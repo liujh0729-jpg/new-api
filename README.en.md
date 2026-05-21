@@ -101,6 +101,31 @@
 
 ## 🚀 Quick Start
 
+> [!TIP]
+> **Latest Docker image:** `calciumion/new-api:latest`
+> **AIPDD one-click pull:** `docker pull crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest`
+
+### Deployment Prerequisites
+
+| Component | Requirement |
+|------|------|
+| **Local database** | SQLite (Docker must mount the `/data` directory) |
+| **Remote database** | MySQL ≥ 5.7.8 or PostgreSQL ≥ 9.6 |
+| **Container engine** | Docker / Docker Compose |
+
+### Required Parameters
+
+| Parameter | Required When | Description |
+|------|---------------|-------------|
+| `AIPDD_KEY` / `AIPDD_API_KEY` | Using built-in AIPDD task models | Upstream AIPDD API key. Register at [app.aipdd.work](https://app.aipdd.work) to obtain it. The system reads `AIPDD_KEY` first, then `AIPDD_API_KEY`; when set, it automatically creates or syncs the `AIPDD` channel with default base URL `https://api.aipdd.work`, and sends the key as `X-API-Key`. |
+| `SQL_DSN` | Using MySQL/PostgreSQL | Database connection string; omit it for default SQLite, but mount `/data` to persist data. |
+| `SESSION_SECRET` | Production or multi-instance deployment | Fixed session secret to keep login state stable across restarts and instances. |
+| `CRYPTO_SECRET` | Redis or multi-instance deployment | Fixed encryption secret so shared cache/cross-instance data can be decrypted. |
+| `REDIS_CONN_STRING` | Multi-instance deployment, shared cache, or task polling | Redis connection string; single-instance deployments can start with memory cache. |
+
+For AIPDD model request parameters, see [AIPDD User Guide](./docs/aipdd-user-guide.zh_CN.md). Common required fields: `aipdd-wan2.2-wanx` needs `image` and `prompt`; `aipdd-mimic-motion` needs `motion_video` and `appearance_image`; `aipdd-indextts` needs `input` and `metadata.audio`.
+
+
 ### Using Docker Compose (Recommended)
 
 ```bash
@@ -124,6 +149,15 @@ docker pull calciumion/new-api:latest
 
 # One-click pull from the AIPDD Alibaba Cloud registry
 docker pull crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest
+
+# Run the AIPDD image and auto-configure the AIPDD channel
+# Register at https://app.aipdd.work to obtain AIPDD_KEY first
+docker run --name new-api -d --restart always \
+  -p 3000:3000 \
+  -e TZ=Asia/Shanghai \
+  -e AIPDD_KEY="your-aipdd-api-key" \
+  -v ./data:/data \
+  crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest
 
 # Using SQLite (default)
 docker run --name new-api -d --restart always \
@@ -286,117 +320,7 @@ docker run --name new-api -d --restart always \
 
 ## 🚢 Deployment
 
-> [!TIP]
-> **Latest Docker image:** `calciumion/new-api:latest`
-> **AIPDD one-click pull:** `docker pull crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest`
-
-### 📋 Deployment Requirements
-
-| Component | Requirement |
-|------|------|
-| **Local database** | SQLite (Docker must mount `/data` directory)|
-| **Remote database** | MySQL ≥ 5.7.8 or PostgreSQL ≥ 9.6 |
-| **Container engine** | Docker / Docker Compose |
-
-### ⚙️ Environment Variable Configuration
-
-<details>
-<summary>Common environment variable configuration</summary>
-
-| Variable Name | Description | Default Value |
-|--------|------|--------|
-| `SESSION_SECRET` | Session secret (required for multi-machine deployment) | - |
-| `CRYPTO_SECRET` | Encryption secret (required for Redis) | - |
-| `SQL_DSN` | Database connection string | - |
-| `REDIS_CONN_STRING` | Redis connection string | - |
-| `STREAMING_TIMEOUT` | Streaming timeout (seconds) | `300` |
-| `STREAM_SCANNER_MAX_BUFFER_MB` | Max per-line buffer (MB) for the stream scanner; increase when upstream sends huge image/base64 payloads | `64` |
-| `MAX_REQUEST_BODY_MB` | Max request body size (MB, counted **after decompression**; prevents huge requests/zip bombs from exhausting memory). Exceeding it returns `413` | `32` |
-| `AZURE_DEFAULT_API_VERSION` | Azure API version | `2025-04-01-preview` |
-| `ERROR_LOG_ENABLED` | Error log switch | `false` |
-| `PYROSCOPE_URL` | Pyroscope server address | - |
-| `PYROSCOPE_APP_NAME` | Pyroscope application name | `new-api` |
-| `PYROSCOPE_BASIC_AUTH_USER` | Pyroscope basic auth user | - |
-| `PYROSCOPE_BASIC_AUTH_PASSWORD` | Pyroscope basic auth password | - |
-| `PYROSCOPE_MUTEX_RATE` | Pyroscope mutex sampling rate | `5` |
-| `PYROSCOPE_BLOCK_RATE` | Pyroscope block sampling rate | `5` |
-| `HOSTNAME` | Hostname tag for Pyroscope | `new-api` |
-
-📖 **Complete configuration:** [Environment Variables Documentation](https://docs.newapi.pro/en/docs/installation/config-maintenance/environment-variables)
-
-</details>
-
-### 🔧 Deployment Methods
-
-<details>
-<summary><strong>Method 1: Docker Compose (Recommended)</strong></summary>
-
-```bash
-# Clone the project
-git clone https://github.com/QuantumNous/new-api.git
-cd new-api
-
-# Edit configuration
-nano docker-compose.yml
-
-# Start service
-docker-compose up -d
-```
-
-</details>
-
-<details>
-<summary><strong>Method 2: Docker Commands</strong></summary>
-
-**Using SQLite:**
-```bash
-docker run --name new-api -d --restart always \
-  -p 3000:3000 \
-  -e TZ=Asia/Shanghai \
-  -v ./data:/data \
-  calciumion/new-api:latest
-```
-
-**Using MySQL:**
-```bash
-docker run --name new-api -d --restart always \
-  -p 3000:3000 \
-  -e SQL_DSN="root:123456@tcp(localhost:3306)/oneapi" \
-  -e TZ=Asia/Shanghai \
-  -v ./data:/data \
-  calciumion/new-api:latest
-```
-
-> **💡 Path explanation:** 
-> - `./data:/data` - Relative path, data saved in the data folder of the current directory
-> - You can also use absolute path, e.g.: `/your/custom/path:/data`
-
-</details>
-
-<details>
-<summary><strong>Method 3: BaoTa Panel</strong></summary>
-
-1. Install BaoTa Panel (≥ 9.2.0 version)
-2. Search for **New-API** in the application store
-3. One-click installation
-
-📖 [Tutorial with images](./docs/BT.md)
-
-</details>
-
-### ⚠️ Multi-machine Deployment Considerations
-
-> [!WARNING]
-> - **Must set** `SESSION_SECRET` - Otherwise login status inconsistent
-> - **Shared Redis must set** `CRYPTO_SECRET` - Otherwise data cannot be decrypted
-
-### 🔄 Channel Retry and Cache
-
-**Retry configuration:** `Settings → Operation Settings → General Settings → Failure Retry Count`
-
-**Cache configuration:**
-- `REDIS_CONN_STRING`: Redis cache (recommended)
-- `MEMORY_CACHE_ENABLED`: Memory cache
+Deployment requirements, required parameters, and Docker / Docker Compose commands have been merged into [Quick Start](#-quick-start). For more platform-specific options, see the [Deployment Guide](https://docs.newapi.pro/en/docs/installation).
 
 ---
 

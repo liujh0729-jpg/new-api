@@ -106,6 +106,31 @@
 
 ## 🚀 Démarrage rapide
 
+> [!TIP]
+> **Dernière image Docker:** `calciumion/new-api:latest`
+> **Tirage AIPDD en une commande :** `docker pull crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest`
+
+### Préparation du déploiement
+
+| Composant | Exigence |
+|------|------|
+| **Base de données locale** | SQLite (Docker doit monter le répertoire `/data`) |
+| **Base de données distante** | MySQL ≥ 5.7.8 ou PostgreSQL ≥ 9.6 |
+| **Moteur de conteneur** | Docker / Docker Compose |
+
+### Paramètres requis
+
+| Paramètre | Obligatoire lorsque | Description |
+|------|---------------------|-------------|
+| `AIPDD_KEY` / `AIPDD_API_KEY` | Utilisation des modèles de tâches AIPDD intégrés | Clé API AIPDD amont. Inscrivez-vous sur [app.aipdd.work](https://app.aipdd.work) pour l'obtenir. Le système lit d'abord `AIPDD_KEY`, puis `AIPDD_API_KEY`; si elle est définie, il crée ou synchronise automatiquement le canal `AIPDD` avec l'URL par défaut `https://api.aipdd.work`, et envoie la clé comme `X-API-Key`. |
+| `SQL_DSN` | Utilisation de MySQL/PostgreSQL | Chaine de connexion à la base de données ; laissez vide pour SQLite par défaut, mais montez `/data` pour persister les données. |
+| `SESSION_SECRET` | Production ou déploiement multi-instance | Secret de session fixe pour stabiliser l'état de connexion après redémarrage ou sur plusieurs instances. |
+| `CRYPTO_SECRET` | Redis ou déploiement multi-instance | Secret de chiffrement fixe pour déchiffrer les données partagées entre cache et instances. |
+| `REDIS_CONN_STRING` | Multi-instance, cache partagé ou interrogation des tâches | Chaine de connexion Redis ; une instance unique peut commencer avec le cache mémoire. |
+
+Pour les paramètres de requête des modèles AIPDD, consultez le [guide utilisateur AIPDD](./docs/aipdd-user-guide.zh_CN.md). Champs requis courants : `aipdd-wan2.2-wanx` nécessite `image` et `prompt`; `aipdd-mimic-motion` nécessite `motion_video` et `appearance_image`; `aipdd-indextts` nécessite `input` et `metadata.audio`.
+
+
 ### Utilisation de Docker Compose (recommandé)
 
 ```bash
@@ -129,6 +154,15 @@ docker pull calciumion/new-api:latest
 
 # Tirage en une commande depuis le registre Alibaba Cloud AIPDD
 docker pull crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest
+
+# Exécuter l'image AIPDD et configurer automatiquement le canal AIPDD
+# Inscrivez-vous sur https://app.aipdd.work pour obtenir AIPDD_KEY
+docker run --name new-api -d --restart always \
+  -p 3000:3000 \
+  -e TZ=Asia/Shanghai \
+  -e AIPDD_KEY="your-aipdd-api-key" \
+  -v ./data:/data \
+  crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest
 
 # Utilisation de SQLite (par défaut)
 docker run --name new-api -d --restart always \
@@ -293,117 +327,7 @@ docker run --name new-api -d --restart always \
 
 ## 🚢 Déploiement
 
-> [!TIP]
-> **Dernière image Docker:** `calciumion/new-api:latest`
-> **Tirage AIPDD en une commande :** `docker pull crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest`
-
-### 📋 Exigences de déploiement
-
-| Composant | Exigence |
-|------|------|
-| **Base de données locale** | SQLite (Docker doit monter le répertoire `/data`)|
-| **Base de données distante | MySQL ≥ 5.7.8 ou PostgreSQL ≥ 9.6 |
-| **Moteur de conteneur** | Docker / Docker Compose |
-
-### ⚙️ Configuration des variables d'environnement
-
-<details>
-<summary>Configuration courante des variables d'environnement</summary>
-
-| Nom de variable | Description | Valeur par défaut |
-|--------|------|--------|
-| `SESSION_SECRET` | Secret de session (requis pour le déploiement multi-machines) |
-| `CRYPTO_SECRET` | Secret de chiffrement (requis pour Redis) | - |
-| `SQL_DSN` | Chaine de connexion à la base de données | - |
-| `REDIS_CONN_STRING` | Chaine de connexion Redis | - |
-| `STREAMING_TIMEOUT` | Délai d'expiration du streaming (secondes) | `300` |
-| `STREAM_SCANNER_MAX_BUFFER_MB` | Taille max du buffer par ligne (Mo) pour le scanner SSE ; à augmenter quand les sorties image/base64 sont très volumineuses (ex. images 4K) | `64` |
-| `MAX_REQUEST_BODY_MB` | Taille maximale du corps de requête (Mo, comptée **après décompression** ; évite les requêtes énormes/zip bombs qui saturent la mémoire). Dépassement ⇒ `413` | `32` |
-| `AZURE_DEFAULT_API_VERSION` | Version de l'API Azure | `2025-04-01-preview` |
-| `ERROR_LOG_ENABLED` | Interrupteur du journal d'erreurs | `false` |
-| `PYROSCOPE_URL` | Adresse du serveur Pyroscope | - |
-| `PYROSCOPE_APP_NAME` | Nom de l'application Pyroscope | `new-api` |
-| `PYROSCOPE_BASIC_AUTH_USER` | Utilisateur Basic Auth Pyroscope | - |
-| `PYROSCOPE_BASIC_AUTH_PASSWORD` | Mot de passe Basic Auth Pyroscope | - |
-| `PYROSCOPE_MUTEX_RATE` | Taux d'échantillonnage mutex Pyroscope | `5` |
-| `PYROSCOPE_BLOCK_RATE` | Taux d'échantillonnage block Pyroscope | `5` |
-| `HOSTNAME` | Nom d'hôte tagué pour Pyroscope | `new-api` |
-
-📖 **Configuration complète:** [Documentation des variables d'environnement](https://docs.newapi.pro/en/docs/installation/config-maintenance/environment-variables)
-
-</details>
-
-### 🔧 Méthodes de déploiement
-
-<details>
-<summary><strong>Méthode 1: Docker Compose (recommandé)</strong></summary>
-
-```bash
-# Cloner le projet
-git clone https://github.com/QuantumNous/new-api.git
-cd new-api
-
-# Modifier la configuration
-nano docker-compose.yml
-
-# Démarrer le service
-docker-compose up -d
-```
-
-</details>
-
-<details>
-<summary><strong>Méthode 2: Commandes Docker</strong></summary>
-
-**Utilisation de SQLite:**
-```bash
-docker run --name new-api -d --restart always \
-  -p 3000:3000 \
-  -e TZ=Asia/Shanghai \
-  -v ./data:/data \
-  calciumion/new-api:latest
-```
-
-**Utilisation de MySQL:**
-```bash
-docker run --name new-api -d --restart always \
-  -p 3000:3000 \
-  -e SQL_DSN="root:123456@tcp(localhost:3306)/oneapi" \
-  -e TZ=Asia/Shanghai \
-  -v ./data:/data \
-  calciumion/new-api:latest
-```
-
-> **💡 Explication du chemin:**
-> - `./data:/data` - Chemin relatif, données sauvegardées dans le dossier data du répertoire actuel
-> - Vous pouvez également utiliser un chemin absolu, par exemple : `/your/custom/path:/data`
-
-</details>
-
-<details>
-<summary><strong>Méthode 3: Panneau BaoTa</strong></summary>
-
-1. Installez le panneau BaoTa (version ≥ 9.2.0)
-2. Recherchez **New-API** dans le magasin d'applications
-3. Installation en un clic
-
-📖 [Tutoriel avec des images](./docs/BT.md)
-
-</details>
-
-### ⚠️ Considérations sur le déploiement multi-machines
-
-> [!WARNING]
-> - **Doit définir** `SESSION_SECRET` - Sinon l'état de connexion sera incohérent sur plusieurs machines
-> - **Redis partagé doit définir** `CRYPTO_SECRET` - Sinon les données ne pourront pas être déchiffrées
-
-### 🔄 Nouvelle tentative de canal et cache
-
-**Configuration de la nouvelle tentative:** `Paramètres → Paramètres de fonctionnement → Paramètres généraux → Nombre de tentatives en cas d'échec`
-
-**Configuration du cache:**
-- `REDIS_CONN_STRING`: Cache Redis (recommandé)
-- `MEMORY_CACHE_ENABLED`: Cache mémoire
+Les exigences de déploiement, les paramètres requis et les commandes Docker / Docker Compose ont été déplacés dans [Démarrage rapide](#-démarrage-rapide). Pour les autres plateformes, consultez le [guide de déploiement](https://docs.newapi.pro/en/docs/installation).
 
 ---
 

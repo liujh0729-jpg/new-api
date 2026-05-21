@@ -106,6 +106,31 @@
 
 ## 🚀 クイックスタート
 
+> [!TIP]
+> **最新のDockerイメージ:** `calciumion/new-api:latest`
+> **AIPDD ワンコマンドプル:** `docker pull crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest`
+
+### デプロイ準備
+
+| コンポーネント | 要件 |
+|------|------|
+| **ローカルデータベース** | SQLite（Docker は `/data` ディレクトリをマウントする必要があります） |
+| **リモートデータベース** | MySQL ≥ 5.7.8 または PostgreSQL ≥ 9.6 |
+| **コンテナエンジン** | Docker / Docker Compose |
+
+### 必須パラメータ
+
+| パラメータ | 必須になる場合 | 説明 |
+|------|----------------|------|
+| `AIPDD_KEY` / `AIPDD_API_KEY` | 内蔵 AIPDD タスクモデルを使う場合 | 上流 AIPDD API Key。[app.aipdd.work](https://app.aipdd.work) で登録して取得してください。システムは `AIPDD_KEY` を優先し、次に `AIPDD_API_KEY` を読みます。設定すると、デフォルト URL `https://api.aipdd.work` の `AIPDD` チャンネルを自動作成または同期し、キーを `X-API-Key` として送信します。 |
+| `SQL_DSN` | MySQL/PostgreSQL を使う場合 | データベース接続文字列。デフォルト SQLite では省略できますが、データ永続化のため `/data` をマウントしてください。 |
+| `SESSION_SECRET` | 本番または複数インスタンス構成 | 再起動や複数インスタンスでログイン状態を安定させる固定セッションシークレット。 |
+| `CRYPTO_SECRET` | Redis または複数インスタンス構成 | 共有キャッシュやインスタンス間データを復号できるようにする固定暗号化シークレット。 |
+| `REDIS_CONN_STRING` | 複数インスタンス、共有キャッシュ、タスクポーリング | Redis 接続文字列。単一インスタンスではメモリキャッシュから始められます。 |
+
+AIPDD モデルのリクエストパラメータは [AIPDD ユーザーガイド](./docs/aipdd-user-guide.zh_CN.md) を参照してください。よく使う必須項目は、`aipdd-wan2.2-wanx` が `image` と `prompt`、`aipdd-mimic-motion` が `motion_video` と `appearance_image`、`aipdd-indextts` が `input` と `metadata.audio` です。
+
+
 ### Docker Composeを使用（推奨）
 
 ```bash
@@ -129,6 +154,15 @@ docker pull calciumion/new-api:latest
 
 # AIPDD Alibaba Cloud レジストリからワンコマンドでプル
 docker pull crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest
+
+# AIPDD イメージを起動し、AIPDD チャンネルを自動設定
+# AIPDD_KEY は https://app.aipdd.work で登録して取得してください
+docker run --name new-api -d --restart always \
+  -p 3000:3000 \
+  -e TZ=Asia/Shanghai \
+  -e AIPDD_KEY="your-aipdd-api-key" \
+  -v ./data:/data \
+  crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest
 
 # SQLiteを使用（デフォルト）
 docker run --name new-api -d --restart always \
@@ -295,115 +329,7 @@ docker run --name new-api -d --restart always \
 
 ## 🚢 デプロイ
 
-> [!TIP]
-> **最新のDockerイメージ:** `calciumion/new-api:latest`
-> **AIPDD ワンコマンドプル:** `docker pull crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest`
-
-### 📋 デプロイ要件
-
-| コンポーネント | 要件 |
-|------|------|
-| **ローカルデータベース** | SQLite（Dockerは `/data` ディレクトリをマウントする必要があります）|
-| **リモートデータベース** | MySQL ≥ 5.7.8 または PostgreSQL ≥ 9.6 |
-| **コンテナエンジン** | Docker / Docker Compose |
-
-### ⚙️ 環境変数設定
-
-<details>
-<summary>一般的な環境変数設定</summary>
-
-| 変数名 | 説明 | デフォルト値 |
-|--------|------|--------|
-| `SESSION_SECRET` | セッションシークレット（マルチマシンデプロイに必須） | - |
-| `CRYPTO_SECRET` | 暗号化シークレット（Redisに必須） | - |
-| `SQL_DSN** | データベース接続文字列 | - |
-| `REDIS_CONN_STRING` | Redis接続文字列 | - |
-| `STREAMING_TIMEOUT` | ストリーミング応答のタイムアウト時間（秒） | `300` |
-| `STREAM_SCANNER_MAX_BUFFER_MB` | ストリームスキャナの1行あたりバッファ上限（MB）。4K画像など巨大なbase64 `data:` ペイロードを扱う場合は値を増加させてください | `64` |
-| `MAX_REQUEST_BODY_MB` | リクエストボディ最大サイズ（MB、**解凍後**に計測。巨大リクエスト/zip bomb によるメモリ枯渇を防止）。超過時は `413` | `32` |
-| `AZURE_DEFAULT_API_VERSION` | Azure APIバージョン | `2025-04-01-preview` |
-| `ERROR_LOG_ENABLED` | エラーログスイッチ | `false` |
-| `PYROSCOPE_URL` | Pyroscopeサーバーのアドレス | - |
-| `PYROSCOPE_APP_NAME` | Pyroscopeアプリ名 | `new-api` |
-| `PYROSCOPE_BASIC_AUTH_USER` | Pyroscope Basic Authユーザー | - |
-| `PYROSCOPE_BASIC_AUTH_PASSWORD` | Pyroscope Basic Authパスワード | - |
-| `PYROSCOPE_MUTEX_RATE` | Pyroscope mutexサンプリング率 | `5` |
-| `PYROSCOPE_BLOCK_RATE` | Pyroscope blockサンプリング率 | `5` |
-| `HOSTNAME` | Pyroscope用のホスト名タグ | `new-api` |
-
-📖 **完全な設定:** [環境変数ドキュメント](https://docs.newapi.pro/ja/docs/installation/config-maintenance/environment-variables)
-
-</details>
-
-### 🔧 デプロイ方法
-
-<details>
-<summary><strong>方法 1: Docker Compose（推奨）</strong></summary>
-
-```bash
-# プロジェクトをクローン
-git clone https://github.com/QuantumNous/new-api.git
-cd new-api
-
-# 設定を編集
-nano docker-compose.yml
-
-# サービスを起動
-docker-compose up -d
-```
-
-</details>
-
-<details>
-<summary><strong>方法 2: Dockerコマンド</strong></summary>
-
-**SQLiteを使用:**
-```bash
-docker run --name new-api -d --restart always \
-  -p 3000:3000 \
-  -e TZ=Asia/Shanghai \
-  -v ./data:/data \
-  calciumion/new-api:latest
-```
-
-**MySQLを使用:**
-```bash
-docker run --name new-api -d --restart always \
-  -p 3000:3000 \
-  -e SQL_DSN="root:123456@tcp(localhost:3306)/oneapi" \
-  -e TZ=Asia/Shanghai \
-  -v ./data:/data \
-  calciumion/new-api:latest
-```
-
-> **💡 パス説明:**
-> - `./data:/data` - 相対パス、データは現在のディレクトリのdataフォルダに保存されます
-> - 絶対パスを使用することもできます：`/your/custom/path:/data`
-
-</details>
-
-<details>
-<summary><strong>方法 3: 宝塔パネル</strong></summary>
-
-1. 宝塔パネル（**9.2.0バージョン**以上）をインストールし、アプリケーションストアで**New-API**を検索してインストールします。
-
-📖 [画像付きチュートリアル](./docs/BT.md)
-
-</details>
-
-### ⚠️ マルチマシンデプロイの注意事項
-
-> [!WARNING]
-> - **必ず設定する必要があります** `SESSION_SECRET` - そうしないとマルチマシンデプロイ時にログイン状態が不一致になります
-> - **共有Redisは必ず設定する必要があります** `CRYPTO_SECRET` - そうしないとデータを復号化できません
-
-### 🔄 チャネルリトライとキャッシュ
-
-**リトライ設定:** `設定 → 運営設定 → 一般設定 → 失敗リトライ回数`
-
-**キャッシュ設定:**
-- `REDIS_CONN_STRING`：Redisキャッシュ（推奨）
-- `MEMORY_CACHE_ENABLED`：メモリキャッシュ
+デプロイ要件、必須パラメータ、Docker / Docker Compose コマンドは [クイックスタート](#-クイックスタート) に移動しました。その他のプラットフォーム向け手順は [デプロイガイド](https://docs.newapi.pro/ja/docs/installation) を参照してください。
 
 ---
 

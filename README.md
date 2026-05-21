@@ -55,6 +55,31 @@
 
 ## 🚀 快速开始
 
+> [!TIP]
+> **最新版 Docker 镜像：** `calciumion/new-api:latest`
+> **AIPDD 阿里云一键拉取：** `docker pull crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest`
+
+### 部署准备
+
+| 组件 | 要求 |
+|------|------|
+| **本地数据库** | SQLite（Docker 需挂载 `/data` 目录） |
+| **远程数据库** | MySQL ≥ 5.7.8 或 PostgreSQL ≥ 9.6 |
+| **容器引擎** | Docker / Docker Compose |
+
+### 必配参数
+
+| 参数 | 何时必须 | 说明 |
+|------|----------|------|
+| `AIPDD_KEY` / `AIPDD_API_KEY` | 使用 AIPDD 内置任务模型时必须 | AIPDD 上游 API Key，请先到 [app.aipdd.work](https://app.aipdd.work) 注册获取。系统优先读取 `AIPDD_KEY`，其次读取 `AIPDD_API_KEY`；设置后会自动创建或同步名为 `AIPDD` 的渠道，默认地址为 `https://api.aipdd.work`，密钥会作为 `X-API-Key` 发送。 |
+| `SQL_DSN` | 使用 MySQL/PostgreSQL 时必须 | 数据库连接字符串；使用默认 SQLite 时可不填，但必须挂载 `/data` 保存数据。 |
+| `SESSION_SECRET` | 生产或多机部署必须 | 固定会话密钥，避免重启或多实例下登录状态不一致。 |
+| `CRYPTO_SECRET` | 使用 Redis 或多机部署时必须 | 固定加密密钥，避免共享缓存/跨实例数据无法解密。 |
+| `REDIS_CONN_STRING` | 多机部署、共享缓存或任务轮询推荐 | Redis 连接字符串；单机可先使用内存缓存。 |
+
+AIPDD 模型调用参数请参考 [AIPDD 能力用户调用指南](./docs/aipdd-user-guide.zh_CN.md)。常见必填项包括：`aipdd-wan2.2-wanx` 需要 `image`、`prompt`，`aipdd-mimic-motion` 需要 `motion_video`、`appearance_image`，`aipdd-indextts` 需要 `input` 和 `metadata.audio`。
+
+
 ### 使用 Docker Compose（推荐）
 
 ```bash
@@ -78,6 +103,15 @@ docker pull calciumion/new-api:latest
 
 # 也可以通过阿里云 AIPDD 镜像一键拉取
 docker pull crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest
+
+# 使用 AIPDD 镜像并自动配置 AIPDD 渠道
+# AIPDD_KEY 请先到 https://app.aipdd.work 注册获取
+docker run --name new-api -d --restart always \
+  -p 3000:3000 \
+  -e TZ=Asia/Shanghai \
+  -e AIPDD_KEY="your-aipdd-api-key" \
+  -v ./data:/data \
+  crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest
 
 # 使用 SQLite（默认）
 docker run --name new-api -d --restart always \
@@ -239,117 +273,7 @@ docker run --name new-api -d --restart always \
 
 ## 🚢 部署
 
-> [!TIP]
-> **最新版 Docker 镜像：** `calciumion/new-api:latest`
-> **AIPDD 阿里云一键拉取：** `docker pull crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest`
-
-### 📋 部署要求
-
-| 组件 | 要求 |
-|------|------|
-| **本地数据库** | SQLite（Docker 需挂载 `/data` 目录）|
-| **远程数据库** | MySQL ≥ 5.7.8 或 PostgreSQL ≥ 9.6 |
-| **容器引擎** | Docker / Docker Compose |
-
-### ⚙️ 环境变量配置
-
-<details>
-<summary>常用环境变量配置</summary>
-
-| 变量名 | 说明                                                           | 默认值 |
-|--------|--------------------------------------------------------------|--------|
-| `SESSION_SECRET` | 会话密钥（多机部署必须）                                                 | - |
-| `CRYPTO_SECRET` | 加密密钥（Redis 必须）                                               | - |
-| `SQL_DSN` | 数据库连接字符串                                                     | - |
-| `REDIS_CONN_STRING` | Redis 连接字符串                                                  | - |
-| `STREAMING_TIMEOUT` | 流式超时时间（秒）                                                    | `300` |
-| `STREAM_SCANNER_MAX_BUFFER_MB` | 流式扫描器单行最大缓冲（MB），图像生成等超大 `data:` 片段（如 4K 图片 base64）需适当调大 | `64` |
-| `MAX_REQUEST_BODY_MB` | 请求体最大大小（MB，**解压后**计；防止超大请求/zip bomb 导致内存暴涨），超过将返回 `413` | `32` |
-| `AZURE_DEFAULT_API_VERSION` | Azure API 版本                                                 | `2025-04-01-preview` |
-| `ERROR_LOG_ENABLED` | 错误日志开关                                                       | `false` |
-| `PYROSCOPE_URL` | Pyroscope 服务地址                                            | - |
-| `PYROSCOPE_APP_NAME` | Pyroscope 应用名                                        | `new-api` |
-| `PYROSCOPE_BASIC_AUTH_USER` | Pyroscope Basic Auth 用户名                        | - |
-| `PYROSCOPE_BASIC_AUTH_PASSWORD` | Pyroscope Basic Auth 密码                  | - |
-| `PYROSCOPE_MUTEX_RATE` | Pyroscope mutex 采样率                               | `5` |
-| `PYROSCOPE_BLOCK_RATE` | Pyroscope block 采样率                               | `5` |
-| `HOSTNAME` | Pyroscope 标签里的主机名                                          | `new-api` |
-
-📖 **完整配置：** [环境变量文档](https://docs.newapi.pro/zh/docs/installation/config-maintenance/environment-variables)
-
-</details>
-
-### 🔧 部署方式
-
-<details>
-<summary><strong>方式 1：Docker Compose（推荐）</strong></summary>
-
-```bash
-# 克隆项目
-git clone https://github.com/QuantumNous/new-api.git
-cd new-api
-
-# 编辑配置
-nano docker-compose.yml
-
-# 启动服务
-docker-compose up -d
-```
-
-</details>
-
-<details>
-<summary><strong>方式 2：Docker 命令</strong></summary>
-
-**使用 SQLite：**
-```bash
-docker run --name new-api -d --restart always \
-  -p 3000:3000 \
-  -e TZ=Asia/Shanghai \
-  -v ./data:/data \
-  calciumion/new-api:latest
-```
-
-**使用 MySQL：**
-```bash
-docker run --name new-api -d --restart always \
-  -p 3000:3000 \
-  -e SQL_DSN="root:123456@tcp(localhost:3306)/oneapi" \
-  -e TZ=Asia/Shanghai \
-  -v ./data:/data \
-  calciumion/new-api:latest
-```
-
-> **💡 路径说明：**
-> - `./data:/data` - 相对路径，数据保存在当前目录的 data 文件夹
-> - 也可使用绝对路径，如：`/your/custom/path:/data`
-
-</details>
-
-<details>
-<summary><strong>方式 3：宝塔面板</strong></summary>
-
-1. 安装宝塔面板（≥ 9.2.0 版本）
-2. 在应用商店搜索 **New-API**
-3. 一键安装
-
-📖 [图文教程](./docs/installation/BT.md)
-
-</details>
-
-### ⚠️ 多机部署注意事项
-
-> [!WARNING]
-> - **必须设置** `SESSION_SECRET` - 否则登录状态不一致
-> - **公用 Redis 必须设置** `CRYPTO_SECRET` - 否则数据无法解密
-
-### 🔄 渠道重试与缓存
-
-**重试配置：** `设置 → 运营设置 → 通用设置 → 失败重试次数`
-
-**缓存配置：**
-- `REDIS_CONN_STRING`：Redis 缓存（推荐）
-- `MEMORY_CACHE_ENABLED`：内存缓存
+部署要求、必配参数和 Docker / Docker Compose 命令已合并到上方 [快速开始](#-快速开始)。更多平台部署方式请参考 [部署指南](https://docs.newapi.pro/zh/docs/installation)。
 
 ---
 
