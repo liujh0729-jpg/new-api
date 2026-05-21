@@ -117,7 +117,7 @@
 
 | Parameter | Required When | Description |
 |------|---------------|-------------|
-| `AIPDD_KEY` / `AIPDD_API_KEY` | Using built-in AIPDD task models | Upstream AIPDD API key. Register at [app.aipdd.work](https://app.aipdd.work) to obtain it. The system reads `AIPDD_KEY` first, then `AIPDD_API_KEY`; when set, it automatically creates or syncs the `AIPDD` channel with default base URL `https://api.aipdd.work`, and sends the key as `X-API-Key`. |
+| `AIPDD_API_KEY` | Using built-in AIPDD task models | Upstream AIPDD API key. Register at [app.aipdd.work](https://app.aipdd.work) to obtain it. When set, it automatically creates or syncs the `AIPDD` channel with default base URL `https://api.aipdd.work`, and sends the key as `X-API-Key`. |
 | `SQL_DSN` | Using MySQL/PostgreSQL | Database connection string; omit it for default SQLite, but mount `/data` to persist data. |
 | `SESSION_SECRET` | Production or multi-instance deployment | Fixed session secret to keep login state stable across restarts and instances. |
 | `CRYPTO_SECRET` | Redis or multi-instance deployment | Fixed encryption secret so shared cache/cross-instance data can be decrypted. |
@@ -151,11 +151,11 @@ docker pull calciumion/new-api:latest
 docker pull crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest
 
 # Run the AIPDD image and auto-configure the AIPDD channel
-# Register at https://app.aipdd.work to obtain AIPDD_KEY first
+# Register at https://app.aipdd.work to obtain AIPDD_API_KEY first
 docker run --name new-api -d --restart always \
   -p 3000:3000 \
   -e TZ=Asia/Shanghai \
-  -e AIPDD_KEY="your-aipdd-api-key" \
+  -e AIPDD_API_KEY="your-aipdd-api-key" \
   -v ./data:/data \
   crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest
 

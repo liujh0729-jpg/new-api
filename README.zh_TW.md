@@ -122,7 +122,7 @@
 
 | 參數 | 何時必須 | 說明 |
 |------|----------|------|
-| `AIPDD_KEY` / `AIPDD_API_KEY` | 使用 AIPDD 內建任務模型時必須 | AIPDD 上游 API Key，請先到 [app.aipdd.work](https://app.aipdd.work) 註冊取得。系統優先讀取 `AIPDD_KEY`，其次讀取 `AIPDD_API_KEY`；設定後會自動建立或同步名為 `AIPDD` 的渠道，預設地址為 `https://api.aipdd.work`，密鑰會作為 `X-API-Key` 發送。 |
+| `AIPDD_API_KEY` | 使用 AIPDD 內建任務模型時必須 | AIPDD 上游 API Key，請先到 [app.aipdd.work](https://app.aipdd.work) 註冊取得。設定後會自動建立或同步名為 `AIPDD` 的渠道，預設地址為 `https://api.aipdd.work`，密鑰會作為 `X-API-Key` 發送。 |
 | `SQL_DSN` | 使用 MySQL/PostgreSQL 時必須 | 資料庫連接字串；使用預設 SQLite 時可不填，但必須掛載 `/data` 保存資料。 |
 | `SESSION_SECRET` | 生產或多機部署必須 | 固定會話密鑰，避免重啟或多實例下登入狀態不一致。 |
 | `CRYPTO_SECRET` | 使用 Redis 或多機部署時必須 | 固定加密密鑰，避免共享快取/跨實例資料無法解密。 |
@@ -156,11 +156,11 @@ docker pull calciumion/new-api:latest
 docker pull crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest
 
 # 使用 AIPDD 鏡像並自動配置 AIPDD 渠道
-# AIPDD_KEY 請先到 https://app.aipdd.work 註冊取得
+# AIPDD_API_KEY 請先到 https://app.aipdd.work 註冊取得
 docker run --name new-api -d --restart always \
   -p 3000:3000 \
   -e TZ=Asia/Shanghai \
-  -e AIPDD_KEY="your-aipdd-api-key" \
+  -e AIPDD_API_KEY="your-aipdd-api-key" \
   -v ./data:/data \
   crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest
 

@@ -122,7 +122,7 @@
 
 | Paramètre | Obligatoire lorsque | Description |
 |------|---------------------|-------------|
-| `AIPDD_KEY` / `AIPDD_API_KEY` | Utilisation des modèles de tâches AIPDD intégrés | Clé API AIPDD amont. Inscrivez-vous sur [app.aipdd.work](https://app.aipdd.work) pour l'obtenir. Le système lit d'abord `AIPDD_KEY`, puis `AIPDD_API_KEY`; si elle est définie, il crée ou synchronise automatiquement le canal `AIPDD` avec l'URL par défaut `https://api.aipdd.work`, et envoie la clé comme `X-API-Key`. |
+| `AIPDD_API_KEY` | Utilisation des modèles de tâches AIPDD intégrés | Clé API AIPDD amont. Inscrivez-vous sur [app.aipdd.work](https://app.aipdd.work) pour l'obtenir. Si elle est définie, le système crée ou synchronise automatiquement le canal `AIPDD` avec l'URL par défaut `https://api.aipdd.work`, et envoie la clé comme `X-API-Key`. |
 | `SQL_DSN` | Utilisation de MySQL/PostgreSQL | Chaine de connexion à la base de données ; laissez vide pour SQLite par défaut, mais montez `/data` pour persister les données. |
 | `SESSION_SECRET` | Production ou déploiement multi-instance | Secret de session fixe pour stabiliser l'état de connexion après redémarrage ou sur plusieurs instances. |
 | `CRYPTO_SECRET` | Redis ou déploiement multi-instance | Secret de chiffrement fixe pour déchiffrer les données partagées entre cache et instances. |
@@ -156,11 +156,11 @@ docker pull calciumion/new-api:latest
 docker pull crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest
 
 # Exécuter l'image AIPDD et configurer automatiquement le canal AIPDD
-# Inscrivez-vous sur https://app.aipdd.work pour obtenir AIPDD_KEY
+# Inscrivez-vous sur https://app.aipdd.work pour obtenir AIPDD_API_KEY
 docker run --name new-api -d --restart always \
   -p 3000:3000 \
   -e TZ=Asia/Shanghai \
-  -e AIPDD_KEY="your-aipdd-api-key" \
+  -e AIPDD_API_KEY="your-aipdd-api-key" \
   -v ./data:/data \
   crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest
 

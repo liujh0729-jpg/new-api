@@ -60,7 +60,6 @@ type Channel struct {
 }
 
 const (
-	aipddKeyEnvName     = "AIPDD_KEY"
 	aipddAPIKeyEnvName  = "AIPDD_API_KEY"
 	aipddEnvChannelName = "AIPDD"
 )
@@ -275,9 +274,6 @@ func (channel *Channel) ApplyDefaultModels() {
 }
 
 func getAIPDDKeyFromEnv() string {
-	if key := strings.TrimSpace(os.Getenv(aipddKeyEnvName)); key != "" {
-		return key
-	}
 	return strings.TrimSpace(os.Getenv(aipddAPIKeyEnvName))
 }
 
@@ -313,7 +309,7 @@ func ensureAIPDDChannelFromEnv(channels []Channel, key string) ([]Channel, bool,
 		if err := channel.Insert(); err != nil {
 			return channels, false, err
 		}
-		common.SysLog("AIPDD channel created from AIPDD_KEY")
+		common.SysLog("AIPDD channel created from AIPDD_API_KEY")
 		return append(channels, *channel), true, nil
 	}
 
@@ -348,7 +344,7 @@ func ensureAIPDDChannelFromEnv(channels []Channel, key string) ([]Channel, bool,
 	if err := channel.UpdateAbilities(nil); err != nil {
 		return channels, false, err
 	}
-	common.SysLog("AIPDD channel synced from AIPDD_KEY")
+	common.SysLog("AIPDD channel synced from AIPDD_API_KEY")
 	return channels, true, nil
 }
 

@@ -11,8 +11,7 @@ import (
 
 func TestEnsureAIPDDChannelDefaultsCreatesChannelFromEnv(t *testing.T) {
 	truncateTables(t)
-	t.Setenv("AIPDD_KEY", "aipdd-env-key")
-	t.Setenv("AIPDD_API_KEY", "")
+	t.Setenv("AIPDD_API_KEY", "aipdd-env-key")
 
 	require.NoError(t, EnsureAIPDDChannelDefaults())
 
@@ -33,8 +32,7 @@ func TestEnsureAIPDDChannelDefaultsCreatesChannelFromEnv(t *testing.T) {
 
 func TestEnsureAIPDDChannelDefaultsSyncsExistingChannelFromEnv(t *testing.T) {
 	truncateTables(t)
-	t.Setenv("AIPDD_KEY", "aipdd-env-key-new")
-	t.Setenv("AIPDD_API_KEY", "")
+	t.Setenv("AIPDD_API_KEY", "aipdd-env-key-new")
 
 	channel := Channel{
 		Type:   constant.ChannelTypeAIPDD,

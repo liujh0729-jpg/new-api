@@ -122,7 +122,7 @@
 
 | パラメータ | 必須になる場合 | 説明 |
 |------|----------------|------|
-| `AIPDD_KEY` / `AIPDD_API_KEY` | 内蔵 AIPDD タスクモデルを使う場合 | 上流 AIPDD API Key。[app.aipdd.work](https://app.aipdd.work) で登録して取得してください。システムは `AIPDD_KEY` を優先し、次に `AIPDD_API_KEY` を読みます。設定すると、デフォルト URL `https://api.aipdd.work` の `AIPDD` チャンネルを自動作成または同期し、キーを `X-API-Key` として送信します。 |
+| `AIPDD_API_KEY` | 内蔵 AIPDD タスクモデルを使う場合 | 上流 AIPDD API Key。[app.aipdd.work](https://app.aipdd.work) で登録して取得してください。設定すると、デフォルト URL `https://api.aipdd.work` の `AIPDD` チャンネルを自動作成または同期し、キーを `X-API-Key` として送信します。 |
 | `SQL_DSN` | MySQL/PostgreSQL を使う場合 | データベース接続文字列。デフォルト SQLite では省略できますが、データ永続化のため `/data` をマウントしてください。 |
 | `SESSION_SECRET` | 本番または複数インスタンス構成 | 再起動や複数インスタンスでログイン状態を安定させる固定セッションシークレット。 |
 | `CRYPTO_SECRET` | Redis または複数インスタンス構成 | 共有キャッシュやインスタンス間データを復号できるようにする固定暗号化シークレット。 |
@@ -156,11 +156,11 @@ docker pull calciumion/new-api:latest
 docker pull crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest
 
 # AIPDD イメージを起動し、AIPDD チャンネルを自動設定
-# AIPDD_KEY は https://app.aipdd.work で登録して取得してください
+# AIPDD_API_KEY は https://app.aipdd.work で登録して取得してください
 docker run --name new-api -d --restart always \
   -p 3000:3000 \
   -e TZ=Asia/Shanghai \
-  -e AIPDD_KEY="your-aipdd-api-key" \
+  -e AIPDD_API_KEY="your-aipdd-api-key" \
   -v ./data:/data \
   crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest
 
