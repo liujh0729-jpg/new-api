@@ -63,6 +63,35 @@ const colors = [
   'yellow',
 ];
 
+const AIPDD_TASK_META = {
+  'aipdd-flux-gguf': { label: '文生图', mediaType: 'image' },
+  'aipdd-wan2.2-wanx': { label: '图生视频', mediaType: 'video' },
+  'aipdd-wan2.2-animater': { label: '主体替换视频', mediaType: 'video' },
+  'aipdd-mimic-motion': { label: '动作迁移视频', mediaType: 'video' },
+  'aipdd-latentsync-1.5': { label: '对口型视频', mediaType: 'video' },
+  'aipdd-indextts': { label: '文生语音', mediaType: 'audio' },
+};
+
+const parseMaybeJson = (value) => {
+  if (typeof value !== 'string') return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+};
+
+const getTaskModelName = (record) => {
+  const properties = parseMaybeJson(record?.properties) || {};
+  const modelName =
+    properties.origin_model_name ||
+    properties.upstream_model_name ||
+    (parseMaybeJson(record?.data) || {})?.model;
+  return typeof modelName === 'string' ? modelName.trim().toLowerCase() : '';
+};
+
+const getAipddTaskMeta = (record) => AIPDD_TASK_META[getTaskModelName(record)];
+
 // Render functions
 const renderTimestamp = (timestampInSeconds) => {
   const date = new Date(timestampInSeconds * 1000); // 从秒转换为毫秒
@@ -90,7 +119,7 @@ function renderDuration(submit_time, finishTime) {
   );
 }
 
-const renderType = (type, t) => {
+const renderType = (type, t, record) => {
   switch (type) {
     case 'MUSIC':
       return (
@@ -105,6 +134,16 @@ const renderType = (type, t) => {
         </Tag>
       );
     case TASK_ACTION_GENERATE:
+      {
+        const meta = getAipddTaskMeta(record);
+        if (meta) {
+          return (
+            <Tag color='blue' shape='circle' prefixIcon={<Sparkles size={14} />}>
+              {t(meta.label)}
+            </Tag>
+          );
+        }
+      }
       return (
         <Tag color='blue' shape='circle' prefixIcon={<Sparkles size={14} />}>
           {t('图生视频')}
@@ -327,7 +366,7 @@ export const getTaskLogsColumns = ({
       title: t('类型'),
       dataIndex: 'action',
       render: (text, record, index) => {
-        return <div>{renderType(text, t)}</div>;
+        return <div>{renderType(text, t, record)}</div>;
       },
     },
     {
@@ -407,16 +446,45 @@ export const getTaskLogsColumns = ({
           );
         }
 
-        // 视频预览：优先使用 result_url，兼容旧数据 fail_reason 中的 URL
+        // 结果预览：优先使用 result_url，兼容旧数据 fail_reason 中的 URL
+        const aipddTaskMeta = getAipddTaskMeta(record);
         const isVideoTask =
-          record.action === TASK_ACTION_GENERATE ||
-          record.action === TASK_ACTION_TEXT_GENERATE ||
-          record.action === TASK_ACTION_FIRST_TAIL_GENERATE ||
-          record.action === TASK_ACTION_REFERENCE_GENERATE ||
-          record.action === TASK_ACTION_REMIX_GENERATE;
+          aipddTaskMeta?.mediaType === 'video' ||
+          (!aipddTaskMeta &&
+            (record.action === TASK_ACTION_GENERATE ||
+              record.action === TASK_ACTION_TEXT_GENERATE ||
+              record.action === TASK_ACTION_FIRST_TAIL_GENERATE ||
+              record.action === TASK_ACTION_REFERENCE_GENERATE ||
+              record.action === TASK_ACTION_REMIX_GENERATE));
         const isSuccess = record.status === 'SUCCESS';
         const resultUrl = record.result_url;
         const hasResultUrl = typeof resultUrl === 'string' && /^https?:\/\//.test(resultUrl);
+        if (isSuccess && aipddTaskMeta?.mediaType === 'audio' && hasResultUrl) {
+          return (
+            <a
+              href='#'
+              onClick={(e) => {
+                e.preventDefault();
+                openAudioModal([
+                  {
+                    id: record.task_id,
+                    title: t(aipddTaskMeta.label),
+                    audio_url: resultUrl,
+                  },
+                ]);
+              }}
+            >
+              {t('点击预览音频')}
+            </a>
+          );
+        }
+        if (isSuccess && aipddTaskMeta?.mediaType === 'image' && hasResultUrl) {
+          return (
+            <a href={resultUrl} target='_blank' rel='noopener noreferrer'>
+              {t('点击预览图片')}
+            </a>
+          );
+        }
         if (isSuccess && isVideoTask && hasResultUrl) {
           return (
             <a

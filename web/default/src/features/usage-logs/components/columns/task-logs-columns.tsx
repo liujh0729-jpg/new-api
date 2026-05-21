@@ -42,6 +42,21 @@ import {
   createProgressColumn,
 } from './column-helpers'
 
+const AIPDD_TASK_META: Record<
+  string,
+  { label: string; mediaType: 'audio' | 'image' | 'video' }
+> = {
+  'aipdd-flux-gguf': { label: 'Text to Image', mediaType: 'image' },
+  'aipdd-wan2.2-wanx': { label: 'Image to Video', mediaType: 'video' },
+  'aipdd-wan2.2-animater': {
+    label: 'Subject Replacement Video',
+    mediaType: 'video',
+  },
+  'aipdd-mimic-motion': { label: 'Motion Transfer Video', mediaType: 'video' },
+  'aipdd-latentsync-1.5': { label: 'Lip Sync Video', mediaType: 'video' },
+  'aipdd-indextts': { label: 'Text to Speech', mediaType: 'audio' },
+}
+
 function parseTaskData(data: unknown): unknown[] {
   if (Array.isArray(data)) return data
   if (typeof data === 'string') {
@@ -53,6 +68,56 @@ function parseTaskData(data: unknown): unknown[] {
     }
   }
   return []
+}
+
+function parseObject(value: unknown): Record<string, unknown> | null {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value as Record<string, unknown>
+  }
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value)
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>
+      }
+    } catch {
+      return null
+    }
+  }
+  return null
+}
+
+function readString(obj: Record<string, unknown> | null, key: string): string {
+  const value = obj?.[key]
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+function getTaskModelName(log: TaskLog): string {
+  const properties = parseObject(log.properties)
+  const data = parseObject(log.data)
+  return (
+    readString(properties, 'origin_model_name') ||
+    readString(properties, 'upstream_model_name') ||
+    readString(data, 'model')
+  ).toLowerCase()
+}
+
+function getAipddTaskMeta(log: TaskLog) {
+  return AIPDD_TASK_META[getTaskModelName(log)]
+}
+
+function getTaskActionLabel(log: TaskLog): string {
+  return getAipddTaskMeta(log)?.label || taskActionMapper.getLabel(log.action)
+}
+
+function getPrimaryResultUrl(log: TaskLog): string {
+  const directUrl = typeof log.result_url === 'string' ? log.result_url : ''
+  const outputUrl = Array.isArray(log.output) ? log.output[0] || '' : ''
+  const failReasonUrl =
+    typeof log.fail_reason === 'string' && log.fail_reason.startsWith('http')
+      ? log.fail_reason
+      : ''
+  return directUrl || outputUrl || failReasonUrl
 }
 
 function AudioPreviewCell({ log }: { log: TaskLog }) {
@@ -187,7 +252,7 @@ export function useTaskLogsColumns(isAdmin: boolean): ColumnDef<TaskLog>[] {
               className='border-border/60 bg-muted/30 max-w-full truncate rounded-md border px-1.5 py-0.5 font-mono'
             />
             <span className='text-muted-foreground/60 truncate text-[11px]'>
-              {t(log.platform)} · {t(taskActionMapper.getLabel(log.action))}
+              {t(log.platform)} · {t(getTaskActionLabel(log))}
             </span>
           </div>
         )
@@ -231,6 +296,7 @@ export function useTaskLogsColumns(isAdmin: boolean): ColumnDef<TaskLog>[] {
         const failReason = row.getValue('fail_reason') as string
         const status = log.status
         const [dialogOpen, setDialogOpen] = useState(false)
+        const [audioOpen, setAudioOpen] = useState(false)
 
         const isSunoSuccess =
           log.platform === 'suno' && status === TASK_STATUS.SUCCESS
@@ -248,14 +314,59 @@ export function useTaskLogsColumns(isAdmin: boolean): ColumnDef<TaskLog>[] {
           }
         }
 
+        const aipddTaskMeta = getAipddTaskMeta(log)
         const isVideoTask =
-          log.action === TASK_ACTIONS.GENERATE ||
-          log.action === TASK_ACTIONS.TEXT_GENERATE ||
-          log.action === TASK_ACTIONS.FIRST_TAIL_GENERATE ||
-          log.action === TASK_ACTIONS.REFERENCE_GENERATE ||
-          log.action === TASK_ACTIONS.REMIX_GENERATE
+          aipddTaskMeta?.mediaType === 'video' ||
+          (!aipddTaskMeta &&
+            (log.action === TASK_ACTIONS.GENERATE ||
+              log.action === TASK_ACTIONS.TEXT_GENERATE ||
+              log.action === TASK_ACTIONS.FIRST_TAIL_GENERATE ||
+              log.action === TASK_ACTIONS.REFERENCE_GENERATE ||
+              log.action === TASK_ACTIONS.REMIX_GENERATE))
         const isSuccess = status === TASK_STATUS.SUCCESS
-        const isUrl = failReason?.startsWith('http')
+        const resultUrl = getPrimaryResultUrl(log)
+        const isUrl = resultUrl.startsWith('http')
+
+        if (isSuccess && aipddTaskMeta?.mediaType === 'audio' && isUrl) {
+          return (
+            <>
+              <button
+                type='button'
+                className='group flex items-center gap-1 text-left text-xs'
+                onClick={() => setAudioOpen(true)}
+              >
+                <Music className='text-muted-foreground size-3' />
+                <span className='text-foreground leading-snug group-hover:underline'>
+                  {t('Click to preview audio')}
+                </span>
+              </button>
+              <AudioPreviewDialog
+                open={audioOpen}
+                onOpenChange={setAudioOpen}
+                clips={[
+                  {
+                    id: log.task_id,
+                    title: t(aipddTaskMeta.label),
+                    audio_url: resultUrl,
+                  },
+                ]}
+              />
+            </>
+          )
+        }
+
+        if (isSuccess && aipddTaskMeta?.mediaType === 'image' && isUrl) {
+          return (
+            <a
+              href={resultUrl}
+              target='_blank'
+              rel='noopener noreferrer'
+              className='text-foreground text-xs hover:underline'
+            >
+              {t('Click to preview image')}
+            </a>
+          )
+        }
 
         if (isSuccess && isVideoTask && isUrl) {
           const videoUrl = `/v1/videos/${log.task_id}/content`
