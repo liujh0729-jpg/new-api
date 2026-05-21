@@ -13,6 +13,7 @@ import (
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/shopspring/decimal"
 	"github.com/thanhpk/randstr"
@@ -106,7 +107,7 @@ func getWaffoPancakeReturnURL() string {
 	if strings.TrimSpace(setting.WaffoPancakeReturnURL) != "" {
 		return setting.WaffoPancakeReturnURL
 	}
-	return paymentReturnPath("/console/topup?show_history=true")
+	return strings.TrimRight(system_setting.ServerAddress, "/") + "/console/topup?show_history=true"
 }
 
 func RequestWaffoPancakePay(c *gin.Context) {

@@ -587,7 +587,7 @@ func RelayTask(c *gin.Context) {
 			ModelRatio:      relayInfo.PriceData.ModelRatio,
 			OtherRatios:     relayInfo.PriceData.OtherRatios,
 			OriginModelName: relayInfo.OriginModelName,
-			PerCallBilling:  common.StringsContains(constant.TaskPricePatches, relayInfo.OriginModelName) || relayInfo.PriceData.UsePrice,
+			PerCallBilling:  isTaskPerCallBilling(relayInfo),
 		}
 		task.Quota = result.Quota
 		task.Data = result.TaskData
@@ -600,6 +600,16 @@ func RelayTask(c *gin.Context) {
 	if taskErr != nil {
 		respondTaskError(c, taskErr)
 	}
+}
+
+func isTaskPerCallBilling(relayInfo *relaycommon.RelayInfo) bool {
+	if relayInfo == nil {
+		return false
+	}
+	if constant.IsAIPDDTaskModel(relayInfo.OriginModelName) {
+		return constant.IsAIPDDPerCallBillingModel(relayInfo.OriginModelName)
+	}
+	return common.StringsContains(constant.TaskPricePatches, relayInfo.OriginModelName) || relayInfo.PriceData.UsePrice
 }
 
 // respondTaskError 统一输出 Task 错误响应（含 429 限流提示改写）

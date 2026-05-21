@@ -378,7 +378,7 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 
 	isOpenAIVideoAPI := strings.HasPrefix(c.Request.RequestURI, "/v1/videos/")
 
-	// Gemini/Vertex 支持实时查询：用户 fetch 时直接从上游拉取最新状态
+	// Gemini/Vertex/AIPDD 支持实时查询：用户 fetch 时直接从上游拉取最新状态
 	if realtimeResp := tryRealtimeFetch(originTask, isOpenAIVideoAPI); len(realtimeResp) > 0 {
 		respBody = realtimeResp
 		return
@@ -415,15 +415,17 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 	return
 }
 
-// tryRealtimeFetch 尝试从上游实时拉取 Gemini/Vertex 任务状态。
-// 仅当渠道类型为 Gemini 或 Vertex 时触发；其他渠道或出错时返回 nil。
+// tryRealtimeFetch 尝试从上游实时拉取 Gemini/Vertex/AIPDD 任务状态。
+// 仅当渠道类型支持直接查询时触发；其他渠道或出错时返回 nil。
 // 当非 OpenAI Video API 时，还会构建自定义格式的响应体。
 func tryRealtimeFetch(task *model.Task, isOpenAIVideoAPI bool) []byte {
 	channelModel, err := model.GetChannelById(task.ChannelId, true)
 	if err != nil {
 		return nil
 	}
-	if channelModel.Type != constant.ChannelTypeVertexAi && channelModel.Type != constant.ChannelTypeGemini {
+	if channelModel.Type != constant.ChannelTypeVertexAi &&
+		channelModel.Type != constant.ChannelTypeGemini &&
+		channelModel.Type != constant.ChannelTypeAIPDD {
 		return nil
 	}
 
@@ -457,6 +459,10 @@ func tryRealtimeFetch(task *model.Task, isOpenAIVideoAPI bool) []byte {
 
 	snap := task.Snapshot()
 
+	if channelModel.Type == constant.ChannelTypeAIPDD {
+		task.Data = body
+	}
+
 	// 将上游最新状态更新到 task
 	if ti.Status != "" {
 		task.Status = model.TaskStatus(ti.Status)
@@ -484,10 +490,12 @@ func tryRealtimeFetch(task *model.Task, isOpenAIVideoAPI bool) []byte {
 
 	// 非 OpenAI Video API: 构建自定义格式响应
 	format := detectVideoFormat(body)
+	output := extractTaskOutputURLs(task)
 	out := map[string]any{
 		"error":    nil,
 		"format":   format,
-		"metadata": nil,
+		"metadata": map[string]any{"urls": output},
+		"output":   output,
 		"status":   mapTaskStatusToSimple(task.Status),
 		"task_id":  task.TaskID,
 		"url":      task.GetResultURL(),
@@ -539,6 +547,14 @@ func mapTaskStatusToSimple(status model.TaskStatus) string {
 }
 
 func TaskModel2Dto(task *model.Task) *dto.TaskDto {
+	output := extractTaskOutputURLs(task)
+	var metadata map[string]any
+	if len(output) > 0 {
+		metadata = map[string]any{
+			"url":  output[0],
+			"urls": output,
+		}
+	}
 	return &dto.TaskDto{
 		ID:         task.ID,
 		CreatedAt:  task.CreatedAt,
@@ -559,6 +575,89 @@ func TaskModel2Dto(task *model.Task) *dto.TaskDto {
 		Progress:   task.Progress,
 		Properties: task.Properties,
 		Username:   task.Username,
+		Output:     output,
+		Metadata:   metadata,
 		Data:       task.Data,
 	}
+}
+
+func extractTaskOutputURLs(task *model.Task) []string {
+	if task == nil || task.Status != model.TaskStatusSuccess {
+		return nil
+	}
+	urls := make([]string, 0)
+	if resultURL := strings.TrimSpace(task.GetResultURL()); resultURL != "" {
+		urls = append(urls, resultURL)
+	}
+	var raw any
+	if len(task.Data) > 0 && common.Unmarshal(task.Data, &raw) == nil {
+		urls = append(urls, extractURLsFromTaskData(raw)...)
+	}
+	return cleanTaskOutputURLs(urls)
+}
+
+func extractURLsFromTaskData(value any) []string {
+	switch v := value.(type) {
+	case nil:
+		return nil
+	case string:
+		return extractURLsFromTaskString(v)
+	case []string:
+		return v
+	case []any:
+		urls := make([]string, 0, len(v))
+		for _, item := range v {
+			urls = append(urls, extractURLsFromTaskData(item)...)
+		}
+		return urls
+	case map[string]any:
+		for _, key := range []string{"task_result", "url", "urls", "result", "results", "output", "outputs", "video", "videos", "image", "images", "audio", "audios", "file", "files", "data"} {
+			if nested, ok := v[key]; ok {
+				if urls := extractURLsFromTaskData(nested); len(urls) > 0 {
+					return urls
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func extractURLsFromTaskString(value string) []string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" || trimmed == "null" {
+		return nil
+	}
+	var parsed any
+	if err := common.Unmarshal([]byte(trimmed), &parsed); err == nil {
+		return extractURLsFromTaskData(parsed)
+	}
+	if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
+		items := strings.Split(strings.Trim(trimmed, "[]"), ",")
+		urls := make([]string, 0, len(items))
+		for _, item := range items {
+			urls = append(urls, strings.Trim(strings.TrimSpace(item), `"'`))
+		}
+		return urls
+	}
+	return []string{trimmed}
+}
+
+func cleanTaskOutputURLs(values []string) []string {
+	out := make([]string, 0, len(values))
+	seen := map[string]bool{}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		if !strings.HasPrefix(value, "http://") &&
+			!strings.HasPrefix(value, "https://") &&
+			!strings.HasPrefix(value, "data:") &&
+			!strings.HasPrefix(value, "/") {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
 }

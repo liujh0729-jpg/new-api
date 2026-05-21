@@ -262,6 +262,12 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 		if _, ok := c.Get("relay_mode"); !ok {
 			c.Set("relay_mode", relayMode)
 		}
+	} else if c.Request.Method == http.MethodGet && strings.HasPrefix(c.Request.URL.Path, "/v1/images/generations/") {
+		c.Set("relay_mode", relayconstant.RelayModeVideoFetchByID)
+		shouldSelectChannel = false
+	} else if c.Request.Method == http.MethodGet && strings.HasPrefix(c.Request.URL.Path, "/v1/audio/speech/") {
+		c.Set("relay_mode", relayconstant.RelayModeVideoFetchByID)
+		shouldSelectChannel = false
 	} else if strings.HasPrefix(c.Request.URL.Path, "/v1beta/models/") || strings.HasPrefix(c.Request.URL.Path, "/v1/models/") {
 		// Gemini API 路径处理: /v1beta/models/gemini-2.0-flash:generateContent
 		relayMode := relayconstant.RelayModeGemini
@@ -292,6 +298,11 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 		}
 	}
 	if strings.HasPrefix(c.Request.URL.Path, "/v1/images/generations") {
+		if c.Request.Method == http.MethodPost {
+			if req, err := getModelFromRequest(c); err == nil && req.Model != "" {
+				modelRequest.Model = req.Model
+			}
+		}
 		modelRequest.Model = common.GetStringIfEmpty(modelRequest.Model, "dall-e")
 	} else if strings.HasPrefix(c.Request.URL.Path, "/v1/images/edits") {
 		//modelRequest.Model = common.GetStringIfEmpty(c.PostForm("model"), "gpt-image-1")
@@ -303,10 +314,13 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 			}
 		}
 	}
-	if strings.HasPrefix(c.Request.URL.Path, "/v1/audio") {
+	if strings.HasPrefix(c.Request.URL.Path, "/v1/audio") &&
+		!(c.Request.Method == http.MethodGet && strings.HasPrefix(c.Request.URL.Path, "/v1/audio/speech/")) {
 		relayMode := relayconstant.RelayModeAudioSpeech
 		if strings.HasPrefix(c.Request.URL.Path, "/v1/audio/speech") {
-
+			if req, err := getModelFromRequest(c); err == nil && req.Model != "" {
+				modelRequest.Model = req.Model
+			}
 			modelRequest.Model = common.GetStringIfEmpty(modelRequest.Model, "tts-1")
 		} else if strings.HasPrefix(c.Request.URL.Path, "/v1/audio/translations") {
 			// 先尝试从请求读取

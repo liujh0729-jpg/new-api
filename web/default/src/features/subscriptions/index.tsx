@@ -22,18 +22,13 @@ import { Alert, AlertDescription } from '@/components/ui/alert'
 import { SectionPageLayout } from '@/components/layout'
 import { SubscriptionsDialogs } from './components/subscriptions-dialogs'
 import { SubscriptionsPrimaryButtons } from './components/subscriptions-primary-buttons'
-import {
-  SubscriptionsProvider,
-  useSubscriptions,
-} from './components/subscriptions-provider'
+import { SubscriptionsProvider } from './components/subscriptions-provider'
 import { SubscriptionsTable } from './components/subscriptions-table'
 
-function SubscriptionsContent() {
+export function Subscriptions() {
   const { t } = useTranslation()
-  const { complianceConfirmed } = useSubscriptions()
-
   return (
-    <>
+    <SubscriptionsProvider>
       <SectionPageLayout>
         <SectionPageLayout.Title>
           {t('Subscription Management')}
@@ -55,28 +50,11 @@ function SubscriptionsContent() {
           </div>
         </SectionPageLayout.Actions>
         <SectionPageLayout.Content>
-          {!complianceConfirmed ? (
-            <Alert variant='destructive' className='mb-4'>
-              <AlertDescription>
-                {t(
-                  'Subscription plan creation and changes are locked until the administrator confirms compliance terms in Payment Gateway settings.'
-                )}
-              </AlertDescription>
-            </Alert>
-          ) : null}
           <SubscriptionsTable />
         </SectionPageLayout.Content>
       </SectionPageLayout>
 
       <SubscriptionsDialogs />
-    </>
-  )
-}
-
-export function Subscriptions() {
-  return (
-    <SubscriptionsProvider>
-      <SubscriptionsContent />
     </SubscriptionsProvider>
   )
 }

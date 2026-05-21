@@ -254,7 +254,7 @@ export function SubscriptionPlansCard({
     <>
       <TitledCard
         title={t('Subscription Plans')}
-        description={t('Subscribe to a plan for model access')}
+        description={t('Purchase a plan to enjoy model benefits')}
         icon={<Crown className='h-4 w-4' />}
         contentClassName='space-y-4 sm:space-y-5'
       >
@@ -499,7 +499,7 @@ export function SubscriptionPlansCard({
 
           {!hasAny && (
             <p className='text-muted-foreground mt-2 text-xs'>
-              {t('Subscribe to a plan for model access')}
+              {t('Purchase a plan to enjoy model benefits')}
             </p>
           )}
         </div>

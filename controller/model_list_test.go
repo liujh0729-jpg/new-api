@@ -26,6 +26,11 @@ type listModelsResponse struct {
 	Object  string             `json:"object"`
 }
 
+type userModelsResponse struct {
+	Success bool     `json:"success"`
+	Data    []string `json:"data"`
+}
+
 func setupModelListControllerTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 
@@ -152,6 +157,152 @@ func pricingByModelName(pricings []model.Pricing) map[string]model.Pricing {
 		byName[pricing.ModelName] = pricing
 	}
 	return byName
+}
+
+func TestPricingIncludesAIPDDCatalogModelsByDefault(t *testing.T) {
+	setupModelListControllerTestDB(t)
+	model.InvalidatePricingCache()
+
+	pricingByName := pricingByModelName(model.GetPricing())
+	vendorByID := map[int]model.PricingVendor{}
+	for _, vendor := range model.GetVendors() {
+		vendorByID[vendor.ID] = vendor
+	}
+
+	for _, modelName := range constant.AIPDDTaskModelList {
+		item, ok := pricingByName[modelName]
+		require.True(t, ok, "expected AIPDD model %s in pricing catalog", modelName)
+		require.Contains(t, item.EnableGroup, "default")
+		expectedEndpoints := constant.GetAIPDDEndpointTypes(modelName)
+		require.Equal(t, expectedEndpoints, item.SupportedEndpointTypes)
+		require.Equal(t, "/aipdd-logo.png", item.Icon)
+		vendor := vendorByID[item.VendorID]
+		require.Equal(t, "AIPDD", vendor.Name)
+		require.Equal(t, "/aipdd-logo.png", vendor.Icon)
+	}
+}
+
+func TestPricingBackfillsAIPDDLegacyOpenAIIcon(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	model.InvalidatePricingCache()
+
+	vendor := model.Vendor{Name: "AIPDD", Icon: "OpenAI", Status: 1}
+	require.NoError(t, db.Create(&vendor).Error)
+	for _, modelName := range constant.AIPDDTaskModelList {
+		require.NoError(t, db.Create(&model.Model{
+			ModelName: modelName,
+			Icon:      "OpenAI",
+			VendorID:  vendor.Id,
+			Status:    1,
+			NameRule:  model.NameRuleExact,
+		}).Error)
+	}
+
+	pricingByName := pricingByModelName(model.GetPricing())
+	for _, modelName := range constant.AIPDDTaskModelList {
+		item, ok := pricingByName[modelName]
+		require.True(t, ok, "expected AIPDD model %s in pricing catalog", modelName)
+		require.Equal(t, "/aipdd-logo.png", item.Icon)
+	}
+
+	var storedVendor model.Vendor
+	require.NoError(t, db.First(&storedVendor, vendor.Id).Error)
+	require.Equal(t, "/aipdd-logo.png", storedVendor.Icon)
+
+	var storedModels []model.Model
+	require.NoError(t, db.Where("vendor_id = ?", vendor.Id).Find(&storedModels).Error)
+	require.Len(t, storedModels, len(constant.AIPDDTaskModelList))
+	for _, storedModel := range storedModels {
+		require.Equal(t, "/aipdd-logo.png", storedModel.Icon)
+	}
+}
+
+func TestAIPDDChannelEmptyModelsUseDefaultAbilities(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	model.InvalidatePricingCache()
+
+	channel := &model.Channel{
+		Type:   constant.ChannelTypeAIPDD,
+		Key:    "aipdd-test-key",
+		Name:   "aipdd",
+		Status: common.ChannelStatusEnabled,
+		Group:  "default",
+	}
+	require.NoError(t, channel.Insert())
+
+	var abilities []model.Ability
+	require.NoError(t, db.Where("channel_id = ?", channel.Id).Find(&abilities).Error)
+	require.Len(t, abilities, len(constant.AIPDDTaskModelList))
+
+	abilityModels := map[string]bool{}
+	for _, ability := range abilities {
+		abilityModels[ability.Model] = true
+	}
+	for _, modelName := range constant.AIPDDTaskModelList {
+		require.True(t, abilityModels[modelName], "expected ability for %s", modelName)
+	}
+}
+
+func TestEnsureAIPDDChannelDefaultsBackfillsExistingBlankChannel(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	model.InvalidatePricingCache()
+
+	channel := model.Channel{
+		Type:   constant.ChannelTypeAIPDD,
+		Key:    "aipdd-test-key",
+		Name:   "legacy-aipdd",
+		Status: common.ChannelStatusEnabled,
+		Group:  "default",
+	}
+	require.NoError(t, db.Create(&channel).Error)
+
+	require.NoError(t, model.EnsureAIPDDChannelDefaults())
+
+	var stored model.Channel
+	require.NoError(t, db.First(&stored, channel.Id).Error)
+	require.Equal(t, strings.Join(constant.AIPDDTaskModelList, ","), stored.Models)
+
+	groupModels := model.GetGroupEnabledModels("default")
+	for _, modelName := range constant.AIPDDTaskModelList {
+		require.Contains(t, groupModels, modelName)
+	}
+}
+
+func TestGetUserModelsExcludesAIPDDTaskModelsFromPlayground(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	model.InvalidatePricingCache()
+
+	require.NoError(t, db.Create(&model.User{
+		Id:       1002,
+		Username: "playground-user",
+		Password: "password",
+		Group:    "default",
+		Status:   common.UserStatusEnabled,
+	}).Error)
+	require.NoError(t, db.Create(&model.Channel{
+		Type:   constant.ChannelTypeAIPDD,
+		Key:    "aipdd-test-key",
+		Name:   "legacy-aipdd",
+		Status: common.ChannelStatusEnabled,
+		Group:  "default",
+	}).Error)
+
+	require.NoError(t, model.EnsureAIPDDChannelDefaults())
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/user/models", nil)
+	ctx.Set("id", 1002)
+
+	GetUserModels(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var payload userModelsResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
+	require.True(t, payload.Success)
+	for _, modelName := range constant.AIPDDTaskModelList {
+		require.NotContains(t, payload.Data, modelName)
+	}
 }
 
 func TestListModelsIncludesTieredBillingModel(t *testing.T) {

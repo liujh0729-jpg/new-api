@@ -6,13 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"os"
 	"strings"
 	"sync"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
-	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/types"
 
 	"github.com/samber/lo"
@@ -58,6 +58,12 @@ type Channel struct {
 	// cache info
 	Keys []string `json:"-" gorm:"-"`
 }
+
+const (
+	aipddKeyEnvName     = "AIPDD_KEY"
+	aipddAPIKeyEnvName  = "AIPDD_API_KEY"
+	aipddEnvChannelName = "AIPDD"
+)
 
 type ChannelInfo struct {
 	IsMultiKey             bool                  `json:"is_multi_key"`                        // 是否多Key模式
@@ -127,38 +133,6 @@ func resolveChannelSortOptions(idSort bool, sortOptions []ChannelSortOptions) Ch
 	options := sortOptions[0]
 	options.IDSort = options.IDSort || idSort
 	return options
-}
-
-func NormalizeChannelGroupFilter(group string) string {
-	group = strings.TrimSpace(group)
-	if group == "" || strings.EqualFold(group, "all") || strings.EqualFold(group, "null") {
-		return ""
-	}
-	return group
-}
-
-func channelGroupFilterCondition() string {
-	if common.UsingMySQL {
-		return `CONCAT(',', ` + commonGroupCol + `, ',') LIKE ? ESCAPE '!'`
-	}
-	return `(',' || ` + commonGroupCol + ` || ',') LIKE ? ESCAPE '!'`
-}
-
-func channelGroupFilterPattern(group string) string {
-	group = strings.NewReplacer(
-		"!", "!!",
-		"%", "!%",
-		"_", "!_",
-	).Replace(group)
-	return "%," + group + ",%"
-}
-
-func ApplyChannelGroupFilter(query *gorm.DB, group string) *gorm.DB {
-	group = NormalizeChannelGroupFilter(group)
-	if group == "" {
-		return query
-	}
-	return query.Where(channelGroupFilterCondition(), channelGroupFilterPattern(group))
 }
 
 // Value implements driver.Valuer interface
@@ -251,9 +225,10 @@ func (channel *Channel) GetNextEnabledKey() (string, int, *types.NewAPIError) {
 		if err != nil {
 			return "", 0, types.NewError(err, types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
 		}
+		//println("before polling index:", channel.ChannelInfo.MultiKeyPollingIndex)
 		defer func() {
 			if common.DebugEnabled {
-				logger.LogDebug(nil, "channel %d polling index: %d", channel.Id, channel.ChannelInfo.MultiKeyPollingIndex)
+				println(fmt.Sprintf("channel %d polling index: %d", channel.Id, channel.ChannelInfo.MultiKeyPollingIndex))
 			}
 			if !common.MemoryCacheEnabled {
 				_ = channel.SaveChannelInfo()
@@ -291,6 +266,128 @@ func (channel *Channel) GetModels() []string {
 		return []string{}
 	}
 	return strings.Split(strings.Trim(channel.Models, ","), ",")
+}
+
+func (channel *Channel) ApplyDefaultModels() {
+	if channel.Type == constant.ChannelTypeAIPDD && strings.TrimSpace(channel.Models) == "" {
+		channel.Models = strings.Join(constant.AIPDDTaskModelList, ",")
+	}
+}
+
+func getAIPDDKeyFromEnv() string {
+	if key := strings.TrimSpace(os.Getenv(aipddKeyEnvName)); key != "" {
+		return key
+	}
+	return strings.TrimSpace(os.Getenv(aipddAPIKeyEnvName))
+}
+
+func selectAIPDDEnvChannel(channels []Channel) *Channel {
+	for i := range channels {
+		if strings.EqualFold(strings.TrimSpace(channels[i].Name), aipddEnvChannelName) {
+			return &channels[i]
+		}
+	}
+	if len(channels) == 0 {
+		return nil
+	}
+	return &channels[0]
+}
+
+func ensureAIPDDChannelFromEnv(channels []Channel, key string) ([]Channel, bool, error) {
+	if strings.TrimSpace(key) == "" {
+		return channels, false, nil
+	}
+
+	channel := selectAIPDDEnvChannel(channels)
+	if channel == nil {
+		baseURL := constant.ChannelBaseURLs[constant.ChannelTypeAIPDD]
+		channel = &Channel{
+			Type:        constant.ChannelTypeAIPDD,
+			Key:         key,
+			Name:        aipddEnvChannelName,
+			Status:      common.ChannelStatusEnabled,
+			Group:       "default",
+			BaseURL:     &baseURL,
+			CreatedTime: common.GetTimestamp(),
+		}
+		if err := channel.Insert(); err != nil {
+			return channels, false, err
+		}
+		common.SysLog("AIPDD channel created from AIPDD_KEY")
+		return append(channels, *channel), true, nil
+	}
+
+	updates := map[string]interface{}{}
+	if channel.Key != key {
+		updates["key"] = key
+		channel.Key = key
+	}
+	if strings.TrimSpace(channel.Models) == "" {
+		channel.ApplyDefaultModels()
+		updates["models"] = channel.Models
+	}
+	if strings.TrimSpace(channel.Group) == "" {
+		updates["group"] = "default"
+		channel.Group = "default"
+	}
+	if channel.Status != common.ChannelStatusEnabled {
+		updates["status"] = common.ChannelStatusEnabled
+		channel.Status = common.ChannelStatusEnabled
+	}
+	if channel.BaseURL == nil || strings.TrimSpace(*channel.BaseURL) == "" {
+		baseURL := constant.ChannelBaseURLs[constant.ChannelTypeAIPDD]
+		updates["base_url"] = baseURL
+		channel.BaseURL = &baseURL
+	}
+	if len(updates) == 0 {
+		return channels, false, nil
+	}
+	if err := DB.Model(&Channel{}).Where("id = ?", channel.Id).Updates(updates).Error; err != nil {
+		return channels, false, err
+	}
+	if err := channel.UpdateAbilities(nil); err != nil {
+		return channels, false, err
+	}
+	common.SysLog("AIPDD channel synced from AIPDD_KEY")
+	return channels, true, nil
+}
+
+func EnsureAIPDDChannelDefaults() error {
+	var channels []Channel
+	if err := DB.Where("type = ?", constant.ChannelTypeAIPDD).Order("id asc").Find(&channels).Error; err != nil {
+		return err
+	}
+
+	changed := false
+	envKey := getAIPDDKeyFromEnv()
+	updatedChannels, envChanged, err := ensureAIPDDChannelFromEnv(channels, envKey)
+	if err != nil {
+		return err
+	}
+	channels = updatedChannels
+	changed = changed || envChanged
+
+	for i := range channels {
+		channel := &channels[i]
+		if strings.TrimSpace(channel.Models) != "" {
+			continue
+		}
+		channel.ApplyDefaultModels()
+		if err := DB.Model(&Channel{}).
+			Where("id = ?", channel.Id).
+			Update("models", channel.Models).Error; err != nil {
+			return err
+		}
+		if err := channel.UpdateAbilities(nil); err != nil {
+			return err
+		}
+		changed = true
+	}
+
+	if changed {
+		InvalidatePricingCache()
+	}
+	return nil
 }
 
 func (channel *Channel) GetGroups() []string {
@@ -397,12 +494,25 @@ func SearchChannels(keyword string, group string, model string, idSort bool, sor
 	baseQuery := DB.Model(&Channel{}).Omit("key")
 
 	// 构造WHERE子句
-	whereClause := "(id = ? OR name LIKE ? OR " + commonKeyCol + " = ? OR " + baseURLCol + " LIKE ?) AND " + modelsCol + " LIKE ?"
-	args := []any{common.String2Int(keyword), "%" + keyword + "%", keyword, "%" + keyword + "%", "%" + model + "%"}
-	baseQuery = ApplyChannelGroupFilter(baseQuery.Where(whereClause, args...), group)
+	var whereClause string
+	var args []interface{}
+	if group != "" && group != "null" {
+		var groupCondition string
+		if common.UsingMySQL {
+			groupCondition = `CONCAT(',', ` + commonGroupCol + `, ',') LIKE ?`
+		} else {
+			// sqlite, PostgreSQL
+			groupCondition = `(',' || ` + commonGroupCol + ` || ',') LIKE ?`
+		}
+		whereClause = "(id = ? OR name LIKE ? OR " + commonKeyCol + " = ? OR " + baseURLCol + " LIKE ?) AND " + modelsCol + ` LIKE ? AND ` + groupCondition
+		args = append(args, common.String2Int(keyword), "%"+keyword+"%", keyword, "%"+keyword+"%", "%"+model+"%", "%,"+group+",%")
+	} else {
+		whereClause = "(id = ? OR name LIKE ? OR " + commonKeyCol + " = ? OR " + baseURLCol + " LIKE ?) AND " + modelsCol + " LIKE ?"
+		args = append(args, common.String2Int(keyword), "%"+keyword+"%", keyword, "%"+keyword+"%", "%"+model+"%")
+	}
 
 	// 执行查询
-	err := order.Apply(baseQuery).Find(&channels).Error
+	err := order.Apply(baseQuery.Where(whereClause, args...)).Find(&channels).Error
 	if err != nil {
 		return nil, err
 	}
@@ -427,6 +537,9 @@ func BatchInsertChannels(channels []Channel) error {
 	if len(channels) == 0 {
 		return nil
 	}
+	for i := range channels {
+		channels[i].ApplyDefaultModels()
+	}
 	tx := DB.Begin()
 	if tx.Error != nil {
 		return tx.Error
@@ -449,7 +562,11 @@ func BatchInsertChannels(channels []Channel) error {
 			}
 		}
 	}
-	return tx.Commit().Error
+	if err := tx.Commit().Error; err != nil {
+		return err
+	}
+	InvalidatePricingCache()
+	return nil
 }
 
 func BatchDeleteChannels(ids []int) error {
@@ -471,7 +588,11 @@ func BatchDeleteChannels(ids []int) error {
 			return err
 		}
 	}
-	return tx.Commit().Error
+	if err := tx.Commit().Error; err != nil {
+		return err
+	}
+	InvalidatePricingCache()
+	return nil
 }
 
 func (channel *Channel) GetPriority() int64 {
@@ -515,15 +636,21 @@ func (channel *Channel) GetStatusCodeMapping() string {
 
 func (channel *Channel) Insert() error {
 	var err error
+	channel.ApplyDefaultModels()
 	err = DB.Create(channel).Error
 	if err != nil {
 		return err
 	}
 	err = channel.AddAbilities(nil)
-	return err
+	if err != nil {
+		return err
+	}
+	InvalidatePricingCache()
+	return nil
 }
 
 func (channel *Channel) Update() error {
+	channel.ApplyDefaultModels()
 	// If this is a multi-key channel, recalculate MultiKeySize based on the current key list to avoid inconsistency after editing keys
 	if channel.ChannelInfo.IsMultiKey {
 		var keyStr string
@@ -569,7 +696,11 @@ func (channel *Channel) Update() error {
 	}
 	DB.Model(channel).First(channel, "id = ?", channel.Id)
 	err = channel.UpdateAbilities(nil)
-	return err
+	if err != nil {
+		return err
+	}
+	InvalidatePricingCache()
+	return nil
 }
 
 func (channel *Channel) UpdateResponseTime(responseTime int64) {
@@ -599,7 +730,11 @@ func (channel *Channel) Delete() error {
 		return err
 	}
 	err = channel.DeleteAbilities()
-	return err
+	if err != nil {
+		return err
+	}
+	InvalidatePricingCache()
+	return nil
 }
 
 var channelStatusLock sync.Mutex
@@ -709,7 +844,9 @@ func UpdateChannelStatus(channelId int, usingKey string, status int, reason stri
 			err := UpdateAbilityStatus(channelId, status == common.ChannelStatusEnabled)
 			if err != nil {
 				common.SysLog(fmt.Sprintf("failed to update ability status: channel_id=%d, error=%v", channelId, err))
+				return
 			}
+			InvalidatePricingCache()
 		}
 	}()
 	channel, err := GetChannelById(channelId, true)
@@ -753,7 +890,11 @@ func EnableChannelByTag(tag string) error {
 		return err
 	}
 	err = UpdateAbilityStatusByTag(tag, true)
-	return err
+	if err != nil {
+		return err
+	}
+	InvalidatePricingCache()
+	return nil
 }
 
 func DisableChannelByTag(tag string) error {
@@ -762,7 +903,11 @@ func DisableChannelByTag(tag string) error {
 		return err
 	}
 	err = UpdateAbilityStatusByTag(tag, false)
-	return err
+	if err != nil {
+		return err
+	}
+	InvalidatePricingCache()
+	return nil
 }
 
 func EditChannelByTag(tag string, newTag *string, modelMapping *string, models *string, group *string, priority *int64, weight *uint, paramOverride *string, headerOverride *string) error {
@@ -812,6 +957,7 @@ func EditChannelByTag(tag string, newTag *string, modelMapping *string, models *
 				}
 			}
 		}
+		InvalidatePricingCache()
 	} else {
 		err := UpdateAbilityByTag(tag, newTag, priority, weight)
 		if err != nil {
@@ -847,18 +993,8 @@ func DeleteDisabledChannel() (int64, error) {
 }
 
 func GetPaginatedTags(offset int, limit int) ([]*string, error) {
-	return GetPaginatedChannelTags(DB.Model(&Channel{}), offset, limit)
-}
-
-func GetPaginatedChannelTags(query *gorm.DB, offset int, limit int) ([]*string, error) {
 	var tags []*string
-	err := query.
-		Select("DISTINCT tag").
-		Where("tag is not null AND tag != ''").
-		Order(clause.OrderByColumn{Column: clause.Column{Name: "tag"}}).
-		Offset(offset).
-		Limit(limit).
-		Find(&tags).Error
+	err := DB.Model(&Channel{}).Select("DISTINCT tag").Where("tag != ''").Offset(offset).Limit(limit).Find(&tags).Error
 	return tags, err
 }
 
@@ -886,11 +1022,24 @@ func SearchTags(keyword string, group string, model string, idSort bool) ([]*str
 	baseQuery := DB.Model(&Channel{}).Omit("key")
 
 	// 构造WHERE子句
-	whereClause := "(id = ? OR name LIKE ? OR " + commonKeyCol + " = ? OR " + baseURLCol + " LIKE ?) AND " + modelsCol + " LIKE ?"
-	args := []any{common.String2Int(keyword), "%" + keyword + "%", keyword, "%" + keyword + "%", "%" + model + "%"}
-	baseQuery = ApplyChannelGroupFilter(baseQuery.Where(whereClause, args...), group)
+	var whereClause string
+	var args []interface{}
+	if group != "" && group != "null" {
+		var groupCondition string
+		if common.UsingMySQL {
+			groupCondition = `CONCAT(',', ` + commonGroupCol + `, ',') LIKE ?`
+		} else {
+			// sqlite, PostgreSQL
+			groupCondition = `(',' || ` + commonGroupCol + ` || ',') LIKE ?`
+		}
+		whereClause = "(id = ? OR name LIKE ? OR " + commonKeyCol + " = ? OR " + baseURLCol + " LIKE ?) AND " + modelsCol + ` LIKE ? AND ` + groupCondition
+		args = append(args, common.String2Int(keyword), "%"+keyword+"%", keyword, "%"+keyword+"%", "%"+model+"%", "%,"+group+",%")
+	} else {
+		whereClause = "(id = ? OR name LIKE ? OR " + commonKeyCol + " = ? OR " + baseURLCol + " LIKE ?) AND " + modelsCol + " LIKE ?"
+		args = append(args, common.String2Int(keyword), "%"+keyword+"%", keyword, "%"+keyword+"%", "%"+model+"%")
+	}
 
-	subQuery := baseQuery.
+	subQuery := baseQuery.Where(whereClause, args...).
 		Select("tag").
 		Where("tag != ''").
 		Order(order)
@@ -1019,7 +1168,11 @@ func BatchSetChannelTag(ids []int, tag *string) error {
 	}
 
 	// 提交事务
-	return tx.Commit().Error
+	if err := tx.Commit().Error; err != nil {
+		return err
+	}
+	InvalidatePricingCache()
+	return nil
 }
 
 // CountAllChannels returns total channels in DB
@@ -1031,12 +1184,8 @@ func CountAllChannels() (int64, error) {
 
 // CountAllTags returns number of non-empty distinct tags
 func CountAllTags() (int64, error) {
-	return CountChannelTags(DB.Model(&Channel{}))
-}
-
-func CountChannelTags(query *gorm.DB) (int64, error) {
 	var total int64
-	err := query.Where("tag is not null AND tag != ''").Distinct("tag").Count(&total).Error
+	err := DB.Model(&Channel{}).Where("tag is not null AND tag != ''").Distinct("tag").Count(&total).Error
 	return total, err
 }
 

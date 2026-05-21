@@ -519,13 +519,6 @@ export function DetailsDialog(props: DetailsDialogProps) {
                   mono
                 />
               )}
-              {props.log.upstream_request_id && (
-                <DetailRow
-                  label={t('Upstream Request ID')}
-                  value={props.log.upstream_request_id}
-                  mono
-                />
-              )}
 
               {props.isAdmin && props.log.channel > 0 && (
                 <DetailRow
@@ -985,8 +978,9 @@ export function DetailsDialog(props: DetailsDialogProps) {
               </DetailSection>
             )}
 
-            {/* Param override */}
-            {other?.po &&
+            {/* Param override (admin only) */}
+            {props.isAdmin &&
+              other?.po &&
               Array.isArray(other.po) &&
               other.po.length > 0 && (
                 <DetailSection

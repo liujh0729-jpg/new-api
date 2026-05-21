@@ -318,7 +318,6 @@ export function ApiKeysTable() {
             columnId: 'status',
             title: t('Status'),
             options: API_KEY_STATUS_OPTIONS,
-            singleSelect: true,
           },
         ],
       }}

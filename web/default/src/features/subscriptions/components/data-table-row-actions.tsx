@@ -35,7 +35,7 @@ interface DataTableRowActionsProps {
 
 export function DataTableRowActions({ row }: DataTableRowActionsProps) {
   const { t } = useTranslation()
-  const { setOpen, setCurrentRow, complianceConfirmed } = useSubscriptions()
+  const { setOpen, setCurrentRow } = useSubscriptions()
 
   return (
     <DropdownMenu>
@@ -46,7 +46,6 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
       </DropdownMenuTrigger>
       <DropdownMenuContent align='end'>
         <DropdownMenuItem
-          disabled={!complianceConfirmed}
           onClick={() => {
             setCurrentRow(row.original)
             setOpen('update')
@@ -56,7 +55,6 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
           {t('Edit')}
         </DropdownMenuItem>
         <DropdownMenuItem
-          disabled={!complianceConfirmed}
           onClick={() => {
             setCurrentRow(row.original)
             setOpen('toggle-status')

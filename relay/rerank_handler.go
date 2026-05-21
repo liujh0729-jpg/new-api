@@ -8,7 +8,6 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
-	"github.com/QuantumNous/new-api/logger"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
@@ -68,7 +67,9 @@ func RerankHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 			}
 		}
 
-		logger.LogDebug(c, "Rerank request body: %s", jsonData)
+		if common.DebugEnabled {
+			println(fmt.Sprintf("Rerank request body: %s", string(jsonData)))
+		}
 		requestBody = bytes.NewBuffer(jsonData)
 	}
 

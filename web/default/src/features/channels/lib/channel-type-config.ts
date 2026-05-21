@@ -134,6 +134,20 @@ export const CHANNEL_TYPE_CONFIGS: Record<number, ChannelTypeConfig> = {
       baseUrl: 'Default: https://api.replicate.com',
     },
   },
+  58: {
+    id: 58,
+    name: CHANNEL_TYPES[58],
+    icon: 'openai',
+    defaultBaseUrl: 'https://api.aipdd.work',
+    supportedModels: [
+      'aipdd-flux-gguf',
+      'aipdd-wan2.2-wanx',
+      'aipdd-wan2.2-animater',
+      'aipdd-mimic-motion',
+      'aipdd-latentsync-1.5',
+      'aipdd-indextts',
+    ],
+  },
 }
 
 /**

@@ -429,6 +429,75 @@ function buildImageSample(lang: Lang, ctx: SampleContext): string {
   ].join('\n')
 }
 
+function buildVideoTaskSample(lang: Lang, ctx: SampleContext): string {
+  const url = `${ctx.baseUrl}${ctx.endpointPath}`
+  const body = {
+    model: ctx.modelName,
+    prompt: 'Animate this image with a slow camera push.',
+    image: 'https://example.com/input.png',
+    duration: 5,
+  }
+  if (lang === 'curl') {
+    return [
+      `curl ${url} \\`,
+      `  -H "Authorization: Bearer $${ctx.apiKeyEnv}" \\`,
+      `  -H "Content-Type: application/json" \\`,
+      `  -d '${JSON.stringify(body, null, 2)}'`,
+      '',
+      `# Poll the returned task_id:`,
+      `# curl ${ctx.baseUrl}/v1/videos/{task_id} -H "Authorization: Bearer $${ctx.apiKeyEnv}"`,
+    ].join('\n')
+  }
+  return [
+    `const response = await fetch('${url}', {`,
+    `  method: 'POST',`,
+    `  headers: {`,
+    `    Authorization: \`Bearer \${process.env.${ctx.apiKeyEnv}}\`,`,
+    `    'Content-Type': 'application/json',`,
+    `  },`,
+    `  body: JSON.stringify(${JSON.stringify(body, null, 2)}),`,
+    `})`,
+    '',
+    `const task = await response.json()`,
+    `console.log(task.task_id ?? task.id)`,
+  ].join('\n')
+}
+
+function buildAudioSpeechTaskSample(lang: Lang, ctx: SampleContext): string {
+  const url = `${ctx.baseUrl}${ctx.endpointPath}`
+  const body = {
+    model: ctx.modelName,
+    input: 'Hello from AIPDD voice cloning.',
+    metadata: {
+      audio: 'https://example.com/reference.wav',
+    },
+  }
+  if (lang === 'curl') {
+    return [
+      `curl ${url} \\`,
+      `  -H "Authorization: Bearer $${ctx.apiKeyEnv}" \\`,
+      `  -H "Content-Type: application/json" \\`,
+      `  -d '${JSON.stringify(body, null, 2)}'`,
+      '',
+      `# Poll the returned task_id:`,
+      `# curl ${ctx.baseUrl}/v1/audio/speech/{task_id} -H "Authorization: Bearer $${ctx.apiKeyEnv}"`,
+    ].join('\n')
+  }
+  return [
+    `const response = await fetch('${url}', {`,
+    `  method: 'POST',`,
+    `  headers: {`,
+    `    Authorization: \`Bearer \${process.env.${ctx.apiKeyEnv}}\`,`,
+    `    'Content-Type': 'application/json',`,
+    `  },`,
+    `  body: JSON.stringify(${JSON.stringify(body, null, 2)}),`,
+    `})`,
+    '',
+    `const task = await response.json()`,
+    `console.log(task.task_id ?? task.id)`,
+  ].join('\n')
+}
+
 function buildSample(
   lang: Lang,
   endpointType: string,
@@ -439,6 +508,8 @@ function buildSample(
   if (endpointType === 'embeddings' || endpointType === 'jina-rerank')
     return buildEmbeddingSample(lang, ctx)
   if (endpointType === 'image-generation') return buildImageSample(lang, ctx)
+  if (endpointType === 'openai-video') return buildVideoTaskSample(lang, ctx)
+  if (endpointType === 'audio-speech') return buildAudioSpeechTaskSample(lang, ctx)
   return buildChatSample(lang, ctx)
 }
 

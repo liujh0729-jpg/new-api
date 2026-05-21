@@ -187,13 +187,11 @@ export function UsersTable() {
             columnId: 'status',
             title: t('Status'),
             options: getUserStatusOptions(t),
-            singleSelect: true,
           },
           {
             columnId: 'role',
             title: t('Role'),
             options: getUserRoleOptions(t),
-            singleSelect: true,
           },
         ],
       }}

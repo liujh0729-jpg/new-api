@@ -335,6 +335,7 @@ export function getChannelIcon(channelType) {
     case 1: // OpenAI
     case 3: // Azure OpenAI
     case 57: // Codex
+    case 58: // AIPDD
       return <OpenAI size={iconSize} />;
     case 2: // Midjourney Proxy
     case 5: // Midjourney Proxy Plus
@@ -420,16 +421,41 @@ export function getChannelIcon(channelType) {
  * 支持：
  * - 基础："OpenAI"、"OpenAI.Color" 等
  * - 额外属性（点号链式）："OpenAI.Avatar.type={'platform'}"、"OpenRouter.Avatar.shape={'square'}"
+ * - 图片 URL/路径："/aipdd-logo.png"、"https://example.com/logo.png"
  * - 继续兼容第二参数 size；若字符串里有 size=，以字符串为准
  * @param {string} iconName - 图标名称/描述
  * @param {number} size - 图标大小，默认为 14
  * @returns {JSX.Element} - 对应的图标组件或 Avatar
  */
+function isImageIconPath(value) {
+  return (
+    /^data:image\//i.test(value) ||
+    (/^(https?:\/\/|\/|\.\/|\.\.\/)/i.test(value) &&
+      /\.(?:png|jpe?g|gif|webp|svg|ico)(?:[?#].*)?$/i.test(value))
+  );
+}
+
 export function getLobeHubIcon(iconName, size = 14) {
   if (typeof iconName === 'string') iconName = iconName.trim();
   // 如果没有图标名称，返回 Avatar
   if (!iconName) {
     return <Avatar size='extra-extra-small'>?</Avatar>;
+  }
+
+  if (isImageIconPath(String(iconName))) {
+    return (
+      <img
+        src={String(iconName)}
+        alt=''
+        aria-hidden='true'
+        style={{
+          width: size,
+          height: size,
+          display: 'block',
+          objectFit: 'contain',
+        }}
+      />
+    );
   }
 
   // 解析组件路径与点号链式属性

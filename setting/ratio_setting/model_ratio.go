@@ -308,6 +308,12 @@ var defaultModelPrice = map[string]float64{
 	"veo-3.0-fast-generate-001":      0.15,
 	"veo-3.1-generate-preview":       0.4,
 	"veo-3.1-fast-generate-preview":  0.15,
+	"aipdd-flux-gguf":                0,
+	"aipdd-wan2.2-wanx":              0.02 / USD2RMB,
+	"aipdd-wan2.2-animater":          0.02,
+	"aipdd-mimic-motion":             0,
+	"aipdd-latentsync-1.5":           0,
+	"aipdd-indextts":                 0.01,
 }
 
 var defaultAudioRatio = map[string]float64{

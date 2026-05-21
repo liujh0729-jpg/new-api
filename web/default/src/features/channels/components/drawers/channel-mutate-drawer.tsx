@@ -136,6 +136,7 @@ import {
   type ChannelFormValues,
   deduplicateKeys,
   getChannelTypeIcon,
+  getChannelTypeConfig,
   getKeyPromptForType,
   parseModelsString,
   formatModelsArray,
@@ -301,6 +302,7 @@ export function ChannelMutateDrawer({
   const { setOpen } = useChannels()
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [customModel, setCustomModel] = useState('')
+  const [isFetchingModels, setIsFetchingModels] = useState(false)
   const [fetchModelsDialogOpen, setFetchModelsDialogOpen] = useState(false)
   const [channelKey, setChannelKey] = useState<string | null>(null)
   const [isChannelKeyLoading, setIsChannelKeyLoading] = useState(false)
@@ -429,6 +431,10 @@ export function ChannelMutateDrawer({
 
   // Get basic models for the current channel type
   const basicModels = useMemo(() => {
+    const typeConfig = getChannelTypeConfig(currentType)
+    if (typeConfig.supportedModels?.length) {
+      return typeConfig.supportedModels
+    }
     if (!allModelsList.length) return []
     // Filter models based on common patterns for specific types
     if (currentType === 1) {
@@ -626,6 +632,21 @@ export function ChannelMutateDrawer({
   useEffect(() => {
     if (isEditing) return // Don't auto-set defaults when editing
 
+    const typeConfig = getChannelTypeConfig(currentType)
+    if (currentType === 58 && typeConfig.defaultBaseUrl) {
+      const currentBaseUrlValue = form.getValues('base_url')
+      if (!currentBaseUrlValue || currentBaseUrlValue === '') {
+        form.setValue('base_url', typeConfig.defaultBaseUrl)
+      }
+    }
+
+    if (currentType === 58 && typeConfig.supportedModels?.length) {
+      const currentModelsValue = form.getValues('models')
+      if (!currentModelsValue || currentModelsValue.trim() === '') {
+        form.setValue('models', typeConfig.supportedModels.join(','))
+      }
+    }
+
     // Type 45 (VolcEngine) - set default base_url
     if (currentType === 45) {
       const currentBaseUrlValue = form.getValues('base_url')
@@ -697,7 +718,7 @@ export function ChannelMutateDrawer({
     try {
       const res = await getChannelKey(channelId)
       if (!res.success) {
-        throw new Error(res.message || t('Failed to fetch channel key'))
+        throw new Error(res.message || 'Failed to fetch channel key')
       }
 
       const keyValue = res.data?.key ?? ''
@@ -732,7 +753,7 @@ export function ChannelMutateDrawer({
     try {
       const res = await refreshCodexCredential(channelId)
       if (!res.success) {
-        throw new Error(res.message || t('Failed to refresh credential'))
+        throw new Error(res.message || 'Failed to refresh credential')
       }
       toast.success(t('Credential refreshed'))
       queryClient.invalidateQueries({
@@ -766,29 +787,43 @@ export function ChannelMutateDrawer({
       return
     }
 
-    // For creation mode, validate key before opening dialog
-    if (!isEditing) {
-      const key = form.getValues('key')
-      if (!key?.trim()) {
-        toast.error(t('Please enter API key first'))
-        return
+    // For editing mode, open FetchModelsDialog to let user select
+    if (isEditing && currentRow) {
+      setFetchModelsDialogOpen(true)
+      return
+    }
+
+    // For creation mode, fetch and fill all models
+    const key = form.getValues('key')
+    if (!key?.trim()) {
+      toast.error(t('Please enter API key first'))
+      return
+    }
+
+    setIsFetchingModels(true)
+    try {
+      const response = await fetchModels({
+        type,
+        key,
+        base_url: form.getValues('base_url') || '',
+      })
+
+      if (response.success && response.data) {
+        updateModels(response.data, true)
+        toast.success(
+          t('Fetched {{count}} model(s) from upstream', {
+            count: response.data.length,
+          })
+        )
+      } else {
+        toast.error(t('No models fetched from upstream'))
       }
+    } catch (error: unknown) {
+      toast.error(getErrorMessage(error) || t('Failed to fetch models'))
+    } finally {
+      setIsFetchingModels(false)
     }
-
-    setFetchModelsDialogOpen(true)
-  }, [isEditing, form, t])
-
-  const createModeFetcher = useCallback(async (): Promise<string[]> => {
-    const response = await fetchModels({
-      type: form.getValues('type'),
-      key: form.getValues('key'),
-      base_url: form.getValues('base_url') || '',
-    })
-    if (response.success && response.data) {
-      return response.data
-    }
-    throw new Error(response.message || 'No models fetched from upstream')
-  }, [form])
+  }, [isEditing, currentRow, form, t, updateModels])
 
   // Handle adding custom models
   const handleAddCustomModels = useCallback(() => {
@@ -2219,8 +2254,13 @@ export function ChannelMutateDrawer({
                                 variant='outline'
                                 size='sm'
                                 onClick={handleFetchModels}
+                                disabled={isFetchingModels}
                               >
-                                <Sparkles className='mr-2 h-4 w-4' />
+                                {isFetchingModels ? (
+                                  <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                                ) : (
+                                  <Sparkles className='mr-2 h-4 w-4' />
+                                )}
                                 {t('Fetch from Upstream')}
                               </Button>
                             )}
@@ -3370,20 +3410,19 @@ export function ChannelMutateDrawer({
         />
       )}
 
-      {/* Fetch Models Dialog */}
-      <FetchModelsDialog
-        open={fetchModelsDialogOpen}
-        onOpenChange={setFetchModelsDialogOpen}
-        onModelsSelected={(models) => {
-          form.setValue('models', formatModelsArray(models))
-        }}
-        redirectModels={redirectModelList}
-        redirectSourceModels={redirectModelKeyList}
-        customFetcher={!isEditing ? createModeFetcher : undefined}
-        existingModelsOverride={
-          !isEditing ? parseModelsString(form.getValues('models') || '') : undefined
-        }
-      />
+      {/* Fetch Models Dialog (for editing mode) */}
+      {isEditing && currentRow && (
+        <FetchModelsDialog
+          open={fetchModelsDialogOpen}
+          onOpenChange={setFetchModelsDialogOpen}
+          onModelsSelected={(models) => {
+            // Fill selected models to form
+            form.setValue('models', formatModelsArray(models))
+          }}
+          redirectModels={redirectModelList}
+          redirectSourceModels={redirectModelKeyList}
+        />
+      )}
 
       <SecureVerificationDialog
         open={verificationOpen}

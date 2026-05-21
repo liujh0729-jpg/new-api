@@ -23,6 +23,7 @@ For commercial licensing, please contact support@quantumnous.com
  * Supports:
  * - Basic: "OpenAI", "OpenAI.Color"
  * - Chained properties: "OpenAI.Avatar.type={'platform'}"
+ * - Image URL/path: "/aipdd-logo.png", "https://example.com/logo.png"
  * - Size parameter: getLobeIcon("OpenAI", 20)
  */
 import * as LobeIcons from '@lobehub/icons'
@@ -61,6 +62,14 @@ function parseValue(raw: string | undefined | null): string | number | boolean {
   return v
 }
 
+function isImageIconPath(value: string): boolean {
+  return (
+    /^data:image\//i.test(value) ||
+    (/^(https?:\/\/|\/|\.\/|\.\.\/)/i.test(value) &&
+      /\.(?:png|jpe?g|gif|webp|svg|ico)(?:[?#].*)?$/i.test(value))
+  )
+}
+
 /**
  * Get LobeHub icon component by name
  * @param iconName - Icon name/description (e.g., "OpenAI", "OpenAI.Color", "Claude.Avatar")
@@ -96,6 +105,22 @@ export function getLobeIcon(
       >
         ?
       </div>
+    )
+  }
+
+  if (isImageIconPath(trimmedName)) {
+    return (
+      <img
+        src={trimmedName}
+        alt=''
+        aria-hidden='true'
+        style={{
+          width: size,
+          height: size,
+          display: 'block',
+          objectFit: 'contain',
+        }}
+      />
     )
   }
 

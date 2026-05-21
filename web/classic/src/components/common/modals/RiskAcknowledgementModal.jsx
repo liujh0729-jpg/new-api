@@ -62,7 +62,6 @@ const RiskAcknowledgementModal = React.memo(function RiskAcknowledgementModal({
   checklist = [],
   inputPrompt = '',
   requiredText = '',
-  requiredTextParts = [],
   inputPlaceholder = '',
   mismatchText = '',
   cancelText = '',
@@ -73,82 +72,30 @@ const RiskAcknowledgementModal = React.memo(function RiskAcknowledgementModal({
   const isMobile = useIsMobile();
   const [checkedItems, setCheckedItems] = useState([]);
   const [typedText, setTypedText] = useState('');
-  const [typedTextParts, setTypedTextParts] = useState([]);
-
-  const normalizedRequiredTextParts = useMemo(() => {
-    let inputIndex = 0;
-    return requiredTextParts.map((part) => {
-      if (part.type === 'input') {
-        const normalizedPart = { ...part, inputIndex };
-        inputIndex += 1;
-        return normalizedPart;
-      }
-      return part;
-    });
-  }, [requiredTextParts]);
-
-  const requiredTextInputCount = useMemo(
-    () =>
-      normalizedRequiredTextParts.filter((part) => part.type === 'input')
-        .length,
-    [normalizedRequiredTextParts],
-  );
-  const hasSegmentedRequiredText = requiredTextInputCount > 0;
-  const requiredTextToDisplay = hasSegmentedRequiredText
-    ? normalizedRequiredTextParts.map((part) => part.text).join('')
-    : requiredText;
 
   useEffect(() => {
     if (!visible) return;
     setCheckedItems(Array(checklist.length).fill(false));
     setTypedText('');
-    setTypedTextParts(Array(requiredTextInputCount).fill(''));
-  }, [visible, checklist.length, requiredTextInputCount]);
+  }, [visible, checklist.length]);
 
   const allChecked = useMemo(() => {
     if (checklist.length === 0) return true;
-    return (
-      checkedItems.length === checklist.length && checkedItems.every(Boolean)
-    );
+    return checkedItems.length === checklist.length && checkedItems.every(Boolean);
   }, [checkedItems, checklist.length]);
 
   const typedMatched = useMemo(() => {
-    if (hasSegmentedRequiredText) {
-      return normalizedRequiredTextParts.every((part) => {
-        if (part.type === 'static') return true;
-        return (
-          typedTextParts[part.inputIndex ?? 0]?.trim() === part.text.trim()
-        );
-      });
-    }
     if (!requiredText) return true;
     return typedText.trim() === requiredText.trim();
-  }, [
-    hasSegmentedRequiredText,
-    normalizedRequiredTextParts,
-    requiredText,
-    typedText,
-    typedTextParts,
-  ]);
+  }, [typedText, requiredText]);
 
   const detailText = useMemo(() => detailItems.join(', '), [detailItems]);
-  const hasTypedRequiredText = hasSegmentedRequiredText
-    ? typedTextParts.some((part) => part.trim() !== '')
-    : typedText.length > 0;
   const canConfirm = allChecked && typedMatched;
 
   const handleChecklistChange = useCallback((index, checked) => {
     setCheckedItems((previous) => {
       const next = [...previous];
       next[index] = checked;
-      return next;
-    });
-  }, []);
-
-  const handleTextPartChange = useCallback((index, value) => {
-    setTypedTextParts((previous) => {
-      const next = [...previous];
-      next[index] = value;
       return next;
     });
   }, []);
@@ -187,6 +134,7 @@ const RiskAcknowledgementModal = React.memo(function RiskAcknowledgementModal({
       }
     >
       <div className='flex flex-col gap-4'>
+
         <RiskMarkdownBlock markdownContent={markdownContent} />
 
         {detailItems.length > 0 ? (
@@ -228,7 +176,7 @@ const RiskAcknowledgementModal = React.memo(function RiskAcknowledgementModal({
           </div>
         ) : null}
 
-        {requiredTextToDisplay ? (
+        {requiredText ? (
           <div
             className='flex flex-col gap-2 rounded-lg'
             style={{
@@ -239,51 +187,19 @@ const RiskAcknowledgementModal = React.memo(function RiskAcknowledgementModal({
           >
             {inputPrompt ? <Text strong>{inputPrompt}</Text> : null}
             <div className='font-mono text-xs break-all rounded-md p-2 bg-gray-50 border border-gray-200'>
-              {requiredTextToDisplay}
+              {requiredText}
             </div>
-            {hasSegmentedRequiredText ? (
-              <div className='flex flex-wrap items-center gap-2'>
-                {normalizedRequiredTextParts.map((part, index) =>
-                  part.type === 'static' ? (
-                    <span
-                      key={`static-${index}`}
-                      className='select-none rounded-md border border-gray-200 bg-white px-2 py-1 font-mono text-sm text-gray-500'
-                    >
-                      {part.text}
-                    </span>
-                  ) : (
-                    <Input
-                      key={`input-${index}`}
-                      value={typedTextParts[part.inputIndex ?? 0] ?? ''}
-                      onChange={(value) =>
-                        handleTextPartChange(part.inputIndex ?? 0, value)
-                      }
-                      placeholder={
-                        part.placeholder || part.text || inputPlaceholder
-                      }
-                      autoFocus={visible && part.inputIndex === 0}
-                      onCopy={(event) => event.preventDefault()}
-                      onCut={(event) => event.preventDefault()}
-                      onPaste={(event) => event.preventDefault()}
-                      onDrop={(event) => event.preventDefault()}
-                      style={{ width: isMobile ? '100%' : 260 }}
-                    />
-                  ),
-                )}
-              </div>
-            ) : (
-              <Input
-                value={typedText}
-                onChange={setTypedText}
-                placeholder={inputPlaceholder}
-                autoFocus={visible}
-                onCopy={(event) => event.preventDefault()}
-                onCut={(event) => event.preventDefault()}
-                onPaste={(event) => event.preventDefault()}
-                onDrop={(event) => event.preventDefault()}
-              />
-            )}
-            {!typedMatched && hasTypedRequiredText ? (
+            <Input
+              value={typedText}
+              onChange={setTypedText}
+              placeholder={inputPlaceholder}
+              autoFocus={visible}
+              onCopy={(event) => event.preventDefault()}
+              onCut={(event) => event.preventDefault()}
+              onPaste={(event) => event.preventDefault()}
+              onDrop={(event) => event.preventDefault()}
+            />
+            {!typedMatched && typedText ? (
               <Text type='danger' size='small'>
                 {mismatchText}
               </Text>

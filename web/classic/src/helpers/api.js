@@ -368,6 +368,14 @@ export async function onCustomOAuthClicked(provider, options = {}) {
 }
 
 let channelModels = undefined;
+const AIPDD_MODELS = [
+  'aipdd-flux-gguf',
+  'aipdd-wan2.2-wanx',
+  'aipdd-wan2.2-animater',
+  'aipdd-mimic-motion',
+  'aipdd-latentsync-1.5',
+  'aipdd-indextts',
+];
 export async function loadChannelModels() {
   const res = await API.get('/api/models');
   const { success, data } = res.data;
@@ -379,6 +387,9 @@ export async function loadChannelModels() {
 }
 
 export function getChannelModels(type) {
+  if (Number(type) === 58) {
+    return AIPDD_MODELS;
+  }
   if (channelModels !== undefined && type in channelModels) {
     if (!channelModels[type]) {
       return [];

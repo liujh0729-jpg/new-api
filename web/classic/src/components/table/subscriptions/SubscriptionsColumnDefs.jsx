@@ -228,11 +228,7 @@ const renderPaymentConfig = (text, record, t, enableEpay) => {
   );
 };
 
-const renderOperations = (
-  text,
-  record,
-  { openEdit, setPlanEnabled, t, complianceConfirmed },
-) => {
+const renderOperations = (text, record, { openEdit, setPlanEnabled, t }) => {
   const isEnabled = record?.plan?.enabled;
 
   const handleToggle = () => {
@@ -260,18 +256,11 @@ const renderOperations = (
         type='tertiary'
         size='small'
         onClick={() => openEdit(record)}
-        disabled={!complianceConfirmed}
       >
         {t('编辑')}
       </Button>
       {isEnabled ? (
-        <Button
-          theme='light'
-          type='danger'
-          size='small'
-          onClick={handleToggle}
-          disabled={!complianceConfirmed}
-        >
+        <Button theme='light' type='danger' size='small' onClick={handleToggle}>
           {t('禁用')}
         </Button>
       ) : (
@@ -280,7 +269,6 @@ const renderOperations = (
           type='primary'
           size='small'
           onClick={handleToggle}
-          disabled={!complianceConfirmed}
         >
           {t('启用')}
         </Button>
@@ -294,7 +282,6 @@ export const getSubscriptionsColumns = ({
   openEdit,
   setPlanEnabled,
   enableEpay,
-  complianceConfirmed = true,
 }) => {
   return [
     {
@@ -364,12 +351,7 @@ export const getSubscriptionsColumns = ({
       fixed: 'right',
       width: 160,
       render: (text, record) =>
-        renderOperations(text, record, {
-          openEdit,
-          setPlanEnabled,
-          t,
-          complianceConfirmed,
-        }),
+        renderOperations(text, record, { openEdit, setPlanEnabled, t }),
     },
   ];
 };

@@ -717,6 +717,13 @@ func (t *TaskSubmitReq) UnmarshalJSON(data []byte) error {
 			if err := common.Unmarshal(aux.Duration, &durationStr); err == nil && durationStr != "" {
 				if v, err := strconv.Atoi(durationStr); err == nil {
 					t.Duration = v
+				} else if f, err := strconv.ParseFloat(durationStr, 64); err == nil && f == float64(int(f)) {
+					t.Duration = int(f)
+				}
+			} else {
+				var durationFloat float64
+				if err := common.Unmarshal(aux.Duration, &durationFloat); err == nil && durationFloat == float64(int(durationFloat)) {
+					t.Duration = int(durationFloat)
 				}
 			}
 		}

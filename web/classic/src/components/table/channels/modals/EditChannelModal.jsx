@@ -155,6 +155,8 @@ function type2secretPrompt(type) {
       return '按照如下格式输入: AccessKey|SecretAccessKey';
     case 57:
       return '请输入 JSON 格式的 OAuth 凭据（必须包含 access_token 和 account_id）';
+    case 58:
+      return '请输入 AIPDD API Key（将作为 X-API-Key 发送）';
     default:
       return '请输入渠道对应的鉴权密钥';
   }
@@ -674,6 +676,13 @@ const EditChannelModal = (props) => {
             base_url: 'https://ark.cn-beijing.volces.com',
           }));
           break;
+        case 58:
+          localModels = getChannelModels(value);
+          setInputs((prevInputs) => ({
+            ...prevInputs,
+            base_url: 'https://api.aipdd.work',
+          }));
+          break;
         default:
           localModels = getChannelModels(value);
           break;
@@ -967,11 +976,14 @@ const EditChannelModal = (props) => {
       }
 
       if (
-        data.type === 45 &&
+        (data.type === 45 || data.type === 58) &&
         (!data.base_url ||
           (typeof data.base_url === 'string' && data.base_url.trim() === ''))
       ) {
-        data.base_url = 'https://ark.cn-beijing.volces.com';
+        data.base_url =
+          data.type === 58
+            ? 'https://api.aipdd.work'
+            : 'https://ark.cn-beijing.volces.com';
       }
 
       initialBaseUrlRef.current = data.base_url || '';

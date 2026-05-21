@@ -1,10 +1,12 @@
 package router
 
 import (
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/controller"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/relay"
+	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
@@ -110,7 +112,11 @@ func SetRelayRouter(router *gin.Engine) {
 			controller.Relay(c, types.RelayFormatOpenAIImage)
 		})
 		httpRouter.POST("/images/generations", func(c *gin.Context) {
-			controller.Relay(c, types.RelayFormatOpenAIImage)
+			relayOrAIPDDTask(c, types.RelayFormatOpenAIImage)
+		})
+		httpRouter.GET("/images/generations/:task_id", func(c *gin.Context) {
+			c.Set("relay_mode", relayconstant.RelayModeVideoFetchByID)
+			controller.RelayTaskFetch(c)
 		})
 		httpRouter.POST("/images/edits", func(c *gin.Context) {
 			controller.Relay(c, types.RelayFormatOpenAIImage)
@@ -129,7 +135,11 @@ func SetRelayRouter(router *gin.Engine) {
 			controller.Relay(c, types.RelayFormatOpenAIAudio)
 		})
 		httpRouter.POST("/audio/speech", func(c *gin.Context) {
-			controller.Relay(c, types.RelayFormatOpenAIAudio)
+			relayOrAIPDDTask(c, types.RelayFormatOpenAIAudio)
+		})
+		httpRouter.GET("/audio/speech/:task_id", func(c *gin.Context) {
+			c.Set("relay_mode", relayconstant.RelayModeVideoFetchByID)
+			controller.RelayTaskFetch(c)
 		})
 
 		// rerank related routes
@@ -198,6 +208,14 @@ func SetRelayRouter(router *gin.Engine) {
 			controller.Relay(c, types.RelayFormatGemini)
 		})
 	}
+}
+
+func relayOrAIPDDTask(c *gin.Context, relayFormat types.RelayFormat) {
+	if common.GetContextKeyInt(c, constant.ContextKeyChannelType) == constant.ChannelTypeAIPDD {
+		controller.RelayTask(c)
+		return
+	}
+	controller.Relay(c, relayFormat)
 }
 
 func registerMjRouterGroup(relayMjRouter *gin.RouterGroup) {

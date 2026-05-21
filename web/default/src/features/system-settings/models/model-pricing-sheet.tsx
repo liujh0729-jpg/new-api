@@ -65,7 +65,6 @@ import {
 import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { combineBillingExpr } from '@/features/pricing/lib/billing-expr'
-import { formatPricingNumber } from './pricing-format'
 import { TieredPricingEditor } from './tiered-pricing-editor'
 
 const createModelPricingSchema = (t: (key: string) => string) =>
@@ -217,10 +216,16 @@ function toNumberOrNull(value: unknown): number | null {
   return Number.isFinite(num) ? num : null
 }
 
+function formatNumber(value: unknown): string {
+  const num = toNumberOrNull(value)
+  if (num === null) return ''
+  return Number.parseFloat(num.toFixed(12)).toString()
+}
+
 function ratioToBasePrice(ratio: unknown): string {
   const num = toNumberOrNull(ratio)
   if (num === null) return ''
-  return formatPricingNumber(num * 2)
+  return formatNumber(num * 2)
 }
 
 function deriveLanePrice(
@@ -231,7 +236,7 @@ function deriveLanePrice(
   const ratioNumber = toNumberOrNull(ratio)
   const denominatorNumber = toNumberOrNull(denominator)
   if (ratioNumber === null || denominatorNumber === null) return fallback
-  return formatPricingNumber(ratioNumber * denominatorNumber)
+  return formatNumber(ratioNumber * denominatorNumber)
 }
 
 function createInitialLaneState(data?: ModelRatioData | null) {
@@ -508,12 +513,12 @@ export function ModelPricingEditorPanel({
     if (lane === 'audioOutput') {
       const audioInputPrice = toNumberOrNull(nextLanePrices.audioInput)
       if (audioInputPrice === null || audioInputPrice === 0) return ''
-      return formatPricingNumber(priceNumber / audioInputPrice)
+      return formatNumber(priceNumber / audioInputPrice)
     }
 
     const inputPrice = toNumberOrNull(nextPromptPrice)
     if (inputPrice === null || inputPrice === 0) return ''
-    return formatPricingNumber(priceNumber / inputPrice)
+    return formatNumber(priceNumber / inputPrice)
   }
 
   const syncLaneRatios = (
@@ -524,7 +529,7 @@ export function ModelPricingEditorPanel({
     const inputPrice = toNumberOrNull(nextPromptPrice)
     setFormValue(
       'ratio',
-      inputPrice !== null ? formatPricingNumber(inputPrice / 2) : ''
+      inputPrice !== null ? formatNumber(inputPrice / 2) : ''
     )
 
     laneConfigs.forEach(({ key }) => {

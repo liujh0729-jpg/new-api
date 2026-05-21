@@ -8,7 +8,7 @@ import (
 
 // Vendor 用于存储供应商信息，供模型引用
 // Name 唯一，用于在模型中关联
-// Icon 采用 @lobehub/icons 的图标名，前端可直接渲染
+// Icon 采用 @lobehub/icons 的图标名或图片 URL/路径，前端可直接渲染
 // Status 预留字段，1 表示启用
 // 本表同样遵循 3NF 设计范式
 

@@ -5,13 +5,11 @@ import (
 	"fmt"
 	"math/rand"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 )
 
@@ -35,6 +33,11 @@ func InitChannelCache() {
 	for _, ability := range abilities {
 		groups[ability.Group] = true
 	}
+	for _, channel := range channels {
+		for _, group := range channel.GetGroups() {
+			groups[group] = true
+		}
+	}
 	newGroup2model2channels := make(map[string]map[string][]int)
 	for group := range groups {
 		newGroup2model2channels[group] = make(map[string][]int)
@@ -43,9 +46,9 @@ func InitChannelCache() {
 		if channel.Status != common.ChannelStatusEnabled {
 			continue // skip disabled channels
 		}
-		groups := strings.Split(channel.Group, ",")
+		groups := channel.GetGroups()
 		for _, group := range groups {
-			models := strings.Split(channel.Models, ",")
+			models := getChannelAbilityModels(channel)
 			for _, model := range models {
 				if _, ok := newGroup2model2channels[group][model]; !ok {
 					newGroup2model2channels[group][model] = make([]int, 0)
@@ -258,12 +261,9 @@ func CacheUpdateChannel(channel *Channel) {
 		return
 	}
 
-	if channelsIDM == nil {
-		channelsIDM = make(map[int]*Channel)
-	}
-	if oldChannel, ok := channelsIDM[channel.Id]; ok {
-		logger.LogDebug(nil, "CacheUpdateChannel before: id=%d, name=%s, status=%d, polling_index=%d", channel.Id, channel.Name, channel.Status, oldChannel.ChannelInfo.MultiKeyPollingIndex)
-	}
+	println("CacheUpdateChannel:", channel.Id, channel.Name, channel.Status, channel.ChannelInfo.MultiKeyPollingIndex)
+
+	println("before:", channelsIDM[channel.Id].ChannelInfo.MultiKeyPollingIndex)
 	channelsIDM[channel.Id] = channel
-	logger.LogDebug(nil, "CacheUpdateChannel after: id=%d, name=%s, status=%d, polling_index=%d", channel.Id, channel.Name, channel.Status, channel.ChannelInfo.MultiKeyPollingIndex)
+	println("after :", channelsIDM[channel.Id].ChannelInfo.MultiKeyPollingIndex)
 }
