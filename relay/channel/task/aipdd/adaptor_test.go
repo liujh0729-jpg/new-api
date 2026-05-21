@@ -391,7 +391,7 @@ func relayInfoWithModel(modelName string) *relaycommon.RelayInfo {
 
 func TestParseTaskResultExtractsNonJSONURLArray(t *testing.T) {
 	adaptor := &TaskAdaptor{}
-	body := []byte(`{"code":200,"message":"获取成功","data":{"id":"task-1","task_status":3,"task_result":"[https://cdn.example.com/a.mp4,https://cdn.example.com/b.mp4]"}}`)
+	body := []byte(`{"code":200,"message":"获取成功","data":{"id":"task-1","task_status":2,"task_result":"[https://cdn.example.com/a.mp4,https://cdn.example.com/b.mp4]"}}`)
 
 	info, err := adaptor.ParseTaskResult(body)
 	if err != nil {
@@ -417,6 +417,57 @@ func TestParseTaskResultTreatsSuccessFalseAsFailure(t *testing.T) {
 		t.Fatalf("unexpected status: %s", info.Status)
 	}
 	if info.Reason != "render failed" {
+		t.Fatalf("unexpected reason: %s", info.Reason)
+	}
+}
+
+func TestParseTaskResultTreatsStatusTwoURLResultAsSuccess(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+	body := []byte(`{"code":200,"message":"获取成功","data":{"id":"task-1","task_status":2,"task_result":"https://oss.aipdd.work/distributed_compute/task-1/result.wav"}}`)
+
+	info, err := adaptor.ParseTaskResult(body)
+	if err != nil {
+		t.Fatalf("ParseTaskResult returned error: %v", err)
+	}
+	if info.Status != model.TaskStatusSuccess {
+		t.Fatalf("unexpected status: %s", info.Status)
+	}
+	if info.Url != "https://oss.aipdd.work/distributed_compute/task-1/result.wav" {
+		t.Fatalf("unexpected result URL: %s", info.Url)
+	}
+}
+
+func TestParseTaskResultTreatsStatusFourURLResultAsSuccess(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+	body := []byte(`{"code":200,"message":"获取成功","data":{"id":"task-1","task_status":4,"task_result":"https://oss.aipdd.work/distributed_compute/task-1/result.mp4"}}`)
+
+	info, err := adaptor.ParseTaskResult(body)
+	if err != nil {
+		t.Fatalf("ParseTaskResult returned error: %v", err)
+	}
+	if info.Status != model.TaskStatusSuccess {
+		t.Fatalf("unexpected status: %s", info.Status)
+	}
+	if info.Url != "https://oss.aipdd.work/distributed_compute/task-1/result.mp4" {
+		t.Fatalf("unexpected result URL: %s", info.Url)
+	}
+}
+
+func TestParseTaskResultTreatsCompletedErrorTextAsFailure(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+	body := []byte(`{"code":200,"message":"获取成功","data":{"id":"task-1","task_status":3,"task_result":"ComfyUI ??: prompt_outputs_failed_validation - Prompt outputs failed validation"}}`)
+
+	info, err := adaptor.ParseTaskResult(body)
+	if err != nil {
+		t.Fatalf("ParseTaskResult returned error: %v", err)
+	}
+	if info.Status != model.TaskStatusFailure {
+		t.Fatalf("unexpected status: %s", info.Status)
+	}
+	if info.Url != "" {
+		t.Fatalf("error text should not be treated as URL: %s", info.Url)
+	}
+	if info.Reason != "ComfyUI ??: prompt_outputs_failed_validation - Prompt outputs failed validation" {
 		t.Fatalf("unexpected reason: %s", info.Reason)
 	}
 }

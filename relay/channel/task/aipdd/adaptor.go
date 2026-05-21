@@ -318,28 +318,41 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		return taskInfo, nil
 	}
 
+	resultURLs := extractResultURLs(task.TaskResult)
+	if len(resultURLs) > 0 {
+		taskInfo.Status = model.TaskStatusSuccess
+		taskInfo.Progress = taskcommon.ProgressComplete
+		taskInfo.Url = resultURLs[0]
+		return taskInfo, nil
+	}
+
 	switch task.TaskStatus {
 	case 0:
 		taskInfo.Status = model.TaskStatusSubmitted
 		taskInfo.Progress = taskcommon.ProgressSubmitted
 	case 1:
-		taskInfo.Status = model.TaskStatusQueued
-		taskInfo.Progress = taskcommon.ProgressQueued
-	case 2:
 		taskInfo.Status = model.TaskStatusInProgress
 		taskInfo.Progress = taskcommon.ProgressInProgress
-	case 3:
-		taskInfo.Status = model.TaskStatusSuccess
+	case 2:
+		taskInfo.Status = model.TaskStatusFailure
 		taskInfo.Progress = taskcommon.ProgressComplete
-		if urls := extractResultURLs(task.TaskResult); len(urls) > 0 {
-			taskInfo.Url = urls[0]
+		taskInfo.Reason = taskResultText(task.TaskResult)
+		if taskInfo.Reason == "" {
+			taskInfo.Reason = "AIPDD task succeeded without result URL"
+		}
+	case 3:
+		taskInfo.Status = model.TaskStatusFailure
+		taskInfo.Progress = taskcommon.ProgressComplete
+		taskInfo.Reason = taskResultText(task.TaskResult)
+		if taskInfo.Reason == "" {
+			taskInfo.Reason = "AIPDD task failed"
 		}
 	case 4:
 		taskInfo.Status = model.TaskStatusFailure
 		taskInfo.Progress = taskcommon.ProgressComplete
 		taskInfo.Reason = taskResultText(task.TaskResult)
 		if taskInfo.Reason == "" {
-			taskInfo.Reason = "AIPDD task failed"
+			taskInfo.Reason = "AIPDD task succeeded but result transfer failed"
 		}
 	default:
 		taskInfo.Status = model.TaskStatusInProgress
@@ -1005,7 +1018,7 @@ func extractResultURLsFromString(value string) []string {
 		}
 		return cleanURLList(urls)
 	}
-	return []string{trimmed}
+	return cleanURLList([]string{trimmed})
 }
 
 func taskResultText(value any) string {
@@ -1031,11 +1044,27 @@ func cleanURLList(values []string) []string {
 	seen := map[string]bool{}
 	for _, value := range values {
 		value = strings.TrimSpace(value)
-		if value == "" || seen[value] {
+		if value == "" || seen[value] || !isResultURL(value) {
 			continue
 		}
 		seen[value] = true
 		out = append(out, value)
 	}
 	return out
+}
+
+func isResultURL(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return false
+	}
+	if strings.HasPrefix(strings.ToLower(value), "data:") {
+		return true
+	}
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return false
+	}
+	scheme := strings.ToLower(parsed.Scheme)
+	return scheme == "http" || scheme == "https"
 }
