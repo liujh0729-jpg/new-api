@@ -219,6 +219,41 @@ func TestPricingBackfillsAIPDDLegacyOpenAIIcon(t *testing.T) {
 	}
 }
 
+func TestPricingBackfillsDefaultVendorForExistingDoubaoModels(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	model.InvalidatePricingCache()
+
+	channel := &model.Channel{
+		Type:   constant.ChannelTypeDoubaoVideo,
+		Key:    "doubao-test-key",
+		Name:   "doubao-video",
+		Models: "doubao-seedance-2.0",
+		Status: common.ChannelStatusEnabled,
+		Group:  "default",
+	}
+	require.NoError(t, channel.Insert())
+	require.NoError(t, db.Create(&model.Model{
+		ModelName:    "doubao-seedance-2.0",
+		Status:       1,
+		SyncOfficial: 1,
+		NameRule:     model.NameRuleExact,
+	}).Error)
+
+	pricingByName := pricingByModelName(model.GetPricing())
+	item, ok := pricingByName["doubao-seedance-2.0"]
+	require.True(t, ok)
+	require.NotZero(t, item.VendorID)
+
+	var vendor model.Vendor
+	require.NoError(t, db.First(&vendor, item.VendorID).Error)
+	require.Equal(t, "字节跳动", vendor.Name)
+	require.Equal(t, "Doubao.Color", vendor.Icon)
+
+	var stored model.Model
+	require.NoError(t, db.Where("model_name = ?", "doubao-seedance-2.0").First(&stored).Error)
+	require.Equal(t, vendor.Id, stored.VendorID)
+}
+
 func TestAIPDDChannelEmptyModelsUseDefaultAbilities(t *testing.T) {
 	db := setupModelListControllerTestDB(t)
 	model.InvalidatePricingCache()
@@ -353,6 +388,64 @@ func TestGetUserModelsFiltersImageEndpointForPlayground(t *testing.T) {
 	require.Contains(t, payload.Data, constant.AIPDDModelFluxGGUF)
 	require.NotContains(t, payload.Data, "gpt-4o")
 	require.NotContains(t, payload.Data, constant.AIPDDModelIndexTTS)
+}
+
+func TestGetUserModelsFiltersChatEndpointForPlayground(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	model.InvalidatePricingCache()
+
+	require.NoError(t, db.Create(&model.User{
+		Id:       1004,
+		Username: "playground-chat-user",
+		Password: "password",
+		Group:    "default",
+		Status:   common.UserStatusEnabled,
+	}).Error)
+
+	openAIChannel := &model.Channel{
+		Type:   constant.ChannelTypeOpenAI,
+		Key:    "openai-test-key",
+		Name:   "openai",
+		Models: "gpt-4o",
+		Status: common.ChannelStatusEnabled,
+		Group:  "default",
+	}
+	require.NoError(t, openAIChannel.Insert())
+
+	doubaoVideoChannel := &model.Channel{
+		Type:   constant.ChannelTypeDoubaoVideo,
+		Key:    "doubao-test-key",
+		Name:   "doubao-video",
+		Models: "doubao-seedance-2.0",
+		Status: common.ChannelStatusEnabled,
+		Group:  "default",
+	}
+	require.NoError(t, doubaoVideoChannel.Insert())
+
+	volcImageChannel := &model.Channel{
+		Type:   constant.ChannelTypeVolcEngine,
+		Key:    "volc-test-key",
+		Name:   "volcengine",
+		Models: "doubao-seedream-4-5",
+		Status: common.ChannelStatusEnabled,
+		Group:  "default",
+	}
+	require.NoError(t, volcImageChannel.Insert())
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/user/models?endpoint_type=openai", nil)
+	ctx.Set("id", 1004)
+
+	GetUserModels(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var payload userModelsResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
+	require.True(t, payload.Success)
+	require.Contains(t, payload.Data, "gpt-4o")
+	require.NotContains(t, payload.Data, "doubao-seedance-2.0")
+	require.NotContains(t, payload.Data, "doubao-seedream-4-5")
 }
 
 func TestListModelsIncludesTieredBillingModel(t *testing.T) {

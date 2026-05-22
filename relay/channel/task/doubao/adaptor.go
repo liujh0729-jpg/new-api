@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"strconv"
 	"time"
@@ -107,6 +108,8 @@ type TaskAdaptor struct {
 	baseURL     string
 }
 
+const defaultDurationSeconds = 5
+
 func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 	a.ChannelType = info.ChannelType
 	a.baseURL = info.ChannelBaseUrl
@@ -132,18 +135,26 @@ func (a *TaskAdaptor) BuildRequestHeader(_ *gin.Context, req *http.Request, _ *r
 	return nil
 }
 
-// EstimateBilling 检测请求 metadata 中是否包含视频输入，返回视频折扣 OtherRatio。
+// EstimateBilling returns duration-based billing ratios and, when applicable,
+// the video-input discount ratio.
 func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInfo) map[string]float64 {
 	req, err := relaycommon.GetTaskRequest(c)
 	if err != nil {
 		return nil
 	}
+
+	ratios := map[string]float64{
+		"seconds": float64(resolveBillingDurationSeconds(req)),
+	}
 	if hasVideoInMetadata(req.Metadata) {
-		if ratio, ok := GetVideoInputRatio(info.OriginModelName); ok {
-			return map[string]float64{"video_input": ratio}
+		for _, modelName := range []string{info.UpstreamModelName, info.OriginModelName} {
+			if ratio, ok := GetVideoInputRatio(modelName); ok {
+				ratios["video_input"] = ratio
+				break
+			}
 		}
 	}
-	return nil
+	return ratios
 }
 
 // hasVideoInMetadata 直接检查 metadata 的 content 数组是否包含 video_url 条目，
@@ -290,7 +301,7 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*
 		return nil, errors.Wrap(err, "unmarshal metadata failed")
 	}
 
-	if sec, _ := strconv.Atoi(req.Seconds); sec > 0 {
+	if sec, ok := requestDurationSeconds(*req); ok {
 		r.Duration = lo.ToPtr(dto.IntValue(sec))
 	}
 
@@ -301,6 +312,67 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*
 	})
 
 	return &r, nil
+}
+
+func resolveBillingDurationSeconds(req relaycommon.TaskSubmitReq) int {
+	if duration, ok := requestDurationSeconds(req); ok {
+		return duration
+	}
+	return defaultDurationSeconds
+}
+
+func requestDurationSeconds(req relaycommon.TaskSubmitReq) (int, bool) {
+	if seconds := parseDurationValue(req.Seconds); seconds > 0 {
+		return seconds, true
+	}
+	if req.Duration > 0 {
+		return req.Duration, true
+	}
+	if seconds := metadataDurationSeconds(req.Metadata, "duration"); seconds > 0 {
+		return seconds, true
+	}
+	if seconds := metadataDurationSeconds(req.Metadata, "seconds"); seconds > 0 {
+		return seconds, true
+	}
+	return 0, false
+}
+
+func metadataDurationSeconds(metadata map[string]interface{}, key string) int {
+	if metadata == nil {
+		return 0
+	}
+	return parseDurationValue(metadata[key])
+}
+
+func parseDurationValue(value interface{}) int {
+	switch v := value.(type) {
+	case int:
+		return v
+	case int64:
+		return int(v)
+	case float64:
+		if v > 0 {
+			return int(math.Ceil(v))
+		}
+	case float32:
+		if v > 0 {
+			return int(math.Ceil(float64(v)))
+		}
+	case string:
+		if i, err := strconv.Atoi(v); err == nil {
+			return i
+		}
+		if f, err := strconv.ParseFloat(v, 64); err == nil && f > 0 {
+			return int(math.Ceil(f))
+		}
+	case dto.IntValue:
+		return int(v)
+	case *dto.IntValue:
+		if v != nil {
+			return int(*v)
+		}
+	}
+	return 0
 }
 
 func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error) {

@@ -33,7 +33,9 @@ export const useDataLoader = (
 
   const loadModels = useCallback(async () => {
     try {
-      const res = await API.get(API_ENDPOINTS.USER_MODELS);
+      const res = await API.get(API_ENDPOINTS.USER_MODELS, {
+        params: { endpoint_type: 'openai' },
+      });
       const { success, message, data } = res.data;
 
       if (success) {

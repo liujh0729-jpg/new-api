@@ -107,6 +107,9 @@ var defaultVendorRules = map[string]string{
 	"grok":     "xAI",
 	"llama":    "Meta",
 	"doubao":   "字节跳动",
+	"seedream": "字节跳动",
+	"seedance": "字节跳动",
+	"seed-":    "字节跳动",
 	"kling":    "快手",
 	"jimeng":   "即梦",
 	"vidu":     "Vidu",
@@ -153,6 +156,9 @@ func initDefaultVendorMapping(metaMap map[string]*Model, vendorMap map[int]*Vend
 		if meta, exists := metaMap[modelName]; exists {
 			if catalog, ok := defaultCatalogModelByName(modelName); ok {
 				ensureDefaultCatalogModelIcon(meta, catalog)
+				ensureDefaultModelVendor(meta, getOrCreateVendor(catalog.VendorName, vendorMap))
+			} else {
+				ensureDefaultModelVendor(meta, inferDefaultVendorID(modelName, vendorMap))
 			}
 			continue
 		}
@@ -172,20 +178,10 @@ func initDefaultVendorMapping(metaMap map[string]*Model, vendorMap map[int]*Vend
 			continue
 		}
 
-		// 匹配供应商
-		vendorID := 0
-		modelLower := strings.ToLower(modelName)
-		for pattern, vendorName := range defaultVendorRules {
-			if strings.Contains(modelLower, pattern) {
-				vendorID = getOrCreateVendor(vendorName, vendorMap)
-				break
-			}
-		}
-
 		// 创建模型元数据
 		metaMap[modelName] = &Model{
 			ModelName: modelName,
-			VendorID:  vendorID,
+			VendorID:  inferDefaultVendorID(modelName, vendorMap),
 			Status:    1,
 			NameRule:  NameRuleExact,
 		}
@@ -194,10 +190,6 @@ func initDefaultVendorMapping(metaMap map[string]*Model, vendorMap map[int]*Vend
 
 func ensureDefaultVendorIcons(vendorMap map[int]*Vendor) {
 	for _, vendor := range vendorMap {
-		if vendor.Name != "AIPDD" {
-			continue
-		}
-
 		updates := map[string]interface{}{}
 		icon := getDefaultVendorIcon(vendor.Name)
 		if shouldReplaceDefaultIcon(vendor.Icon, icon) {
@@ -212,6 +204,26 @@ func ensureDefaultVendorIcons(vendorMap map[int]*Vendor) {
 		if len(updates) > 0 {
 			_ = DB.Model(&Vendor{}).Where("id = ?", vendor.Id).Updates(updates).Error
 		}
+	}
+}
+
+func inferDefaultVendorID(modelName string, vendorMap map[int]*Vendor) int {
+	modelLower := strings.ToLower(modelName)
+	for pattern, vendorName := range defaultVendorRules {
+		if strings.Contains(modelLower, pattern) {
+			return getOrCreateVendor(vendorName, vendorMap)
+		}
+	}
+	return 0
+}
+
+func ensureDefaultModelVendor(meta *Model, vendorID int) {
+	if meta == nil || meta.VendorID != 0 || vendorID == 0 {
+		return
+	}
+	meta.VendorID = vendorID
+	if meta.Id > 0 {
+		_ = DB.Model(&Model{}).Where("id = ?", meta.Id).Update("vendor_id", vendorID).Error
 	}
 }
 

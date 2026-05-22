@@ -189,6 +189,17 @@ export async function getUserModels(): Promise<{
   return res.data
 }
 
+export async function getUserModelsByEndpoint(endpointType: string): Promise<{
+  success: boolean
+  message?: string
+  data?: string[]
+}> {
+  const res = await api.get('/api/user/models', {
+    params: { endpoint_type: endpointType },
+  })
+  return res.data
+}
+
 // Get user groups with descriptions and ratios
 export async function getUserGroups(): Promise<{
   success: boolean

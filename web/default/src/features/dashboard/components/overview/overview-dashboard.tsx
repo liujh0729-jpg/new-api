@@ -40,7 +40,7 @@ import {
 import { motion, useReducedMotion } from 'motion/react'
 import { useTranslation } from 'react-i18next'
 import { useAuthStore } from '@/stores/auth-store'
-import { getUserModels } from '@/lib/api'
+import { getUserModelsByEndpoint } from '@/lib/api'
 import { MOTION_TRANSITION } from '@/lib/motion'
 import { ROLE } from '@/lib/roles'
 import { cn } from '@/lib/utils'
@@ -443,7 +443,7 @@ export function OverviewDashboard() {
   const modelsQuery = useQuery({
     queryKey: ['dashboard', 'overview', 'user-models'],
     queryFn: async () => {
-      const result = await getUserModels()
+      const result = await getUserModelsByEndpoint('openai')
       return result.success ? (result.data ?? []) : []
     },
     staleTime: 5 * 60 * 1000,

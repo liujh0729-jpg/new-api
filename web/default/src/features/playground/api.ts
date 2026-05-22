@@ -75,12 +75,9 @@ export async function getUserModels(
   mode: PlaygroundMode = 'chat'
 ): Promise<ModelOption[]> {
   const res = await api.get(API_ENDPOINTS.USER_MODELS, {
-    params:
-      mode === 'image'
-        ? {
-            endpoint_type: 'image-generation',
-          }
-        : undefined,
+    params: {
+      endpoint_type: mode === 'image' ? 'image-generation' : 'openai',
+    },
   })
   const { data } = res
 

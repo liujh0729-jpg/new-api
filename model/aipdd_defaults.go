@@ -12,6 +12,9 @@ import (
 // initialization. It keeps channel abilities and model metadata in sync with
 // the local AIPDD catalog.
 func EnsureAIPDDDefaults() error {
+	if err := validateAIPDDBootstrapKey(getAIPDDKeyFromEnv()); err != nil {
+		return err
+	}
 	changed, err := ensureAIPDDModelCatalogDefaults()
 	if err != nil {
 		return err

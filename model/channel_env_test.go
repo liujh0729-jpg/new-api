@@ -30,6 +30,17 @@ func TestEnsureAIPDDChannelDefaultsCreatesChannelFromEnv(t *testing.T) {
 	require.Len(t, abilities, len(constant.AIPDDTaskModelList))
 }
 
+func TestEnsureAIPDDChannelDefaultsRequiresEnvWhenEnabled(t *testing.T) {
+	truncateTables(t)
+	t.Setenv("AIPDD_API_KEY", "")
+	t.Setenv("AIPDD_BOOTSTRAP_REQUIRED", "true")
+
+	err := EnsureAIPDDChannelDefaults()
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "AIPDD_API_KEY is required")
+}
+
 func TestEnsureAIPDDChannelDefaultsSyncsExistingChannelFromEnv(t *testing.T) {
 	truncateTables(t)
 	t.Setenv("AIPDD_API_KEY", "aipdd-env-key-new")
@@ -108,4 +119,19 @@ func TestEnsureAIPDDDefaultsCreatesChannelAndModelCatalog(t *testing.T) {
 		require.Equal(t, NameRuleExact, item.NameRule)
 		require.Equal(t, 1, item.Status)
 	}
+}
+
+func TestEnsureAIPDDDefaultsRequiresEnvBeforeCatalogSync(t *testing.T) {
+	truncateTables(t)
+	t.Setenv("AIPDD_API_KEY", "")
+	t.Setenv("AIPDD_BOOTSTRAP_REQUIRED", "true")
+
+	err := EnsureAIPDDDefaults()
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "AIPDD_API_KEY is required")
+
+	var count int64
+	require.NoError(t, DB.Model(&Vendor{}).Where("name = ?", "AIPDD").Count(&count).Error)
+	require.Zero(t, count)
 }

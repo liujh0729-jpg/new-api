@@ -60,8 +60,9 @@ type Channel struct {
 }
 
 const (
-	aipddAPIKeyEnvName  = "AIPDD_API_KEY"
-	aipddEnvChannelName = "AIPDD"
+	aipddAPIKeyEnvName         = "AIPDD_API_KEY"
+	aipddBootstrapRequiredName = "AIPDD_BOOTSTRAP_REQUIRED"
+	aipddEnvChannelName        = "AIPDD"
 )
 
 type ChannelInfo struct {
@@ -277,6 +278,17 @@ func getAIPDDKeyFromEnv() string {
 	return strings.TrimSpace(os.Getenv(aipddAPIKeyEnvName))
 }
 
+func isAIPDDKeyRequiredFromEnv() bool {
+	return common.GetEnvOrDefaultBool(aipddBootstrapRequiredName, false)
+}
+
+func validateAIPDDBootstrapKey(key string) error {
+	if strings.TrimSpace(key) == "" && isAIPDDKeyRequiredFromEnv() {
+		return fmt.Errorf("%s is required; set it before starting the container so AIPDD models can be bootstrapped", aipddAPIKeyEnvName)
+	}
+	return nil
+}
+
 func selectAIPDDEnvChannel(channels []Channel) *Channel {
 	for i := range channels {
 		if strings.EqualFold(strings.TrimSpace(channels[i].Name), aipddEnvChannelName) {
@@ -401,6 +413,9 @@ func EnsureAIPDDChannelDefaults() error {
 
 	changed := false
 	envKey := getAIPDDKeyFromEnv()
+	if err := validateAIPDDBootstrapKey(envKey); err != nil {
+		return err
+	}
 	updatedChannels, envChanged, err := ensureAIPDDChannelFromEnv(channels, envKey)
 	if err != nil {
 		return err

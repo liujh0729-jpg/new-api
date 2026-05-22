@@ -108,8 +108,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
 
         {/* Delete */}
         <DropdownMenuItem
-          onSelect={(e) => {
-            e.preventDefault()
+          onClick={() => {
             setDeleteConfirmOpen(true)
           }}
           className='text-destructive focus:text-destructive'

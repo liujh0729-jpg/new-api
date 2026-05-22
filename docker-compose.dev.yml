@@ -29,7 +29,7 @@ services:
     environment:
       - SQL_DSN=postgresql://root:123456@postgres:5432/new-api
       - REDIS_CONN_STRING=redis://redis
-      - AIPDD_KEY=${AIPDD_KEY:-}
+      - AIPDD_API_KEY=${AIPDD_API_KEY:-}
       - TZ=Asia/Shanghai
       - BATCH_UPDATE_ENABLED=true
     depends_on:
