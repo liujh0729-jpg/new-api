@@ -179,6 +179,7 @@ func TestPricingIncludesAIPDDCatalogModelsByDefault(t *testing.T) {
 		vendor := vendorByID[item.VendorID]
 		require.Equal(t, "AIPDD", vendor.Name)
 		require.Equal(t, "/aipdd-logo.png", vendor.Icon)
+		require.Equal(t, constant.AIPDDWebsiteURL, vendor.Website)
 	}
 }
 
@@ -208,6 +209,7 @@ func TestPricingBackfillsAIPDDLegacyOpenAIIcon(t *testing.T) {
 	var storedVendor model.Vendor
 	require.NoError(t, db.First(&storedVendor, vendor.Id).Error)
 	require.Equal(t, "/aipdd-logo.png", storedVendor.Icon)
+	require.Equal(t, constant.AIPDDWebsiteURL, storedVendor.Website)
 
 	var storedModels []model.Model
 	require.NoError(t, db.Where("vendor_id = ?", vendor.Id).Find(&storedModels).Error)

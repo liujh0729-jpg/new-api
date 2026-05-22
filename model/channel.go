@@ -289,6 +289,51 @@ func selectAIPDDEnvChannel(channels []Channel) *Channel {
 	return &channels[0]
 }
 
+func shouldNormalizeAIPDDChannelName(name string) bool {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return true
+	}
+	lowerName := strings.ToLower(name)
+	return strings.Contains(lowerName, "aipdd") && strings.Contains(lowerName, "smoke test")
+}
+
+func ensureAIPDDChannelMetadataDefaults(channel *Channel) (bool, error) {
+	updates := map[string]interface{}{}
+	modelsChanged := false
+
+	if shouldNormalizeAIPDDChannelName(channel.Name) {
+		updates["name"] = aipddEnvChannelName
+		channel.Name = aipddEnvChannelName
+	}
+	if strings.TrimSpace(channel.Models) == "" {
+		channel.ApplyDefaultModels()
+		updates["models"] = channel.Models
+		modelsChanged = true
+	}
+	if strings.TrimSpace(channel.Group) == "" {
+		updates["group"] = "default"
+		channel.Group = "default"
+	}
+	if channel.BaseURL == nil || strings.TrimSpace(*channel.BaseURL) == "" {
+		baseURL := constant.ChannelBaseURLs[constant.ChannelTypeAIPDD]
+		updates["base_url"] = baseURL
+		channel.BaseURL = &baseURL
+	}
+	if len(updates) == 0 {
+		return false, nil
+	}
+	if err := DB.Model(&Channel{}).Where("id = ?", channel.Id).Updates(updates).Error; err != nil {
+		return false, err
+	}
+	if modelsChanged {
+		if err := channel.UpdateAbilities(nil); err != nil {
+			return false, err
+		}
+	}
+	return true, nil
+}
+
 func ensureAIPDDChannelFromEnv(channels []Channel, key string) ([]Channel, bool, error) {
 	if strings.TrimSpace(key) == "" {
 		return channels, false, nil
@@ -365,19 +410,11 @@ func EnsureAIPDDChannelDefaults() error {
 
 	for i := range channels {
 		channel := &channels[i]
-		if strings.TrimSpace(channel.Models) != "" {
-			continue
-		}
-		channel.ApplyDefaultModels()
-		if err := DB.Model(&Channel{}).
-			Where("id = ?", channel.Id).
-			Update("models", channel.Models).Error; err != nil {
+		metadataChanged, err := ensureAIPDDChannelMetadataDefaults(channel)
+		if err != nil {
 			return err
 		}
-		if err := channel.UpdateAbilities(nil); err != nil {
-			return err
-		}
-		changed = true
+		changed = changed || metadataChanged
 	}
 
 	if changed {

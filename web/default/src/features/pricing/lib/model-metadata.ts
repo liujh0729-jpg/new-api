@@ -412,6 +412,7 @@ export type ModelVendor =
   | 'bytedance'
   | 'midjourney'
   | 'stability'
+  | 'aipdd'
   | 'unknown'
 
 export type ApiInfo = {
@@ -444,11 +445,48 @@ const VENDOR_LABELS: Record<ModelVendor, string> = {
   bytedance: 'ByteDance',
   midjourney: 'Midjourney',
   stability: 'Stability AI',
+  aipdd: 'AIPDD',
   unknown: 'Unknown',
+}
+
+const VENDOR_ALIASES: Record<string, ModelVendor> = {
+  openai: 'openai',
+  anthropic: 'anthropic',
+  claude: 'anthropic',
+  google: 'google',
+  gemini: 'google',
+  meta: 'meta',
+  mistral: 'mistral',
+  qwen: 'qwen',
+  alibaba: 'qwen',
+  阿里巴巴: 'qwen',
+  deepseek: 'deepseek',
+  xai: 'xai',
+  cohere: 'cohere',
+  baidu: 'baidu',
+  百度: 'baidu',
+  zhipu: 'zhipu',
+  智谱: 'zhipu',
+  moonshot: 'moonshot',
+  minimax: 'minimax',
+  tencent: 'tencent',
+  腾讯: 'tencent',
+  bytedance: 'bytedance',
+  字节跳动: 'bytedance',
+  midjourney: 'midjourney',
+  stability: 'stability',
+  aipdd: 'aipdd',
+}
+
+function detectVendorFromLabel(label?: string): ModelVendor | undefined {
+  const normalized = label?.trim().toLowerCase()
+  if (!normalized) return undefined
+  return VENDOR_ALIASES[normalized]
 }
 
 function detectVendor(name: string): ModelVendor {
   const n = name.toLowerCase()
+  if (/aipdd/.test(n)) return 'aipdd'
   if (/^gpt|^o[1-4]|davinci|babbage|whisper|tts|dall.?e|sora|^omni/.test(n))
     return 'openai'
   if (/claude/.test(n)) return 'anthropic'
@@ -486,6 +524,7 @@ const TOKENIZER_BY_VENDOR: Partial<Record<ModelVendor, string>> = {
   minimax: 'ABAB tokenizer',
   tencent: 'Hunyuan tokenizer',
   bytedance: 'Doubao tokenizer',
+  aipdd: 'AIPDD workflow parameters',
 }
 
 function inferTokenizer(
@@ -526,6 +565,7 @@ const LICENSE_BY_VENDOR: Record<
   bytedance: { license: 'Proprietary (commercial)', kind: 'proprietary' },
   midjourney: { license: 'Proprietary (commercial)', kind: 'proprietary' },
   stability: { license: 'Stability AI Community License', kind: 'open-weight' },
+  aipdd: { license: 'AIPDD commercial service', kind: 'proprietary' },
   unknown: { license: 'Provider-specific', kind: 'unknown' },
 }
 
@@ -547,6 +587,7 @@ const HOMEPAGE_BY_VENDOR: Partial<Record<ModelVendor, string>> = {
   bytedance: 'https://www.volcengine.com/docs/82379',
   midjourney: 'https://www.midjourney.com/',
   stability: 'https://platform.stability.ai/',
+  aipdd: 'https://app.aipdd.work',
 }
 
 /**
@@ -555,20 +596,22 @@ const HOMEPAGE_BY_VENDOR: Partial<Record<ModelVendor, string>> = {
  * stable.
  */
 export function inferApiInfo(model: PricingModel): ApiInfo {
-  const vendor = detectVendor(model.model_name || '')
+  const vendor =
+    detectVendorFromLabel(model.vendor_name) ??
+    detectVendor(model.model_name || '')
   const tk = inferTokenizer(model, vendor)
   const license = LICENSE_BY_VENDOR[vendor]
   const rand = seededRandom(hashStringToSeed(`${model.model_name}:api`))
   const retention = vendor === 'openai' ? 30 : Math.round(rand() * 90)
   return {
     vendor,
-    vendor_label: VENDOR_LABELS[vendor],
+    vendor_label: model.vendor_name || VENDOR_LABELS[vendor],
     tokenizer: tk.tokenizer,
     tokenizer_note: tk.note,
     license: license.license,
     license_kind: license.kind,
     data_retention_days: retention,
     training_opt_out: true,
-    homepage: HOMEPAGE_BY_VENDOR[vendor],
+    homepage: model.vendor_website || HOMEPAGE_BY_VENDOR[vendor],
   }
 }

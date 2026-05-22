@@ -294,7 +294,7 @@ func migrateDB() error {
 			return err
 		}
 	}
-	if err := EnsureAIPDDChannelDefaults(); err != nil {
+	if err := EnsureAIPDDDefaults(); err != nil {
 		return err
 	}
 	return nil
@@ -366,7 +366,7 @@ func migrateDBFast() error {
 			return err
 		}
 	}
-	if err := EnsureAIPDDChannelDefaults(); err != nil {
+	if err := EnsureAIPDDDefaults(); err != nil {
 		return err
 	}
 	common.SysLog("database migrated")

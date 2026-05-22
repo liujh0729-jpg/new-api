@@ -494,75 +494,26 @@ func (a *TaskAdaptor) applyMultipartUploads(c *gin.Context, info *relaycommon.Re
 }
 
 func resolveAIPDDUploadTarget(cfg modelConfig, fieldName string) (target string, direct bool, ok bool) {
-	uploadTargets := aipddUploadTargets(cfg)
-	if len(uploadTargets) == 0 {
+	if len(cfg.UploadTargets) == 0 {
 		return "", false, false
 	}
 	normalized := strings.ToLower(strings.TrimSpace(fieldName))
 	if normalized == "" {
 		return "", false, false
 	}
-	for target := range uploadTargets {
-		if strings.ToLower(target) == normalized {
-			return target, true, true
+	for _, uploadTarget := range cfg.UploadTargets {
+		if strings.ToLower(strings.TrimSpace(uploadTarget.ParamKey)) == normalized {
+			return uploadTarget.ParamKey, true, true
 		}
 	}
-
-	switch cfg.ModelName {
-	case ModelWan22Wanx:
-		if stringInSet(normalized, "file", "input_reference", "reference", "images") {
-			return "image", false, true
-		}
-	case ModelWan22Animater:
-		if stringInSet(normalized, "file", "input_reference", "reference", "video") {
-			return "load_video", false, true
-		}
-	case ModelMimicMotion:
-		if stringInSet(normalized, "video", "load_video", "input_reference", "motion") {
-			return "motion_video", false, true
-		}
-		if stringInSet(normalized, "image", "reference_image", "appearance", "person") {
-			return "appearance_image", false, true
-		}
-	case ModelLatentsync15:
-		if stringInSet(normalized, "file", "input_reference", "reference", "load_video") {
-			return "video", false, true
-		}
-		if stringInSet(normalized, "audio", "input_audio", "voice") {
-			return "LoadAudio", false, true
-		}
-	case ModelIndexTTS:
-		if stringInSet(normalized, "file", "input_reference", "ref_audio", "reference_audio", "voice") {
-			return "audio", false, true
+	for _, uploadTarget := range cfg.UploadTargets {
+		for _, alias := range uploadTarget.Aliases {
+			if strings.ToLower(strings.TrimSpace(alias)) == normalized {
+				return uploadTarget.ParamKey, false, true
+			}
 		}
 	}
 	return "", false, false
-}
-
-func aipddUploadTargets(cfg modelConfig) map[string]bool {
-	switch cfg.ModelName {
-	case ModelWan22Wanx:
-		return map[string]bool{"image": true}
-	case ModelWan22Animater:
-		return map[string]bool{"load_video": true, "fullpath": true}
-	case ModelMimicMotion:
-		return map[string]bool{"motion_video": true, "appearance_image": true}
-	case ModelLatentsync15:
-		return map[string]bool{"video": true, "LoadAudio": true}
-	case ModelIndexTTS:
-		return map[string]bool{"audio": true, "emotion_audio": true}
-	default:
-		return nil
-	}
-}
-
-func stringInSet(value string, candidates ...string) bool {
-	for _, candidate := range candidates {
-		if value == candidate {
-			return true
-		}
-	}
-	return false
 }
 
 func (a *TaskAdaptor) uploadFileToOSS(c *gin.Context, info *relaycommon.RelayInfo, paramKey string, fileHeader *multipart.FileHeader) (string, error) {
@@ -770,35 +721,71 @@ func parseDurationValue(value string) int {
 }
 
 func applyModelDefaults(content map[string]any, req relaycommon.TaskSubmitReq, cfg modelConfig) {
-	switch cfg.ModelName {
-	case ModelFluxGGUF:
-		setContentString(content, "positive_prompt", metadataString(req.Metadata, "prompt"), req.Prompt)
-	case ModelWan22Wanx:
-		image := firstNonEmpty(metadataString(req.Metadata, "image"), req.Image, firstString(req.Images))
-		prompt := firstNonEmpty(metadataString(req.Metadata, "prompt"), req.Prompt)
-		setContentString(content, "image", image)
-		setContentString(content, "prompt", prompt)
-		setContentString(content, "positive_prompt", metadataString(req.Metadata, "positive_prompt"), prompt)
-		setContentInt(content, "duration", req.Duration)
-	case ModelWan22Animater:
-		loadVideo := firstNonEmpty(metadataString(req.Metadata, "load_video"), metadataString(req.Metadata, "video"), req.InputReference, req.Image, firstString(req.Images))
-		setContentString(content, "load_video", loadVideo)
-		setContentString(content, "filename", filenameFromURL(loadVideo))
-		setContentString(content, "WanVideoTextEncodeCached_positive_prompt", metadataString(req.Metadata, "positive_prompt"), metadataString(req.Metadata, "prompt"), req.Prompt)
-		setContentString(content, "WanVideoTextEncodeCached_negative_prompt", metadataString(req.Metadata, "negative_prompt"))
-	case ModelMimicMotion:
-		setContentString(content, "motion_video", metadataString(req.Metadata, "video"), metadataString(req.Metadata, "load_video"), req.InputReference, req.Image, firstString(req.Images))
-		setContentString(content, "appearance_image", metadataString(req.Metadata, "image"), firstString(req.Images), req.Image)
-	case ModelLatentsync15:
-		video := firstNonEmpty(metadataString(req.Metadata, "video"), metadataString(req.Metadata, "load_video"), req.InputReference, req.Image, firstString(req.Images))
-		setContentString(content, "video", video)
-		setContentString(content, "filename", filenameFromURL(video))
-		setContentString(content, "LoadAudio", metadataString(req.Metadata, "LoadAudio"), metadataString(req.Metadata, "audio"))
-	case ModelIndexTTS:
-		setContentString(content, "audio", metadataString(req.Metadata, "audio"), metadataString(req.Metadata, "ref_audio"), metadataString(req.Metadata, "reference_audio"), metadataString(req.Metadata, "voice"), req.InputReference, firstString(req.Images), req.Image)
-		setContentString(content, "emotion_audio", metadataString(req.Metadata, "emotion_audio"))
-		setContentString(content, "text", metadataString(req.Metadata, "text"), metadataString(req.Metadata, "input"), req.Prompt)
+	for _, item := range cfg.WorkflowDefaults {
+		if strings.TrimSpace(item.ParamKey) == "" || hasContentValue(content[item.ParamKey]) {
+			continue
+		}
+		switch item.ValueType {
+		case constant.AIPDDWorkflowValueTypeInt:
+			if value, ok := resolveWorkflowDefaultInt(content, req, item.Sources); ok {
+				setContentInt(content, item.ParamKey, value)
+			}
+		default:
+			if value := resolveWorkflowDefaultString(content, req, item.Sources); value != "" {
+				setContentString(content, item.ParamKey, value)
+			}
+		}
 	}
+}
+
+func resolveWorkflowDefaultString(content map[string]any, req relaycommon.TaskSubmitReq, sources []constant.AIPDDWorkflowValueSource) string {
+	values := make([]string, 0, len(sources))
+	for _, source := range sources {
+		switch source.Type {
+		case constant.AIPDDWorkflowSourceMetadata:
+			values = append(values, metadataString(req.Metadata, source.Key))
+		case constant.AIPDDWorkflowSourcePrompt:
+			values = append(values, req.Prompt)
+		case constant.AIPDDWorkflowSourceImage:
+			values = append(values, req.Image)
+		case constant.AIPDDWorkflowSourceFirstImage:
+			values = append(values, firstString(req.Images))
+		case constant.AIPDDWorkflowSourceInputReference:
+			values = append(values, req.InputReference)
+		case constant.AIPDDWorkflowSourceDuration:
+			if req.Duration > 0 {
+				values = append(values, strconv.Itoa(req.Duration))
+			}
+		case constant.AIPDDWorkflowSourceFilenameFromURL:
+			values = append(values, filenameFromURL(firstNonEmpty(
+				anyToString(content[source.Key]),
+				metadataString(req.Metadata, source.Key),
+			)))
+		}
+	}
+	return firstNonEmpty(values...)
+}
+
+func resolveWorkflowDefaultInt(content map[string]any, req relaycommon.TaskSubmitReq, sources []constant.AIPDDWorkflowValueSource) (int, bool) {
+	for _, source := range sources {
+		switch source.Type {
+		case constant.AIPDDWorkflowSourceMetadata:
+			if value := parseDurationValue(metadataString(req.Metadata, source.Key)); value > 0 {
+				return value, true
+			}
+		case constant.AIPDDWorkflowSourceDuration:
+			if req.Duration > 0 {
+				return req.Duration, true
+			}
+		case constant.AIPDDWorkflowSourceFilenameFromURL:
+			continue
+		default:
+			if value := parseDurationValue(resolveWorkflowDefaultString(content, req, []constant.AIPDDWorkflowValueSource{source})); value > 0 {
+				return value, true
+			}
+		}
+	}
+	return 0, false
 }
 
 func validateTaskContent(content map[string]any, cfg modelConfig) error {

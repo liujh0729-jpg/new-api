@@ -18,7 +18,7 @@ type defaultCatalogModel struct {
 }
 
 const (
-	aipddLogoPath       = "/aipdd-logo.png"
+	aipddLogoPath       = constant.AIPDDLogoPath
 	legacyAIPDDLogoIcon = "OpenAI"
 )
 
@@ -198,10 +198,19 @@ func ensureDefaultVendorIcons(vendorMap map[int]*Vendor) {
 			continue
 		}
 
+		updates := map[string]interface{}{}
 		icon := getDefaultVendorIcon(vendor.Name)
 		if shouldReplaceDefaultIcon(vendor.Icon, icon) {
 			vendor.Icon = icon
-			_ = DB.Model(&Vendor{}).Where("id = ?", vendor.Id).Update("icon", icon).Error
+			updates["icon"] = icon
+		}
+		website := getDefaultVendorWebsite(vendor.Name)
+		if strings.TrimSpace(vendor.Website) == "" && website != "" {
+			vendor.Website = website
+			updates["website"] = website
+		}
+		if len(updates) > 0 {
+			_ = DB.Model(&Vendor{}).Where("id = ?", vendor.Id).Updates(updates).Error
 		}
 	}
 }
@@ -235,9 +244,10 @@ func getOrCreateVendor(vendorName string, vendorMap map[int]*Vendor) int {
 
 	// 创建新供应商
 	newVendor := &Vendor{
-		Name:   vendorName,
-		Status: 1,
-		Icon:   getDefaultVendorIcon(vendorName),
+		Name:    vendorName,
+		Status:  1,
+		Icon:    getDefaultVendorIcon(vendorName),
+		Website: getDefaultVendorWebsite(vendorName),
 	}
 
 	if err := newVendor.Insert(); err != nil {
@@ -252,6 +262,13 @@ func getOrCreateVendor(vendorName string, vendorMap map[int]*Vendor) int {
 func getDefaultVendorIcon(vendorName string) string {
 	if icon, exists := defaultVendorIcons[vendorName]; exists {
 		return icon
+	}
+	return ""
+}
+
+func getDefaultVendorWebsite(vendorName string) string {
+	if vendorName == "AIPDD" {
+		return constant.AIPDDWebsiteURL
 	}
 	return ""
 }

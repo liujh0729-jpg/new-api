@@ -70,6 +70,7 @@ type upstreamVendor struct {
 	Description string `json:"description"`
 	Icon        string `json:"icon"`
 	Name        string `json:"name"`
+	Website     string `json:"website"`
 	Status      int    `json:"status"`
 }
 
@@ -251,6 +252,7 @@ func ensureVendorID(vendorName string, vendorByName map[string]upstreamVendor, v
 		Name:        vendorName,
 		Description: uv.Description,
 		Icon:        coalesce(uv.Icon, ""),
+		Website:     strings.TrimSpace(uv.Website),
 		Status:      chooseStatus(uv.Status, 1),
 	}
 	if err := v.Insert(); err == nil {

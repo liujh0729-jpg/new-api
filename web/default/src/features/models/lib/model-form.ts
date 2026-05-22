@@ -56,6 +56,7 @@ export const vendorFormSchema = z.object({
   name: z.string().min(1, 'Vendor name is required'),
   description: z.string().default(''),
   icon: z.string().default(''),
+  website: z.string().default(''),
   status: z.number().default(1),
 })
 

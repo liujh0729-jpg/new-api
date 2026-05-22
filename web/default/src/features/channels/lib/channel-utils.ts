@@ -40,6 +40,10 @@ export function getChannelTypeLabel(type: number): string {
   return CHANNEL_TYPES[type as keyof typeof CHANNEL_TYPES] || 'Unknown'
 }
 
+function isImageIconPath(value: string): boolean {
+  return /^(data:image\/|https?:\/\/|\/|\.\/|\.\.\/)/i.test(value)
+}
+
 /**
  * Get channel type icon name for getLobeIcon
  * Maps channel types to Lobe icon names using type number (language-independent)
@@ -101,7 +105,7 @@ export function getChannelTypeIcon(type: number): string {
     55: 'OpenAI', // Sora
     54: 'Doubao', // DoubaoVideo
     56: 'Replicate', // Replicate
-    58: 'OpenAI', // AIPDD
+    58: '/aipdd-logo.png', // AIPDD
 
     // Tools & Platforms
     37: 'Dify', // Dify
@@ -119,6 +123,14 @@ export function getChannelTypeIcon(type: number): string {
   }
 
   return TYPE_TO_ICON[type] || 'OpenAI'
+}
+
+export function getChannelTypeIconForDisplay(type: number): string {
+  const iconName = getChannelTypeIcon(type)
+  if (isImageIconPath(iconName)) {
+    return iconName
+  }
+  return `${iconName}.Color`
 }
 
 // ============================================================================

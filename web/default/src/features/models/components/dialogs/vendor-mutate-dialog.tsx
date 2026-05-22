@@ -69,6 +69,7 @@ export function VendorMutateDialog({
       name: '',
       description: '',
       icon: '',
+      website: '',
       status: 1,
     },
   })
@@ -81,6 +82,7 @@ export function VendorMutateDialog({
         name: currentVendor.name,
         description: currentVendor.description || '',
         icon: currentVendor.icon || '',
+        website: currentVendor.website || '',
         status: currentVendor.status || 1,
       })
     } else if (open && !isEdit) {
@@ -88,6 +90,7 @@ export function VendorMutateDialog({
         name: '',
         description: '',
         icon: '',
+        website: '',
         status: 1,
       })
     }
@@ -96,9 +99,16 @@ export function VendorMutateDialog({
   const onSubmit = async (values: Record<string, unknown>) => {
     setIsSaving(true)
     try {
+      const payload = {
+        ...values,
+        website:
+          typeof values.website === 'string'
+            ? values.website
+            : currentVendor?.website || '',
+      }
       const response = isEdit
-        ? await updateVendor({ ...values, id: currentVendor!.id })
-        : await createVendor(values)
+        ? await updateVendor({ ...payload, id: currentVendor!.id })
+        : await createVendor(payload)
 
       if (response.success) {
         toast.success(

@@ -509,7 +509,8 @@ function buildSample(
     return buildEmbeddingSample(lang, ctx)
   if (endpointType === 'image-generation') return buildImageSample(lang, ctx)
   if (endpointType === 'openai-video') return buildVideoTaskSample(lang, ctx)
-  if (endpointType === 'audio-speech') return buildAudioSpeechTaskSample(lang, ctx)
+  if (endpointType === 'audio-speech')
+    return buildAudioSpeechTaskSample(lang, ctx)
   return buildChatSample(lang, ctx)
 }
 
@@ -806,20 +807,19 @@ export function ModelDetailsProviderInfo(props: { model: PricingModel }) {
 
       <div className='border-border/60 bg-border/60 grid grid-cols-1 gap-px overflow-hidden rounded-lg border sm:grid-cols-2'>
         <InfoCell label={t('Provider')}>
-          <div className='flex items-center gap-1.5'>
+          {info.homepage ? (
+            <a
+              href={info.homepage}
+              target='_blank'
+              rel='noopener noreferrer'
+              className='hover:text-primary inline-flex items-center gap-1 text-sm font-medium transition-colors'
+            >
+              {info.vendor_label}
+              <ExternalLink className='size-3.5' />
+            </a>
+          ) : (
             <span className='text-sm font-medium'>{info.vendor_label}</span>
-            {info.homepage && (
-              <a
-                href={info.homepage}
-                target='_blank'
-                rel='noopener noreferrer'
-                className='text-muted-foreground hover:text-foreground inline-flex items-center gap-0.5 text-[11px]'
-              >
-                {t('Docs')}
-                <ExternalLink className='size-3' />
-              </a>
-            )}
-          </div>
+          )}
         </InfoCell>
 
         <InfoCell label={t('Tokenizer')}>

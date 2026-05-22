@@ -1,7 +1,6 @@
 package model
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -43,6 +42,7 @@ type PricingVendor struct {
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
 	Icon        string `json:"icon,omitempty"`
+	Website     string `json:"website,omitempty"`
 }
 
 var (
@@ -186,6 +186,7 @@ func updatePricing() {
 			Name:        v.Name,
 			Description: v.Description,
 			Icon:        v.Icon,
+			Website:     v.Website,
 		})
 	}
 
@@ -221,7 +222,7 @@ func updatePricing() {
 			continue
 		}
 		var raw map[string]interface{}
-		if err := json.Unmarshal([]byte(meta.Endpoints), &raw); err == nil {
+		if err := common.Unmarshal([]byte(meta.Endpoints), &raw); err == nil {
 			endpoints := make([]string, 0, len(raw))
 			for k, v := range raw {
 				switch v.(type) {
@@ -265,7 +266,7 @@ func updatePricing() {
 			continue
 		}
 		var raw map[string]interface{}
-		if err := json.Unmarshal([]byte(meta.Endpoints), &raw); err == nil {
+		if err := common.Unmarshal([]byte(meta.Endpoints), &raw); err == nil {
 			for k, v := range raw {
 				switch val := v.(type) {
 				case string:

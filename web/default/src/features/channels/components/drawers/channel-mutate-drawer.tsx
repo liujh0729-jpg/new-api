@@ -135,7 +135,7 @@ import {
   transformFormDataToUpdatePayload,
   type ChannelFormValues,
   deduplicateKeys,
-  getChannelTypeIcon,
+  getChannelTypeIconForDisplay,
   getChannelTypeConfig,
   getKeyPromptForType,
   parseModelsString,
@@ -478,13 +478,13 @@ export function ChannelMutateDrawer({
     const options = CHANNEL_TYPE_OPTIONS.map((option) => ({
       value: String(option.value),
       label: t(option.label),
-      icon: getLobeIcon(`${getChannelTypeIcon(option.value)}.Color`, 16),
+      icon: getLobeIcon(getChannelTypeIconForDisplay(option.value), 16),
     }))
     if (!options.some((option) => Number(option.value) === currentType)) {
       options.push({
         value: String(currentType),
         label: `#${currentType}`,
-        icon: getLobeIcon(`${getChannelTypeIcon(currentType)}.Color`, 16),
+        icon: getLobeIcon(getChannelTypeIconForDisplay(currentType), 16),
       })
     }
     return options
@@ -1125,7 +1125,7 @@ export function ChannelMutateDrawer({
           <SheetHeader className='border-b px-4 py-3 text-start sm:px-6 sm:py-4'>
             <SheetTitle className='flex items-center gap-3'>
               <span className='bg-muted flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border'>
-                {getLobeIcon(`${getChannelTypeIcon(currentType)}.Color`, 22)}
+                {getLobeIcon(getChannelTypeIconForDisplay(currentType), 22)}
               </span>
               <span>
                 {isEditing ? t('Edit Channel') : t('Create Channel')}

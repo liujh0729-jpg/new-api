@@ -25,6 +25,7 @@ export type PricingVendor = {
   name: string
   icon?: string
   description?: string
+  website?: string
 }
 
 export type PricingModel = {
@@ -35,6 +36,7 @@ export type PricingModel = {
   vendor_name?: string
   vendor_icon?: string
   vendor_description?: string
+  vendor_website?: string
   quota_type: number
   model_ratio: number
   completion_ratio: number

@@ -59,7 +59,7 @@ import {
   formatRelativeTime,
   formatResponseTime,
   getBalanceVariant,
-  getChannelTypeIcon,
+  getChannelTypeIconForDisplay,
   getChannelTypeLabel,
   getResponseTimeConfig,
   isMultiKeyChannel,
@@ -628,8 +628,7 @@ export function useChannelsColumns(): ColumnDef<Channel>[] {
         const type = row.getValue('type') as number
         const typeNameKey = getChannelTypeLabel(type)
         const typeName = t(typeNameKey)
-        const iconName = getChannelTypeIcon(type)
-        const icon = getLobeIcon(`${iconName}.Color`, 20)
+        const icon = getLobeIcon(getChannelTypeIconForDisplay(type), 20)
         const channel = row.original as Channel
         const isMultiKey = isMultiKeyChannel(channel)
         const multiKeyMode = channel.channel_info?.multi_key_mode ?? 'random'
