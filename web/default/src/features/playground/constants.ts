@@ -35,6 +35,7 @@ export const MESSAGE_STATUS = {
 // API endpoints
 export const API_ENDPOINTS = {
   CHAT_COMPLETIONS: '/pg/chat/completions',
+  IMAGE_GENERATIONS: '/pg/images/generations',
   USER_MODELS: '/api/user/models',
   USER_GROUPS: '/api/user/self/groups',
 } as const
@@ -42,8 +43,50 @@ export const API_ENDPOINTS = {
 // Default group
 export const DEFAULT_GROUP = 'auto' as const
 
+export const DEFAULT_IMAGE_SIZE = '1024x1024'
+export const SEEDREAM_45_MIN_PIXELS = 3686400
+export const SEEDREAM_45_SAFE_IMAGE_SIZE = '1920x1920'
+
+export const IMAGE_SIZE_OPTIONS = [
+  SEEDREAM_45_SAFE_IMAGE_SIZE,
+  '2560x1440',
+  '1440x2560',
+  DEFAULT_IMAGE_SIZE,
+  '1024x1536',
+  '1536x1024',
+  '512x512',
+] as const
+
+export function isSeedream45Model(model: string): boolean {
+  return model.includes('seedream-4-5')
+}
+
+export function getImageSizePixels(size: string): number | null {
+  const match = size.trim().match(/^(\d+)x(\d+)$/i)
+  if (!match) return null
+
+  const width = Number(match[1])
+  const height = Number(match[2])
+  if (!Number.isFinite(width) || !Number.isFinite(height)) return null
+
+  return width * height
+}
+
+export function normalizeImageSizeForModel(
+  model: string,
+  size: string
+): string {
+  if (!isSeedream45Model(model)) return size
+
+  const pixels = getImageSizePixels(size)
+  if (pixels !== null && pixels >= SEEDREAM_45_MIN_PIXELS) return size
+
+  return SEEDREAM_45_SAFE_IMAGE_SIZE
+}
+
 // Default configuration
 export const DEFAULT_CONFIG: PlaygroundConfig = {
+  mode: 'chat',
   model: 'gpt-4o',
   group: DEFAULT_GROUP,
   temperature: 0.7,
@@ -53,6 +96,9 @@ export const DEFAULT_CONFIG: PlaygroundConfig = {
   presence_penalty: 0,
   seed: null,
   stream: true,
+  image_size: DEFAULT_IMAGE_SIZE,
+  image_quality: 'standard',
+  image_count: 1,
 }
 
 export const DEFAULT_PARAMETER_ENABLED: ParameterEnabled = {
@@ -79,6 +125,8 @@ export const ERROR_MESSAGES = {
   STREAM_START_ERROR: 'Error establishing connection',
   CONNECTION_CLOSED: 'Connection closed',
   INTERRUPTED: 'Generation was interrupted',
+  IMAGE_TASK_TIMEOUT: 'Image task timed out',
+  IMAGE_TASK_FAILED: 'Image task failed',
 } as const
 
 // Message action button styles

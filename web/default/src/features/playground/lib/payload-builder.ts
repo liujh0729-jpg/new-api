@@ -18,10 +18,12 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import type {
   ChatCompletionRequest,
+  ImageGenerationRequest,
   Message,
   PlaygroundConfig,
   ParameterEnabled,
 } from '../types'
+import { normalizeImageSizeForModel } from '../constants'
 import { formatMessageForAPI, isValidMessage } from './message-utils'
 
 /**
@@ -62,6 +64,25 @@ export function buildChatCompletionPayload(
       }
     }
   })
+
+  return payload
+}
+
+/**
+ * Build image generation request payload from prompt and config
+ */
+export function buildImageGenerationPayload(
+  prompt: string,
+  config: PlaygroundConfig
+): ImageGenerationRequest {
+  const payload: ImageGenerationRequest = {
+    model: config.model,
+    group: config.group,
+    prompt,
+    size: normalizeImageSizeForModel(config.model, config.image_size),
+    quality: config.image_quality,
+    n: config.image_count,
+  }
 
   return payload
 }

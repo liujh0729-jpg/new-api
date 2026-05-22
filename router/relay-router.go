@@ -66,7 +66,18 @@ func SetRelayRouter(router *gin.Engine) {
 	playgroundRouter.Use(middleware.SystemPerformanceCheck())
 	playgroundRouter.Use(middleware.UserAuth(), middleware.Distribute())
 	{
-		playgroundRouter.POST("/chat/completions", controller.Playground)
+		playgroundRouter.POST("/chat/completions", playgroundHandler(types.RelayFormatOpenAI))
+		playgroundRouter.POST("/images/generations", func(c *gin.Context) {
+			if common.GetContextKeyInt(c, constant.ContextKeyChannelType) == constant.ChannelTypeAIPDD {
+				controller.PlaygroundTask(c)
+				return
+			}
+			controller.Playground(c, types.RelayFormatOpenAIImage)
+		})
+		playgroundRouter.GET("/images/generations/:task_id", func(c *gin.Context) {
+			c.Set("relay_mode", relayconstant.RelayModeVideoFetchByID)
+			controller.RelayTaskFetch(c)
+		})
 	}
 	relayV1Router := router.Group("/v1")
 	relayV1Router.Use(middleware.RouteTag("relay"))
@@ -207,6 +218,12 @@ func SetRelayRouter(router *gin.Engine) {
 		relayGeminiRouter.POST("/models/*path", func(c *gin.Context) {
 			controller.Relay(c, types.RelayFormatGemini)
 		})
+	}
+}
+
+func playgroundHandler(relayFormat types.RelayFormat) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		controller.Playground(c, relayFormat)
 	}
 }
 

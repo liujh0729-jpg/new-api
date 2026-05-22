@@ -672,11 +672,11 @@ func setUploadedFileURL(req *relaycommon.TaskSubmitReq, target, uploadedURL, fil
 
 func endpointTypeFromPath(path string) constant.EndpointType {
 	switch {
-	case strings.HasPrefix(path, "/v1/images/generations"):
+	case strings.HasPrefix(path, "/v1/images/generations"), strings.HasPrefix(path, "/pg/images/generations"):
 		return constant.EndpointTypeImageGeneration
-	case strings.HasPrefix(path, "/v1/audio/speech"):
+	case strings.HasPrefix(path, "/v1/audio/speech"), strings.HasPrefix(path, "/pg/audio/speech"):
 		return constant.EndpointTypeAudioSpeech
-	case strings.HasPrefix(path, "/v1/videos"), strings.HasPrefix(path, "/v1/video/generations"):
+	case strings.HasPrefix(path, "/v1/videos"), strings.HasPrefix(path, "/v1/video/generations"), strings.HasPrefix(path, "/pg/videos"), strings.HasPrefix(path, "/pg/video/generations"):
 		return constant.EndpointTypeOpenAIVideo
 	default:
 		return ""

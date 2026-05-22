@@ -527,9 +527,16 @@ func GetUserModels(c *gin.Context) {
 	}
 	groups := service.GetUserUsableGroups(user.Group)
 	var models []string
+	endpointType := constant.EndpointType(strings.TrimSpace(c.Query("endpoint_type")))
+	if endpointType != "" {
+		model.GetPricing()
+	}
 	for group := range groups {
 		for _, g := range model.GetGroupEnabledModels(group) {
-			if constant.IsAIPDDTaskModel(g) {
+			if endpointType == "" && constant.IsAIPDDTaskModel(g) {
+				continue
+			}
+			if endpointType != "" && !modelSupportsEndpoint(g, endpointType) {
 				continue
 			}
 			if !common.StringsContains(models, g) {
@@ -543,6 +550,15 @@ func GetUserModels(c *gin.Context) {
 		"data":    models,
 	})
 	return
+}
+
+func modelSupportsEndpoint(modelName string, endpointType constant.EndpointType) bool {
+	for _, supportedEndpointType := range model.GetModelSupportEndpointTypes(modelName) {
+		if supportedEndpointType == endpointType {
+			return true
+		}
+	}
+	return false
 }
 
 func UpdateUser(c *gin.Context) {

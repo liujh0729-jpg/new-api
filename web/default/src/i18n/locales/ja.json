@@ -4418,6 +4418,15 @@
     "Zhipu V4": "Zhipu V 4",
     "Zoom": "ズーム",
     "AIPDD": "AIPDD",
-    "Enter AIPDD API key (sent as X-API-Key)": "AIPDD API キーを入力してください（X-API-Key として送信）"
+    "Enter AIPDD API key (sent as X-API-Key)": "AIPDD API キーを入力してください（X-API-Key として送信）",
+    "Describe the image to generate": "生成する画像を説明",
+    "Generating image...": "画像を生成中...",
+    "Image settings": "画像設定",
+    "Size": "サイズ",
+    "Quality": "品質",
+    "Count": "数量",
+    "standard": "標準",
+    "hd": "HD",
+    "auto": "自動"
   }
 }

@@ -21,7 +21,7 @@ import { useQuery } from '@tanstack/react-query'
 import { getUserModels, getUserGroups } from './api'
 import { PlaygroundChat } from './components/playground-chat'
 import { PlaygroundInput } from './components/playground-input'
-import { DEFAULT_GROUP } from './constants'
+import { DEFAULT_GROUP, normalizeImageSizeForModel } from './constants'
 import { usePlaygroundState, useChatHandler } from './hooks'
 import { createUserMessage, createLoadingAssistantMessage } from './lib'
 import type { Message as MessageType } from './types'
@@ -52,8 +52,8 @@ export function Playground() {
 
   // Load models
   const { data: modelsData, isLoading: isLoadingModels } = useQuery({
-    queryKey: ['playground-models'],
-    queryFn: getUserModels,
+    queryKey: ['playground-models', config.mode],
+    queryFn: () => getUserModels(config.mode),
   })
 
   // Load groups
@@ -74,6 +74,18 @@ export function Playground() {
       updateConfig('model', modelsData[0].value)
     }
   }, [modelsData, config.model, setModels, updateConfig])
+
+  useEffect(() => {
+    if (config.mode !== 'image') return
+
+    const normalizedSize = normalizeImageSizeForModel(
+      config.model,
+      config.image_size
+    )
+    if (normalizedSize !== config.image_size) {
+      updateConfig('image_size', normalizedSize)
+    }
+  }, [config.mode, config.model, config.image_size, updateConfig])
 
   // Update groups when data changes
   useEffect(() => {
@@ -194,11 +206,19 @@ export function Playground() {
           disabled={isGenerating}
           groups={groups}
           groupValue={config.group}
+          imageCount={config.image_count}
+          imageQuality={config.image_quality}
+          imageSize={config.image_size}
           isGenerating={isGenerating}
           isModelLoading={isLoadingModels}
+          mode={config.mode}
           modelValue={config.model}
           models={models}
           onGroupChange={(value) => updateConfig('group', value)}
+          onImageCountChange={(value) => updateConfig('image_count', value)}
+          onImageQualityChange={(value) => updateConfig('image_quality', value)}
+          onImageSizeChange={(value) => updateConfig('image_size', value)}
+          onModeChange={(value) => updateConfig('mode', value)}
           onModelChange={(value) => updateConfig('model', value)}
           onStop={stopGeneration}
           onSubmit={handleSendMessage}

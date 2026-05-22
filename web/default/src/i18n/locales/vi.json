@@ -4418,6 +4418,15 @@
     "Zhipu V4": "Zhipu V4",
     "Zoom": "Zoom",
     "AIPDD": "AIPDD",
-    "Enter AIPDD API key (sent as X-API-Key)": "Nhập khóa API AIPDD (được gửi dưới dạng X-API-Key)"
+    "Enter AIPDD API key (sent as X-API-Key)": "Nhập khóa API AIPDD (được gửi dưới dạng X-API-Key)",
+    "Describe the image to generate": "Mô tả hình ảnh cần tạo",
+    "Generating image...": "Đang tạo hình ảnh...",
+    "Image settings": "Cài đặt hình ảnh",
+    "Size": "Kích thước",
+    "Quality": "Chất lượng",
+    "Count": "Số lượng",
+    "standard": "Tiêu chuẩn",
+    "hd": "HD",
+    "auto": "Tự động"
   }
 }

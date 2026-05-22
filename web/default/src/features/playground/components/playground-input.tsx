@@ -19,13 +19,16 @@ For commercial licensing, please contact support@quantumnous.com
 import { useState } from 'react'
 import {
   PaperclipIcon,
+  ChevronDownIcon,
   FileIcon,
   ImageIcon,
+  MessageSquareIcon,
   ScreenShareIcon,
   CameraIcon,
   GlobeIcon,
   SendIcon,
   SquareIcon,
+  Settings2Icon,
   BarChartIcon,
   BoxIcon,
   NotepadTextIcon,
@@ -37,7 +40,12 @@ import { toast } from 'sonner'
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuLabel,
   DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import {
@@ -50,11 +58,14 @@ import {
 } from '@/components/ai-elements/prompt-input'
 import { Suggestion, Suggestions } from '@/components/ai-elements/suggestion'
 import { ModelGroupSelector } from '@/components/model-group-selector'
-import type { ModelOption, GroupOption } from '../types'
+import { IMAGE_SIZE_OPTIONS } from '../constants'
+import type { ModelOption, GroupOption, PlaygroundMode } from '../types'
 
 interface PlaygroundInputProps {
   onSubmit: (text: string) => void
   onStop?: () => void
+  mode: PlaygroundMode
+  onModeChange: (value: PlaygroundMode) => void
   disabled?: boolean
   isGenerating?: boolean
   models: ModelOption[]
@@ -64,6 +75,12 @@ interface PlaygroundInputProps {
   groups: GroupOption[]
   groupValue: string
   onGroupChange: (value: string) => void
+  imageSize: string
+  onImageSizeChange: (value: string) => void
+  imageQuality: string
+  onImageQualityChange: (value: string) => void
+  imageCount: number
+  onImageCountChange: (value: number) => void
 }
 
 const suggestions = [
@@ -75,9 +92,14 @@ const suggestions = [
   { icon: null, text: 'More' },
 ]
 
+const imageQualities = ['standard', 'hd', 'auto']
+const imageCounts = [1, 2, 4]
+
 export function PlaygroundInput({
   onSubmit,
   onStop,
+  mode,
+  onModeChange,
   disabled,
   isGenerating,
   models,
@@ -87,16 +109,26 @@ export function PlaygroundInput({
   groups,
   groupValue,
   onGroupChange,
+  imageSize,
+  onImageSizeChange,
+  imageQuality,
+  onImageQualityChange,
+  imageCount,
+  onImageCountChange,
 }: PlaygroundInputProps) {
   const { t } = useTranslation()
   const [text, setText] = useState('')
+  const isImageMode = mode === 'image'
+  const ModeIcon = isImageMode ? ImageIcon : MessageSquareIcon
 
   const isModelSelectDisabled =
     disabled || isModelLoading || models.length === 0
   const isGroupSelectDisabled = disabled || groups.length === 0
+  const isSubmitDisabled =
+    disabled || isModelLoading || models.length === 0 || !modelValue
 
   const handleSubmit = (message: PromptInputMessage) => {
-    if (!message.text?.trim() || disabled) return
+    if (!message.text?.trim() || isSubmitDisabled) return
     onSubmit(message.text)
     setText('')
   }
@@ -122,12 +154,50 @@ export function PlaygroundInput({
           className='px-5 md:text-base'
           disabled={disabled}
           onChange={(event) => setText(event.target.value)}
-          placeholder={t('Ask anything')}
+          placeholder={
+            isImageMode
+              ? t('Describe the image to generate')
+              : t('Ask anything')
+          }
           value={text}
         />
 
         <PromptInputFooter className='p-2.5'>
           <PromptInputTools>
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                render={
+                  <PromptInputButton
+                    className='min-w-24 justify-between border font-medium'
+                    disabled={disabled}
+                    type='button'
+                    variant='outline'
+                  />
+                }
+              >
+                <ModeIcon size={16} />
+                <span>{isImageMode ? t('Image') : t('Chat')}</span>
+                <ChevronDownIcon className='opacity-70' size={14} />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align='start' className='min-w-36'>
+                <DropdownMenuRadioGroup
+                  value={mode}
+                  onValueChange={(value) =>
+                    onModeChange(value as PlaygroundMode)
+                  }
+                >
+                  <DropdownMenuRadioItem value='chat'>
+                    <MessageSquareIcon className='mr-2' size={16} />
+                    {t('Chat')}
+                  </DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value='image'>
+                    <ImageIcon className='mr-2' size={16} />
+                    {t('Image')}
+                  </DropdownMenuRadioItem>
+                </DropdownMenuRadioGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
+
             <DropdownMenu>
               <DropdownMenuTrigger
                 render={
@@ -170,6 +240,77 @@ export function PlaygroundInput({
               </DropdownMenuContent>
             </DropdownMenu>
 
+            {isImageMode && (
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  render={
+                    <PromptInputButton
+                      className='border font-medium'
+                      disabled={disabled}
+                      type='button'
+                      variant='outline'
+                    />
+                  }
+                >
+                  <Settings2Icon size={16} />
+                  <span className='hidden sm:inline'>
+                    {t('Image settings')}
+                  </span>
+                  <span className='sr-only sm:hidden'>
+                    {t('Image settings')}
+                  </span>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align='start' className='min-w-44'>
+                  <DropdownMenuGroup>
+                    <DropdownMenuLabel>{t('Size')}</DropdownMenuLabel>
+                    <DropdownMenuRadioGroup
+                      value={imageSize}
+                      onValueChange={onImageSizeChange}
+                    >
+                      {IMAGE_SIZE_OPTIONS.map((size) => (
+                        <DropdownMenuRadioItem key={size} value={size}>
+                          {size}
+                        </DropdownMenuRadioItem>
+                      ))}
+                    </DropdownMenuRadioGroup>
+                  </DropdownMenuGroup>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuGroup>
+                    <DropdownMenuLabel>{t('Quality')}</DropdownMenuLabel>
+                    <DropdownMenuRadioGroup
+                      value={imageQuality}
+                      onValueChange={onImageQualityChange}
+                    >
+                      {imageQualities.map((quality) => (
+                        <DropdownMenuRadioItem key={quality} value={quality}>
+                          {t(quality)}
+                        </DropdownMenuRadioItem>
+                      ))}
+                    </DropdownMenuRadioGroup>
+                  </DropdownMenuGroup>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuGroup>
+                    <DropdownMenuLabel>{t('Count')}</DropdownMenuLabel>
+                    <DropdownMenuRadioGroup
+                      value={String(imageCount)}
+                      onValueChange={(value) =>
+                        onImageCountChange(Number.parseInt(value, 10))
+                      }
+                    >
+                      {imageCounts.map((count) => (
+                        <DropdownMenuRadioItem
+                          key={count}
+                          value={String(count)}
+                        >
+                          {count}
+                        </DropdownMenuRadioItem>
+                      ))}
+                    </DropdownMenuRadioGroup>
+                  </DropdownMenuGroup>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
+
             <PromptInputButton
               className='border font-medium'
               disabled={disabled}
@@ -206,7 +347,7 @@ export function PlaygroundInput({
             ) : (
               <PromptInputButton
                 className='text-foreground font-medium'
-                disabled={disabled || !text.trim()}
+                disabled={isSubmitDisabled || !text.trim()}
                 type='submit'
                 variant='secondary'
               >

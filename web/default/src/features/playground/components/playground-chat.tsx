@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useEffect, useMemo, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
@@ -49,8 +50,8 @@ import {
   SourcesTrigger,
 } from '@/components/ai-elements/sources'
 import { MESSAGE_ROLES } from '../constants'
+import { parseThinkTags, getImageSrc } from '../lib'
 import { getMessageContentStyles } from '../lib/message-styles'
-import { parseThinkTags } from '../lib/message-utils'
 import type { Message as MessageType } from '../types'
 import { MessageActions } from './message-actions'
 import { MessageError } from './message-error'
@@ -80,6 +81,7 @@ export function PlaygroundChat({
   onCancelEdit,
   onSaveEditAndSubmit,
 }: PlaygroundChatProps) {
+  const { t } = useTranslation()
   const [editText, setEditText] = useState('')
   const [originalText, setOriginalText] = useState('')
 
@@ -174,6 +176,11 @@ export function PlaygroundChat({
                                 (message.from === MESSAGE_ROLES.USER ||
                                   !message.isReasoningStreaming) &&
                                 !!version.content
+                              const generatedImages = message.images || []
+                              const loaderText =
+                                message.activity === 'image_generation'
+                                  ? t('Generating image...')
+                                  : 'Responding...'
 
                               // Extract visible content (remove <think> tags for assistant messages)
                               const displayContent = isAssistant
@@ -233,7 +240,7 @@ export function PlaygroundChat({
                                     <div className='flex items-center gap-2 py-2'>
                                       <Loader />
                                       <Shimmer className='text-sm' duration={1}>
-                                        Responding...
+                                        {loaderText}
                                       </Shimmer>
                                     </div>
                                   )}
@@ -248,16 +255,51 @@ export function PlaygroundChat({
                                       {actions}
                                     </>
                                   ) : (
-                                    showMessageContent && (
+                                    (showMessageContent ||
+                                      generatedImages.length > 0) && (
                                       <>
-                                        <MessageContent
-                                          variant='flat'
-                                          className={cn(
-                                            getMessageContentStyles()
-                                          )}
-                                        >
-                                          <Response>{displayContent}</Response>
-                                        </MessageContent>
+                                        {showMessageContent && (
+                                          <MessageContent
+                                            variant='flat'
+                                            className={cn(
+                                              getMessageContentStyles()
+                                            )}
+                                          >
+                                            <Response>
+                                              {displayContent}
+                                            </Response>
+                                          </MessageContent>
+                                        )}
+                                        {generatedImages.length > 0 && (
+                                          <div className='grid grid-cols-1 gap-3 py-2 sm:grid-cols-2'>
+                                            {generatedImages.map(
+                                              (image, imageIndex) => {
+                                                const src = getImageSrc(image)
+                                                if (!src) return null
+
+                                                return (
+                                                  <a
+                                                    className='group/image bg-muted block aspect-square overflow-hidden rounded-lg border'
+                                                    href={src}
+                                                    key={`${message.key}-image-${imageIndex}`}
+                                                    rel='noreferrer'
+                                                    target='_blank'
+                                                  >
+                                                    <img
+                                                      alt={
+                                                        image.revised_prompt ||
+                                                        'Generated image'
+                                                      }
+                                                      className='size-full object-contain transition-transform duration-200 group-hover/image:scale-[1.01]'
+                                                      loading='lazy'
+                                                      src={src}
+                                                    />
+                                                  </a>
+                                                )
+                                              }
+                                            )}
+                                          </div>
+                                        )}
                                         {actions}
                                       </>
                                     )

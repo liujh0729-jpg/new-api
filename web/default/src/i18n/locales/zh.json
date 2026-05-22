@@ -4418,6 +4418,15 @@
     "Zhipu V4": "智谱 V4",
     "Zoom": "缩放",
     "AIPDD": "AIPDD",
-    "Enter AIPDD API key (sent as X-API-Key)": "输入 AIPDD API Key（将作为 X-API-Key 发送）"
+    "Enter AIPDD API key (sent as X-API-Key)": "输入 AIPDD API Key（将作为 X-API-Key 发送）",
+    "Describe the image to generate": "描述要生成的图片",
+    "Generating image...": "图片生成中...",
+    "Image settings": "图片设置",
+    "Size": "尺寸",
+    "Quality": "质量",
+    "Count": "数量",
+    "standard": "标准",
+    "hd": "高清",
+    "auto": "自动"
   }
 }

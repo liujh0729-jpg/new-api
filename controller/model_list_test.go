@@ -307,6 +307,54 @@ func TestGetUserModelsExcludesAIPDDTaskModelsFromPlayground(t *testing.T) {
 	}
 }
 
+func TestGetUserModelsFiltersImageEndpointForPlayground(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	model.InvalidatePricingCache()
+
+	require.NoError(t, db.Create(&model.User{
+		Id:       1003,
+		Username: "playground-image-user",
+		Password: "password",
+		Group:    "default",
+		Status:   common.UserStatusEnabled,
+	}).Error)
+
+	openAIChannel := &model.Channel{
+		Type:   constant.ChannelTypeOpenAI,
+		Key:    "openai-test-key",
+		Name:   "openai",
+		Models: "gpt-image-1,gpt-4o",
+		Status: common.ChannelStatusEnabled,
+		Group:  "default",
+	}
+	require.NoError(t, openAIChannel.Insert())
+
+	require.NoError(t, db.Create(&model.Channel{
+		Type:   constant.ChannelTypeAIPDD,
+		Key:    "aipdd-test-key",
+		Name:   "legacy-aipdd",
+		Status: common.ChannelStatusEnabled,
+		Group:  "default",
+	}).Error)
+	require.NoError(t, model.EnsureAIPDDChannelDefaults())
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/user/models?endpoint_type=image-generation", nil)
+	ctx.Set("id", 1003)
+
+	GetUserModels(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var payload userModelsResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
+	require.True(t, payload.Success)
+	require.Contains(t, payload.Data, "gpt-image-1")
+	require.Contains(t, payload.Data, constant.AIPDDModelFluxGGUF)
+	require.NotContains(t, payload.Data, "gpt-4o")
+	require.NotContains(t, payload.Data, constant.AIPDDModelIndexTTS)
+}
+
 func TestListModelsIncludesTieredBillingModel(t *testing.T) {
 	withSelfUseModeDisabled(t)
 	withTieredBillingConfig(t, map[string]string{

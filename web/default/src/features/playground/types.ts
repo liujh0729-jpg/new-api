@@ -21,6 +21,8 @@ export type MessageRole = 'user' | 'assistant' | 'system'
 
 export type MessageStatus = 'loading' | 'streaming' | 'complete' | 'error'
 
+export type MessageActivity = 'image_generation'
+
 export interface MessageVersion {
   id: string
   content: string
@@ -30,6 +32,7 @@ export interface Message {
   key: string
   from: MessageRole
   versions: MessageVersion[]
+  images?: GeneratedImage[]
   sources?: { href: string; title: string }[]
   reasoning?: {
     content: string
@@ -38,8 +41,16 @@ export interface Message {
   isReasoningStreaming?: boolean
   isReasoningComplete?: boolean
   isContentComplete?: boolean
+  activity?: MessageActivity
   status?: MessageStatus
   errorCode?: string | null
+}
+
+export interface GeneratedImage {
+  url?: string
+  b64_json?: string
+  mime_type?: string
+  revised_prompt?: string
 }
 
 // API payload types
@@ -106,8 +117,37 @@ export interface ChatCompletionResponse {
   }
 }
 
+export interface ImageGenerationRequest {
+  model: string
+  group?: string
+  prompt: string
+  size?: string
+  quality?: string
+  n?: number
+}
+
+export interface ImageGenerationResponse {
+  created?: number
+  data?: GeneratedImage[]
+  id?: string
+  task_id?: string
+  object?: string
+  status?: string
+  model?: string
+  metadata?: Record<string, unknown>
+}
+
+export interface TaskFetchResponse {
+  code?: string
+  data?: unknown
+  error?: unknown
+}
+
+export type PlaygroundMode = 'chat' | 'image'
+
 // Configuration types
 export interface PlaygroundConfig {
+  mode: PlaygroundMode
   model: string
   group: string
   temperature: number
@@ -117,6 +157,9 @@ export interface PlaygroundConfig {
   presence_penalty: number
   seed: number | null
   stream: boolean
+  image_size: string
+  image_quality: string
+  image_count: number
 }
 
 export interface ParameterEnabled {

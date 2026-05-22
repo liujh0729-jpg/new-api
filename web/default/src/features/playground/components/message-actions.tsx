@@ -51,9 +51,18 @@ export function MessageActions({
 
   const isAssistant = message.from === 'assistant'
   const hasContent = message.versions.some((v) => v.content)
+  const hasImages = !!message.images?.length
   const isLoading =
     message.status === 'loading' || message.status === 'streaming'
-  const content = message.versions[0]?.content || ''
+  const imageContent =
+    message.images
+      ?.map((image) => image.url || image.b64_json)
+      .filter(Boolean)
+      .join('\n') || ''
+  const content =
+    hasImages && imageContent
+      ? imageContent
+      : message.versions[0]?.content || ''
   const isCopied = copiedText === content
 
   const handleCopy = () => {
@@ -79,7 +88,7 @@ export function MessageActions({
         className={`flex items-center gap-0.5 transition-opacity ${visibilityClass} ${className}`}
       >
         {/* Copy */}
-        {hasContent && (
+        {(hasContent || hasImages) && (
           <MessageActionButton
             icon={isCopied ? Check : Copy}
             label={

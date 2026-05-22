@@ -21,8 +21,12 @@ import { API_ENDPOINTS } from './constants'
 import type {
   ChatCompletionRequest,
   ChatCompletionResponse,
+  ImageGenerationRequest,
+  ImageGenerationResponse,
+  TaskFetchResponse,
   ModelOption,
   GroupOption,
+  PlaygroundMode,
 } from './types'
 
 /**
@@ -38,10 +42,46 @@ export async function sendChatCompletion(
 }
 
 /**
+ * Send image generation request
+ */
+export async function sendImageGeneration(
+  payload: ImageGenerationRequest
+): Promise<ImageGenerationResponse> {
+  const res = await api.post(API_ENDPOINTS.IMAGE_GENERATIONS, payload, {
+    skipErrorHandler: true,
+  } as Record<string, unknown>)
+  return res.data
+}
+
+/**
+ * Fetch image generation task status
+ */
+export async function getImageGenerationTask(
+  taskId: string
+): Promise<TaskFetchResponse> {
+  const res = await api.get(
+    `${API_ENDPOINTS.IMAGE_GENERATIONS}/${encodeURIComponent(taskId)}`,
+    {
+      skipErrorHandler: true,
+    } as Record<string, unknown>
+  )
+  return res.data
+}
+
+/**
  * Get user available models
  */
-export async function getUserModels(): Promise<ModelOption[]> {
-  const res = await api.get(API_ENDPOINTS.USER_MODELS)
+export async function getUserModels(
+  mode: PlaygroundMode = 'chat'
+): Promise<ModelOption[]> {
+  const res = await api.get(API_ENDPOINTS.USER_MODELS, {
+    params:
+      mode === 'image'
+        ? {
+            endpoint_type: 'image-generation',
+          }
+        : undefined,
+  })
   const { data } = res
 
   if (!data.success || !Array.isArray(data.data)) {
