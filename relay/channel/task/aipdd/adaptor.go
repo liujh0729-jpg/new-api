@@ -31,6 +31,7 @@ const (
 	ChannelName = "aipdd"
 
 	ModelFluxGGUF         = constant.AIPDDModelFluxGGUF
+	ModelFluxGGUFT2I      = constant.AIPDDModelFluxGGUFT2I
 	ModelWan22Wanx        = constant.AIPDDModelWan22Wanx
 	ModelWan22Animater    = constant.AIPDDModelWan22Animater
 	ModelMimicMotion      = constant.AIPDDModelMimicMotion

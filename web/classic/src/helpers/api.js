@@ -370,6 +370,7 @@ export async function onCustomOAuthClicked(provider, options = {}) {
 let channelModels = undefined;
 const AIPDD_MODELS = [
   'aipdd-flux-gguf',
+  'aipdd-flux-gguf-t2i',
   'aipdd-wan2.2-wanx',
   'aipdd-wan2.2-animater',
   'aipdd-mimic-motion',

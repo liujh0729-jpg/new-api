@@ -87,6 +87,7 @@ func TestConvertToRequestPayloadForAllAIPDDModels(t *testing.T) {
 		name       string
 		req        relaycommon.TaskSubmitReq
 		wantScript string
+		wantID     string
 		wantFields map[string]string
 	}{
 		{
@@ -95,8 +96,19 @@ func TestConvertToRequestPayloadForAllAIPDDModels(t *testing.T) {
 			req: relaycommon.TaskSubmitReq{
 				Model:  ModelFluxGGUF,
 				Prompt: "a cinematic robot",
+				Image:  "https://cdn.example.com/input.png",
 			},
-			wantFields: map[string]string{"positive_prompt": "a cinematic robot"},
+			wantFields: map[string]string{"image": "https://cdn.example.com/input.png", "positive_prompt": "a cinematic robot"},
+		},
+		{
+			name:       ModelFluxGGUFT2I,
+			wantScript: "FLUX-GGUF-T2I",
+			wantID:     "aa6e64ce-bc73-4295-b78a-a269e5d3c1a9",
+			req: relaycommon.TaskSubmitReq{
+				Model:  ModelFluxGGUFT2I,
+				Prompt: "a cinematic robot",
+			},
+			wantFields: map[string]string{"text": "a cinematic robot"},
 		},
 		{
 			name:       ModelWan22Wanx,
@@ -168,6 +180,9 @@ func TestConvertToRequestPayloadForAllAIPDDModels(t *testing.T) {
 			}
 			if payload.ScriptCode != tt.wantScript {
 				t.Fatalf("unexpected script code: %s", payload.ScriptCode)
+			}
+			if tt.wantID != "" && payload.ScriptID != tt.wantID {
+				t.Fatalf("unexpected script id: %s", payload.ScriptID)
 			}
 			var content map[string]any
 			if err := common.Unmarshal([]byte(payload.TaskContent), &content); err != nil {
@@ -305,8 +320,14 @@ func TestBuildRequestBodyUploadsMultipartFileToAIPDDOSS(t *testing.T) {
 }
 
 func TestResolveAIPDDUploadTargetAliases(t *testing.T) {
+	flux, _ := resolveModelConfig(ModelFluxGGUF)
+	target, direct, ok := resolveAIPDDUploadTarget(flux, "file")
+	if !ok || direct || target != "image" {
+		t.Fatalf("file alias should resolve to image, got target=%q direct=%v ok=%v", target, direct, ok)
+	}
+
 	latentsync, _ := resolveModelConfig(ModelLatentsync15)
-	target, direct, ok := resolveAIPDDUploadTarget(latentsync, "audio")
+	target, direct, ok = resolveAIPDDUploadTarget(latentsync, "audio")
 	if !ok || direct || target != "LoadAudio" {
 		t.Fatalf("audio alias should resolve to LoadAudio, got target=%q direct=%v ok=%v", target, direct, ok)
 	}
@@ -339,6 +360,17 @@ func TestWan22WanxRejectsUnsupportedDuration(t *testing.T) {
 	}, relayInfoWithModel(ModelWan22Wanx))
 	if err == nil {
 		t.Fatal("expected duration validation error")
+	}
+}
+
+func TestFluxGGUFRequiresImage(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+	_, err := adaptor.convertToRequestPayload(relaycommon.TaskSubmitReq{
+		Model:  ModelFluxGGUF,
+		Prompt: "a cinematic robot",
+	}, relayInfoWithModel(ModelFluxGGUF))
+	if err == nil {
+		t.Fatal("expected image validation error")
 	}
 }
 

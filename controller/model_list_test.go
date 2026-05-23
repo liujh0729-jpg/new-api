@@ -386,6 +386,7 @@ func TestGetUserModelsFiltersImageEndpointForPlayground(t *testing.T) {
 	require.True(t, payload.Success)
 	require.Contains(t, payload.Data, "gpt-image-1")
 	require.Contains(t, payload.Data, constant.AIPDDModelFluxGGUF)
+	require.Contains(t, payload.Data, constant.AIPDDModelFluxGGUFT2I)
 	require.NotContains(t, payload.Data, "gpt-4o")
 	require.NotContains(t, payload.Data, constant.AIPDDModelIndexTTS)
 }

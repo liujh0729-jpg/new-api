@@ -46,7 +46,8 @@ const AIPDD_TASK_META: Record<
   string,
   { label: string; mediaType: 'audio' | 'image' | 'video' }
 > = {
-  'aipdd-flux-gguf': { label: 'Text to Image', mediaType: 'image' },
+  'aipdd-flux-gguf': { label: 'Image to Image', mediaType: 'image' },
+  'aipdd-flux-gguf-t2i': { label: 'Text to Image', mediaType: 'image' },
   'aipdd-wan2.2-wanx': { label: 'Image to Video', mediaType: 'video' },
   'aipdd-wan2.2-animater': {
     label: 'Subject Replacement Video',

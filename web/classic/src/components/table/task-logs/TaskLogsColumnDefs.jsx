@@ -64,7 +64,8 @@ const colors = [
 ];
 
 const AIPDD_TASK_META = {
-  'aipdd-flux-gguf': { label: '文生图', mediaType: 'image' },
+  'aipdd-flux-gguf': { label: '图生图', mediaType: 'image' },
+  'aipdd-flux-gguf-t2i': { label: '文生图', mediaType: 'image' },
   'aipdd-wan2.2-wanx': { label: '图生视频', mediaType: 'video' },
   'aipdd-wan2.2-animater': { label: '主体替换视频', mediaType: 'video' },
   'aipdd-mimic-motion': { label: '动作迁移视频', mediaType: 'video' },

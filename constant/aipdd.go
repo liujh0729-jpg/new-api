@@ -4,6 +4,7 @@ import "strings"
 
 const (
 	AIPDDModelFluxGGUF      = "aipdd-flux-gguf"
+	AIPDDModelFluxGGUFT2I   = "aipdd-flux-gguf-t2i"
 	AIPDDModelWan22Wanx     = "aipdd-wan2.2-wanx"
 	AIPDDModelWan22Animater = "aipdd-wan2.2-animater"
 	AIPDDModelMimicMotion   = "aipdd-mimic-motion"
@@ -104,14 +105,34 @@ var AIPDDCapabilities = []AIPDDCapability{
 		ScriptID:          "c1d4d41c-0d5a-4bf8-bfdb-548d7a710759",
 		ScriptCode:        "FLUX_GGUF",
 		TaskCost:          0,
-		WorkflowParamKeys: []string{"positive_prompt", "negative_prompt"},
+		WorkflowParamKeys: []string{"image", "positive_prompt", "negative_prompt"},
 		RequiredWorkflowParams: map[string]bool{
+			"image":           true,
 			"positive_prompt": false,
 			"negative_prompt": false,
 		},
 		WorkflowDefaults: []AIPDDWorkflowParamDefault{
+			aipddStringDefault("image", aipddMetadata("image"), aipddSource(AIPDDWorkflowSourceImage), aipddSource(AIPDDWorkflowSourceFirstImage)),
 			aipddStringDefault("positive_prompt", aipddMetadata("positive_prompt"), aipddMetadata("prompt"), aipddSource(AIPDDWorkflowSourcePrompt)),
 			aipddStringDefault("negative_prompt", aipddMetadata("negative_prompt")),
+		},
+		UploadTargets: []AIPDDUploadTarget{
+			{ParamKey: "image", Aliases: []string{"file", "input_reference", "reference", "images"}},
+		},
+		EndpointType: EndpointTypeImageGeneration,
+		BillingType:  AIPDDBillingTypePerCall,
+	},
+	{
+		ModelName:         AIPDDModelFluxGGUFT2I,
+		ScriptID:          "aa6e64ce-bc73-4295-b78a-a269e5d3c1a9",
+		ScriptCode:        "FLUX-GGUF-T2I",
+		TaskCost:          0,
+		WorkflowParamKeys: []string{"text"},
+		RequiredWorkflowParams: map[string]bool{
+			"text": true,
+		},
+		WorkflowDefaults: []AIPDDWorkflowParamDefault{
+			aipddStringDefault("text", aipddMetadata("text"), aipddMetadata("input"), aipddMetadata("prompt"), aipddSource(AIPDDWorkflowSourcePrompt)),
 		},
 		EndpointType: EndpointTypeImageGeneration,
 		BillingType:  AIPDDBillingTypePerCall,

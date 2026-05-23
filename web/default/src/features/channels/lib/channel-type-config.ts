@@ -141,6 +141,7 @@ export const CHANNEL_TYPE_CONFIGS: Record<number, ChannelTypeConfig> = {
     defaultBaseUrl: 'https://api.aipdd.work',
     supportedModels: [
       'aipdd-flux-gguf',
+      'aipdd-flux-gguf-t2i',
       'aipdd-wan2.2-wanx',
       'aipdd-wan2.2-animater',
       'aipdd-mimic-motion',

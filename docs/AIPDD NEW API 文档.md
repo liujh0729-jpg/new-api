@@ -1,4 +1,4 @@
-# AIPDD 六个模型用户使用文档
+# AIPDD 七个模型用户使用文档
 
 本文面向普通 API 用户。调用时只需要使用平台发放的 NewAPI Token，不需要 AIPDD 上游 Key。
 
@@ -32,7 +32,8 @@ export NEW_API_TOKEN="sk-xxxx"
 
 | 能力 | 模型名 | 创建接口 | 查询接口 | 主要输入 | 计费 |
 | --- | --- | --- | --- | --- | --- |
-| 文生图 | `aipdd-flux-gguf` | `POST /v1/images/generations` | `GET /v1/images/generations/{task_id}` | `prompt` | 按次 |
+| 图生图 | `aipdd-flux-gguf` | `POST /v1/images/generations` | `GET /v1/images/generations/{task_id}` | `image`，可选 `prompt` | 按次 |
+| 文生图 | `aipdd-flux-gguf-t2i` | `POST /v1/images/generations` | `GET /v1/images/generations/{task_id}` | `prompt` 或 `text` | 按次 |
 | 图生视频 | `aipdd-wan2.2-wanx` | `POST /v1/videos` | `GET /v1/videos/{task_id}` | `image`、`prompt`、`duration` | 按秒 |
 | 主体替换视频 | `aipdd-wan2.2-animater` | `POST /v1/videos` | `GET /v1/videos/{task_id}` | `load_video`、`prompt`、`negative_prompt` | 按次 |
 | 动作迁移视频 | `aipdd-mimic-motion` | `POST /v1/videos` | `GET /v1/videos/{task_id}` | `motion_video`、`appearance_image` | 按次 |
@@ -43,7 +44,7 @@ export NEW_API_TOKEN="sk-xxxx"
 
 ## 提交任务示例
 
-### 1. Flux 文生图
+### 1. Flux 图生图
 
 ```bash
 curl "${BASE_URL}v1/images/generations" \
@@ -51,11 +52,24 @@ curl "${BASE_URL}v1/images/generations" \
   -H "Content-Type: application/json" \
   -d '{
     "model": "aipdd-flux-gguf",
+    "image": "https://example.com/input.png",
     "prompt": "一张高级感产品摄影图，柔和棚拍灯光"
   }'
 ```
 
-### 2. Wan2.2 图生视频
+### 2. Flux 文生图
+
+```bash
+curl "${BASE_URL}v1/images/generations" \
+  -H "Authorization: Bearer $NEW_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "aipdd-flux-gguf-t2i",
+    "prompt": "一张高级感产品摄影图，柔和棚拍灯光"
+  }'
+```
+
+### 3. Wan2.2 图生视频
 
 ```bash
 curl "${BASE_URL}v1/videos" \
@@ -69,7 +83,7 @@ curl "${BASE_URL}v1/videos" \
   }'
 ```
 
-### 3. Wan2.2 主体替换视频
+### 4. Wan2.2 主体替换视频
 
 ```bash
 curl "${BASE_URL}v1/videos" \
@@ -83,7 +97,7 @@ curl "${BASE_URL}v1/videos" \
   }'
 ```
 
-### 4. MimicMotion 动作迁移视频
+### 5. MimicMotion 动作迁移视频
 
 ```bash
 curl "${BASE_URL}v1/videos" \
@@ -96,7 +110,7 @@ curl "${BASE_URL}v1/videos" \
   }'
 ```
 
-### 5. Latentsync 对口型视频
+### 6. Latentsync 对口型视频
 
 ```bash
 curl "${BASE_URL}v1/videos" \
@@ -109,7 +123,7 @@ curl "${BASE_URL}v1/videos" \
   }'
 ```
 
-### 6. IndexTTS 声音复刻
+### 7. IndexTTS 声音复刻
 
 ```bash
 curl "${BASE_URL}v1/audio/speech" \
@@ -187,6 +201,7 @@ curl "${BASE_URL}v1/videos" \
 
 | 模型名 | 文件字段 |
 | --- | --- |
+| `aipdd-flux-gguf` | `image` |
 | `aipdd-wan2.2-wanx` | `image` |
 | `aipdd-wan2.2-animater` | `load_video` |
 | `aipdd-mimic-motion` | `motion_video`、`appearance_image` |

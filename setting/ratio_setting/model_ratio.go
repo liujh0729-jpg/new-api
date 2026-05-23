@@ -309,6 +309,7 @@ var defaultModelPrice = map[string]float64{
 	"veo-3.1-generate-preview":       0.4,
 	"veo-3.1-fast-generate-preview":  0.15,
 	"aipdd-flux-gguf":                0,
+	"aipdd-flux-gguf-t2i":            0,
 	"aipdd-wan2.2-wanx":              0.02 / USD2RMB,
 	"aipdd-wan2.2-animater":          0.02,
 	"aipdd-mimic-motion":             0,

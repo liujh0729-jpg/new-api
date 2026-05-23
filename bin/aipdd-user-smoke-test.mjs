@@ -78,13 +78,25 @@ async function main() {
 function buildTests() {
   return [
     {
-      name: 'flux',
+      name: 'flux-i2i',
       model: 'aipdd-flux-gguf',
+      createPath: '/v1/images/generations',
+      fetchPath: (taskId) => `/v1/images/generations/${encodeURIComponent(taskId)}`,
+      requiredAssets: ['imageUrl'],
+      body: {
+        model: 'aipdd-flux-gguf',
+        image: config.imageUrl,
+        prompt: config.prompt,
+      },
+    },
+    {
+      name: 'flux-t2i',
+      model: 'aipdd-flux-gguf-t2i',
       createPath: '/v1/images/generations',
       fetchPath: (taskId) => `/v1/images/generations/${encodeURIComponent(taskId)}`,
       requiredAssets: [],
       body: {
-        model: 'aipdd-flux-gguf',
+        model: 'aipdd-flux-gguf-t2i',
         prompt: config.prompt,
       },
     },
@@ -398,6 +410,6 @@ Environment variables:
 Options:
   --no-poll                        Only create tasks, do not poll completion
   --skip-missing-assets            Skip tests whose required asset URLs are missing
-  --only flux,wanx                 Run selected tests only
+  --only flux-i2i,flux-t2i,wanx    Run selected tests only
 `);
 }
