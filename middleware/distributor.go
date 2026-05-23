@@ -90,7 +90,7 @@ func Distribute() func(c *gin.Context) {
 						return
 					}
 					if playgroundRequest.Group != "" {
-						if !service.GroupInUserUsableGroups(usingGroup, playgroundRequest.Group) && playgroundRequest.Group != usingGroup {
+						if !isPlaygroundGroupOverrideAllowed(usingGroup, playgroundRequest.Group) {
 							abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorGroupAccessDenied))
 							return
 						}
@@ -176,6 +176,16 @@ func getModelFromRequest(c *gin.Context) (*ModelRequest, error) {
 		return nil, errors.New(i18n.T(c, i18n.MsgDistributorInvalidRequest, map[string]any{"Error": err.Error()}))
 	}
 	return &modelRequest, nil
+}
+
+func isPlaygroundGroupOverrideAllowed(userGroup, requestedGroup string) bool {
+	if requestedGroup == "" || requestedGroup == userGroup {
+		return true
+	}
+	if requestedGroup == "auto" {
+		return len(service.GetUserAutoGroup(userGroup)) > 0
+	}
+	return service.GroupInUserUsableGroups(userGroup, requestedGroup)
 }
 
 func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {

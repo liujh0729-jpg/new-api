@@ -7,7 +7,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/QuantumNous/new-api/setting"
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/require"
 )
 
 func TestGetModelRequestReadsMultipartImageGenerationModel(t *testing.T) {
@@ -38,6 +40,35 @@ func TestGetModelRequestReadsMultipartAudioSpeechModel(t *testing.T) {
 	if modelRequest.Model != "aipdd-indextts" {
 		t.Fatalf("unexpected model: %q", modelRequest.Model)
 	}
+}
+
+func TestPlaygroundGroupOverrideAllowsAutoWhenUserHasAutoGroup(t *testing.T) {
+	restoreGroupSettings(t)
+	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"默认分组"}`))
+	require.NoError(t, setting.UpdateAutoGroupsByJsonString(`["default"]`))
+
+	require.True(t, isPlaygroundGroupOverrideAllowed("default", "auto"))
+	require.True(t, isPlaygroundGroupOverrideAllowed("default", "default"))
+	require.False(t, isPlaygroundGroupOverrideAllowed("default", "vip"))
+}
+
+func TestPlaygroundGroupOverrideRejectsAutoWithoutUsableAutoGroup(t *testing.T) {
+	restoreGroupSettings(t)
+	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"默认分组"}`))
+	require.NoError(t, setting.UpdateAutoGroupsByJsonString(`["vip"]`))
+
+	require.False(t, isPlaygroundGroupOverrideAllowed("default", "auto"))
+}
+
+func restoreGroupSettings(t *testing.T) {
+	t.Helper()
+
+	originalAutoGroups := setting.AutoGroups2JsonString()
+	originalUserUsableGroups := setting.UserUsableGroups2JSONString()
+	t.Cleanup(func() {
+		require.NoError(t, setting.UpdateAutoGroupsByJsonString(originalAutoGroups))
+		require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(originalUserUsableGroups))
+	})
 }
 
 func newMultipartModelRequest(t *testing.T, path, model string) *gin.Context {
