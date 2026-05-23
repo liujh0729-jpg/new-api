@@ -358,11 +358,30 @@ func TestGetUserModelsFiltersImageEndpointForPlayground(t *testing.T) {
 		Type:   constant.ChannelTypeOpenAI,
 		Key:    "openai-test-key",
 		Name:   "openai",
-		Models: "gpt-image-1,gpt-4o",
+		Models: "gpt-image-1,gpt-4o,custom-t2i,custom-img2img",
 		Status: common.ChannelStatusEnabled,
 		Group:  "default",
 	}
 	require.NoError(t, openAIChannel.Insert())
+
+	imageEndpoints, err := common.Marshal(map[string]string{
+		string(constant.EndpointTypeImageGeneration): "/v1/images/generations",
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.Create(&model.Model{
+		ModelName: "custom-t2i",
+		Tags:      "文生图",
+		Endpoints: string(imageEndpoints),
+		Status:    1,
+		NameRule:  model.NameRuleExact,
+	}).Error)
+	require.NoError(t, db.Create(&model.Model{
+		ModelName: "custom-img2img",
+		Tags:      "图生图",
+		Endpoints: string(imageEndpoints),
+		Status:    1,
+		NameRule:  model.NameRuleExact,
+	}).Error)
 
 	require.NoError(t, db.Create(&model.Channel{
 		Type:   constant.ChannelTypeAIPDD,
@@ -385,8 +404,10 @@ func TestGetUserModelsFiltersImageEndpointForPlayground(t *testing.T) {
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
 	require.True(t, payload.Success)
 	require.Contains(t, payload.Data, "gpt-image-1")
-	require.Contains(t, payload.Data, constant.AIPDDModelFluxGGUF)
+	require.Contains(t, payload.Data, "custom-t2i")
 	require.Contains(t, payload.Data, constant.AIPDDModelFluxGGUFT2I)
+	require.NotContains(t, payload.Data, "custom-img2img")
+	require.NotContains(t, payload.Data, constant.AIPDDModelFluxGGUF)
 	require.NotContains(t, payload.Data, "gpt-4o")
 	require.NotContains(t, payload.Data, constant.AIPDDModelIndexTTS)
 }
