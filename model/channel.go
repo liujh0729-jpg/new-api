@@ -274,6 +274,37 @@ func (channel *Channel) ApplyDefaultModels() {
 	}
 }
 
+func (channel *Channel) BackfillAIPDDDefaultModels() bool {
+	if channel.Type != constant.ChannelTypeAIPDD {
+		return false
+	}
+	models := make([]string, 0, len(constant.AIPDDTaskModelList))
+	seen := make(map[string]bool, len(constant.AIPDDTaskModelList))
+	changed := false
+	for _, modelName := range channel.GetModels() {
+		modelName = strings.TrimSpace(modelName)
+		if modelName == "" || seen[modelName] {
+			changed = true
+			continue
+		}
+		models = append(models, modelName)
+		seen[modelName] = true
+	}
+	for _, modelName := range constant.AIPDDTaskModelList {
+		if seen[modelName] {
+			continue
+		}
+		models = append(models, modelName)
+		seen[modelName] = true
+		changed = true
+	}
+	if !changed {
+		return false
+	}
+	channel.Models = strings.Join(models, ",")
+	return true
+}
+
 func getAIPDDKeyFromEnv() string {
 	return strings.TrimSpace(os.Getenv(aipddAPIKeyEnvName))
 }
@@ -318,8 +349,7 @@ func ensureAIPDDChannelMetadataDefaults(channel *Channel) (bool, error) {
 		updates["name"] = aipddEnvChannelName
 		channel.Name = aipddEnvChannelName
 	}
-	if strings.TrimSpace(channel.Models) == "" {
-		channel.ApplyDefaultModels()
+	if channel.BackfillAIPDDDefaultModels() {
 		updates["models"] = channel.Models
 		modelsChanged = true
 	}
