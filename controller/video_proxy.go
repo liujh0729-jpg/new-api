@@ -5,8 +5,10 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"net/url"
+	"path"
 	"strings"
 	"time"
 
@@ -122,7 +124,7 @@ func VideoProxy(c *gin.Context) {
 	}
 
 	if strings.HasPrefix(videoURL, "data:") {
-		if err := writeVideoDataURL(c, videoURL); err != nil {
+		if err := writeVideoDataURL(c, taskID, videoURL); err != nil {
 			logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to decode video data URL for task %s: %s", taskID, err.Error()))
 			videoProxyError(c, http.StatusBadGateway, "server_error", "Failed to fetch video content")
 		}
@@ -164,6 +166,7 @@ func VideoProxy(c *gin.Context) {
 		}
 	}
 
+	setVideoProxyContentHeaders(c, taskID, videoURL, resp.Header.Get("Content-Type"))
 	c.Writer.Header().Set("Cache-Control", "public, max-age=86400")
 	c.Writer.WriteHeader(resp.StatusCode)
 	if _, err = io.Copy(c.Writer, resp.Body); err != nil {
@@ -171,7 +174,7 @@ func VideoProxy(c *gin.Context) {
 	}
 }
 
-func writeVideoDataURL(c *gin.Context, dataURL string) error {
+func writeVideoDataURL(c *gin.Context, taskID string, dataURL string) error {
 	parts := strings.SplitN(dataURL, ",", 2)
 	if len(parts) != 2 {
 		return fmt.Errorf("invalid data url")
@@ -197,9 +200,145 @@ func writeVideoDataURL(c *gin.Context, dataURL string) error {
 		}
 	}
 
-	c.Writer.Header().Set("Content-Type", mimeType)
+	setVideoProxyContentHeaders(c, taskID, "", mimeType)
 	c.Writer.Header().Set("Cache-Control", "public, max-age=86400")
 	c.Writer.WriteHeader(http.StatusOK)
 	_, err = c.Writer.Write(videoBytes)
 	return err
+}
+
+func setVideoProxyContentHeaders(c *gin.Context, taskID, videoURL, contentType string) {
+	contentType = normalizeVideoContentType(contentType, videoURL)
+	c.Writer.Header().Set("Content-Type", contentType)
+	c.Writer.Header().Set("Content-Disposition", mime.FormatMediaType("inline", map[string]string{
+		"filename": videoProxyFilename(taskID, videoURL, contentType),
+	}))
+}
+
+func normalizeVideoContentType(contentType, videoURL string) string {
+	contentType = strings.TrimSpace(contentType)
+	mediaType := contentType
+	if parsed, _, err := mime.ParseMediaType(contentType); err == nil {
+		mediaType = parsed
+	}
+	if mediaType != "" && !strings.EqualFold(mediaType, "application/octet-stream") {
+		return contentType
+	}
+	if inferred := videoContentTypeFromURL(videoURL); inferred != "" {
+		return inferred
+	}
+	return "video/mp4"
+}
+
+func videoProxyFilename(taskID, videoURL, contentType string) string {
+	filename := sanitizeDownloadFilename(taskID)
+	if filename == "" {
+		filename = "video"
+	}
+	if path.Ext(filename) != "" {
+		return filename
+	}
+	ext := videoExtensionFromURL(videoURL)
+	if ext == "" {
+		ext = videoExtensionFromContentType(contentType)
+	}
+	if ext == "" {
+		ext = ".mp4"
+	}
+	return filename + ext
+}
+
+func sanitizeDownloadFilename(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	replacer := strings.NewReplacer(
+		"/", "_",
+		"\\", "_",
+		":", "_",
+		"*", "_",
+		"?", "_",
+		`"`, "_",
+		"<", "_",
+		">", "_",
+		"|", "_",
+		"\r", "_",
+		"\n", "_",
+	)
+	return strings.Trim(replacer.Replace(value), " .")
+}
+
+func videoContentTypeFromURL(rawURL string) string {
+	switch videoExtensionFromURL(rawURL) {
+	case ".mp4", ".m4v":
+		return "video/mp4"
+	case ".mov":
+		return "video/quicktime"
+	case ".webm":
+		return "video/webm"
+	case ".mpeg", ".mpg":
+		return "video/mpeg"
+	case ".avi":
+		return "video/x-msvideo"
+	case ".mkv":
+		return "video/x-matroska"
+	default:
+		return ""
+	}
+}
+
+func videoExtensionFromURL(rawURL string) string {
+	rawURL = strings.TrimSpace(rawURL)
+	if rawURL == "" {
+		return ""
+	}
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return ""
+	}
+	ext := strings.ToLower(path.Ext(parsed.Path))
+	if isKnownVideoExtension(ext) {
+		return ext
+	}
+	return ""
+}
+
+func videoExtensionFromContentType(contentType string) string {
+	mediaType, _, err := mime.ParseMediaType(strings.TrimSpace(contentType))
+	if err != nil {
+		mediaType = strings.TrimSpace(contentType)
+	}
+	switch strings.ToLower(mediaType) {
+	case "video/mp4":
+		return ".mp4"
+	case "video/quicktime":
+		return ".mov"
+	case "video/webm":
+		return ".webm"
+	case "video/mpeg":
+		return ".mpg"
+	case "video/x-msvideo":
+		return ".avi"
+	case "video/x-matroska":
+		return ".mkv"
+	}
+	extensions, err := mime.ExtensionsByType(mediaType)
+	if err != nil || len(extensions) == 0 {
+		return ""
+	}
+	ext := strings.ToLower(extensions[0])
+	if isKnownVideoExtension(ext) {
+		return ext
+	}
+	return ""
+}
+
+func isKnownVideoExtension(ext string) bool {
+	switch strings.ToLower(ext) {
+	case ".mp4", ".m4v", ".mov", ".webm", ".mpeg", ".mpg", ".avi", ".mkv":
+		return true
+	default:
+		return false
+	}
 }

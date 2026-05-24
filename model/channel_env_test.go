@@ -105,6 +105,46 @@ func TestEnsureAIPDDChannelDefaultsBackfillsMissingCatalogModels(t *testing.T) {
 	}
 }
 
+func TestFixAbilityBackfillsAIPDDMissingCatalogModels(t *testing.T) {
+	truncateTables(t)
+
+	legacyModels := make([]string, 0, len(constant.AIPDDTaskModelList)-1)
+	for _, modelName := range constant.AIPDDTaskModelList {
+		if modelName != constant.AIPDDModelFluxGGUFT2I {
+			legacyModels = append(legacyModels, modelName)
+		}
+	}
+	channel := Channel{
+		Type:   constant.ChannelTypeAIPDD,
+		Key:    "aipdd-test-key",
+		Name:   "AIPDD",
+		Status: common.ChannelStatusEnabled,
+		Group:  "default",
+		Models: strings.Join(legacyModels, ","),
+	}
+	require.NoError(t, DB.Create(&channel).Error)
+	require.NoError(t, channel.AddAbilities(nil))
+
+	success, fails, err := FixAbility()
+
+	require.NoError(t, err)
+	require.Equal(t, 1, success)
+	require.Equal(t, 0, fails)
+
+	var stored Channel
+	require.NoError(t, DB.First(&stored, channel.Id).Error)
+	require.Contains(t, stored.GetModels(), constant.AIPDDModelFluxGGUFT2I)
+
+	var abilities []Ability
+	require.NoError(t, DB.Where("channel_id = ?", channel.Id).Find(&abilities).Error)
+	require.Len(t, abilities, len(constant.AIPDDTaskModelList))
+	abilityModels := map[string]bool{}
+	for _, ability := range abilities {
+		abilityModels[ability.Model] = true
+	}
+	require.True(t, abilityModels[constant.AIPDDModelFluxGGUFT2I])
+}
+
 func TestEnsureAIPDDChannelDefaultsNormalizesSmokeTestChannel(t *testing.T) {
 	truncateTables(t)
 

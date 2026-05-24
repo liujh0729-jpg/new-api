@@ -291,6 +291,10 @@ func FixAbility() (int, int, error) {
 	}
 	defer fixLock.Unlock()
 
+	if err := EnsureAIPDDChannelDefaults(); err != nil {
+		return 0, 0, err
+	}
+
 	// truncate abilities table
 	if common.UsingSQLite {
 		err := DB.Exec("DELETE FROM abilities").Error
