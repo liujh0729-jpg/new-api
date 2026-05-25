@@ -14,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting/config"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/require"
@@ -524,6 +525,56 @@ func TestListModelsIncludesTieredBillingModel(t *testing.T) {
 	require.True(t, ok)
 	require.Empty(t, missingExprPricing.BillingMode)
 	require.Empty(t, missingExprPricing.BillingExpr)
+}
+
+func TestListModelsIncludesDefaultPricedAIPDDModelWhenModelPriceOptionIsStale(t *testing.T) {
+	withSelfUseModeDisabled(t)
+	savedModelPrice := ratio_setting.ModelPrice2JSONString()
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(savedModelPrice))
+		model.InvalidatePricingCache()
+	})
+
+	staleModelPrices := map[string]float64{}
+	for modelName, price := range ratio_setting.GetDefaultModelPriceMap() {
+		if modelName == constant.AIPDDModelFluxGGUFT2I {
+			continue
+		}
+		staleModelPrices[modelName] = price
+	}
+	staleBytes, err := common.Marshal(staleModelPrices)
+	require.NoError(t, err)
+	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(string(staleBytes)))
+
+	db := setupModelListControllerTestDB(t)
+	model.InvalidatePricingCache()
+	require.NoError(t, db.Create(&model.User{
+		Id:       1005,
+		Username: "model-list-aipdd-user",
+		Password: "password",
+		Group:    "default",
+		Status:   common.UserStatusEnabled,
+	}).Error)
+
+	channel := &model.Channel{
+		Type:   constant.ChannelTypeAIPDD,
+		Key:    "aipdd-test-key",
+		Name:   "aipdd",
+		Models: strings.Join(constant.AIPDDTaskModelList, ","),
+		Status: common.ChannelStatusEnabled,
+		Group:  "default",
+	}
+	require.NoError(t, channel.Insert())
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	ctx.Set("id", 1005)
+
+	ListModels(ctx, constant.ChannelTypeOpenAI)
+
+	ids := decodeListModelsResponse(t, recorder)
+	require.Contains(t, ids, constant.AIPDDModelFluxGGUFT2I)
 }
 
 func TestListModelsTokenLimitIncludesTieredBillingModel(t *testing.T) {

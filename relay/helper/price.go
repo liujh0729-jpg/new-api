@@ -228,6 +228,9 @@ func HasModelBillingConfig(modelName string) bool {
 	if _, ok := ratio_setting.GetModelPrice(modelName, false); ok {
 		return true
 	}
+	if _, ok := ratio_setting.GetDefaultModelPriceMap()[modelName]; ok {
+		return true
+	}
 	if _, ok, _ := ratio_setting.GetModelRatio(modelName); ok {
 		return true
 	}
