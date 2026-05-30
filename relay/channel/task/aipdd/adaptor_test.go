@@ -92,7 +92,7 @@ func TestConvertToRequestPayloadForAllAIPDDModels(t *testing.T) {
 	}{
 		{
 			name:       ModelFluxGGUF,
-			wantScript: "FLUX_GGUF",
+			wantScript: "FLUX-GGUF-V2",
 			req: relaycommon.TaskSubmitReq{
 				Model:  ModelFluxGGUF,
 				Prompt: "a cinematic robot",
@@ -102,7 +102,7 @@ func TestConvertToRequestPayloadForAllAIPDDModels(t *testing.T) {
 		},
 		{
 			name:       ModelFluxGGUFT2I,
-			wantScript: "FLUX-GGUF-T2I",
+			wantScript: "FLUX-GGUF-T2I-V2",
 			wantID:     "aa6e64ce-bc73-4295-b78a-a269e5d3c1a9",
 			req: relaycommon.TaskSubmitReq{
 				Model:  ModelFluxGGUFT2I,
@@ -295,7 +295,7 @@ func TestBuildRequestBodyUploadsMultipartFileToAIPDDOSS(t *testing.T) {
 	if err := common.Unmarshal(bodyBytes, &payload); err != nil {
 		t.Fatalf("unmarshal payload: %v", err)
 	}
-	if payload.TaskCost != 5000 {
+	if payload.TaskCost != 2000 {
 		t.Fatalf("unexpected task_cost: %v", payload.TaskCost)
 	}
 	var content map[string]any
@@ -363,14 +363,22 @@ func TestWan22WanxRejectsUnsupportedDuration(t *testing.T) {
 	}
 }
 
-func TestFluxGGUFRequiresImage(t *testing.T) {
+func TestFluxGGUFAllowsPromptOnly(t *testing.T) {
 	adaptor := &TaskAdaptor{}
-	_, err := adaptor.convertToRequestPayload(relaycommon.TaskSubmitReq{
+	payload, err := adaptor.convertToRequestPayload(relaycommon.TaskSubmitReq{
 		Model:  ModelFluxGGUF,
 		Prompt: "a cinematic robot",
 	}, relayInfoWithModel(ModelFluxGGUF))
-	if err == nil {
-		t.Fatal("expected image validation error")
+	if err != nil {
+		t.Fatalf("convertToRequestPayload returned error: %v", err)
+	}
+
+	var content map[string]any
+	if err := common.Unmarshal([]byte(payload.TaskContent), &content); err != nil {
+		t.Fatalf("unmarshal task content: %v", err)
+	}
+	if got := anyToString(content["positive_prompt"]); got != "a cinematic robot" {
+		t.Fatalf("unexpected positive_prompt: got %q content=%#v", got, content)
 	}
 }
 

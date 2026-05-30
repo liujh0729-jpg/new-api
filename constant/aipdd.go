@@ -103,11 +103,11 @@ var AIPDDCapabilities = []AIPDDCapability{
 	{
 		ModelName:         AIPDDModelFluxGGUF,
 		ScriptID:          "c1d4d41c-0d5a-4bf8-bfdb-548d7a710759",
-		ScriptCode:        "FLUX_GGUF",
-		TaskCost:          0,
+		ScriptCode:        "FLUX-GGUF-V2",
+		TaskCost:          200,
 		WorkflowParamKeys: []string{"image", "positive_prompt", "negative_prompt"},
 		RequiredWorkflowParams: map[string]bool{
-			"image":           true,
+			"image":           false,
 			"positive_prompt": false,
 			"negative_prompt": false,
 		},
@@ -125,8 +125,8 @@ var AIPDDCapabilities = []AIPDDCapability{
 	{
 		ModelName:         AIPDDModelFluxGGUFT2I,
 		ScriptID:          "aa6e64ce-bc73-4295-b78a-a269e5d3c1a9",
-		ScriptCode:        "FLUX-GGUF-T2I",
-		TaskCost:          0,
+		ScriptCode:        "FLUX-GGUF-T2I-V2",
+		TaskCost:          200,
 		WorkflowParamKeys: []string{"text"},
 		RequiredWorkflowParams: map[string]bool{
 			"text": true,
@@ -141,7 +141,7 @@ var AIPDDCapabilities = []AIPDDCapability{
 		ModelName:         AIPDDModelWan22Wanx,
 		ScriptID:          "3eae5a25-98cf-4658-aa9f-c48bb41043a6",
 		ScriptCode:        "aipdd_wan2.2_wanx",
-		TaskCost:          5000,
+		TaskCost:          2000,
 		WorkflowParamKeys: []string{"image", "prompt", "positive_prompt", "duration"},
 		RequiredWorkflowParams: map[string]bool{
 			"image":           true,
@@ -165,7 +165,7 @@ var AIPDDCapabilities = []AIPDDCapability{
 		ModelName:  AIPDDModelWan22Animater,
 		ScriptID:   "4f1401c1-9791-406e-8ce2-4808f9b95d9c",
 		ScriptCode: "aipdd_Wan2.2-Animater",
-		TaskCost:   10000,
+		TaskCost:   2000,
 		WorkflowParamKeys: []string{
 			"load_video",
 			"filename",
@@ -197,7 +197,7 @@ var AIPDDCapabilities = []AIPDDCapability{
 		ModelName:         AIPDDModelMimicMotion,
 		ScriptID:          "0628aec4-ab5e-4b3f-a453-760bcb8bfeaf",
 		ScriptCode:        "aipdd_mimic_motion",
-		TaskCost:          0,
+		TaskCost:          2000,
 		WorkflowParamKeys: []string{"motion_video", "appearance_image"},
 		RequiredWorkflowParams: map[string]bool{
 			"motion_video":     true,
@@ -218,7 +218,7 @@ var AIPDDCapabilities = []AIPDDCapability{
 		ModelName:         AIPDDModelLatentsync15,
 		ScriptID:          "57971711-0255-46b1-893a-10d7216f42a0",
 		ScriptCode:        "aipdd_latentsync1.5",
-		TaskCost:          0,
+		TaskCost:          1000,
 		WorkflowParamKeys: []string{"video", "filename", "LoadAudio"},
 		RequiredWorkflowParams: map[string]bool{
 			"video":     true,
@@ -241,7 +241,7 @@ var AIPDDCapabilities = []AIPDDCapability{
 		ModelName:         AIPDDModelIndexTTS,
 		ScriptID:          "eba39b43-6c3b-4930-b0c9-a492706fa464",
 		ScriptCode:        "aipdd_IndexTTS",
-		TaskCost:          5000,
+		TaskCost:          1000,
 		WorkflowParamKeys: []string{"audio", "emotion_audio", "text"},
 		RequiredWorkflowParams: map[string]bool{
 			"audio":         true,

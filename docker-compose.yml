@@ -23,7 +23,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: new-api:aipdd
+    image: 1317b90/new-api-aipdd:latest
     container_name: new-api
     restart: always
     command: --log-dir /app/logs

@@ -23,7 +23,7 @@
   <a href="https://github.com/users/Calcium-Ion/packages/container/package/new-api">
     <img src="https://img.shields.io/badge/docker-ghcr.io-blue" alt="docker">
   </a>
-  <a href="https://hub.docker.com/r/CalciumIon/new-api">
+  <a href="https://hub.docker.com/r/1317b90/new-api-aipdd">
     <img src="https://img.shields.io/badge/docker-dockerHub-blue" alt="docker">
   </a>
   <a href="https://goreportcard.com/report/github.com/Calcium-Ion/new-api">
@@ -102,8 +102,8 @@
 ## 🚀 Quick Start
 
 > [!TIP]
-> **Latest Docker image:** `calciumion/new-api:latest`
-> **AIPDD one-click pull:** `docker pull crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest`
+> **Latest Docker image:** `1317b90/new-api-aipdd:latest`
+> **Docker Hub pull:** `docker pull 1317b90/new-api-aipdd:latest`
 
 ### Deployment Prerequisites
 
@@ -144,11 +144,8 @@ docker-compose up -d
 <summary><strong>Using Docker Commands</strong></summary>
 
 ```bash
-# Pull the latest image
-docker pull calciumion/new-api:latest
-
-# One-click pull from the AIPDD Alibaba Cloud registry
-docker pull crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest
+# Pull the latest AIPDD image
+docker pull 1317b90/new-api-aipdd:latest
 
 # Run the AIPDD image and auto-configure the AIPDD channel
 # Register at https://app.aipdd.work to obtain AIPDD_API_KEY first
@@ -157,14 +154,14 @@ docker run --name new-api -d --restart always \
   -e TZ=Asia/Shanghai \
   -e AIPDD_API_KEY="your-aipdd-api-key" \
   -v ./data:/data \
-  crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest
+  1317b90/new-api-aipdd:latest
 
 # Using SQLite (default)
 docker run --name new-api -d --restart always \
   -p 3000:3000 \
   -e TZ=Asia/Shanghai \
   -v ./data:/data \
-  calciumion/new-api:latest
+  1317b90/new-api-aipdd:latest
 
 # Using MySQL
 docker run --name new-api -d --restart always \
@@ -172,7 +169,7 @@ docker run --name new-api -d --restart always \
   -e SQL_DSN="root:123456@tcp(localhost:3306)/oneapi" \
   -e TZ=Asia/Shanghai \
   -v ./data:/data \
-  calciumion/new-api:latest
+  1317b90/new-api-aipdd:latest
 ```
 
 > **💡 Tip:** `-v ./data:/data` will save data in the `data` folder of the current directory, you can also change it to an absolute path like `-v /your/custom/path:/data`

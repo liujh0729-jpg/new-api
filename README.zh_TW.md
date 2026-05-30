@@ -21,7 +21,7 @@
   <a href="https://github.com/Calcium-Ion/new-api/releases/latest">
     <img src="https://img.shields.io/github/v/release/Calcium-Ion/new-api?color=brightgreen&include_prereleases" alt="release">
   </a>
-  <a href="https://hub.docker.com/r/CalciumIon/new-api">
+  <a href="https://hub.docker.com/r/1317b90/new-api-aipdd">
     <img src="https://img.shields.io/badge/docker-dockerHub-blue" alt="docker">
   </a>
   <a href="https://goreportcard.com/report/github.com/Calcium-Ion/new-api">
@@ -107,8 +107,8 @@
 ## 🚀 快速開始
 
 > [!TIP]
-> **最新版 Docker 鏡像：** `calciumion/new-api:latest`
-> **AIPDD 阿里雲一鍵拉取：** `docker pull crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest`
+> **最新版 Docker 鏡像：** `1317b90/new-api-aipdd:latest`
+> **Docker Hub 拉取：** `docker pull 1317b90/new-api-aipdd:latest`
 
 ### 部署準備
 
@@ -149,11 +149,8 @@ docker-compose up -d
 <summary><strong>使用 Docker 命令</strong></summary>
 
 ```bash
-# 拉取最新鏡像
-docker pull calciumion/new-api:latest
-
-# 也可以透過阿里雲 AIPDD 鏡像一鍵拉取
-docker pull crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest
+# 拉取最新 AIPDD 鏡像
+docker pull 1317b90/new-api-aipdd:latest
 
 # 使用 AIPDD 鏡像並自動配置 AIPDD 渠道
 # AIPDD_API_KEY 請先到 https://app.aipdd.work 註冊取得
@@ -162,14 +159,14 @@ docker run --name new-api -d --restart always \
   -e TZ=Asia/Shanghai \
   -e AIPDD_API_KEY="your-aipdd-api-key" \
   -v ./data:/data \
-  crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest
+  1317b90/new-api-aipdd:latest
 
 # 使用 SQLite（預設）
 docker run --name new-api -d --restart always \
   -p 3000:3000 \
   -e TZ=Asia/Shanghai \
   -v ./data:/data \
-  calciumion/new-api:latest
+  1317b90/new-api-aipdd:latest
 
 # 使用 MySQL
 docker run --name new-api -d --restart always \
@@ -177,7 +174,7 @@ docker run --name new-api -d --restart always \
   -e SQL_DSN="root:123456@tcp(localhost:3306)/oneapi" \
   -e TZ=Asia/Shanghai \
   -v ./data:/data \
-  calciumion/new-api:latest
+  1317b90/new-api-aipdd:latest
 ```
 
 > **💡 提示：** `-v ./data:/data` 會將數據保存在當前目錄的 `data` 資料夾中，你也可以改為絕對路徑如 `-v /your/custom/path:/data`
