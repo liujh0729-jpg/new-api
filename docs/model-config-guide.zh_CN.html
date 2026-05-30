@@ -1,0 +1,936 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>模型配置简明教程</title>
+  <style>
+    :root {
+      --bg: #f6f7f4;
+      --paper: #fffef9;
+      --ink: #20231f;
+      --muted: #62685f;
+      --line: #d8ddd2;
+      --line-strong: #b9c2b3;
+      --green: #0f7b5f;
+      --green-soft: #dceee7;
+      --red: #b83b3b;
+      --red-soft: #f5dfdd;
+      --yellow: #f2c14e;
+      --code: #16231f;
+      --code-line: #263932;
+      --shadow: 0 18px 50px rgba(35, 45, 35, 0.11);
+      --radius: 8px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      background:
+        linear-gradient(90deg, rgba(15, 123, 95, 0.08) 1px, transparent 1px),
+        linear-gradient(0deg, rgba(15, 123, 95, 0.08) 1px, transparent 1px),
+        var(--bg);
+      background-size: 32px 32px;
+      color: var(--ink);
+      font-family: "Noto Serif SC", "Source Han Serif SC", "Songti SC", Georgia, serif;
+      letter-spacing: 0;
+      line-height: 1.7;
+    }
+
+    a {
+      color: var(--green);
+      text-decoration-thickness: 1px;
+      text-underline-offset: 3px;
+    }
+
+    .shell {
+      width: min(1180px, calc(100vw - 32px));
+      margin: 0 auto;
+    }
+
+    header {
+      padding: 42px 0 28px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(246, 247, 244, 0.84);
+      backdrop-filter: blur(14px);
+      position: sticky;
+      top: 0;
+      z-index: 20;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 24px;
+    }
+
+    h1 {
+      margin: 0;
+      max-width: 760px;
+      font-size: clamp(34px, 5vw, 68px);
+      line-height: 0.98;
+      font-weight: 900;
+    }
+
+    .subtitle {
+      margin: 18px 0 0;
+      max-width: 760px;
+      color: var(--muted);
+      font-size: 17px;
+    }
+
+    .stamp {
+      min-width: 168px;
+      border: 2px solid var(--ink);
+      padding: 12px 14px;
+      box-shadow: 6px 6px 0 var(--yellow);
+      background: var(--paper);
+      text-align: center;
+      transform: rotate(1.5deg);
+    }
+
+    .stamp strong {
+      display: block;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 13px;
+      letter-spacing: 0;
+    }
+
+    .stamp span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      margin-top: 2px;
+    }
+
+    nav {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 24px;
+    }
+
+    nav a {
+      display: inline-flex;
+      align-items: center;
+      min-height: 36px;
+      padding: 6px 12px;
+      border: 1px solid var(--line-strong);
+      border-radius: 999px;
+      background: rgba(255, 254, 249, 0.74);
+      color: var(--ink);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 13px;
+      text-decoration: none;
+      transition: transform 160ms ease, border-color 160ms ease, background 160ms ease;
+    }
+
+    nav a:hover {
+      transform: translateY(-2px);
+      border-color: var(--green);
+      background: var(--green-soft);
+    }
+
+    main {
+      padding: 34px 0 70px;
+    }
+
+    section {
+      margin-top: 34px;
+      scroll-margin-top: 156px;
+    }
+
+    .section-head {
+      display: grid;
+      grid-template-columns: 92px 1fr;
+      gap: 18px;
+      align-items: start;
+      margin-bottom: 16px;
+    }
+
+    .num {
+      display: inline-grid;
+      place-items: center;
+      height: 52px;
+      border: 2px solid var(--ink);
+      border-radius: var(--radius);
+      background: var(--yellow);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-weight: 800;
+      box-shadow: 4px 4px 0 var(--ink);
+    }
+
+    h2 {
+      margin: 0;
+      font-size: clamp(24px, 3vw, 38px);
+      line-height: 1.15;
+    }
+
+    .lead {
+      margin: 8px 0 0;
+      color: var(--muted);
+      font-size: 16px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(12, 1fr);
+      gap: 16px;
+    }
+
+    .card,
+    .wide-card {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: rgba(255, 254, 249, 0.94);
+      box-shadow: var(--shadow);
+    }
+
+    .card {
+      grid-column: span 4;
+      padding: 18px;
+    }
+
+    .wide-card {
+      grid-column: 1 / -1;
+      padding: 20px;
+    }
+
+    h3 {
+      margin: 0 0 8px;
+      font-size: 21px;
+      line-height: 1.25;
+    }
+
+    h4 {
+      margin: 18px 0 8px;
+      font-size: 16px;
+    }
+
+    p {
+      margin: 0 0 12px;
+    }
+
+    ul,
+    ol {
+      margin: 10px 0 0;
+      padding-left: 22px;
+    }
+
+    li {
+      margin: 6px 0;
+    }
+
+    .tagrow {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin: 10px 0 0;
+    }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      min-height: 26px;
+      padding: 2px 9px;
+      border-radius: 999px;
+      background: var(--green-soft);
+      color: #0b5c49;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .tag.warn {
+      background: var(--red-soft);
+      color: var(--red);
+    }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 10px;
+      margin-top: 12px;
+    }
+
+    .step {
+      min-height: 132px;
+      padding: 14px;
+      border: 1px solid var(--line-strong);
+      border-radius: var(--radius);
+      background: var(--paper);
+      position: relative;
+    }
+
+    .step::after {
+      content: "";
+      position: absolute;
+      width: 18px;
+      height: 1px;
+      top: 28px;
+      right: -15px;
+      background: var(--line-strong);
+    }
+
+    .step:last-child::after {
+      display: none;
+    }
+
+    .step b {
+      display: block;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px;
+      color: var(--green);
+      margin-bottom: 8px;
+    }
+
+    .step strong {
+      display: block;
+      font-size: 16px;
+      line-height: 1.35;
+      margin-bottom: 7px;
+    }
+
+    .step span {
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .matrix {
+      width: 100%;
+      border-collapse: collapse;
+      overflow: hidden;
+      border-radius: var(--radius);
+      background: var(--paper);
+      font-size: 14px;
+    }
+
+    .matrix th,
+    .matrix td {
+      border-bottom: 1px solid var(--line);
+      padding: 11px 12px;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    .matrix th {
+      background: #e9eee4;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px;
+      color: #344037;
+    }
+
+    .matrix tr:last-child td {
+      border-bottom: 0;
+    }
+
+    code {
+      padding: 1px 5px;
+      border-radius: 5px;
+      background: #e8ede4;
+      color: #25342e;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.92em;
+    }
+
+    pre {
+      position: relative;
+      margin: 12px 0 0;
+      padding: 16px;
+      border-radius: var(--radius);
+      overflow: auto;
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.05), transparent),
+        var(--code);
+      color: #edf7f1;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 13px;
+      line-height: 1.55;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    }
+
+    pre code {
+      padding: 0;
+      background: transparent;
+      color: inherit;
+      font-size: inherit;
+    }
+
+    .copy {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 6px;
+      background: var(--code-line);
+      color: #edf7f1;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px;
+      padding: 5px 8px;
+      cursor: pointer;
+    }
+
+    .notice {
+      border-left: 5px solid var(--green);
+      padding: 14px 16px;
+      border-radius: 0 var(--radius) var(--radius) 0;
+      background: var(--green-soft);
+      color: #18372f;
+    }
+
+    .danger {
+      border-left-color: var(--red);
+      background: var(--red-soft);
+      color: #5d2020;
+    }
+
+    .checklist {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      padding: 0;
+      list-style: none;
+    }
+
+    .checklist li {
+      margin: 0;
+      padding: 12px 12px 12px 38px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--paper);
+      position: relative;
+    }
+
+    .checklist li::before {
+      content: "✓";
+      position: absolute;
+      left: 12px;
+      top: 11px;
+      width: 18px;
+      height: 18px;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      background: var(--green);
+      color: white;
+      font-size: 12px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+
+    .split {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+
+    footer {
+      padding: 26px 0 40px;
+      color: var(--muted);
+      border-top: 1px solid var(--line);
+      font-size: 14px;
+    }
+
+    @media (max-width: 900px) {
+      header {
+        position: static;
+      }
+
+      .topbar,
+      .section-head,
+      .split {
+        grid-template-columns: 1fr;
+        display: grid;
+      }
+
+      .stamp {
+        width: fit-content;
+      }
+
+      .card {
+        grid-column: 1 / -1;
+      }
+
+      .flow {
+        grid-template-columns: 1fr;
+      }
+
+      .step {
+        min-height: auto;
+      }
+
+      .step::after {
+        display: none;
+      }
+
+      .checklist {
+        grid-template-columns: 1fr;
+      }
+
+      section {
+        scroll-margin-top: 24px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="shell">
+      <div class="topbar">
+        <div>
+          <h1>模型配置简明教程</h1>
+          <p class="subtitle">面向 New API 管理员：把渠道、模型、端点、映射、计费配成一套稳定规则，减少调用失败和日志混乱。</p>
+        </div>
+        <div class="stamp" aria-label="文档版本">
+          <strong>ADMIN GUIDE</strong>
+          <span>渠道 / 模型 / 计费</span>
+        </div>
+      </div>
+      <nav aria-label="页面导航">
+        <a href="#principle">01 原则</a>
+        <a href="#workflow">02 流程</a>
+        <a href="#types">03 分类配置</a>
+        <a href="#aipdd">04 AIPDD</a>
+        <a href="#examples">05 调用示例</a>
+        <a href="#troubleshooting">06 排错</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="shell">
+    <section id="principle">
+      <div class="section-head">
+        <span class="num">01</span>
+        <div>
+          <h2>先记住一个标准</h2>
+          <p class="lead">对外模型名、上游模型名、调用端点、计费规则要各司其职，不要混在参数覆盖里。</p>
+        </div>
+      </div>
+      <div class="grid">
+        <article class="card">
+          <h3>渠道负责接上游</h3>
+          <p>渠道里配置供应商类型、Base URL、Key、分组和可用模型。这里的模型名建议使用平台对外暴露的稳定名称。</p>
+          <div class="tagrow">
+            <span class="tag">Channel</span>
+            <span class="tag">Base URL</span>
+            <span class="tag">API Key</span>
+          </div>
+        </article>
+        <article class="card">
+          <h3>映射负责改上游名</h3>
+          <p>如果对外叫 <code>doubao-seedance-2.0</code>，上游实际叫 <code>doubao-seedance-2-0-260128</code>，写到模型映射，不要写到参数覆盖。</p>
+          <div class="tagrow">
+            <span class="tag">Model Mapping</span>
+            <span class="tag warn">不要硬改 model</span>
+          </div>
+        </article>
+        <article class="card">
+          <h3>模型页负责能力</h3>
+          <p>模型管理里确认端点类型、可见分组、计费方式和价格。缺价格时容易出现扣费规则不存在或模型列表展示异常。</p>
+          <div class="tagrow">
+            <span class="tag">Endpoint</span>
+            <span class="tag">Pricing</span>
+            <span class="tag">Group</span>
+          </div>
+        </article>
+      </div>
+      <div class="wide-card" style="margin-top:16px">
+        <div class="notice danger">
+          <strong>参数覆盖只放通用、稳定、不会改变用户意图的参数。</strong>
+          不建议在参数覆盖里固定 <code>prompt</code>、<code>content</code>、<code>model</code>、用户素材地址。这样会导致所有请求都被改成同一个内容，日志也会变得难判断。
+        </div>
+      </div>
+    </section>
+
+    <section id="workflow">
+      <div class="section-head">
+        <span class="num">02</span>
+        <div>
+          <h2>管理员配置流程</h2>
+          <p class="lead">每加一个模型都按这五步走，能覆盖标准大模型、图片、视频和语音。</p>
+        </div>
+      </div>
+      <div class="wide-card">
+        <div class="flow">
+          <div class="step">
+            <b>STEP 1</b>
+            <strong>新建渠道</strong>
+            <span>选择正确渠道类型，填写 Base URL、Key、分组。</span>
+          </div>
+          <div class="step">
+            <b>STEP 2</b>
+            <strong>填写模型列表</strong>
+            <span>只填对外模型名，多个模型用英文逗号分隔。</span>
+          </div>
+          <div class="step">
+            <b>STEP 3</b>
+            <strong>设置模型映射</strong>
+            <span>只有对外名和上游名不一致时才需要映射。</span>
+          </div>
+          <div class="step">
+            <b>STEP 4</b>
+            <strong>补模型元数据</strong>
+            <span>在模型管理里确认端点、供应商、分组、状态。</span>
+          </div>
+          <div class="step">
+            <b>STEP 5</b>
+            <strong>补计费规则</strong>
+            <span>聊天多用倍率，图片、视频、语音多用按次或按秒。</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="types">
+      <div class="section-head">
+        <span class="num">03</span>
+        <div>
+          <h2>不同模型怎么配</h2>
+          <p class="lead">重点是选对端点类型。端点不对时，即使模型名存在，也会调用失败。</p>
+        </div>
+      </div>
+      <div class="wide-card">
+        <table class="matrix">
+          <thead>
+            <tr>
+              <th>类型</th>
+              <th>模型页端点</th>
+              <th>用户调用接口</th>
+              <th>配置要点</th>
+              <th>常见错误</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>标准大模型</strong><br>聊天、工具调用、文本生成</td>
+              <td><code>openai</code> 或供应商对应聊天端点</td>
+              <td><code>POST /v1/chat/completions</code></td>
+              <td>模型列表填对外名；如上游名不同，用模型映射；计费通常用模型倍率。</td>
+              <td>把聊天模型拿去调 <code>/v1/responses</code>，但当前渠道适配器不支持。</td>
+            </tr>
+            <tr>
+              <td><strong>文生图</strong><br>文本生成图片</td>
+              <td><code>image-generation</code></td>
+              <td><code>POST /v1/images/generations</code></td>
+              <td>请求必须有 <code>prompt</code> 或供应商要求的文本字段；按次计费时要补模型价格。</td>
+              <td>模型价格缺失，或把固定 prompt 写进参数覆盖。</td>
+            </tr>
+            <tr>
+              <td><strong>图生图</strong><br>参考图改图</td>
+              <td><code>image-generation</code></td>
+              <td><code>POST /v1/images/generations</code></td>
+              <td>请求必须带 <code>image</code>、<code>reference</code> 或平台支持的上传字段。</td>
+              <td>只传 prompt 不传图片，日志里出现 <code>Field required</code>。</td>
+            </tr>
+            <tr>
+              <td><strong>文生视频</strong><br>文本生成视频</td>
+              <td><code>openai-video</code></td>
+              <td><code>POST /v1/videos</code></td>
+              <td>请求通常要有 <code>prompt</code> 或 <code>content</code>；模型映射放上游真实模型名。</td>
+              <td>把视频模型发到 <code>/v1/chat/completions</code> 或参数覆盖固定 content。</td>
+            </tr>
+            <tr>
+              <td><strong>语音</strong><br>TTS、声音复刻</td>
+              <td><code>audio-speech</code></td>
+              <td><code>POST /v1/audio/speech</code></td>
+              <td>普通 TTS 需要 <code>input</code>；复刻类还要参考音频字段。</td>
+              <td>只传文本不传参考音频，或价格未配置。</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="split" style="margin-top:16px">
+        <article class="wide-card">
+          <h3>推荐的模型映射写法</h3>
+          <p>对外名保持简洁稳定，上游版本号放映射。这样用户不用跟着上游版本号频繁改代码。</p>
+          <pre><button class="copy" type="button">复制</button><code>{
+  "doubao-seedance-2.0": "doubao-seedance-2-0-260128",
+  "doubao-seedance-1.5": "doubao-seedance-1-5-pro-251215",
+  "doubao-seedream-4-5": "doubao-seedream-4-5-251128"
+}</code></pre>
+        </article>
+        <article class="wide-card">
+          <h3>参数覆盖的边界</h3>
+          <p>不要替用户填写业务输入。Doubao Seedream 4.5 的 <code>response_format</code> 不建议做通道级覆盖，保持为空最稳；必须覆盖时只覆盖确认被上游接受的非业务字段。</p>
+          <pre><button class="copy" type="button">复制</button><code>{}</code></pre>
+        </article>
+      </div>
+    </section>
+
+    <section id="aipdd">
+      <div class="section-head">
+        <span class="num">04</span>
+        <div>
+          <h2>AIPDD 模型配置参考</h2>
+          <p class="lead">AIPDD 是任务型模型，不是聊天模型。不要用 <code>/v1/chat/completions</code> 调 AIPDD 图片、视频、语音模型。</p>
+        </div>
+      </div>
+      <div class="wide-card">
+        <table class="matrix">
+          <thead>
+            <tr>
+              <th>能力</th>
+              <th>模型名</th>
+              <th>接口</th>
+              <th>必填输入</th>
+              <th>计费建议</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>文生图</td>
+              <td><code>aipdd-flux-gguf-t2i</code></td>
+              <td><code>/v1/images/generations</code></td>
+              <td><code>prompt</code>、<code>text</code> 或 <code>input</code></td>
+              <td>按次；即使免费也建议价格填 <code>0</code></td>
+            </tr>
+            <tr>
+              <td>图生图</td>
+              <td><code>aipdd-flux-gguf</code></td>
+              <td><code>/v1/images/generations</code></td>
+              <td><code>image</code>，可选 <code>prompt</code></td>
+              <td>按次</td>
+            </tr>
+            <tr>
+              <td>图生视频</td>
+              <td><code>aipdd-wan2.2-wanx</code></td>
+              <td><code>/v1/videos</code></td>
+              <td><code>image</code>、<code>prompt</code>，可选 <code>duration</code></td>
+              <td>按秒；<code>duration</code> 通常为 5 或 10</td>
+            </tr>
+            <tr>
+              <td>视频主体替换</td>
+              <td><code>aipdd-wan2.2-animater</code></td>
+              <td><code>/v1/videos</code></td>
+              <td><code>load_video</code>、<code>prompt</code>、<code>negative_prompt</code></td>
+              <td>按次</td>
+            </tr>
+            <tr>
+              <td>动作迁移</td>
+              <td><code>aipdd-mimic-motion</code></td>
+              <td><code>/v1/videos</code></td>
+              <td><code>motion_video</code>、<code>appearance_image</code></td>
+              <td>按次</td>
+            </tr>
+            <tr>
+              <td>对口型视频</td>
+              <td><code>aipdd-latentsync-1.5</code></td>
+              <td><code>/v1/videos</code></td>
+              <td><code>video</code>、<code>LoadAudio</code></td>
+              <td>按次</td>
+            </tr>
+            <tr>
+              <td>声音复刻</td>
+              <td><code>aipdd-indextts</code></td>
+              <td><code>/v1/audio/speech</code></td>
+              <td><code>input</code> 或 <code>text</code>，以及 <code>audio</code></td>
+              <td>按次</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="grid" style="margin-top:16px">
+        <article class="card">
+          <h3>AIPDD 渠道</h3>
+          <p>渠道类型选择 AIPDD，Base URL 使用上游 AIPDD 地址，模型列表填完整的 AIPDD 模型名。通常不需要模型映射。</p>
+        </article>
+        <article class="card">
+          <h3>AIPDD 价格</h3>
+          <p>按次模型要在模型价格里出现。免费模型也建议显式填 <code>0</code>，避免列表、计费和日志判断不一致。</p>
+        </article>
+        <article class="card">
+          <h3>AIPDD 测试</h3>
+          <p>任务型模型的自动测试可能显示未测试或响应时间为 0。重点看真实任务提交、任务查询和日志结果。</p>
+        </article>
+      </div>
+    </section>
+
+    <section id="examples">
+      <div class="section-head">
+        <span class="num">05</span>
+        <div>
+          <h2>用户调用示例</h2>
+          <p class="lead">下面只展示请求形态。管理员配置正确后，用户只需要使用平台发放的 Token。</p>
+        </div>
+      </div>
+      <div class="grid">
+        <article class="card">
+          <h3>标准大模型</h3>
+          <pre><button class="copy" type="button">复制</button><code>curl "$BASE_URL/v1/chat/completions" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "deepseek-v4-pro",
+    "messages": [
+      { "role": "user", "content": "写一个三行产品文案" }
+    ]
+  }'</code></pre>
+        </article>
+        <article class="card">
+          <h3>文生图</h3>
+          <pre><button class="copy" type="button">复制</button><code>curl "$BASE_URL/v1/images/generations" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "aipdd-flux-gguf-t2i",
+    "prompt": "高级感产品摄影，柔和棚拍灯光"
+  }'</code></pre>
+        </article>
+        <article class="card">
+          <h3>图生图</h3>
+          <pre><button class="copy" type="button">复制</button><code>curl "$BASE_URL/v1/images/generations" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "aipdd-flux-gguf",
+    "image": "https://example.com/input.png",
+    "prompt": "保留主体，改成电影海报风格"
+  }'</code></pre>
+        </article>
+        <article class="card">
+          <h3>文生视频</h3>
+          <pre><button class="copy" type="button">复制</button><code>curl "$BASE_URL/v1/videos" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "doubao-seedance-2.0",
+    "prompt": "城市夜景航拍，镜头缓慢前进，电影感"
+  }'</code></pre>
+        </article>
+        <article class="card">
+          <h3>AIPDD 图生视频</h3>
+          <pre><button class="copy" type="button">复制</button><code>curl "$BASE_URL/v1/videos" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "aipdd-wan2.2-wanx",
+    "image": "https://example.com/input.png",
+    "prompt": "镜头缓慢推进，画面稳定",
+    "duration": 5
+  }'</code></pre>
+        </article>
+        <article class="card">
+          <h3>语音复刻</h3>
+          <pre><button class="copy" type="button">复制</button><code>curl "$BASE_URL/v1/audio/speech" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "aipdd-indextts",
+    "input": "这里填写需要合成的文本",
+    "audio": "https://example.com/reference.wav"
+  }'</code></pre>
+        </article>
+      </div>
+      <div class="wide-card" style="margin-top:16px">
+        <h3>异步任务查询</h3>
+        <p>图片、视频、语音任务提交后通常先返回 <code>task_id</code>。按对应类型查询，不要跨接口查询。</p>
+        <pre><button class="copy" type="button">复制</button><code># 图片
+curl "$BASE_URL/v1/images/generations/task_xxx" \
+  -H "Authorization: Bearer $TOKEN"
+
+# 视频
+curl "$BASE_URL/v1/videos/task_xxx" \
+  -H "Authorization: Bearer $TOKEN"
+
+# 语音
+curl "$BASE_URL/v1/audio/speech/task_xxx" \
+  -H "Authorization: Bearer $TOKEN"</code></pre>
+      </div>
+    </section>
+
+    <section id="troubleshooting">
+      <div class="section-head">
+        <span class="num">06</span>
+        <div>
+          <h2>上线前检查和日志排错</h2>
+          <p class="lead">出现调用问题时，不要先改参数覆盖，先按清单确认模型链路完整。</p>
+        </div>
+      </div>
+      <div class="wide-card">
+        <ul class="checklist">
+          <li>渠道已启用，分组包含用户所在分组。</li>
+          <li>渠道模型列表包含对外模型名，多个模型用英文逗号。</li>
+          <li>上游真实模型名只写在模型映射里。</li>
+          <li>模型管理里模型状态为启用，端点类型匹配调用接口。</li>
+          <li>按次、按秒模型已有模型价格；免费也显式填 0。</li>
+          <li>参数覆盖没有固定 prompt、content、image、audio、video。</li>
+          <li>用户调用接口正确：聊天、图片、视频、语音不要混用。</li>
+          <li>测试时使用普通用户 Token，不使用管理员密码或上游 Key。</li>
+        </ul>
+      </div>
+      <div class="wide-card" style="margin-top:16px">
+        <table class="matrix">
+          <thead>
+            <tr>
+              <th>日志现象</th>
+              <th>优先检查</th>
+              <th>处理方式</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>model_not_found</code></td>
+              <td>渠道模型列表、用户分组、模型端点</td>
+              <td>把模型加到渠道和模型管理；确认用户调用的是对应端点。</td>
+            </tr>
+            <tr>
+              <td><code>扣费规则不存在</code></td>
+              <td>模型价格或计费类型</td>
+              <td>按次模型补 <code>ModelPrice</code>；倍率计费模型补倍率。</td>
+            </tr>
+            <tr>
+              <td><code>Field required</code></td>
+              <td>该模型必填字段</td>
+              <td>图生图补图片，复刻语音补参考音频，AIPDD 视频按模型补素材字段。</td>
+            </tr>
+            <tr>
+              <td><code>not implemented</code></td>
+              <td>接口是否被渠道适配器支持</td>
+              <td>例如 DeepSeek 不一定支持 <code>/v1/responses</code>，改用 <code>/v1/chat/completions</code>。</td>
+            </tr>
+            <tr>
+              <td><code>response_format</code> 类型错误</td>
+              <td>参数覆盖格式</td>
+              <td>删除通道级覆盖。Doubao Seedream 4.5 不要把 <code>response_format</code> 覆盖成对象。</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="shell">
+      <p>参考：<a href="https://docs.newapi.pro/zh/docs/guide/feature-guide/admin/channel">官方渠道配置文档</a>、<a href="https://docs.newapi.pro/zh/docs/guide/feature-guide/admin/model">官方模型配置文档</a>。本文不包含任何账号密码或密钥，适合内部配置培训使用。</p>
+    </div>
+  </footer>
+
+  <script>
+    document.querySelectorAll("pre").forEach((block) => {
+      const button = block.querySelector(".copy");
+      const code = block.querySelector("code");
+      if (!button || !code) return;
+      button.addEventListener("click", async () => {
+        const text = code.innerText;
+        try {
+          await navigator.clipboard.writeText(text);
+          button.textContent = "已复制";
+        } catch {
+          button.textContent = "复制失败";
+        }
+        window.setTimeout(() => {
+          button.textContent = "复制";
+        }, 1300);
+      });
+    });
+  </script>
+</body>
+</html>
