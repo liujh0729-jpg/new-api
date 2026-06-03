@@ -122,9 +122,8 @@ function buildTests() {
       body: {
         model: 'aipdd-wan2.2-animater',
         load_video: config.videoUrl,
-        filename: filenameFromUrl(config.videoUrl),
-        WanVideoTextEncodeCached_positive_prompt: 'natural motion, stable subject',
-        WanVideoTextEncodeCached_negative_prompt: 'low quality, distorted, flicker',
+        prompt: 'natural motion, stable subject',
+        negative_prompt: 'low quality, distorted, flicker',
       },
     },
     {
@@ -148,7 +147,6 @@ function buildTests() {
       body: {
         model: 'aipdd-latentsync-1.5',
         video: config.videoUrl,
-        filename: filenameFromUrl(config.videoUrl),
         LoadAudio: config.audioUrl,
       },
     },
@@ -352,18 +350,6 @@ function toInt(value, fallback) {
 
 function stripTrailingSlash(value) {
   return String(value || '').replace(/\/+$/, '');
-}
-
-function filenameFromUrl(value) {
-  if (!value) {
-    return '';
-  }
-  try {
-    const url = new URL(value);
-    return decodeURIComponent(url.pathname.split('/').filter(Boolean).pop() || 'input.mp4');
-  } catch {
-    return String(value).split('/').filter(Boolean).pop() || 'input.mp4';
-  }
 }
 
 function assetEnvName(key) {

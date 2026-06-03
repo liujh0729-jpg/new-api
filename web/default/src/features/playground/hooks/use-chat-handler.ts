@@ -21,16 +21,23 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import {
   getImageGenerationTask,
+  getVideoGenerationTask,
   sendChatCompletion,
   sendImageGeneration,
+  sendVideoGeneration,
 } from '../api'
 import { MESSAGE_STATUS, ERROR_MESSAGES } from '../constants'
 import {
   buildChatCompletionPayload,
   buildImageGenerationPayload,
+  buildVideoGenerationPayload,
   extractImageResults,
+  extractVideoResults,
   isImageTaskResponse,
+  isVideoTaskResponse,
   parseImageTaskResponse,
+  parseVideoTaskResponse,
+  normalizePlaygroundError,
   updateAssistantMessageWithError,
   updateLastAssistantMessage,
   updateCurrentVersionContent,
@@ -39,9 +46,11 @@ import {
 } from '../lib'
 import type {
   GeneratedImage,
+  GeneratedVideo,
   Message,
   PlaygroundConfig,
   ParameterEnabled,
+  TaskFetchResponse,
 } from '../types'
 import { useStreamRequest } from './use-stream-request'
 
@@ -54,6 +63,23 @@ interface UseChatHandlerOptions {
 const IMAGE_TASK_POLL_INTERVAL_MS = 2000
 const IMAGE_TASK_INITIAL_POLL_DELAY_MS = 1000
 const IMAGE_TASK_POLL_TIMEOUT_MS = 20 * 60 * 1000
+const VIDEO_TASK_POLL_INTERVAL_MS = 3000
+const VIDEO_TASK_INITIAL_POLL_DELAY_MS = 1500
+const VIDEO_TASK_POLL_TIMEOUT_MS = 30 * 60 * 1000
+
+function getHttpStatus(error: unknown): number | undefined {
+  if (typeof error !== 'object' || error === null) return undefined
+  const response = (error as { response?: { status?: unknown } }).response
+  return typeof response?.status === 'number' ? response.status : undefined
+}
+
+function isTransientPollingError(error: unknown): boolean {
+  const status = getHttpStatus(error)
+  return (
+    status === 429 ||
+    (status !== undefined && status >= 500 && status < 600)
+  )
+}
 
 /**
  * Hook for handling chat message sending and receiving
@@ -67,6 +93,7 @@ export function useChatHandler({
   const { sendStreamRequest, stopStream } = useStreamRequest()
   const [isGenerating, setIsGenerating] = useState(false)
   const imageAbortRef = useRef(false)
+  const videoAbortRef = useRef(false)
 
   const completeWithImages = useCallback(
     (images: GeneratedImage[]) => {
@@ -89,6 +116,33 @@ export function useChatHandler({
         ...updateCurrentVersionContent(message, ''),
         images: undefined,
         activity: 'image_generation',
+        status: MESSAGE_STATUS.STREAMING,
+        isReasoningStreaming: false,
+      }))
+    )
+  }, [onMessageUpdate])
+
+  const completeWithVideos = useCallback(
+    (videos: GeneratedVideo[]) => {
+      onMessageUpdate((prev) =>
+        updateLastAssistantMessage(prev, (message) => ({
+          ...updateCurrentVersionContent(message, t('Generated video')),
+          videos,
+          activity: undefined,
+          status: MESSAGE_STATUS.COMPLETE,
+          isReasoningStreaming: false,
+        }))
+      )
+    },
+    [onMessageUpdate, t]
+  )
+
+  const markVideoGenerationLoading = useCallback(() => {
+    onMessageUpdate((prev) =>
+      updateLastAssistantMessage(prev, (message) => ({
+        ...updateCurrentVersionContent(message, ''),
+        videos: undefined,
+        activity: 'video_generation',
         status: MESSAGE_STATUS.STREAMING,
         isReasoningStreaming: false,
       }))
@@ -141,14 +195,22 @@ export function useChatHandler({
 
   // Handle stream error
   const handleStreamError = useCallback(
-    (error: string, errorCode?: string) => {
+    (error: unknown, errorCode?: string) => {
+      const normalizedError = normalizePlaygroundError(
+        errorCode ? { message: error, code: errorCode } : error,
+        t
+      )
       setIsGenerating(false)
-      toast.error(error)
+      toast.error(normalizedError.message)
       onMessageUpdate((prev) =>
-        updateAssistantMessageWithError(prev, error, errorCode)
+        updateAssistantMessageWithError(
+          prev,
+          normalizedError.message,
+          normalizedError.code
+        )
       )
     },
-    [onMessageUpdate]
+    [onMessageUpdate, t]
   )
 
   // Send streaming chat request
@@ -210,18 +272,7 @@ export function useChatHandler({
           }))
         )
       } catch (error: unknown) {
-        const err = error as {
-          response?: {
-            data?: { message?: string; error?: { code?: string } }
-          }
-          message?: string
-        }
-        handleStreamError(
-          err?.response?.data?.message ||
-            err?.message ||
-            ERROR_MESSAGES.API_REQUEST_ERROR,
-          err?.response?.data?.error?.code || undefined
-        )
+        handleStreamError(error)
       } finally {
         setIsGenerating(false)
       }
@@ -271,6 +322,64 @@ export function useChatHandler({
     [completeWithImages, markImageGenerationLoading]
   )
 
+  const pollVideoTask = useCallback(
+    async (taskId: string) => {
+      const deadline = Date.now() + VIDEO_TASK_POLL_TIMEOUT_MS
+      let attempt = 0
+
+      while (Date.now() < deadline) {
+        if (videoAbortRef.current) return
+
+        await new Promise((resolve) =>
+          setTimeout(
+            resolve,
+            attempt === 0
+              ? VIDEO_TASK_INITIAL_POLL_DELAY_MS
+              : VIDEO_TASK_POLL_INTERVAL_MS
+          )
+        )
+        attempt += 1
+        if (videoAbortRef.current) return
+
+        let response: TaskFetchResponse
+        try {
+          response = await getVideoGenerationTask(taskId)
+        } catch (error: unknown) {
+          if (isTransientPollingError(error)) {
+            markVideoGenerationLoading()
+            continue
+          }
+          throw error
+        }
+        const task = parseVideoTaskResponse(response)
+        const status = task.status || 'processing'
+        markVideoGenerationLoading()
+
+        if (status === 'failed') {
+          throw new Error(task.error || ERROR_MESSAGES.VIDEO_TASK_FAILED)
+        }
+
+        if (status === 'succeeded') {
+          const resolvedTaskId = task.taskId || taskId
+          const proxyUrl = `/v1/videos/${encodeURIComponent(resolvedTaskId)}/content`
+          const videos =
+            task.videos.length > 0
+              ? task.videos.map((video) => ({
+                  ...video,
+                  url: video.url?.trim() || proxyUrl,
+                  task_id: video.task_id || resolvedTaskId,
+                }))
+              : [{ url: proxyUrl, task_id: resolvedTaskId }]
+          completeWithVideos(videos)
+          return
+        }
+      }
+
+      throw new Error(ERROR_MESSAGES.VIDEO_TASK_TIMEOUT)
+    },
+    [completeWithVideos, markVideoGenerationLoading]
+  )
+
   const sendImageChat = useCallback(
     async (messages: Message[]) => {
       const prompt = [...messages]
@@ -310,22 +419,7 @@ export function useChatHandler({
         throw new Error(ERROR_MESSAGES.PARSE_ERROR)
       } catch (error: unknown) {
         if (imageAbortRef.current) return
-        const err = error as {
-          response?: {
-            data?: {
-              message?: string
-              error?: { message?: string; code?: string }
-            }
-          }
-          message?: string
-        }
-        handleStreamError(
-          err?.response?.data?.error?.message ||
-            err?.response?.data?.message ||
-            err?.message ||
-            ERROR_MESSAGES.API_REQUEST_ERROR,
-          err?.response?.data?.error?.code || undefined
-        )
+        handleStreamError(error)
       } finally {
         setIsGenerating(false)
       }
@@ -339,11 +433,69 @@ export function useChatHandler({
     ]
   )
 
+  const sendVideoChat = useCallback(
+    async (messages: Message[]) => {
+      const userMessage = [...messages]
+        .reverse()
+        .find((message) => message.from === 'user')
+      const prompt = userMessage?.versions?.[0]?.content?.trim() || ''
+      const references = userMessage?.seedanceReferences || []
+
+      if (!prompt && references.length === 0) {
+        handleStreamError(ERROR_MESSAGES.API_REQUEST_ERROR)
+        return
+      }
+
+      videoAbortRef.current = false
+      setIsGenerating(true)
+      markVideoGenerationLoading()
+
+      try {
+        const response = await sendVideoGeneration(
+          buildVideoGenerationPayload(prompt, references, config)
+        )
+        const videos = extractVideoResults(response)
+        if (videos.length > 0) {
+          completeWithVideos(videos)
+          return
+        }
+
+        if (isVideoTaskResponse(response)) {
+          const taskId = response.task_id || response.id
+          if (!taskId) {
+            throw new Error(ERROR_MESSAGES.PARSE_ERROR)
+          }
+          markVideoGenerationLoading()
+          await pollVideoTask(taskId)
+          return
+        }
+
+        throw new Error(ERROR_MESSAGES.PARSE_ERROR)
+      } catch (error: unknown) {
+        if (videoAbortRef.current) return
+        handleStreamError(error)
+      } finally {
+        setIsGenerating(false)
+      }
+    },
+    [
+      config,
+      completeWithVideos,
+      handleStreamError,
+      markVideoGenerationLoading,
+      pollVideoTask,
+    ]
+  )
+
   // Send chat request (stream or non-stream based on config)
   const sendChat = useCallback(
     (messages: Message[]) => {
       if (config.mode === 'image') {
         void sendImageChat(messages)
+        return
+      }
+      if (config.mode === 'video') {
+        void sendVideoChat(messages)
         return
       }
       if (config.stream) {
@@ -356,6 +508,7 @@ export function useChatHandler({
       config.mode,
       config.stream,
       sendImageChat,
+      sendVideoChat,
       sendStreamingChat,
       sendNonStreamingChat,
     ]
@@ -364,6 +517,7 @@ export function useChatHandler({
   // Stop generation
   const stopGeneration = useCallback(() => {
     imageAbortRef.current = true
+    videoAbortRef.current = true
     stopStream()
     setIsGenerating(false)
     onMessageUpdate((prev) =>

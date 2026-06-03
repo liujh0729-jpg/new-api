@@ -18,15 +18,37 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useCallback, useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { getUserModels, getUserGroups } from './api'
+import type { FileUIPart } from 'ai'
+import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
+import type {
+  PromptInputMessage,
+  PromptInputSubmittedFile,
+} from '@/components/ai-elements/prompt-input'
+import { getUserModels, getUserGroups, uploadReferenceMedia } from './api'
 import { PlaygroundChat } from './components/playground-chat'
 import { PlaygroundInput } from './components/playground-input'
-import { DEFAULT_GROUP, normalizeImageSizeForModel } from './constants'
+import {
+  DEFAULT_GROUP,
+  ERROR_MESSAGES,
+  SEEDANCE_REFERENCE_LIMITS,
+  isSeedance20VideoModel,
+  normalizeImageSizeForModel,
+} from './constants'
 import { usePlaygroundState, useChatHandler } from './hooks'
-import { createUserMessage, createLoadingAssistantMessage } from './lib'
-import type { Message as MessageType } from './types'
+import {
+  createUserMessage,
+  createLoadingAssistantMessage,
+  normalizePlaygroundError,
+} from './lib'
+import type {
+  Message as MessageType,
+  SeedanceReference,
+  SeedanceReferenceKind,
+} from './types'
 
 export function Playground() {
+  const { t } = useTranslation()
   const {
     config,
     parameterEnabled,
@@ -49,6 +71,7 @@ export function Playground() {
   const [editingMessageKey, setEditingMessageKey] = useState<string | null>(
     null
   )
+  const [isUploadingReferences, setIsUploadingReferences] = useState(false)
 
   // Load models
   const { data: modelsData, isLoading: isLoadingModels } = useQuery({
@@ -108,8 +131,60 @@ export function Playground() {
     setGroups(processedGroups)
   }, [groupsData, setGroups])
 
-  const handleSendMessage = (text: string) => {
-    const userMessage = createUserMessage(text)
+  const handleSendMessage = async (message: PromptInputMessage) => {
+    const text = message.text?.trim() || ''
+    let seedanceReferences: SeedanceReference[] = []
+
+    if (config.mode === 'video') {
+      const referenceCandidates = buildSeedanceReferenceCandidates(
+        message.files || []
+      )
+      const validationError = validateSeedanceVideoInput(
+        text,
+        referenceCandidates,
+        message.files?.length || 0,
+        config.model,
+        t
+      )
+      if (validationError) {
+        toast.error(validationError)
+        throw new Error(validationError)
+      }
+      const durationValidationError = await validateSeedanceReferenceDurations(
+        referenceCandidates,
+        t
+      )
+      if (durationValidationError) {
+        toast.error(durationValidationError)
+        throw new Error(durationValidationError)
+      }
+      if (referenceCandidates.some((reference) => reference.kind === 'video')) {
+        toast.warning(
+          t('Seedance may reject reference videos containing real people.')
+        )
+      }
+
+      const hasLocalReferences = referenceCandidates.some(
+        (reference) => reference.sourceFile
+      )
+      if (hasLocalReferences) {
+        setIsUploadingReferences(true)
+      }
+      try {
+        seedanceReferences =
+          await resolveSeedanceReferenceURLs(referenceCandidates)
+      } catch (error) {
+        const uploadError = normalizePlaygroundError(error, t)
+        toast.error(uploadError.message)
+        throw new Error(uploadError.message)
+      } finally {
+        if (hasLocalReferences) {
+          setIsUploadingReferences(false)
+        }
+      }
+    }
+
+    const userMessage = createUserMessage(text, seedanceReferences)
     const assistantMessage = createLoadingAssistantMessage()
 
     const newMessages = [...messages, userMessage, assistantMessage]
@@ -203,7 +278,7 @@ export function Playground() {
       {/* Input area: center content and constrain to the same container width */}
       <div className='mx-auto w-full max-w-4xl'>
         <PlaygroundInput
-          disabled={isGenerating}
+          disabled={isUploadingReferences}
           groups={groups}
           groupValue={config.group}
           imageCount={config.image_count}
@@ -222,8 +297,223 @@ export function Playground() {
           onModelChange={(value) => updateConfig('model', value)}
           onStop={stopGeneration}
           onSubmit={handleSendMessage}
+          onVideoDurationChange={(value) =>
+            updateConfig('video_duration', value)
+          }
+          onVideoRatioChange={(value) => updateConfig('video_ratio', value)}
+          videoDuration={config.video_duration}
+          videoRatio={config.video_ratio}
         />
       </div>
     </div>
   )
+}
+
+type SeedanceReferenceCandidate = SeedanceReference & { sourceFile?: File }
+
+function buildSeedanceReferenceCandidates(
+  files: PromptInputSubmittedFile[]
+): SeedanceReferenceCandidate[] {
+  return files.flatMap((file) => {
+    const url = file.url?.trim()
+    const kind = getSeedanceReferenceKind(file)
+    if (!url || !kind) return []
+    return [
+      {
+        kind,
+        url,
+        filename: file.filename,
+        media_type: file.mediaType,
+        sourceFile: file.sourceFile,
+      },
+    ]
+  })
+}
+
+async function resolveSeedanceReferenceURLs(
+  references: SeedanceReferenceCandidate[]
+): Promise<SeedanceReference[]> {
+  const resolvedReferences = await Promise.all(
+    references.map(async ({ sourceFile, ...reference }) => {
+      if (!sourceFile) return reference
+
+      const uploaded = await uploadReferenceMedia(sourceFile)
+      return {
+        ...reference,
+        url: uploaded.url,
+        filename: uploaded.filename || reference.filename,
+        media_type: uploaded.media_type || reference.media_type,
+      }
+    })
+  )
+
+  if (resolvedReferences.some((reference) => !isWebUrl(reference.url))) {
+    throw new Error(ERROR_MESSAGES.VIDEO_REFERENCE_UPLOAD_REQUIRED)
+  }
+
+  return resolvedReferences
+}
+
+function isWebUrl(url: string): boolean {
+  return /^https?:\/\//i.test(url.trim())
+}
+
+function getSeedanceReferenceKind(
+  file: Pick<FileUIPart, 'filename' | 'mediaType' | 'url'>
+): SeedanceReferenceKind | null {
+  const mediaType = (file.mediaType || inferDataUrlMediaType(file.url) || '')
+    .trim()
+    .toLowerCase()
+  if (mediaType.startsWith('image/')) return 'image'
+  if (mediaType.startsWith('video/')) return 'video'
+  if (mediaType.startsWith('audio/')) return 'audio'
+
+  const filename = (file.filename || '').toLowerCase()
+  if (/\.(png|jpe?g|webp|gif|bmp|heic|heif)$/.test(filename)) return 'image'
+  if (/\.(mp4|mov|m4v|webm|mkv|avi|mpeg|mpg|3gp)$/.test(filename)) {
+    return 'video'
+  }
+  if (/\.(mp3|wav|m4a|aac|ogg|oga|flac|opus)$/.test(filename)) return 'audio'
+  return null
+}
+
+function inferDataUrlMediaType(url?: string): string {
+  if (!url?.startsWith('data:')) return ''
+  const end = url.indexOf(';')
+  if (end === -1) return ''
+  return url.slice('data:'.length, end)
+}
+
+function validateSeedanceVideoInput(
+  text: string,
+  references: SeedanceReference[],
+  rawFileCount: number,
+  model: string,
+  t: (key: string) => string
+): string | null {
+  if (!isSeedance20VideoModel(model)) {
+    return t('Seedance video mode requires a Seedance 2.0 model')
+  }
+  if (!text && references.length === 0) {
+    return t('Add text or reference media before generating')
+  }
+  if (rawFileCount !== references.length) {
+    return t('Only image, video, and audio references are supported')
+  }
+
+  const imageCount = references.filter((item) => item.kind === 'image').length
+  const videoCount = references.filter((item) => item.kind === 'video').length
+  const audioCount = references.filter((item) => item.kind === 'audio').length
+
+  if (references.length > SEEDANCE_REFERENCE_LIMITS.total) {
+    return t('Seedance supports up to 12 reference media items')
+  }
+  if (imageCount > SEEDANCE_REFERENCE_LIMITS.image) {
+    return t('Seedance supports up to 9 reference images')
+  }
+  if (videoCount > SEEDANCE_REFERENCE_LIMITS.video) {
+    return t('Seedance supports up to 3 reference videos')
+  }
+  if (audioCount > SEEDANCE_REFERENCE_LIMITS.audio) {
+    return t('Seedance supports up to 3 reference audio files')
+  }
+  if (audioCount > 0 && imageCount + videoCount === 0) {
+    return t('Audio references require at least one image or video reference')
+  }
+  return null
+}
+
+async function validateSeedanceReferenceDurations(
+  references: SeedanceReferenceCandidate[],
+  t: (key: string) => string
+): Promise<string | null> {
+  const localVideos = references.filter(
+    (reference) => reference.kind === 'video' && reference.sourceFile
+  )
+  const localAudios = references.filter(
+    (reference) => reference.kind === 'audio' && reference.sourceFile
+  )
+
+  try {
+    const videoDurations = await Promise.all(
+      localVideos.map((reference) =>
+        readLocalMediaDuration(reference.sourceFile!, 'video')
+      )
+    )
+    const audioDurations = await Promise.all(
+      localAudios.map((reference) =>
+        readLocalMediaDuration(reference.sourceFile!, 'audio')
+      )
+    )
+
+    if (
+      videoDurations.some(
+        (duration) =>
+          duration < SEEDANCE_REFERENCE_LIMITS.minVideoDurationSeconds
+      )
+    ) {
+      return t('Reference videos must be at least 2 seconds long')
+    }
+    if (
+      videoDurations.some(
+        (duration) =>
+          duration > SEEDANCE_REFERENCE_LIMITS.maxVideoDurationSeconds
+      )
+    ) {
+      return t('Reference videos must be 15 seconds or shorter')
+    }
+    if (
+      sumDurations(videoDurations) >
+      SEEDANCE_REFERENCE_LIMITS.maxVideoTotalDurationSeconds
+    ) {
+      return t('Reference video total duration must be 15 seconds or shorter')
+    }
+    if (
+      sumDurations(audioDurations) >
+      SEEDANCE_REFERENCE_LIMITS.maxAudioTotalDurationSeconds
+    ) {
+      return t('Reference audio total duration must be 15 seconds or shorter')
+    }
+  } catch {
+    return t(ERROR_MESSAGES.VIDEO_REFERENCE_DURATION_READ_FAILED)
+  }
+
+  return null
+}
+
+function sumDurations(durations: number[]): number {
+  return durations.reduce((total, duration) => total + duration, 0)
+}
+
+function readLocalMediaDuration(
+  file: File,
+  kind: 'audio' | 'video'
+): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const media = document.createElement(kind)
+    const url = URL.createObjectURL(file)
+
+    const cleanup = () => {
+      media.removeAttribute('src')
+      media.load()
+      URL.revokeObjectURL(url)
+    }
+
+    media.preload = 'metadata'
+    media.onloadedmetadata = () => {
+      const duration = media.duration
+      cleanup()
+      if (Number.isFinite(duration) && duration > 0) {
+        resolve(duration)
+        return
+      }
+      reject(new Error('invalid media duration'))
+    }
+    media.onerror = () => {
+      cleanup()
+      reject(new Error('failed to read media duration'))
+    }
+    media.src = url
+    media.load()
+  })
 }

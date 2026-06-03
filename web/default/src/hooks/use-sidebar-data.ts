@@ -29,7 +29,7 @@ import {
   Command,
   Radio,
   FlaskConical,
-  MessageSquare,
+  FileJson,
   CreditCard,
   ListTodo,
   Settings,
@@ -52,8 +52,8 @@ export function useSidebarData(): SidebarData {
     ],
     navGroups: [
       {
-        id: 'chat',
-        title: t('Chat'),
+        id: 'general',
+        title: t('General'),
         items: [
           {
             title: t('Playground'),
@@ -61,16 +61,10 @@ export function useSidebarData(): SidebarData {
             icon: FlaskConical,
           },
           {
-            title: t('Chat'),
-            icon: MessageSquare,
-            type: 'chat-presets',
+            title: t('Test Bench'),
+            url: '/test-bench',
+            icon: FileJson,
           },
-        ],
-      },
-      {
-        id: 'general',
-        title: t('General'),
-        items: [
           {
             title: t('Overview'),
             url: '/dashboard/overview',

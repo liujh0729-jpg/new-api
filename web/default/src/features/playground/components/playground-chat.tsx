@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useEffect, useMemo, useState } from 'react'
+import { ExternalLinkIcon, ImageIcon, MusicIcon, VideoIcon } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -50,9 +51,9 @@ import {
   SourcesTrigger,
 } from '@/components/ai-elements/sources'
 import { MESSAGE_ROLES } from '../constants'
-import { parseThinkTags, getImageSrc } from '../lib'
+import { parseThinkTags, getImageSrc, getVideoSrc } from '../lib'
 import { getMessageContentStyles } from '../lib/message-styles'
-import type { Message as MessageType } from '../types'
+import type { Message as MessageType, SeedanceReference } from '../types'
 import { MessageActions } from './message-actions'
 import { MessageError } from './message-error'
 
@@ -67,6 +68,122 @@ interface PlaygroundChatProps {
   onSaveEdit?: (newContent: string) => void
   onCancelEdit?: (open: boolean) => void
   onSaveEditAndSubmit?: (newContent: string) => void
+}
+
+function ReferenceLabel({ reference }: { reference: SeedanceReference }) {
+  const { t } = useTranslation()
+  const label =
+    reference.filename ||
+    (reference.kind === 'image'
+      ? t('Image')
+      : reference.kind === 'video'
+        ? t('Video')
+        : t('Audio'))
+  const Icon =
+    reference.kind === 'image'
+      ? ImageIcon
+      : reference.kind === 'video'
+        ? VideoIcon
+        : MusicIcon
+
+  return (
+    <div className='flex min-w-0 items-center justify-between gap-2 px-2.5 py-1.5'>
+      <div className='flex min-w-0 items-center gap-1.5'>
+        <Icon className='text-muted-foreground size-3.5 shrink-0' />
+        <span className='truncate text-xs'>{label}</span>
+      </div>
+      <a
+        className='text-muted-foreground hover:text-foreground inline-flex shrink-0 items-center gap-1 text-xs'
+        href={reference.url}
+        rel='noreferrer'
+        target='_blank'
+      >
+        {t('Open')}
+        <ExternalLinkIcon size={12} />
+      </a>
+    </div>
+  )
+}
+
+function SeedanceReferencePreview({
+  reference,
+  messageKey,
+  index,
+}: {
+  reference: SeedanceReference
+  messageKey: string
+  index: number
+}) {
+  const { t } = useTranslation()
+  const key = `${messageKey}-reference-${index}`
+
+  if (reference.kind === 'image') {
+    return (
+      <div className='bg-muted overflow-hidden rounded-lg border' key={key}>
+        <a href={reference.url} rel='noreferrer' target='_blank'>
+          <img
+            alt={reference.filename || t('Image')}
+            className='aspect-square w-full object-contain'
+            loading='lazy'
+            src={reference.url}
+          />
+        </a>
+        <ReferenceLabel reference={reference} />
+      </div>
+    )
+  }
+
+  if (reference.kind === 'video') {
+    return (
+      <div className='bg-muted overflow-hidden rounded-lg border' key={key}>
+        <video
+          className='aspect-video w-full bg-black object-contain'
+          controls
+          playsInline
+          preload='metadata'
+          src={reference.url}
+        />
+        <ReferenceLabel reference={reference} />
+      </div>
+    )
+  }
+
+  return (
+    <div className='bg-muted overflow-hidden rounded-lg border' key={key}>
+      <div className='flex min-h-16 items-center px-2.5'>
+        <audio
+          className='w-full'
+          controls
+          preload='metadata'
+          src={reference.url}
+        />
+      </div>
+      <ReferenceLabel reference={reference} />
+    </div>
+  )
+}
+
+function SeedanceReferences({
+  references,
+  messageKey,
+}: {
+  references: SeedanceReference[]
+  messageKey: string
+}) {
+  if (references.length === 0) return null
+
+  return (
+    <div className='grid max-w-2xl grid-cols-2 gap-2 py-2 group-[.is-user]:ml-auto sm:grid-cols-3'>
+      {references.map((reference, index) => (
+        <SeedanceReferencePreview
+          index={index}
+          key={`${messageKey}-reference-${index}`}
+          messageKey={messageKey}
+          reference={reference}
+        />
+      ))}
+    </div>
+  )
 }
 
 export function PlaygroundChat({
@@ -177,10 +294,15 @@ export function PlaygroundChat({
                                   !message.isReasoningStreaming) &&
                                 !!version.content
                               const generatedImages = message.images || []
+                              const generatedVideos = message.videos || []
+                              const seedanceReferences =
+                                message.seedanceReferences || []
                               const loaderText =
                                 message.activity === 'image_generation'
                                   ? t('Generating image...')
-                                  : 'Responding...'
+                                  : message.activity === 'video_generation'
+                                    ? t('Generating video...')
+                                    : 'Responding...'
 
                               // Extract visible content (remove <think> tags for assistant messages)
                               const displayContent = isAssistant
@@ -256,7 +378,9 @@ export function PlaygroundChat({
                                     </>
                                   ) : (
                                     (showMessageContent ||
-                                      generatedImages.length > 0) && (
+                                      generatedImages.length > 0 ||
+                                      generatedVideos.length > 0 ||
+                                      seedanceReferences.length > 0) && (
                                       <>
                                         {showMessageContent && (
                                           <MessageContent
@@ -269,6 +393,12 @@ export function PlaygroundChat({
                                               {displayContent}
                                             </Response>
                                           </MessageContent>
+                                        )}
+                                        {seedanceReferences.length > 0 && (
+                                          <SeedanceReferences
+                                            messageKey={message.key}
+                                            references={seedanceReferences}
+                                          />
                                         )}
                                         {generatedImages.length > 0 && (
                                           <div className='grid grid-cols-1 gap-3 py-2 sm:grid-cols-2'>
@@ -295,6 +425,48 @@ export function PlaygroundChat({
                                                       src={src}
                                                     />
                                                   </a>
+                                                )
+                                              }
+                                            )}
+                                          </div>
+                                        )}
+                                        {generatedVideos.length > 0 && (
+                                          <div className='grid grid-cols-1 gap-3 py-2'>
+                                            {generatedVideos.map(
+                                              (video, videoIndex) => {
+                                                const src = getVideoSrc(video)
+                                                if (!src) return null
+
+                                                return (
+                                                  <div
+                                                    className='bg-muted overflow-hidden rounded-lg border'
+                                                    key={`${message.key}-video-${videoIndex}`}
+                                                  >
+                                                    <video
+                                                      className='aspect-video w-full bg-black object-contain'
+                                                      controls
+                                                      playsInline
+                                                      preload='metadata'
+                                                      src={src}
+                                                    />
+                                                    <div className='flex items-center justify-between gap-2 px-3 py-2'>
+                                                      <span className='text-muted-foreground truncate text-xs'>
+                                                        {video.task_id ||
+                                                          t('Generated video')}
+                                                      </span>
+                                                      <a
+                                                        className='text-muted-foreground hover:text-foreground inline-flex items-center gap-1 text-xs'
+                                                        href={src}
+                                                        rel='noreferrer'
+                                                        target='_blank'
+                                                      >
+                                                        {t('Open')}
+                                                        <ExternalLinkIcon
+                                                          size={12}
+                                                        />
+                                                      </a>
+                                                    </div>
+                                                  </div>
                                                 )
                                               }
                                             )}

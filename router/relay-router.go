@@ -61,6 +61,14 @@ func SetRelayRouter(router *gin.Engine) {
 		})
 	}
 
+	playgroundUtilityRouter := router.Group("/pg")
+	playgroundUtilityRouter.Use(middleware.RouteTag("relay"))
+	playgroundUtilityRouter.Use(middleware.SystemPerformanceCheck())
+	playgroundUtilityRouter.Use(middleware.UserAuth())
+	{
+		playgroundUtilityRouter.POST("/reference-media/upload", controller.PlaygroundUploadReferenceMedia)
+	}
+
 	playgroundRouter := router.Group("/pg")
 	playgroundRouter.Use(middleware.RouteTag("relay"))
 	playgroundRouter.Use(middleware.SystemPerformanceCheck())
@@ -75,6 +83,11 @@ func SetRelayRouter(router *gin.Engine) {
 			controller.Playground(c, types.RelayFormatOpenAIImage)
 		})
 		playgroundRouter.GET("/images/generations/:task_id", func(c *gin.Context) {
+			c.Set("relay_mode", relayconstant.RelayModeVideoFetchByID)
+			controller.RelayTaskFetch(c)
+		})
+		playgroundRouter.POST("/video/generations", controller.PlaygroundSeedanceVideo)
+		playgroundRouter.GET("/video/generations/:task_id", func(c *gin.Context) {
 			c.Set("relay_mode", relayconstant.RelayModeVideoFetchByID)
 			controller.RelayTaskFetch(c)
 		})

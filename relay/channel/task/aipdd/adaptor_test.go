@@ -57,27 +57,43 @@ func TestConvertToRequestPayloadBuildsIndexTTSContent(t *testing.T) {
 	}
 }
 
-func TestConvertToRequestPayloadDerivesFilename(t *testing.T) {
+func TestConvertToRequestPayloadDoesNotForwardFilenameForVideoModels(t *testing.T) {
 	adaptor := &TaskAdaptor{}
-	req := relaycommon.TaskSubmitReq{
-		Model: ModelLatentsync15,
-		Metadata: map[string]interface{}{
-			"video":     "https://cdn.example.com/uploads/input-video.mp4?x=1",
-			"LoadAudio": "https://cdn.example.com/uploads/input-audio.wav",
+	tests := []relaycommon.TaskSubmitReq{
+		{
+			Model:  ModelWan22Animater,
+			Prompt: "replace subject",
+			Metadata: map[string]interface{}{
+				"video":           "https://cdn.example.com/uploads/input-video.mp4?x=1",
+				"negative_prompt": "low quality",
+				"filename":        "input-video.mp4",
+			},
+		},
+		{
+			Model: ModelLatentsync15,
+			Metadata: map[string]interface{}{
+				"video":     "https://cdn.example.com/uploads/input-video.mp4?x=1",
+				"LoadAudio": "https://cdn.example.com/uploads/input-audio.wav",
+				"filename":  "input-video.mp4",
+			},
 		},
 	}
 
-	payload, err := adaptor.convertToRequestPayload(req, relayInfoWithModel(ModelLatentsync15))
-	if err != nil {
-		t.Fatalf("convertToRequestPayload returned error: %v", err)
-	}
+	for _, req := range tests {
+		t.Run(req.Model, func(t *testing.T) {
+			payload, err := adaptor.convertToRequestPayload(req, relayInfoWithModel(req.Model))
+			if err != nil {
+				t.Fatalf("convertToRequestPayload returned error: %v", err)
+			}
 
-	var content map[string]string
-	if err := common.Unmarshal([]byte(payload.TaskContent), &content); err != nil {
-		t.Fatalf("unmarshal task content: %v", err)
-	}
-	if content["filename"] != "input-video.mp4" {
-		t.Fatalf("filename was not derived from video URL: %#v", content)
+			var content map[string]any
+			if err := common.Unmarshal([]byte(payload.TaskContent), &content); err != nil {
+				t.Fatalf("unmarshal task content: %v", err)
+			}
+			if _, ok := content["filename"]; ok {
+				t.Fatalf("filename should not be forwarded: %#v", content)
+			}
+		})
 	}
 }
 
@@ -132,7 +148,7 @@ func TestConvertToRequestPayloadForAllAIPDDModels(t *testing.T) {
 					"negative_prompt": "low quality",
 				},
 			},
-			wantFields: map[string]string{"load_video": "https://cdn.example.com/subject.mp4", "filename": "subject.mp4", "WanVideoTextEncodeCached_positive_prompt": "replace subject", "WanVideoTextEncodeCached_negative_prompt": "low quality"},
+			wantFields: map[string]string{"load_video": "https://cdn.example.com/subject.mp4", "positive_prompt": "replace subject", "negative_prompt": "low quality"},
 		},
 		{
 			name:       ModelMimicMotion,
@@ -156,7 +172,7 @@ func TestConvertToRequestPayloadForAllAIPDDModels(t *testing.T) {
 					"LoadAudio": "https://cdn.example.com/speech.wav",
 				},
 			},
-			wantFields: map[string]string{"video": "https://cdn.example.com/lips.mp4", "filename": "lips.mp4", "LoadAudio": "https://cdn.example.com/speech.wav"},
+			wantFields: map[string]string{"video": "https://cdn.example.com/lips.mp4", "LoadAudio": "https://cdn.example.com/speech.wav"},
 		},
 		{
 			name:       ModelIndexTTS,
@@ -316,6 +332,139 @@ func TestBuildRequestBodyUploadsMultipartFileToAIPDDOSS(t *testing.T) {
 	}
 	if gotParamKey != "" || gotScriptID != "" {
 		t.Fatalf("upload should not trigger aipdd-api script validation, got script_id=%q param_key=%q", gotScriptID, gotParamKey)
+	}
+}
+
+func TestBuildRequestBodyDoesNotInjectFilenameForVideoUploads(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	uploadServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		file, fileHeader, err := r.FormFile("file")
+		if err != nil {
+			t.Fatalf("expected uploaded file: %v", err)
+		}
+		defer file.Close()
+
+		uploadedURL := "https://oss.aipdd.work/files/uploaded.bin"
+		switch fileHeader.Filename {
+		case "fullpath.mp4":
+			uploadedURL = "https://oss.aipdd.work/files/ef5220cd-18e7-47be-b99c-e4390e03168f.mp4"
+		case "source.mp4":
+			uploadedURL = "https://oss.aipdd.work/files/source.mp4"
+		case "speech.wav":
+			uploadedURL = "https://oss.aipdd.work/files/speech.wav"
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"code":200,"message":"上传成功","data":{"url":"` + uploadedURL + `"}}`))
+	}))
+	defer uploadServer.Close()
+
+	tests := []struct {
+		name       string
+		model      string
+		endpoint   string
+		fields     map[string]string
+		files      map[string]string
+		wantFields map[string]string
+	}{
+		{
+			name:     "animater fullpath upload",
+			model:    ModelWan22Animater,
+			endpoint: "/v1/videos",
+			fields: map[string]string{
+				"load_video":      "https://oss.aipdd.work/distributed_compute/443/15e6278f-a3ca-4682-89ef-802af9913273/ComfyUI_00006_.mp4",
+				"prompt":          "natural motion, stable subject",
+				"negative_prompt": "low quality, distorted, flicker",
+			},
+			files: map[string]string{
+				"fullpath": "fullpath.mp4",
+			},
+			wantFields: map[string]string{
+				"load_video":      "https://oss.aipdd.work/distributed_compute/443/15e6278f-a3ca-4682-89ef-802af9913273/ComfyUI_00006_.mp4",
+				"fullpath":        "https://oss.aipdd.work/files/ef5220cd-18e7-47be-b99c-e4390e03168f.mp4",
+				"positive_prompt": "natural motion, stable subject",
+				"negative_prompt": "low quality, distorted, flicker",
+			},
+		},
+		{
+			name:     "latentsync video and audio upload",
+			model:    ModelLatentsync15,
+			endpoint: "/v1/videos",
+			fields:   map[string]string{},
+			files: map[string]string{
+				"video":     "source.mp4",
+				"LoadAudio": "speech.wav",
+			},
+			wantFields: map[string]string{
+				"video":     "https://oss.aipdd.work/files/source.mp4",
+				"LoadAudio": "https://oss.aipdd.work/files/speech.wav",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var requestBody bytes.Buffer
+			writer := multipart.NewWriter(&requestBody)
+			_ = writer.WriteField("model", tt.model)
+			for key, value := range tt.fields {
+				_ = writer.WriteField(key, value)
+			}
+			for field, filename := range tt.files {
+				header := make(textproto.MIMEHeader)
+				header.Set("Content-Disposition", `form-data; name="`+field+`"; filename="`+filename+`"`)
+				header.Set("Content-Type", "application/octet-stream")
+				part, err := writer.CreatePart(header)
+				if err != nil {
+					t.Fatalf("create multipart part: %v", err)
+				}
+				_, _ = part.Write([]byte("fake file bytes"))
+			}
+			if err := writer.Close(); err != nil {
+				t.Fatalf("close multipart writer: %v", err)
+			}
+
+			recorder := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(recorder)
+			ctx.Request = httptest.NewRequest(http.MethodPost, tt.endpoint, &requestBody)
+			ctx.Request.Header.Set("Content-Type", writer.FormDataContentType())
+
+			info := relayInfoWithModel(tt.model)
+			info.ChannelBaseUrl = uploadServer.URL
+			info.ApiKey = "aipdd-key"
+			adaptor := &TaskAdaptor{}
+			adaptor.Init(info)
+
+			if taskErr := adaptor.ValidateRequestAndSetAction(ctx, info); taskErr != nil {
+				t.Fatalf("ValidateRequestAndSetAction returned task error: %v", taskErr)
+			}
+			bodyReader, err := adaptor.BuildRequestBody(ctx, info)
+			if err != nil {
+				t.Fatalf("BuildRequestBody returned error: %v", err)
+			}
+			bodyBytes, err := io.ReadAll(bodyReader)
+			if err != nil {
+				t.Fatalf("read built request body: %v", err)
+			}
+
+			var payload createTaskPayload
+			if err := common.Unmarshal(bodyBytes, &payload); err != nil {
+				t.Fatalf("unmarshal payload: %v", err)
+			}
+			var content map[string]any
+			if err := common.Unmarshal([]byte(payload.TaskContent), &content); err != nil {
+				t.Fatalf("unmarshal task content: %v", err)
+			}
+			t.Logf("task_content=%s", payload.TaskContent)
+			for key, want := range tt.wantFields {
+				if got := anyToString(content[key]); got != want {
+					t.Fatalf("unexpected %s: got %q want %q in %#v", key, got, want, content)
+				}
+			}
+			if _, ok := content["filename"]; ok {
+				t.Fatalf("filename should not be injected: %#v", content)
+			}
+		})
 	}
 }
 

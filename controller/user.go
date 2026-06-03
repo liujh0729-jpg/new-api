@@ -569,7 +569,8 @@ func modelSupportsEndpoint(modelName string, endpointType constant.EndpointType)
 
 func modelSupportsPlaygroundTextToImage(modelName string, pricing model.Pricing) bool {
 	if capability, ok := constant.GetAIPDDCapability(modelName); ok && capability.EndpointType == constant.EndpointTypeImageGeneration {
-		return !capability.RequiredWorkflowParams["image"]
+		_, hasImageParam := capability.RequiredWorkflowParams["image"]
+		return !hasImageParam
 	}
 
 	tags := strings.ToLower(strings.TrimSpace(pricing.Tags))

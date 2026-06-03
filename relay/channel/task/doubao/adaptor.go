@@ -7,6 +7,7 @@ import (
 	"math"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -119,7 +120,17 @@ func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 // ValidateRequestAndSetAction parses body, validates fields and sets default action.
 func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.TaskError) {
 	// Accept only POST /v1/video/generations as "generate" action.
-	return relaycommon.ValidateBasicTaskRequest(c, info, constant.TaskActionGenerate)
+	if taskErr := relaycommon.ValidateBasicTaskRequestAllowEmptyPrompt(c, info, constant.TaskActionGenerate); taskErr != nil {
+		return taskErr
+	}
+	req, err := relaycommon.GetTaskRequest(c)
+	if err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+	}
+	if err := validateSeedanceRequest(req); err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+	}
+	return nil
 }
 
 // BuildRequestURL constructs the upstream URL.
@@ -184,6 +195,93 @@ func hasVideoInMetadata(metadata map[string]interface{}) bool {
 		}
 	}
 	return false
+}
+
+type seedanceReferenceCounts struct {
+	images int
+	videos int
+	audios int
+}
+
+func validateSeedanceRequest(req relaycommon.TaskSubmitReq) error {
+	counts := countSeedanceReferences(req)
+	total := counts.images + counts.videos + counts.audios
+	prompt := strings.TrimSpace(req.Prompt)
+	if prompt == "" && total == 0 {
+		return fmt.Errorf("prompt or reference media is required")
+	}
+
+	if !isSeedance20Model(req.Model) {
+		if prompt == "" {
+			return fmt.Errorf("prompt is required")
+		}
+		return nil
+	}
+
+	if counts.images > 9 {
+		return fmt.Errorf("seedance 2.0 supports at most 9 reference images")
+	}
+	if counts.videos > 3 {
+		return fmt.Errorf("seedance 2.0 supports at most 3 reference videos")
+	}
+	if counts.audios > 3 {
+		return fmt.Errorf("seedance 2.0 supports at most 3 reference audio files")
+	}
+	if total > 12 {
+		return fmt.Errorf("seedance 2.0 supports at most 12 reference media items")
+	}
+	if counts.audios > 0 && counts.images+counts.videos == 0 {
+		return fmt.Errorf("seedance 2.0 audio references require at least one image or video reference")
+	}
+	return nil
+}
+
+func isSeedance20Model(modelName string) bool {
+	modelName = strings.ToLower(strings.TrimSpace(modelName))
+	compact := strings.NewReplacer(" ", "-", "_", "-", ".", "-").Replace(modelName)
+	return strings.Contains(modelName, "seedance-2-0") || strings.Contains(modelName, "seedance-2.0") || strings.Contains(compact, "seedance-2-0")
+}
+
+func countSeedanceReferences(req relaycommon.TaskSubmitReq) seedanceReferenceCounts {
+	counts := seedanceReferenceCounts{
+		images: len(req.Images),
+	}
+	if req.Metadata == nil {
+		return counts
+	}
+	contentRaw, ok := req.Metadata["content"]
+	if !ok {
+		return counts
+	}
+	contentSlice, ok := contentRaw.([]interface{})
+	if !ok {
+		return counts
+	}
+	for _, item := range contentSlice {
+		itemMap, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		switch strings.TrimSpace(fmt.Sprint(itemMap["type"])) {
+		case "image_url":
+			counts.images++
+			continue
+		case "video_url":
+			counts.videos++
+			continue
+		case "audio_url":
+			counts.audios++
+			continue
+		}
+		if _, has := itemMap["image_url"]; has {
+			counts.images++
+		} else if _, has := itemMap["video_url"]; has {
+			counts.videos++
+		} else if _, has := itemMap["audio_url"]; has {
+			counts.audios++
+		}
+	}
+	return counts
 }
 
 // BuildRequestBody converts request into Doubao specific format.
@@ -301,15 +399,21 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*
 		return nil, errors.Wrap(err, "unmarshal metadata failed")
 	}
 
+	if isSeedance20Model(req.Model) && strings.TrimSpace(r.Resolution) == "" {
+		r.Resolution = "720p"
+	}
+
 	if sec, ok := requestDurationSeconds(*req); ok {
 		r.Duration = lo.ToPtr(dto.IntValue(sec))
 	}
 
 	r.Content = lo.Reject(r.Content, func(c ContentItem, _ int) bool { return c.Type == "text" })
-	r.Content = append(r.Content, ContentItem{
-		Type: "text",
-		Text: req.Prompt,
-	})
+	if strings.TrimSpace(req.Prompt) != "" {
+		r.Content = append(r.Content, ContentItem{
+			Type: "text",
+			Text: req.Prompt,
+		})
+	}
 
 	return &r, nil
 }

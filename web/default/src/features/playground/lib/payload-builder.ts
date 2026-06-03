@@ -16,15 +16,26 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import {
+  DEFAULT_VIDEO_RESOLUTION,
+  ERROR_MESSAGES,
+  normalizeImageSizeForModel,
+} from '../constants'
 import type {
   ChatCompletionRequest,
   ImageGenerationRequest,
   Message,
   PlaygroundConfig,
   ParameterEnabled,
+  SeedanceReference,
+  VideoGenerationRequest,
+  VideoGenerationContentItem,
 } from '../types'
-import { normalizeImageSizeForModel } from '../constants'
 import { formatMessageForAPI, isValidMessage } from './message-utils'
+
+function isWebUrl(url: string): boolean {
+  return /^https?:\/\//i.test(url.trim())
+}
 
 /**
  * Build API request payload from messages and config
@@ -85,4 +96,62 @@ export function buildImageGenerationPayload(
   }
 
   return payload
+}
+
+/**
+ * Build Seedance video generation request payload from prompt, references, and config
+ */
+export function buildVideoGenerationPayload(
+  prompt: string,
+  references: SeedanceReference[],
+  config: PlaygroundConfig
+): VideoGenerationRequest {
+  if (references.some((reference) => !isWebUrl(reference.url))) {
+    throw new Error(ERROR_MESSAGES.VIDEO_REFERENCE_UPLOAD_REQUIRED)
+  }
+
+  const sortedReferences = [
+    ...references.filter((reference) => reference.kind === 'image'),
+    ...references.filter((reference) => reference.kind === 'video'),
+    ...references.filter((reference) => reference.kind === 'audio'),
+  ]
+
+  const content = sortedReferences
+    .map<VideoGenerationContentItem | null>((reference) => {
+      if (reference.kind === 'image') {
+        return {
+          type: 'image_url',
+          role: 'reference_image',
+          image_url: { url: reference.url },
+        }
+      }
+      if (reference.kind === 'video') {
+        return {
+          type: 'video_url',
+          role: 'reference_video',
+          video_url: { url: reference.url },
+        }
+      }
+      if (reference.kind === 'audio') {
+        return {
+          type: 'audio_url',
+          role: 'reference_audio',
+          audio_url: { url: reference.url },
+        }
+      }
+      return null
+    })
+    .filter((item): item is VideoGenerationContentItem => item !== null)
+
+  return {
+    model: config.model,
+    group: config.group,
+    prompt,
+    duration: config.video_duration,
+    metadata: {
+      content,
+      ratio: config.video_ratio,
+      resolution: DEFAULT_VIDEO_RESOLUTION,
+    },
+  }
 }

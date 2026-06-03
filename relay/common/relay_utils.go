@@ -196,6 +196,14 @@ func isKnownTaskField(field string) bool {
 }
 
 func ValidateBasicTaskRequest(c *gin.Context, info *RelayInfo, action string) *dto.TaskError {
+	return validateBasicTaskRequest(c, info, action, true)
+}
+
+func ValidateBasicTaskRequestAllowEmptyPrompt(c *gin.Context, info *RelayInfo, action string) *dto.TaskError {
+	return validateBasicTaskRequest(c, info, action, false)
+}
+
+func validateBasicTaskRequest(c *gin.Context, info *RelayInfo, action string, requirePrompt bool) *dto.TaskError {
 	var err error
 	contentType := c.GetHeader("Content-Type")
 	var req TaskSubmitReq
@@ -210,8 +218,10 @@ func ValidateBasicTaskRequest(c *gin.Context, info *RelayInfo, action string) *d
 		return createTaskError(err, "invalid_request", http.StatusBadRequest, true)
 	}
 
-	if taskErr := validatePrompt(req.Prompt); taskErr != nil {
-		return taskErr
+	if requirePrompt {
+		if taskErr := validatePrompt(req.Prompt); taskErr != nil {
+			return taskErr
+		}
 	}
 
 	if len(req.Images) == 0 && strings.TrimSpace(req.Image) != "" {

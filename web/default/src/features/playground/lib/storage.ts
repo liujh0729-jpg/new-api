@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { STORAGE_KEYS } from '../constants'
+import { DEFAULT_VIDEO_DURATION, STORAGE_KEYS } from '../constants'
 import type { PlaygroundConfig, ParameterEnabled, Message } from '../types'
 import { sanitizeMessagesOnLoad } from './message-utils'
 
@@ -27,7 +27,23 @@ export function loadConfig(): Partial<PlaygroundConfig> {
   try {
     const saved = localStorage.getItem(STORAGE_KEYS.CONFIG)
     if (saved) {
-      return JSON.parse(saved)
+      const config = JSON.parse(saved) as Partial<PlaygroundConfig>
+      if (
+        config.video_duration === 15 &&
+        !localStorage.getItem(STORAGE_KEYS.VIDEO_DURATION_DEFAULT_MIGRATED)
+      ) {
+        const migrated = {
+          ...config,
+          video_duration: DEFAULT_VIDEO_DURATION,
+        }
+        localStorage.setItem(STORAGE_KEYS.CONFIG, JSON.stringify(migrated))
+        localStorage.setItem(
+          STORAGE_KEYS.VIDEO_DURATION_DEFAULT_MIGRATED,
+          'true'
+        )
+        return migrated
+      }
+      return config
     }
   } catch (error) {
     // eslint-disable-next-line no-console

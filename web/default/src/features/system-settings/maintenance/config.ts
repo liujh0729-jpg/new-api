@@ -57,6 +57,7 @@ export const SIDEBAR_MODULES_DEFAULT: SidebarModulesAdminConfig = {
   chat: {
     enabled: true,
     playground: true,
+    test_bench: true,
     chat: true,
   },
   console: {

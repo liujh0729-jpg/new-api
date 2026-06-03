@@ -21,7 +21,7 @@ export type MessageRole = 'user' | 'assistant' | 'system'
 
 export type MessageStatus = 'loading' | 'streaming' | 'complete' | 'error'
 
-export type MessageActivity = 'image_generation'
+export type MessageActivity = 'image_generation' | 'video_generation'
 
 export interface MessageVersion {
   id: string
@@ -33,6 +33,8 @@ export interface Message {
   from: MessageRole
   versions: MessageVersion[]
   images?: GeneratedImage[]
+  videos?: GeneratedVideo[]
+  seedanceReferences?: SeedanceReference[]
   sources?: { href: string; title: string }[]
   reasoning?: {
     content: string
@@ -51,6 +53,21 @@ export interface GeneratedImage {
   b64_json?: string
   mime_type?: string
   revised_prompt?: string
+}
+
+export interface GeneratedVideo {
+  url: string
+  task_id?: string
+  mime_type?: string
+}
+
+export type SeedanceReferenceKind = 'image' | 'video' | 'audio'
+
+export interface SeedanceReference {
+  kind: SeedanceReferenceKind
+  url: string
+  filename?: string
+  media_type?: string
 }
 
 // API payload types
@@ -137,13 +154,53 @@ export interface ImageGenerationResponse {
   metadata?: Record<string, unknown>
 }
 
+export interface VideoGenerationContentItem {
+  type: 'image_url' | 'video_url' | 'audio_url'
+  role?: 'reference_image' | 'reference_video' | 'reference_audio'
+  image_url?: {
+    url: string
+  }
+  video_url?: {
+    url: string
+  }
+  audio_url?: {
+    url: string
+  }
+}
+
+export interface VideoGenerationRequest {
+  model: string
+  group?: string
+  prompt: string
+  duration?: number
+  metadata?: {
+    content?: VideoGenerationContentItem[]
+    ratio?: string
+    resolution?: string
+  }
+}
+
+export interface VideoGenerationResponse {
+  id?: string
+  task_id?: string
+  object?: string
+  model?: string
+  status?: string
+  progress?: number
+  metadata?: Record<string, unknown>
+  error?: {
+    message?: string
+    code?: string
+  }
+}
+
 export interface TaskFetchResponse {
   code?: string
   data?: unknown
   error?: unknown
 }
 
-export type PlaygroundMode = 'chat' | 'image'
+export type PlaygroundMode = 'chat' | 'image' | 'video'
 
 // Configuration types
 export interface PlaygroundConfig {
@@ -160,6 +217,8 @@ export interface PlaygroundConfig {
   image_size: string
   image_quality: string
   image_count: number
+  video_ratio: string
+  video_duration: number
 }
 
 export interface ParameterEnabled {

@@ -36,6 +36,8 @@ export const MESSAGE_STATUS = {
 export const API_ENDPOINTS = {
   CHAT_COMPLETIONS: '/pg/chat/completions',
   IMAGE_GENERATIONS: '/pg/images/generations',
+  VIDEO_GENERATIONS: '/pg/video/generations',
+  REFERENCE_MEDIA_UPLOAD: '/pg/reference-media/upload',
   USER_MODELS: '/api/user/models',
   USER_GROUPS: '/api/user/self/groups',
 } as const
@@ -56,6 +58,69 @@ export const IMAGE_SIZE_OPTIONS = [
   '1536x1024',
   '512x512',
 ] as const
+
+export const VIDEO_RATIO_OPTIONS = [
+  '16:9',
+  '9:16',
+  '1:1',
+  '4:3',
+  '3:4',
+] as const
+export const VIDEO_DURATION_OPTIONS = [5, 10, 15] as const
+export const DEFAULT_VIDEO_RATIO = '16:9'
+export const DEFAULT_VIDEO_DURATION = 5
+export const DEFAULT_VIDEO_RESOLUTION = '720p'
+export const SEEDANCE_REFERENCE_LIMITS = {
+  total: 12,
+  image: 9,
+  video: 3,
+  audio: 3,
+  maxFileSize: 30 * 1024 * 1024,
+  minVideoDurationSeconds: 2,
+  maxVideoDurationSeconds: 15.2,
+  maxVideoTotalDurationSeconds: 15.2,
+  maxAudioTotalDurationSeconds: 15.2,
+} as const
+export const SEEDANCE_REFERENCE_ACCEPT = [
+  'image/*',
+  'video/*',
+  'audio/*',
+  '.png',
+  '.jpg',
+  '.jpeg',
+  '.webp',
+  '.gif',
+  '.bmp',
+  '.heic',
+  '.heif',
+  '.mp4',
+  '.mov',
+  '.m4v',
+  '.webm',
+  '.mkv',
+  '.avi',
+  '.mpeg',
+  '.mpg',
+  '.3gp',
+  '.mp3',
+  '.wav',
+  '.m4a',
+  '.aac',
+  '.ogg',
+  '.oga',
+  '.flac',
+  '.opus',
+].join(',')
+
+export function isSeedance20VideoModel(model: string): boolean {
+  const normalized = model.toLowerCase().trim()
+  const compact = normalized.replace(/[\s_.]+/g, '-')
+  return (
+    normalized.includes('seedance-2-0') ||
+    normalized.includes('seedance-2.0') ||
+    compact.includes('seedance-2-0')
+  )
+}
 
 export function isSeedream45Model(model: string): boolean {
   return model.includes('seedream-4-5')
@@ -99,6 +164,8 @@ export const DEFAULT_CONFIG: PlaygroundConfig = {
   image_size: DEFAULT_IMAGE_SIZE,
   image_quality: 'standard',
   image_count: 1,
+  video_ratio: DEFAULT_VIDEO_RATIO,
+  video_duration: DEFAULT_VIDEO_DURATION,
 }
 
 export const DEFAULT_PARAMETER_ENABLED: ParameterEnabled = {
@@ -115,6 +182,8 @@ export const STORAGE_KEYS = {
   CONFIG: 'playground_config',
   MESSAGES: 'playground_messages',
   PARAMETER_ENABLED: 'playground_parameter_enabled',
+  VIDEO_DURATION_DEFAULT_MIGRATED:
+    'playground_video_duration_default_v5_migrated',
 } as const
 
 // Error messages
@@ -127,6 +196,12 @@ export const ERROR_MESSAGES = {
   INTERRUPTED: 'Generation was interrupted',
   IMAGE_TASK_TIMEOUT: 'Image task timed out',
   IMAGE_TASK_FAILED: 'Image task failed',
+  VIDEO_TASK_TIMEOUT: 'Video task timed out',
+  VIDEO_TASK_FAILED: 'Video task failed',
+  VIDEO_REFERENCE_UPLOAD_REQUIRED:
+    'Reference media must be uploaded before video generation. Please reselect the files and try again.',
+  VIDEO_REFERENCE_DURATION_READ_FAILED:
+    'Unable to read reference media duration. Please reselect the file.',
 } as const
 
 // Message action button styles

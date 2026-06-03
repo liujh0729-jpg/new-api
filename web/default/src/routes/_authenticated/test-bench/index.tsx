@@ -16,9 +16,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-export * from './message-utils'
-export * from './payload-builder'
-export * from './response-parser'
-export * from './storage'
-export * from './message-styles'
-export * from './error-utils'
+import { createFileRoute } from '@tanstack/react-router'
+import { TestBench } from '@/features/test-bench'
+
+export const Route = createFileRoute('/_authenticated/test-bench/')({
+  component: TestBench,
+})

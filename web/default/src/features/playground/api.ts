@@ -17,17 +17,33 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { api } from '@/lib/api'
-import { API_ENDPOINTS } from './constants'
+import {
+  API_ENDPOINTS,
+  ERROR_MESSAGES,
+  isSeedance20VideoModel,
+} from './constants'
 import type {
   ChatCompletionRequest,
   ChatCompletionResponse,
   ImageGenerationRequest,
   ImageGenerationResponse,
+  VideoGenerationRequest,
+  VideoGenerationResponse,
   TaskFetchResponse,
   ModelOption,
   GroupOption,
   PlaygroundMode,
 } from './types'
+
+export interface ReferenceMediaUploadResult {
+  url: string
+  filename?: string
+  media_type?: string
+}
+
+function isWebUrl(url: string): boolean {
+  return /^https?:\/\//i.test(url.trim())
+}
 
 /**
  * Send chat completion request (non-streaming)
@@ -69,23 +85,98 @@ export async function getImageGenerationTask(
 }
 
 /**
+ * Send Seedance video generation request
+ */
+export async function sendVideoGeneration(
+  payload: VideoGenerationRequest
+): Promise<VideoGenerationResponse> {
+  const res = await api.post(API_ENDPOINTS.VIDEO_GENERATIONS, payload, {
+    skipErrorHandler: true,
+  } as Record<string, unknown>)
+  return res.data
+}
+
+/**
+ * Fetch Seedance video generation task status
+ */
+export async function getVideoGenerationTask(
+  taskId: string
+): Promise<TaskFetchResponse> {
+  const res = await api.get(
+    `${API_ENDPOINTS.VIDEO_GENERATIONS}/${encodeURIComponent(taskId)}`,
+    {
+      skipErrorHandler: true,
+    } as Record<string, unknown>
+  )
+  return res.data
+}
+
+/**
+ * Upload local Seedance reference media to AIPDD OSS and return a web URL.
+ */
+export async function uploadReferenceMedia(
+  file: File
+): Promise<ReferenceMediaUploadResult> {
+  const formData = new FormData()
+  formData.append('file', file)
+
+  const res = await api.post(API_ENDPOINTS.REFERENCE_MEDIA_UPLOAD, formData, {
+    skipErrorHandler: true,
+    skipBusinessError: true,
+  } as Record<string, unknown>)
+  const responseData = res.data?.data ?? res.data
+  const url =
+    typeof responseData?.url === 'string' ? responseData.url.trim() : ''
+  if (!url) {
+    throw new Error('AIPDD OSS upload response URL is empty')
+  }
+  if (!isWebUrl(url)) {
+    throw new Error(ERROR_MESSAGES.VIDEO_REFERENCE_UPLOAD_REQUIRED)
+  }
+
+  return {
+    url,
+    filename:
+      typeof responseData?.filename === 'string'
+        ? responseData.filename
+        : undefined,
+    media_type:
+      typeof responseData?.media_type === 'string'
+        ? responseData.media_type
+        : undefined,
+  }
+}
+
+/**
  * Get user available models
  */
 export async function getUserModels(
   mode: PlaygroundMode = 'chat'
 ): Promise<ModelOption[]> {
+  const endpointType =
+    mode === 'image'
+      ? 'image-generation'
+      : mode === 'video'
+        ? 'openai-video'
+        : 'openai'
   const res = await api.get(API_ENDPOINTS.USER_MODELS, {
     params: {
-      endpoint_type: mode === 'image' ? 'image-generation' : 'openai',
+      endpoint_type: endpointType,
     },
-  })
+    skipErrorHandler: true,
+  } as Record<string, unknown>)
   const { data } = res
 
   if (!data.success || !Array.isArray(data.data)) {
     return []
   }
 
-  return data.data.map((model: string) => ({
+  const models =
+    mode === 'video'
+      ? data.data.filter((model: string) => isSeedance20VideoModel(model))
+      : data.data
+
+  return models.map((model: string) => ({
     label: model,
     value: model,
   }))
@@ -95,7 +186,9 @@ export async function getUserModels(
  * Get user groups
  */
 export async function getUserGroups(): Promise<GroupOption[]> {
-  const res = await api.get(API_ENDPOINTS.USER_GROUPS)
+  const res = await api.get(API_ENDPOINTS.USER_GROUPS, {
+    skipErrorHandler: true,
+  } as Record<string, unknown>)
   const { data } = res
 
   if (!data.success || !data.data) {

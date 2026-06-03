@@ -23,6 +23,7 @@ import type {
   MessageVersion,
   ChatCompletionMessage,
   ContentPart,
+  SeedanceReference,
 } from '../types'
 
 /**
@@ -59,11 +60,18 @@ export function updateCurrentVersionContent(
 /**
  * Create a user message
  */
-export function createUserMessage(content: string): Message {
+export function createUserMessage(
+  content: string,
+  seedanceReferences?: SeedanceReference[]
+): Message {
   return {
     key: nanoid(),
     from: MESSAGE_ROLES.USER,
     versions: [createMessageVersion(content)],
+    seedanceReferences:
+      seedanceReferences && seedanceReferences.length > 0
+        ? seedanceReferences
+        : undefined,
   }
 }
 
@@ -151,6 +159,35 @@ export function isValidMessage(message: Message): boolean {
   if (message.from === 'assistant' && !content.trim()) return false
 
   return true
+}
+
+function isWebUrl(url: string): boolean {
+  return /^https?:\/\//i.test(url.trim())
+}
+
+function sanitizeSeedanceReferences(message: Message): Message {
+  const references = message.seedanceReferences
+  if (!references?.length) return message
+
+  const safeReferences = references
+    .map((reference) => ({
+      ...reference,
+      url: reference.url.trim(),
+    }))
+    .filter((reference) => isWebUrl(reference.url))
+
+  const unchanged =
+    safeReferences.length === references.length &&
+    safeReferences.every(
+      (reference, index) => reference.url === references[index]?.url
+    )
+
+  if (unchanged) return message
+
+  return {
+    ...message,
+    seedanceReferences: safeReferences.length > 0 ? safeReferences : undefined,
+  }
 }
 
 /**
@@ -314,9 +351,22 @@ export function finalizeMessage(
  * Converts stuck loading/streaming messages to stable state
  */
 export function sanitizeMessagesOnLoad(messages: Message[]): Message[] {
+  let sanitizedMessages = messages
+  let changed = false
+
+  const referenceSanitizedMessages = messages.map((message) => {
+    const sanitized = sanitizeSeedanceReferences(message)
+    if (sanitized !== message) changed = true
+    return sanitized
+  })
+
+  if (changed) {
+    sanitizedMessages = referenceSanitizedMessages
+  }
+
   let targetIndex = -1
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const m = messages[i]
+  for (let i = sanitizedMessages.length - 1; i >= 0; i--) {
+    const m = sanitizedMessages[i]
     if (
       m?.from === MESSAGE_ROLES.ASSISTANT &&
       (m?.status === MESSAGE_STATUS.LOADING ||
@@ -327,9 +377,9 @@ export function sanitizeMessagesOnLoad(messages: Message[]): Message[] {
     }
   }
 
-  if (targetIndex === -1) return messages
+  if (targetIndex === -1) return changed ? sanitizedMessages : messages
 
-  const finalized = finalizeMessage(messages[targetIndex])
+  const finalized = finalizeMessage(sanitizedMessages[targetIndex])
   const hasContent = finalized.versions?.[0]?.content?.trim()
   const hasReasoning = finalized.reasoning?.content?.trim()
 
@@ -349,7 +399,7 @@ export function sanitizeMessagesOnLoad(messages: Message[]): Message[] {
           isReasoningStreaming: false,
         }
 
-  const result = [...messages]
+  const result = [...sanitizedMessages]
   result[targetIndex] = sanitized
   return result
 }

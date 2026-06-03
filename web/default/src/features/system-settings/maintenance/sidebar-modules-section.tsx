@@ -82,6 +82,10 @@ export function SidebarModulesSection({
         title: t('Playground'),
         description: t('Experiment with prompts and models in real time.'),
       },
+      test_bench: {
+        title: t('Test Bench'),
+        description: t('Run direct model relay tests from the default UI.'),
+      },
       chat: {
         title: t('Chat'),
         description: t('Access previous conversations and start new ones.'),

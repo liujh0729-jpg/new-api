@@ -91,12 +91,145 @@ func TestConvertToRequestPayloadForwardsTopLevelDuration(t *testing.T) {
 	payload, err := adaptor.convertToRequestPayload(&relaycommon.TaskSubmitReq{
 		Model:    "doubao-seedance-2.0",
 		Prompt:   "cinematic shot",
-		Duration: 10,
+		Duration: 15,
 	})
 	if err != nil {
 		t.Fatalf("convertToRequestPayload returned error: %v", err)
 	}
-	if payload.Duration == nil || int(*payload.Duration) != 10 {
-		t.Fatalf("duration = %v, want 10", payload.Duration)
+	if payload.Duration == nil || int(*payload.Duration) != 15 {
+		t.Fatalf("duration = %v, want 15", payload.Duration)
+	}
+	if payload.Resolution != "720p" {
+		t.Fatalf("resolution = %q, want 720p", payload.Resolution)
+	}
+}
+
+func TestConvertToRequestPayloadPreservesExplicitResolution(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+	payload, err := adaptor.convertToRequestPayload(&relaycommon.TaskSubmitReq{
+		Model:  "doubao-seedance-2-0-260128",
+		Prompt: "cinematic shot",
+		Metadata: map[string]interface{}{
+			"resolution": "480p",
+		},
+	})
+	if err != nil {
+		t.Fatalf("convertToRequestPayload returned error: %v", err)
+	}
+	if payload.Resolution != "480p" {
+		t.Fatalf("resolution = %q, want 480p", payload.Resolution)
+	}
+}
+
+func TestValidateSeedanceRequestAllowsMediaOnlyForSeedance20(t *testing.T) {
+	err := validateSeedanceRequest(relaycommon.TaskSubmitReq{
+		Model: "doubao-seedance-2-0-fast-260128",
+		Metadata: map[string]interface{}{
+			"content": []interface{}{
+				map[string]interface{}{
+					"type":      "image_url",
+					"image_url": map[string]interface{}{"url": "data:image/png;base64,aaa"},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("validateSeedanceRequest returned error: %v", err)
+	}
+}
+
+func TestValidateSeedanceRequestRejectsAudioOnly(t *testing.T) {
+	err := validateSeedanceRequest(relaycommon.TaskSubmitReq{
+		Model:  "doubao-seedance-2-0-fast-260128",
+		Prompt: "match the beat",
+		Metadata: map[string]interface{}{
+			"content": []interface{}{
+				map[string]interface{}{
+					"type":      "audio_url",
+					"audio_url": map[string]interface{}{"url": "data:audio/mp3;base64,aaa"},
+				},
+			},
+		},
+	})
+	if err == nil {
+		t.Fatalf("validateSeedanceRequest returned nil, want audio-only error")
+	}
+}
+
+func TestValidateSeedanceRequestRejectsNonSeedanceMediaOnly(t *testing.T) {
+	err := validateSeedanceRequest(relaycommon.TaskSubmitReq{
+		Model: "doubao-seedance-1-0-pro-250528",
+		Metadata: map[string]interface{}{
+			"content": []interface{}{
+				map[string]interface{}{
+					"type":      "image_url",
+					"image_url": map[string]interface{}{"url": "https://example.com/input.png"},
+				},
+			},
+		},
+	})
+	if err == nil {
+		t.Fatalf("validateSeedanceRequest returned nil, want prompt required error")
+	}
+}
+
+func TestConvertToRequestPayloadOmitsEmptyTextContent(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+	payload, err := adaptor.convertToRequestPayload(&relaycommon.TaskSubmitReq{
+		Model: "doubao-seedance-2-0-fast-260128",
+		Metadata: map[string]interface{}{
+			"content": []interface{}{
+				map[string]interface{}{
+					"type":      "image_url",
+					"image_url": map[string]interface{}{"url": "data:image/png;base64,aaa"},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("convertToRequestPayload returned error: %v", err)
+	}
+	for _, item := range payload.Content {
+		if item.Type == "text" {
+			t.Fatalf("payload contains empty text item: %#v", payload.Content)
+		}
+	}
+}
+
+func TestConvertToRequestPayloadPreservesReferenceRoles(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+	payload, err := adaptor.convertToRequestPayload(&relaycommon.TaskSubmitReq{
+		Model: "doubao-seedance-2-0-fast-260128",
+		Metadata: map[string]interface{}{
+			"content": []interface{}{
+				map[string]interface{}{
+					"type":      "image_url",
+					"role":      "reference_image",
+					"image_url": map[string]interface{}{"url": "https://example.com/reference.png"},
+				},
+				map[string]interface{}{
+					"type":      "video_url",
+					"role":      "reference_video",
+					"video_url": map[string]interface{}{"url": "https://example.com/reference.mp4"},
+				},
+				map[string]interface{}{
+					"type":      "audio_url",
+					"role":      "reference_audio",
+					"audio_url": map[string]interface{}{"url": "https://example.com/reference.mp3"},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("convertToRequestPayload returned error: %v", err)
+	}
+	if len(payload.Content) != 3 {
+		t.Fatalf("content length = %d, want 3; content=%#v", len(payload.Content), payload.Content)
+	}
+	wantRoles := []string{"reference_image", "reference_video", "reference_audio"}
+	for i, want := range wantRoles {
+		if payload.Content[i].Role != want {
+			t.Fatalf("content[%d].Role = %q, want %q; content=%#v", i, payload.Content[i].Role, want, payload.Content)
+		}
 	}
 }

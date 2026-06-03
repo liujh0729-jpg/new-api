@@ -2,13 +2,13 @@ package aipdd
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
 	"net/url"
-	"path"
 	"sort"
 	"strconv"
 	"strings"
@@ -487,7 +487,7 @@ func (a *TaskAdaptor) applyMultipartUploads(c *gin.Context, info *relaycommon.Re
 			if err != nil {
 				return err
 			}
-			setUploadedFileURL(req, target, url, fileHeaders[0].Filename)
+			setUploadedFileURL(req, target, url)
 			uploadedTargets[target] = true
 		}
 	}
@@ -522,28 +522,47 @@ func (a *TaskAdaptor) uploadFileToOSS(c *gin.Context, info *relaycommon.RelayInf
 		return "", fmt.Errorf("missing upload file for %s", paramKey)
 	}
 
+	proxy := ""
+	if info != nil {
+		proxy = info.ChannelSetting.Proxy
+	}
+	uploadedURL, err := UploadFileToOSS(c.Request.Context(), a.baseURL, a.apiKey, proxy, fileHeader)
+	if err != nil {
+		return "", fmt.Errorf("upload %s to AIPDD OSS failed: %w", paramKey, err)
+	}
+	return uploadedURL, nil
+}
+
+func UploadFileToOSS(ctx context.Context, baseURL, apiKey, proxy string, fileHeader *multipart.FileHeader) (string, error) {
+	if fileHeader == nil {
+		return "", fmt.Errorf("missing upload file")
+	}
+	apiKey = strings.TrimSpace(apiKey)
+	if apiKey == "" {
+		return "", fmt.Errorf("AIPDD API key is empty")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	var requestBody bytes.Buffer
 	contentType, err := writeOSSUploadMultipart(&requestBody, fileHeader)
 	if err != nil {
 		return "", err
 	}
 
-	uri, err := a.buildOSSUploadURL()
+	uri, err := buildOSSUploadURL(baseURL)
 	if err != nil {
 		return "", err
 	}
-	req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodPost, uri, &requestBody)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, uri, &requestBody)
 	if err != nil {
 		return "", err
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", contentType)
-	req.Header.Set("X-API-Key", a.apiKey)
+	req.Header.Set("X-API-Key", apiKey)
 
-	proxy := ""
-	if info != nil {
-		proxy = info.ChannelSetting.Proxy
-	}
 	client, err := service.GetHttpClientWithProxy(proxy)
 	if err != nil {
 		return "", fmt.Errorf("new proxy http client failed: %w", err)
@@ -554,7 +573,7 @@ func (a *TaskAdaptor) uploadFileToOSS(c *gin.Context, info *relaycommon.RelayInf
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("upload %s to AIPDD OSS failed: %w", paramKey, err)
+		return "", fmt.Errorf("upload to AIPDD OSS failed: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -588,10 +607,15 @@ func (a *TaskAdaptor) uploadFileToOSS(c *gin.Context, info *relaycommon.RelayInf
 }
 
 func (a *TaskAdaptor) buildOSSUploadURL() (string, error) {
-	if strings.TrimSpace(a.baseURL) == "" {
-		return "", fmt.Errorf("AIPDD base URL is empty")
+	return buildOSSUploadURL(a.baseURL)
+}
+
+func buildOSSUploadURL(baseURL string) (string, error) {
+	baseURL = strings.TrimSpace(baseURL)
+	if baseURL == "" {
+		baseURL = constant.ChannelBaseURLs[constant.ChannelTypeAIPDD]
 	}
-	uri, err := url.Parse(strings.TrimRight(a.baseURL, "/") + "/oss/upload")
+	uri, err := url.Parse(strings.TrimRight(baseURL, "/") + "/oss/upload")
 	if err != nil {
 		return "", err
 	}
@@ -649,7 +673,7 @@ func escapeMultipartQuotes(value string) string {
 	return replacer.Replace(value)
 }
 
-func setUploadedFileURL(req *relaycommon.TaskSubmitReq, target, uploadedURL, filename string) {
+func setUploadedFileURL(req *relaycommon.TaskSubmitReq, target, uploadedURL string) {
 	if req.Metadata == nil {
 		req.Metadata = map[string]interface{}{}
 	}
@@ -662,11 +686,6 @@ func setUploadedFileURL(req *relaycommon.TaskSubmitReq, target, uploadedURL, fil
 	case "load_video", "video", "motion_video", "audio":
 		if req.InputReference == "" {
 			req.InputReference = uploadedURL
-		}
-	}
-	if (target == "load_video" || target == "video") && metadataString(req.Metadata, "filename") == "" {
-		if strings.TrimSpace(filename) != "" {
-			req.Metadata["filename"] = filename
 		}
 	}
 }
@@ -757,11 +776,6 @@ func resolveWorkflowDefaultString(content map[string]any, req relaycommon.TaskSu
 			if req.Duration > 0 {
 				values = append(values, strconv.Itoa(req.Duration))
 			}
-		case constant.AIPDDWorkflowSourceFilenameFromURL:
-			values = append(values, filenameFromURL(firstNonEmpty(
-				anyToString(content[source.Key]),
-				metadataString(req.Metadata, source.Key),
-			)))
 		}
 	}
 	return firstNonEmpty(values...)
@@ -778,8 +792,6 @@ func resolveWorkflowDefaultInt(content map[string]any, req relaycommon.TaskSubmi
 			if req.Duration > 0 {
 				return req.Duration, true
 			}
-		case constant.AIPDDWorkflowSourceFilenameFromURL:
-			continue
 		default:
 			if value := parseDurationValue(resolveWorkflowDefaultString(content, req, []constant.AIPDDWorkflowValueSource{source})); value > 0 {
 				return value, true
@@ -905,19 +917,6 @@ func anyToString(value any) string {
 
 func hasContentValue(value any) bool {
 	return strings.TrimSpace(anyToString(value)) != ""
-}
-
-func filenameFromURL(rawURL string) string {
-	if strings.TrimSpace(rawURL) == "" {
-		return ""
-	}
-	parsed, err := url.Parse(rawURL)
-	if err == nil && parsed.Path != "" {
-		if base := path.Base(parsed.Path); base != "." && base != "/" {
-			return base
-		}
-	}
-	return path.Base(strings.TrimSpace(rawURL))
 }
 
 func isKnownSubmitField(key string) bool {

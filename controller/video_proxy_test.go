@@ -43,3 +43,20 @@ func TestWriteVideoDataURLAddsDownloadFilename(t *testing.T) {
 	require.Equal(t, "video/mp4", recorder.Header().Get("Content-Type"))
 	require.Equal(t, `inline; filename=task_data.mp4`, recorder.Header().Get("Content-Disposition"))
 }
+
+func TestCopyVideoProxyRequestHeadersForwardsRange(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/videos/task_123/content", nil)
+	ctx.Request.Header.Set("Range", "bytes=0-1023")
+	ctx.Request.Header.Set("If-Range", "etag-123")
+
+	req, err := http.NewRequest(http.MethodGet, "https://example.com/video.mp4", nil)
+	require.NoError(t, err)
+
+	copyVideoProxyRequestHeaders(ctx, req)
+
+	require.Equal(t, "bytes=0-1023", req.Header.Get("Range"))
+	require.Equal(t, "etag-123", req.Header.Get("If-Range"))
+}

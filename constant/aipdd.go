@@ -31,13 +31,12 @@ const (
 type AIPDDWorkflowSourceType string
 
 const (
-	AIPDDWorkflowSourceMetadata        AIPDDWorkflowSourceType = "metadata"
-	AIPDDWorkflowSourcePrompt          AIPDDWorkflowSourceType = "prompt"
-	AIPDDWorkflowSourceImage           AIPDDWorkflowSourceType = "image"
-	AIPDDWorkflowSourceFirstImage      AIPDDWorkflowSourceType = "first_image"
-	AIPDDWorkflowSourceInputReference  AIPDDWorkflowSourceType = "input_reference"
-	AIPDDWorkflowSourceDuration        AIPDDWorkflowSourceType = "duration"
-	AIPDDWorkflowSourceFilenameFromURL AIPDDWorkflowSourceType = "filename_from_url"
+	AIPDDWorkflowSourceMetadata       AIPDDWorkflowSourceType = "metadata"
+	AIPDDWorkflowSourcePrompt         AIPDDWorkflowSourceType = "prompt"
+	AIPDDWorkflowSourceImage          AIPDDWorkflowSourceType = "image"
+	AIPDDWorkflowSourceFirstImage     AIPDDWorkflowSourceType = "first_image"
+	AIPDDWorkflowSourceInputReference AIPDDWorkflowSourceType = "input_reference"
+	AIPDDWorkflowSourceDuration       AIPDDWorkflowSourceType = "duration"
 )
 
 type AIPDDWorkflowValueSource struct {
@@ -77,10 +76,6 @@ func aipddMetadata(key string) AIPDDWorkflowValueSource {
 
 func aipddSource(sourceType AIPDDWorkflowSourceType) AIPDDWorkflowValueSource {
 	return AIPDDWorkflowValueSource{Type: sourceType}
-}
-
-func aipddFilenameFromURL(paramKey string) AIPDDWorkflowValueSource {
-	return AIPDDWorkflowValueSource{Type: AIPDDWorkflowSourceFilenameFromURL, Key: paramKey}
 }
 
 func aipddStringDefault(paramKey string, sources ...AIPDDWorkflowValueSource) AIPDDWorkflowParamDefault {
@@ -168,23 +163,20 @@ var AIPDDCapabilities = []AIPDDCapability{
 		TaskCost:   2000,
 		WorkflowParamKeys: []string{
 			"load_video",
-			"filename",
 			"fullpath",
-			"WanVideoTextEncodeCached_positive_prompt",
-			"WanVideoTextEncodeCached_negative_prompt",
+			"positive_prompt",
+			"negative_prompt",
 		},
 		RequiredWorkflowParams: map[string]bool{
-			"load_video": true,
-			"filename":   true,
-			"fullpath":   false,
-			"WanVideoTextEncodeCached_positive_prompt": true,
-			"WanVideoTextEncodeCached_negative_prompt": true,
+			"load_video":      true,
+			"fullpath":        false,
+			"positive_prompt": true,
+			"negative_prompt": true,
 		},
 		WorkflowDefaults: []AIPDDWorkflowParamDefault{
 			aipddStringDefault("load_video", aipddMetadata("load_video"), aipddMetadata("video"), aipddSource(AIPDDWorkflowSourceInputReference), aipddSource(AIPDDWorkflowSourceImage), aipddSource(AIPDDWorkflowSourceFirstImage)),
-			aipddStringDefault("filename", aipddMetadata("filename"), aipddFilenameFromURL("load_video")),
-			aipddStringDefault("WanVideoTextEncodeCached_positive_prompt", aipddMetadata("positive_prompt"), aipddMetadata("prompt"), aipddSource(AIPDDWorkflowSourcePrompt)),
-			aipddStringDefault("WanVideoTextEncodeCached_negative_prompt", aipddMetadata("negative_prompt")),
+			aipddStringDefault("positive_prompt", aipddMetadata("positive_prompt"), aipddMetadata("prompt"), aipddSource(AIPDDWorkflowSourcePrompt)),
+			aipddStringDefault("negative_prompt", aipddMetadata("negative_prompt")),
 		},
 		UploadTargets: []AIPDDUploadTarget{
 			{ParamKey: "load_video", Aliases: []string{"file", "input_reference", "reference", "video"}},
@@ -219,15 +211,13 @@ var AIPDDCapabilities = []AIPDDCapability{
 		ScriptID:          "57971711-0255-46b1-893a-10d7216f42a0",
 		ScriptCode:        "aipdd_latentsync1.5",
 		TaskCost:          1000,
-		WorkflowParamKeys: []string{"video", "filename", "LoadAudio"},
+		WorkflowParamKeys: []string{"video", "LoadAudio"},
 		RequiredWorkflowParams: map[string]bool{
 			"video":     true,
-			"filename":  true,
 			"LoadAudio": true,
 		},
 		WorkflowDefaults: []AIPDDWorkflowParamDefault{
 			aipddStringDefault("video", aipddMetadata("video"), aipddMetadata("load_video"), aipddSource(AIPDDWorkflowSourceInputReference), aipddSource(AIPDDWorkflowSourceImage), aipddSource(AIPDDWorkflowSourceFirstImage)),
-			aipddStringDefault("filename", aipddMetadata("filename"), aipddFilenameFromURL("video")),
 			aipddStringDefault("LoadAudio", aipddMetadata("LoadAudio"), aipddMetadata("audio")),
 		},
 		UploadTargets: []AIPDDUploadTarget{

@@ -85,6 +85,7 @@ func VideoProxy(c *gin.Context) {
 		videoProxyError(c, http.StatusInternalServerError, "server_error", "Failed to create proxy request")
 		return
 	}
+	copyVideoProxyRequestHeaders(c, req)
 
 	switch channel.Type {
 	case constant.ChannelTypeGemini:
@@ -153,7 +154,7 @@ func VideoProxy(c *gin.Context) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Upstream returned status %d for %s", resp.StatusCode, videoURL))
 		videoProxyError(c, http.StatusBadGateway, "server_error",
 			fmt.Sprintf("Upstream service returned status %d", resp.StatusCode))
@@ -171,6 +172,14 @@ func VideoProxy(c *gin.Context) {
 	c.Writer.WriteHeader(resp.StatusCode)
 	if _, err = io.Copy(c.Writer, resp.Body); err != nil {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to stream video content: %s", err.Error()))
+	}
+}
+
+func copyVideoProxyRequestHeaders(c *gin.Context, req *http.Request) {
+	for _, header := range []string{"Range", "If-Range"} {
+		if value := c.GetHeader(header); value != "" {
+			req.Header.Set(header, value)
+		}
 	}
 }
 

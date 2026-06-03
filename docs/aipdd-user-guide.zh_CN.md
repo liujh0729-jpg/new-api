@@ -398,14 +398,13 @@ curl "$BASE_URL/v1/videos" \
 | 参数 | 说明 |
 | --- | --- |
 | `load_video` | 源视频 URL。 |
-| `prompt` 或 `positive_prompt` | 正向提示词，会映射到工作流 `WanVideoTextEncodeCached_positive_prompt`。 |
-| `negative_prompt` | 反向提示词，会映射到工作流 `WanVideoTextEncodeCached_negative_prompt`。 |
+| `prompt` 或 `positive_prompt` | 正向提示词，会映射到工作流 `positive_prompt`。 |
+| `negative_prompt` | 反向提示词，会映射到工作流 `negative_prompt`。 |
 
 可选参数：
 
 | 参数 | 说明 |
 | --- | --- |
-| `filename` | 源视频文件名。不传时系统会从 `load_video` URL 自动提取。 |
 | `fullpath` | 工作流可选路径参数。普通调用一般不需要传。 |
 
 JSON 示例：
@@ -481,12 +480,6 @@ curl "$BASE_URL/v1/videos" \
 | --- | --- |
 | `video` | 输入视频 URL。 |
 | `LoadAudio` | 驱动口型的音频 URL。字段大小写需要保持为 `LoadAudio`。 |
-
-可选参数：
-
-| 参数 | 说明 |
-| --- | --- |
-| `filename` | 视频文件名。不传时系统会从 `video` URL 自动提取。 |
 
 JSON 示例：
 

@@ -94,8 +94,10 @@ import {
 // Provider Context & Types
 // ============================================================================
 
+type PromptInputFile = FileUIPart & { id: string; sourceFile?: File }
+
 export type AttachmentsContext = {
-  files: (FileUIPart & { id: string })[]
+  files: PromptInputFile[]
   add: (files: File[] | FileList) => void
   remove: (id: string) => void
   clear: () => void
@@ -117,6 +119,27 @@ export type PromptInputControllerProps = {
     ref: RefObject<HTMLInputElement | null>,
     open: () => void
   ) => void
+}
+
+function fileMatchesAccept(file: File, accept?: string): boolean {
+  const rules = accept
+    ?.split(',')
+    .map((rule) => rule.trim().toLowerCase())
+    .filter(Boolean)
+
+  if (!rules?.length) return true
+
+  const type = file.type.toLowerCase()
+  const name = file.name.toLowerCase()
+
+  return rules.some((rule) => {
+    if (rule.startsWith('.')) return name.endsWith(rule)
+    if (rule.endsWith('/*')) {
+      const prefix = rule.slice(0, -1)
+      return type.startsWith(prefix)
+    }
+    return type === rule
+  })
 }
 
 const PromptInputController = createContext<PromptInputControllerProps | null>(
@@ -169,9 +192,7 @@ export function PromptInputProvider({
   const clearInput = useCallback(() => setTextInput(''), [])
 
   // ----- attachments state (global when wrapped)
-  const [attachements, setAttachements] = useState<
-    (FileUIPart & { id: string })[]
-  >([])
+  const [attachements, setAttachements] = useState<PromptInputFile[]>([])
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const openRef = useRef<() => void>(() => {})
 
@@ -187,6 +208,7 @@ export function PromptInputProvider({
           url: URL.createObjectURL(file),
           mediaType: file.type,
           filename: file.name,
+          sourceFile: file,
         }))
       )
     )
@@ -273,7 +295,7 @@ export const usePromptInputAttachments = () => {
 }
 
 export type PromptInputAttachmentProps = HTMLAttributes<HTMLDivElement> & {
-  data: FileUIPart & { id: string }
+  data: PromptInputFile
   className?: string
 }
 
@@ -375,7 +397,7 @@ export type PromptInputAttachmentsProps = Omit<
   HTMLAttributes<HTMLDivElement>,
   'children'
 > & {
-  children: (attachment: FileUIPart & { id: string }) => ReactNode
+  children: (attachment: PromptInputFile) => ReactNode
 }
 
 export function PromptInputAttachments({
@@ -400,6 +422,7 @@ export type PromptInputActionAddAttachmentsProps = ComponentProps<
 
 export const PromptInputActionAddAttachments = ({
   label,
+  onClick,
   ...props
 }: PromptInputActionAddAttachmentsProps) => {
   const { t } = useTranslation()
@@ -409,7 +432,9 @@ export const PromptInputActionAddAttachments = ({
   return (
     <DropdownMenuItem
       {...props}
-      onSelect={(e) => {
+      onClick={(e) => {
+        onClick?.(e)
+        if (e.defaultPrevented) return
         e.preventDefault()
         attachments.openFileDialog()
       }}
@@ -419,9 +444,11 @@ export const PromptInputActionAddAttachments = ({
   )
 }
 
+export type PromptInputSubmittedFile = FileUIPart & { sourceFile?: File }
+
 export type PromptInputMessage = {
   text?: string
-  files?: FileUIPart[]
+  files?: PromptInputSubmittedFile[]
 }
 
 export type PromptInputProps = Omit<
@@ -485,24 +512,20 @@ export const PromptInput = ({
   }, [])
 
   // ----- Local attachments (only used when no provider)
-  const [items, setItems] = useState<(FileUIPart & { id: string })[]>([])
+  const [items, setItems] = useState<PromptInputFile[]>([])
   const files = usingProvider ? controller.attachments.files : items
+  const filesRef = useRef(files)
+
+  useEffect(() => {
+    filesRef.current = files
+  }, [files])
 
   const openFileDialogLocal = useCallback(() => {
     inputRef.current?.click()
   }, [])
 
   const matchesAccept = useCallback(
-    (f: File) => {
-      if (!accept || accept.trim() === '') {
-        return true
-      }
-      if (accept.includes('image/*')) {
-        return f.type.startsWith('image/')
-      }
-      // NOTE: keep simple; expand as needed
-      return true
-    },
+    (file: File) => fileMatchesAccept(file, accept),
     [accept]
   )
 
@@ -541,7 +564,7 @@ export const PromptInput = ({
             message: t('Too many files. Some were not added.'),
           })
         }
-        const next: (FileUIPart & { id: string })[] = []
+        const next: PromptInputFile[] = []
         for (const file of capped) {
           next.push({
             id: nanoid(),
@@ -549,6 +572,7 @@ export const PromptInput = ({
             url: URL.createObjectURL(file),
             mediaType: file.type,
             filename: file.name,
+            sourceFile: file,
           })
         }
         return prev.concat(next)
@@ -671,12 +695,12 @@ export const PromptInput = ({
   useEffect(
     () => () => {
       if (!usingProvider) {
-        for (const f of files) {
+        for (const f of filesRef.current) {
           if (f.url) URL.revokeObjectURL(f.url)
         }
       }
     },
-    [usingProvider, files]
+    [usingProvider]
   )
 
   const handleChange: ChangeEventHandler<HTMLInputElement> = (event) => {
@@ -685,15 +709,18 @@ export const PromptInput = ({
     }
   }
 
-  const convertBlobUrlToDataUrl = async (url: string): Promise<string> => {
-    const response = await fetch(url)
-    const blob = await response.blob()
-    return new Promise((resolve, reject) => {
+  const blobToDataUrl = async (blob: Blob): Promise<string> =>
+    new Promise((resolve, reject) => {
       const reader = new FileReader()
       reader.onloadend = () => resolve(reader.result as string)
       reader.onerror = reject
       reader.readAsDataURL(blob)
     })
+
+  const convertBlobUrlToDataUrl = async (url: string): Promise<string> => {
+    const response = await fetch(url)
+    const blob = await response.blob()
+    return blobToDataUrl(blob)
   }
 
   const ctx = useMemo<AttachmentsContext>(
@@ -727,8 +754,15 @@ export const PromptInput = ({
 
     // Convert blob URLs to data URLs asynchronously
     Promise.all(
-      files.map(async ({ id, ...item }) => {
-        if (item.url && item.url.startsWith('blob:')) {
+      files.map(async ({ id, sourceFile, ...item }) => {
+        if (sourceFile) {
+          return {
+            ...item,
+            sourceFile,
+            url: await blobToDataUrl(sourceFile),
+          }
+        }
+        if (item.url?.startsWith('blob:')) {
           return {
             ...item,
             url: await convertBlobUrlToDataUrl(item.url),
@@ -736,33 +770,40 @@ export const PromptInput = ({
         }
         return item
       })
-    ).then((convertedFiles: FileUIPart[]) => {
-      try {
-        const result = onSubmit({ text, files: convertedFiles }, event)
+    )
+      .then((convertedFiles: PromptInputSubmittedFile[]) => {
+        try {
+          const result = onSubmit({ text, files: convertedFiles }, event)
 
-        // Handle both sync and async onSubmit
-        if (result instanceof Promise) {
-          result
-            .then(() => {
-              clear()
-              if (usingProvider) {
-                controller.textInput.clear()
-              }
-            })
-            .catch(() => {
-              // Don't clear on error - user may want to retry
-            })
-        } else {
-          // Sync function completed without throwing, clear attachments
-          clear()
-          if (usingProvider) {
-            controller.textInput.clear()
+          // Handle both sync and async onSubmit
+          if (result instanceof Promise) {
+            result
+              .then(() => {
+                clear()
+                if (usingProvider) {
+                  controller.textInput.clear()
+                }
+              })
+              .catch(() => {
+                // Don't clear on error - user may want to retry
+              })
+          } else {
+            // Sync function completed without throwing, clear attachments
+            clear()
+            if (usingProvider) {
+              controller.textInput.clear()
+            }
           }
+        } catch (_error) {
+          // Don't clear on error - user may want to retry
         }
-      } catch (_error) {
-        // Don't clear on error - user may want to retry
-      }
-    })
+      })
+      .catch(() => {
+        onError?.({
+          code: 'accept',
+          message: t('Failed to read selected files. Please reselect them.'),
+        })
+      })
   }
 
   // Render with or without local provider
