@@ -19,6 +19,10 @@ type Option struct {
 	Value string `json:"value"`
 }
 
+var deprecatedOptionKeys = map[string]struct{}{
+	"theme.frontend": {},
+}
+
 func AllOption() ([]*Option, error) {
 	var options []*Option
 	var err error
@@ -185,12 +189,29 @@ func InitOptionMap() {
 	}
 
 	common.OptionMapRWMutex.Unlock()
+	deleteDeprecatedOptions()
 	loadOptionsFromDatabase()
+}
+
+func deleteDeprecatedOptions() {
+	keys := make([]string, 0, len(deprecatedOptionKeys))
+	for key := range deprecatedOptionKeys {
+		keys = append(keys, key)
+	}
+	if len(keys) == 0 {
+		return
+	}
+	if err := DB.Where(commonKeyCol+" IN ?", keys).Delete(&Option{}).Error; err != nil {
+		common.SysLog("failed to delete deprecated options: " + err.Error())
+	}
 }
 
 func loadOptionsFromDatabase() {
 	options, _ := AllOption()
 	for _, option := range options {
+		if _, ok := deprecatedOptionKeys[option.Key]; ok {
+			continue
+		}
 		err := updateOptionMap(option.Key, option.Value)
 		if err != nil {
 			common.SysLog("failed to update option map: " + err.Error())
@@ -581,8 +602,6 @@ func handleConfigUpdate(key, value string) bool {
 	} else if configName == "billing_setting" {
 		InvalidatePricingCache()
 		ratio_setting.InvalidateExposedDataCache()
-	} else if configName == "theme" {
-		system_setting.UpdateAndSyncTheme()
 	}
 
 	return true // 已处理

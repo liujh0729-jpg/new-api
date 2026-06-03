@@ -35,7 +35,6 @@ oauth/         — OAuth provider implementations
 pkg/           — Internal packages (cachex, ionet)
 web/             — Frontend themes container
  web/default/   — Default frontend (React 19, Rsbuild, Base UI, Tailwind)
-  web/classic/   — Classic frontend (React 18, Vite, Semi Design)
   web/default/src/i18n/ — Frontend internationalization (i18next, zh/en/fr/ru/ja/vi)
 ```
 

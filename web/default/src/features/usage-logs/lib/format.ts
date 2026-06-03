@@ -235,7 +235,7 @@ export interface TieredBillingSummary {
 /**
  * Whether the request payload reports any cache-related token usage. Used to
  * suppress cache pricing rows from the tiered breakdown when the request did
- * not exercise the cache path (mirrors the classic frontend behaviour).
+ * not exercise the cache path (mirrors the legacy UI behaviour).
  */
 export function hasAnyCacheTokens(
   other: LogOtherData | null | undefined
