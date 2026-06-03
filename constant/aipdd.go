@@ -1,6 +1,9 @@
 package constant
 
-import "strings"
+import (
+	"strings"
+	"sync"
+)
 
 const (
 	AIPDDModelFluxGGUF      = "aipdd-flux-gguf"
@@ -59,6 +62,9 @@ type AIPDDCapability struct {
 	ModelName              string
 	ScriptID               string
 	ScriptCode             string
+	TaskKind               string
+	InputModalities        []string
+	OutputModalities       []string
 	TaskCost               float64
 	WorkflowParamKeys      []string
 	RequiredWorkflowParams map[string]bool
@@ -252,32 +258,121 @@ var AIPDDCapabilities = []AIPDDCapability{
 	},
 }
 
-var AIPDDTaskModelList = func() []string {
-	models := make([]string, 0, len(AIPDDCapabilities))
-	for _, capability := range AIPDDCapabilities {
-		models = append(models, capability.ModelName)
+var defaultAIPDDCapabilities = cloneAIPDDCapabilities(AIPDDCapabilities)
+
+var AIPDDTaskModelList = buildAIPDDTaskModelList(AIPDDCapabilities)
+
+var aipddCapabilityByAlias = buildAIPDDCapabilityByAlias(AIPDDCapabilities)
+
+var defaultAIPDDCapabilityByAlias = buildAIPDDCapabilityByAlias(defaultAIPDDCapabilities)
+
+var aipddCapabilitiesLock sync.RWMutex
+
+func buildAIPDDTaskModelList(capabilities []AIPDDCapability) []string {
+	models := make([]string, 0, len(capabilities))
+	seen := make(map[string]bool, len(capabilities))
+	for _, capability := range capabilities {
+		modelName := strings.TrimSpace(capability.ModelName)
+		if modelName == "" || seen[modelName] {
+			continue
+		}
+		models = append(models, modelName)
+		seen[modelName] = true
 	}
 	return models
-}()
+}
 
-var aipddCapabilityByAlias = func() map[string]AIPDDCapability {
-	out := make(map[string]AIPDDCapability, len(AIPDDCapabilities)*2)
-	for _, capability := range AIPDDCapabilities {
-		out[strings.ToLower(capability.ModelName)] = capability
-		out[strings.ToLower(capability.ScriptCode)] = capability
+func buildAIPDDCapabilityByAlias(capabilities []AIPDDCapability) map[string]AIPDDCapability {
+	out := make(map[string]AIPDDCapability, len(capabilities)*2)
+	for _, capability := range capabilities {
+		capability = cloneAIPDDCapability(capability)
+		for _, alias := range []string{capability.ModelName, capability.ScriptCode} {
+			alias = strings.ToLower(strings.TrimSpace(alias))
+			if alias == "" {
+				continue
+			}
+			out[alias] = capability
+		}
 	}
 	return out
-}()
+}
+
+func cloneAIPDDCapabilities(capabilities []AIPDDCapability) []AIPDDCapability {
+	out := make([]AIPDDCapability, 0, len(capabilities))
+	for _, capability := range capabilities {
+		out = append(out, cloneAIPDDCapability(capability))
+	}
+	return out
+}
+
+func cloneAIPDDCapability(capability AIPDDCapability) AIPDDCapability {
+	capability.InputModalities = append([]string(nil), capability.InputModalities...)
+	capability.OutputModalities = append([]string(nil), capability.OutputModalities...)
+	capability.WorkflowParamKeys = append([]string(nil), capability.WorkflowParamKeys...)
+	if capability.RequiredWorkflowParams != nil {
+		required := make(map[string]bool, len(capability.RequiredWorkflowParams))
+		for key, value := range capability.RequiredWorkflowParams {
+			required[key] = value
+		}
+		capability.RequiredWorkflowParams = required
+	}
+	if capability.WorkflowDefaults != nil {
+		defaults := make([]AIPDDWorkflowParamDefault, 0, len(capability.WorkflowDefaults))
+		for _, item := range capability.WorkflowDefaults {
+			item.Sources = append([]AIPDDWorkflowValueSource(nil), item.Sources...)
+			defaults = append(defaults, item)
+		}
+		capability.WorkflowDefaults = defaults
+	}
+	if capability.UploadTargets != nil {
+		targets := make([]AIPDDUploadTarget, 0, len(capability.UploadTargets))
+		for _, target := range capability.UploadTargets {
+			target.Aliases = append([]string(nil), target.Aliases...)
+			targets = append(targets, target)
+		}
+		capability.UploadTargets = targets
+	}
+	return capability
+}
+
+func SetAIPDDCapabilities(capabilities []AIPDDCapability) {
+	if len(capabilities) == 0 {
+		return
+	}
+	cloned := cloneAIPDDCapabilities(capabilities)
+	aipddCapabilitiesLock.Lock()
+	defer aipddCapabilitiesLock.Unlock()
+	AIPDDCapabilities = cloned
+	AIPDDTaskModelList = buildAIPDDTaskModelList(cloned)
+	aipddCapabilityByAlias = buildAIPDDCapabilityByAlias(cloned)
+}
+
+func ResetAIPDDCapabilities() {
+	SetAIPDDCapabilities(defaultAIPDDCapabilities)
+}
 
 func GetAIPDDCapability(modelName string) (AIPDDCapability, bool) {
+	aipddCapabilitiesLock.RLock()
+	defer aipddCapabilitiesLock.RUnlock()
 	capability, ok := aipddCapabilityByAlias[strings.ToLower(strings.TrimSpace(modelName))]
-	return capability, ok
+	return cloneAIPDDCapability(capability), ok
+}
+
+func GetDefaultAIPDDCapability(modelName string) (AIPDDCapability, bool) {
+	capability, ok := defaultAIPDDCapabilityByAlias[strings.ToLower(strings.TrimSpace(modelName))]
+	return cloneAIPDDCapability(capability), ok
 }
 
 func GetAIPDDCapabilities() []AIPDDCapability {
-	capabilities := make([]AIPDDCapability, len(AIPDDCapabilities))
-	copy(capabilities, AIPDDCapabilities)
-	return capabilities
+	aipddCapabilitiesLock.RLock()
+	defer aipddCapabilitiesLock.RUnlock()
+	return cloneAIPDDCapabilities(AIPDDCapabilities)
+}
+
+func GetAIPDDTaskModelList() []string {
+	aipddCapabilitiesLock.RLock()
+	defer aipddCapabilitiesLock.RUnlock()
+	return append([]string(nil), AIPDDTaskModelList...)
 }
 
 func IsAIPDDTaskModel(modelName string) bool {

@@ -314,17 +314,116 @@ func appendDefaultCatalogAbilities(abilities []AbilityWithChannel) []AbilityWith
 			},
 			ChannelType: catalog.ChannelType,
 		})
+		enabledModels[catalog.ModelName] = true
+	}
+
+	for _, catalog := range aipddCurrentCatalogModels() {
+		if enabledModels[catalog.ModelName] {
+			continue
+		}
+		abilities = append(abilities, AbilityWithChannel{
+			Ability: Ability{
+				Group:   "default",
+				Model:   catalog.ModelName,
+				Enabled: true,
+			},
+			ChannelType: catalog.ChannelType,
+		})
+		enabledModels[catalog.ModelName] = true
 	}
 	return abilities
 }
 
 func defaultCatalogModelByName(modelName string) (defaultCatalogModel, bool) {
+	if catalog, ok := staticDefaultCatalogModelByName(modelName); ok {
+		return catalog, true
+	}
+	return aipddCatalogModelByName(modelName)
+}
+
+func staticDefaultCatalogModelByName(modelName string) (defaultCatalogModel, bool) {
 	for _, catalog := range defaultCatalogModels {
 		if catalog.ModelName == modelName {
 			return catalog, true
 		}
 	}
 	return defaultCatalogModel{}, false
+}
+
+func aipddCatalogModelByName(modelName string) (defaultCatalogModel, bool) {
+	capability, ok := constant.GetAIPDDCapability(modelName)
+	if !ok {
+		return defaultCatalogModel{}, false
+	}
+	return aipddCatalogModelFromCapability(capability), true
+}
+
+func aipddCurrentCatalogModels() []defaultCatalogModel {
+	capabilities := constant.GetAIPDDCapabilities()
+	catalogs := make([]defaultCatalogModel, 0, len(capabilities))
+	seen := make(map[string]bool, len(capabilities))
+	for _, capability := range capabilities {
+		if strings.TrimSpace(capability.ModelName) == "" || seen[capability.ModelName] {
+			continue
+		}
+		if catalog, ok := staticDefaultCatalogModelByName(capability.ModelName); ok {
+			catalogs = append(catalogs, catalog)
+		} else {
+			catalogs = append(catalogs, aipddCatalogModelFromCapability(capability))
+		}
+		seen[capability.ModelName] = true
+	}
+	return catalogs
+}
+
+func aipddCatalogModelFromCapability(capability constant.AIPDDCapability) defaultCatalogModel {
+	endpointTypes := []constant.EndpointType{}
+	if capability.EndpointType != "" {
+		endpointTypes = []constant.EndpointType{capability.EndpointType}
+	}
+
+	tags := []string{"AIPDD", "ComfyUI", "异步任务"}
+	description := "基于 AIPDD ComfyUI 工作流的动态模型，通过 AIPDD 任务接口异步创建并轮询结果。"
+	switch capability.EndpointType {
+	case constant.EndpointTypeImageGeneration:
+		tags = append(tags, "图片生成")
+	case constant.EndpointTypeOpenAIVideo:
+		tags = append(tags, "视频生成")
+	case constant.EndpointTypeAudioSpeech:
+		tags = append(tags, "语音合成")
+	}
+	switch capability.BillingType {
+	case constant.AIPDDBillingTypeDurationSeconds:
+		tags = append(tags, "按时长")
+	default:
+		tags = append(tags, "按次")
+	}
+	if strings.TrimSpace(capability.ScriptCode) != "" {
+		tags = append(tags, capability.ScriptCode)
+		description = "基于 AIPDD ComfyUI 工作流 " + capability.ScriptCode + " 的动态模型，通过 AIPDD 任务接口异步创建并轮询结果。"
+	}
+	if strings.TrimSpace(capability.TaskKind) != "" {
+		tags = append(tags, capability.TaskKind)
+	}
+	for _, modality := range capability.InputModalities {
+		if strings.TrimSpace(modality) != "" {
+			tags = append(tags, "input:"+modality)
+		}
+	}
+	for _, modality := range capability.OutputModalities {
+		if strings.TrimSpace(modality) != "" {
+			tags = append(tags, "output:"+modality)
+		}
+	}
+	return defaultCatalogModel{
+		ModelName:     capability.ModelName,
+		VendorName:    "AIPDD",
+		Description:   description,
+		Icon:          aipddLogoPath,
+		Tags:          strings.Join(tags, ","),
+		ChannelType:   constant.ChannelTypeAIPDD,
+		EndpointTypes: endpointTypes,
+	}
 }
 
 func getChannelAbilityModels(channel *Channel) []string {
@@ -336,7 +435,7 @@ func getChannelAbilityModels(channel *Channel) []string {
 		}
 	}
 	if len(models) == 0 && channel.Type == constant.ChannelTypeAIPDD {
-		return append([]string(nil), constant.AIPDDTaskModelList...)
+		return constant.GetAIPDDTaskModelList()
 	}
 	return models
 }

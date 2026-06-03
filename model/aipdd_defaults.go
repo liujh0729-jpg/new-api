@@ -1,10 +1,15 @@
 package model
 
 import (
+	"context"
 	"errors"
+	"net/http"
 	"strings"
+	"time"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/pkg/aipddcatalog"
 	"gorm.io/gorm"
 )
 
@@ -12,9 +17,12 @@ import (
 // initialization. It keeps channel abilities and model metadata in sync with
 // the local AIPDD catalog.
 func EnsureAIPDDDefaults() error {
-	if err := validateAIPDDBootstrapKey(getAIPDDKeyFromEnv()); err != nil {
+	key := getAIPDDKeyFromEnv()
+	if err := validateAIPDDBootstrapKey(key); err != nil {
 		return err
 	}
+	syncAIPDDCatalogFromEnv(key)
+
 	changed, err := ensureAIPDDModelCatalogDefaults()
 	if err != nil {
 		return err
@@ -28,16 +36,47 @@ func EnsureAIPDDDefaults() error {
 	return nil
 }
 
+func syncAIPDDCatalogFromEnv(key string) {
+	key = strings.TrimSpace(key)
+	if key == "" || !isAIPDDCatalogSyncOnBootEnabled(key) {
+		return
+	}
+
+	timeoutSeconds := common.GetEnvOrDefault(aipddCatalogSyncTimeoutSecondsEnvName, 10)
+	if timeoutSeconds <= 0 {
+		timeoutSeconds = 10
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSeconds)*time.Second)
+	defer cancel()
+
+	catalog, err := aipddcatalog.Fetch(ctx, http.DefaultClient, getAIPDDBaseURLFromEnv(), key)
+	if err != nil {
+		common.SysLog("AIPDD catalog sync on boot failed, fallback to built-in defaults: " + err.Error())
+		return
+	}
+	if len(catalog.Capabilities) == 0 {
+		common.SysLog("AIPDD catalog sync on boot returned no models, fallback to built-in defaults")
+		return
+	}
+	constant.SetAIPDDCapabilities(catalog.Capabilities)
+	common.SysLog("AIPDD catalog synced on boot: models=" + strings.Join(catalog.ModelNames(), ","))
+}
+
+func isAIPDDCatalogSyncOnBootEnabled(key string) bool {
+	raw := strings.TrimSpace(common.GetEnvOrDefaultString(aipddCatalogSyncOnBootEnvName, ""))
+	if raw != "" {
+		return common.GetEnvOrDefaultBool(aipddCatalogSyncOnBootEnvName, true)
+	}
+	return strings.HasPrefix(strings.TrimSpace(key), "sk-")
+}
+
 func ensureAIPDDModelCatalogDefaults() (bool, error) {
 	vendorID, changed, err := ensureAIPDDVendor()
 	if err != nil {
 		return false, err
 	}
 
-	for _, catalog := range defaultCatalogModels {
-		if catalog.ChannelType != constant.ChannelTypeAIPDD {
-			continue
-		}
+	for _, catalog := range aipddCurrentCatalogModels() {
 		itemChanged, err := ensureAIPDDModelCatalogItem(catalog, vendorID)
 		if err != nil {
 			return false, err

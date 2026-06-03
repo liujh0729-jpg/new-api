@@ -80,7 +80,7 @@ func init() {
 			OwnedBy: minimax.ChannelName,
 		})
 	}
-	for _, modelName := range taskaipdd.ModelList {
+	for _, modelName := range constant.GetAIPDDTaskModelList() {
 		openAIModels = append(openAIModels, dto.OpenAIModels{
 			Id:      modelName,
 			Object:  "model",
@@ -113,10 +113,57 @@ func init() {
 		adaptor.Init(meta)
 		channelId2Models[i] = adaptor.GetModelList()
 	}
-	channelId2Models[constant.ChannelTypeAIPDD] = taskaipdd.ModelList
+	channelId2Models[constant.ChannelTypeAIPDD] = constant.GetAIPDDTaskModelList()
 	openAIModels = lo.UniqBy(openAIModels, func(m dto.OpenAIModels) string {
 		return m.Id
 	})
+}
+
+func getOpenAIModel(modelName string) (dto.OpenAIModels, bool) {
+	if oaiModel, ok := openAIModelsMap[modelName]; ok {
+		return oaiModel, true
+	}
+	if constant.IsAIPDDTaskModel(modelName) {
+		return dto.OpenAIModels{
+			Id:      modelName,
+			Object:  "model",
+			Created: 1626777600,
+			OwnedBy: taskaipdd.ChannelName,
+		}, true
+	}
+	return dto.OpenAIModels{}, false
+}
+
+func getChannelListOpenAIModels() []dto.OpenAIModels {
+	models := append([]dto.OpenAIModels(nil), openAIModels...)
+	seen := make(map[string]bool, len(models))
+	for _, item := range models {
+		seen[item.Id] = true
+	}
+	for _, modelName := range constant.GetAIPDDTaskModelList() {
+		if seen[modelName] {
+			continue
+		}
+		models = append(models, dto.OpenAIModels{
+			Id:      modelName,
+			Object:  "model",
+			Created: 1626777600,
+			OwnedBy: taskaipdd.ChannelName,
+		})
+		seen[modelName] = true
+	}
+	return lo.UniqBy(models, func(m dto.OpenAIModels) string {
+		return m.Id
+	})
+}
+
+func getDashboardChannelModels() map[int][]string {
+	out := make(map[int][]string, len(channelId2Models))
+	for channelType, models := range channelId2Models {
+		out[channelType] = append([]string(nil), models...)
+	}
+	out[constant.ChannelTypeAIPDD] = constant.GetAIPDDTaskModelList()
+	return out
 }
 
 func ListModels(c *gin.Context, modelType int) {
@@ -148,7 +195,7 @@ func ListModels(c *gin.Context, modelType int) {
 					continue
 				}
 			}
-			if oaiModel, ok := openAIModelsMap[allowModel]; ok {
+			if oaiModel, ok := getOpenAIModel(allowModel); ok {
 				oaiModel.SupportedEndpointTypes = model.GetModelSupportEndpointTypes(allowModel)
 				userOpenAiModels = append(userOpenAiModels, oaiModel)
 			} else {
@@ -195,7 +242,7 @@ func ListModels(c *gin.Context, modelType int) {
 					continue
 				}
 			}
-			if oaiModel, ok := openAIModelsMap[modelName]; ok {
+			if oaiModel, ok := getOpenAIModel(modelName); ok {
 				oaiModel.SupportedEndpointTypes = model.GetModelSupportEndpointTypes(modelName)
 				userOpenAiModels = append(userOpenAiModels, oaiModel)
 			} else {
@@ -251,14 +298,14 @@ func ListModels(c *gin.Context, modelType int) {
 func ChannelListModels(c *gin.Context) {
 	c.JSON(200, gin.H{
 		"success": true,
-		"data":    openAIModels,
+		"data":    getChannelListOpenAIModels(),
 	})
 }
 
 func DashboardListModels(c *gin.Context) {
 	c.JSON(200, gin.H{
 		"success": true,
-		"data":    channelId2Models,
+		"data":    getDashboardChannelModels(),
 	})
 }
 
@@ -271,7 +318,7 @@ func EnabledListModels(c *gin.Context) {
 
 func RetrieveModel(c *gin.Context, modelType int) {
 	modelId := c.Param("model")
-	if aiModel, ok := openAIModelsMap[modelId]; ok {
+	if aiModel, ok := getOpenAIModel(modelId); ok {
 		switch modelType {
 		case constant.ChannelTypeAnthropic:
 			c.JSON(200, dto.AnthropicModel{

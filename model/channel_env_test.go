@@ -1,6 +1,8 @@
 package model
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -194,6 +196,89 @@ func TestEnsureAIPDDDefaultsCreatesChannelAndModelCatalog(t *testing.T) {
 		require.Equal(t, NameRuleExact, item.NameRule)
 		require.Equal(t, 1, item.Status)
 	}
+}
+
+func TestEnsureAIPDDDefaultsSyncsDynamicCatalogOnBoot(t *testing.T) {
+	truncateTables(t)
+	constant.ResetAIPDDCapabilities()
+	t.Cleanup(constant.ResetAIPDDCapabilities)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/scripts/admin/comfyui_workflow":
+			_, _ = w.Write([]byte(`{
+				"code": 200,
+				"message": "ok",
+				"data": [
+					{
+						"id": "dynamic-script-id",
+						"code": "dynamic-aipdd-video",
+						"name": "Dynamic AIPDD Video",
+						"description": "dynamic model from upstream",
+						"priceAWcoin": 500,
+						"endpointType": "openai-video",
+						"taskKind": "image_to_video",
+						"inputModalities": ["image", "text"],
+						"outputModalities": ["video"],
+						"params": [
+							{"paramKey": "image", "dataType": "string", "isRequired": true, "orderNo": 1, "uiType": "image_url"},
+							{"paramKey": "prompt", "dataType": "string", "isRequired": true, "orderNo": 2, "uiType": "textarea"}
+						]
+					}
+				]
+			}`))
+		case "/fee-rules":
+			_, _ = w.Write([]byte(`{
+				"code": 200,
+				"message": "ok",
+				"data": {
+					"total": 1,
+					"page": 1,
+					"pageSize": 100,
+					"list": [
+						{"key": "dynamic-aipdd-video", "name": "Dynamic AIPDD Video", "type": "comfyUI_workflow", "price": 500, "unit": "次"}
+					]
+				}
+			}`))
+		case "/system/awcoin-rate":
+			_, _ = w.Write([]byte(`{
+				"code": 200,
+				"message": "ok",
+				"data": {"rmb": 0.01, "usd": 0.0015}
+			}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	t.Setenv("AIPDD_API_KEY", "sk-test-env-key")
+	t.Setenv("AIPDD_BASE_URL", server.URL)
+	t.Setenv("AIPDD_CATALOG_SYNC_ON_BOOT", "true")
+
+	require.NoError(t, EnsureAIPDDDefaults())
+
+	var channel Channel
+	require.NoError(t, DB.Where("type = ?", constant.ChannelTypeAIPDD).First(&channel).Error)
+	require.Equal(t, server.URL, *channel.BaseURL)
+	require.Equal(t, "dynamic-aipdd-video", channel.Models)
+
+	var ability Ability
+	require.NoError(t, DB.Where("channel_id = ? AND model = ?", channel.Id, "dynamic-aipdd-video").First(&ability).Error)
+	require.True(t, ability.Enabled)
+
+	var item Model
+	require.NoError(t, DB.Where("model_name = ?", "dynamic-aipdd-video").First(&item).Error)
+	require.Equal(t, constant.AIPDDLogoPath, item.Icon)
+	require.Contains(t, item.Tags, "image_to_video")
+	require.Equal(t, marshalEndpointTypes([]constant.EndpointType{constant.EndpointTypeOpenAIVideo}), item.Endpoints)
+
+	capability, ok := constant.GetAIPDDCapability("dynamic-aipdd-video")
+	require.True(t, ok)
+	require.Equal(t, "image_to_video", capability.TaskKind)
+	require.Equal(t, []string{"image", "text"}, capability.InputModalities)
+	require.Equal(t, []string{"video"}, capability.OutputModalities)
 }
 
 func TestEnsureAIPDDDefaultsRequiresEnvBeforeCatalogSync(t *testing.T) {

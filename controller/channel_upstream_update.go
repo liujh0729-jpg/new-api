@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -263,6 +264,16 @@ func fetchChannelUpstreamModelIDs(channel *model.Channel) ([]string, error) {
 	baseURL := constant.ChannelBaseURLs[channel.Type]
 	if channel.GetBaseURL() != "" {
 		baseURL = channel.GetBaseURL()
+	}
+
+	if channel.Type == constant.ChannelTypeAIPDD {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(defaultTimeoutSeconds)*time.Second)
+		defer cancel()
+		catalog, err := refreshAIPDDCatalogForChannel(ctx, channel)
+		if err != nil {
+			return nil, err
+		}
+		return normalizeModelNames(catalog.ModelNames()), nil
 	}
 
 	if channel.Type == constant.ChannelTypeOllama {

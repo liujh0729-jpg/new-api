@@ -17,10 +17,12 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
 
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/aipddcatalog"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/samber/lo"
@@ -102,6 +104,14 @@ func valueMap(value any) map[string]any {
 	default:
 		return nil
 	}
+}
+
+func aipddCatalogRatioData(catalog aipddcatalog.Catalog) map[string]any {
+	data := make(map[string]any)
+	if len(catalog.ModelPrices) > 0 {
+		data["model_price"] = valueMap(catalog.ModelPrices)
+	}
+	return data
 }
 
 func asFloat64(value any) (float64, bool) {
@@ -225,6 +235,7 @@ func FetchUpstreamRatios(c *gin.Context) {
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
+			isAIPDDCatalog := strings.EqualFold(strings.Trim(strings.TrimSpace(chItem.Endpoint), "/"), "aipdd")
 			isOpenRouter := chItem.Endpoint == "openrouter"
 
 			endpoint := chItem.Endpoint
@@ -250,6 +261,33 @@ func FetchUpstreamRatios(c *gin.Context) {
 
 			ctx, cancel := context.WithTimeout(c.Request.Context(), time.Duration(req.Timeout)*time.Second)
 			defer cancel()
+
+			if chItem.ID > 0 {
+				dbCh, err := model.GetChannelById(chItem.ID, true)
+				if err == nil && dbCh.Type == constant.ChannelTypeAIPDD {
+					catalog, err := refreshAIPDDCatalogForChannel(ctx, dbCh)
+					if err != nil {
+						ch <- upstreamResult{Name: uniqueName, Err: err.Error()}
+						return
+					}
+					ch <- upstreamResult{Name: uniqueName, Data: aipddCatalogRatioData(catalog)}
+					return
+				}
+			}
+
+			if isAIPDDCatalog {
+				catalog, err := aipddcatalog.Fetch(ctx, client, chItem.BaseURL, "")
+				if err != nil {
+					ch <- upstreamResult{Name: uniqueName, Err: err.Error()}
+					return
+				}
+				if len(catalog.Capabilities) > 0 {
+					constant.SetAIPDDCapabilities(catalog.Capabilities)
+					model.InvalidatePricingCache()
+				}
+				ch <- upstreamResult{Name: uniqueName, Data: aipddCatalogRatioData(catalog)}
+				return
+			}
 
 			httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, fullURL, nil)
 			if err != nil {

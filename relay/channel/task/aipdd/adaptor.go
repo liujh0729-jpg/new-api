@@ -18,6 +18,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/aipddcatalog"
 	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -41,7 +42,7 @@ const (
 	defaultTaskNamePrefix = "new-api"
 )
 
-var ModelList = append([]string(nil), constant.AIPDDTaskModelList...)
+var ModelList = constant.GetAIPDDTaskModelList()
 
 type modelConfig = constant.AIPDDCapability
 
@@ -49,6 +50,7 @@ type TaskAdaptor struct {
 	taskcommon.BaseBilling
 	apiKey  string
 	baseURL string
+	proxy   string
 }
 
 type createTaskPayload struct {
@@ -113,6 +115,7 @@ func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 		a.baseURL = constant.ChannelBaseURLs[constant.ChannelTypeAIPDD]
 	}
 	a.apiKey = info.ApiKey
+	a.proxy = info.ChannelSetting.Proxy
 }
 
 func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
@@ -130,7 +133,7 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	if strings.TrimSpace(req.Model) == "" {
 		return service.TaskErrorWrapperLocal(fmt.Errorf("model field is required"), "missing_model", http.StatusBadRequest)
 	}
-	cfg, ok := resolveModelConfig(req.Model)
+	cfg, ok := a.resolveModelConfig(ginRequestContext(c), req.Model)
 	if !ok {
 		return service.TaskErrorWrapperLocal(fmt.Errorf("unsupported AIPDD model: %s", req.Model), "unsupported_model", http.StatusBadRequest)
 	}
@@ -159,7 +162,7 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 	if err != nil {
 		return nil
 	}
-	cfg, ok := resolveModelConfig(firstNonEmpty(info.UpstreamModelName, info.OriginModelName, req.Model))
+	cfg, ok := a.resolveModelConfig(ginRequestContext(c), firstNonEmpty(info.UpstreamModelName, info.OriginModelName, req.Model))
 	if !ok || cfg.BillingType != constant.AIPDDBillingTypeDurationSeconds {
 		return nil
 	}
@@ -188,7 +191,7 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	}
 	normalizeTaskSubmitReq(&req)
 
-	cfg, err := resolveRequestModelConfig(req, info)
+	cfg, err := a.resolveRequestModelConfig(ginRequestContext(c), req, info)
 	if err != nil {
 		return nil, err
 	}
@@ -230,7 +233,7 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 		return "", nil, service.TaskErrorWrapper(fmt.Errorf("task_id is empty"), "invalid_response", http.StatusInternalServerError)
 	}
 
-	cfg, _ := resolveModelConfig(firstNonEmpty(info.UpstreamModelName, info.OriginModelName))
+	cfg, _ := a.resolveModelConfig(ginRequestContext(c), firstNonEmpty(info.UpstreamModelName, info.OriginModelName))
 	writeCreateTaskResponse(c, info, cfg)
 
 	return aipddResp.Data.ID, responseBody, nil
@@ -364,7 +367,7 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 }
 
 func (a *TaskAdaptor) GetModelList() []string {
-	return ModelList
+	return constant.GetAIPDDTaskModelList()
 }
 
 func (a *TaskAdaptor) GetChannelName() string {
@@ -393,7 +396,7 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, erro
 }
 
 func (a *TaskAdaptor) convertToRequestPayload(req relaycommon.TaskSubmitReq, info *relaycommon.RelayInfo) (*createTaskPayload, error) {
-	cfg, err := resolveRequestModelConfig(req, info)
+	cfg, err := a.resolveRequestModelConfig(context.Background(), req, info)
 	if err != nil {
 		return nil, err
 	}
@@ -447,8 +450,64 @@ func resolveRequestModelConfig(req relaycommon.TaskSubmitReq, info *relaycommon.
 	return cfg, nil
 }
 
+func (a *TaskAdaptor) resolveRequestModelConfig(ctx context.Context, req relaycommon.TaskSubmitReq, info *relaycommon.RelayInfo) (modelConfig, error) {
+	modelName := ""
+	if info != nil {
+		modelName = strings.TrimSpace(info.UpstreamModelName)
+	}
+	if modelName == "" {
+		modelName = strings.TrimSpace(req.Model)
+	}
+	cfg, ok := a.resolveModelConfig(ctx, modelName)
+	if !ok {
+		return modelConfig{}, fmt.Errorf("unsupported AIPDD model: %s", modelName)
+	}
+	return cfg, nil
+}
+
 func resolveModelConfig(modelName string) (modelConfig, bool) {
 	return constant.GetAIPDDCapability(modelName)
+}
+
+func ginRequestContext(c *gin.Context) context.Context {
+	if c != nil && c.Request != nil {
+		return c.Request.Context()
+	}
+	return context.Background()
+}
+
+func (a *TaskAdaptor) resolveModelConfig(ctx context.Context, modelName string) (modelConfig, bool) {
+	cfg, ok := resolveModelConfig(modelName)
+	if ok {
+		return cfg, true
+	}
+	if err := a.refreshCatalog(ctx); err != nil {
+		return modelConfig{}, false
+	}
+	return resolveModelConfig(modelName)
+}
+
+func (a *TaskAdaptor) refreshCatalog(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	client, err := service.GetHttpClientWithProxy(a.proxy)
+	if err != nil {
+		return fmt.Errorf("new proxy http client failed: %w", err)
+	}
+	if client == nil {
+		client = http.DefaultClient
+	}
+	catalog, err := aipddcatalog.Fetch(ctx, client, a.baseURL, a.apiKey)
+	if err != nil {
+		return err
+	}
+	if len(catalog.Capabilities) > 0 {
+		constant.SetAIPDDCapabilities(catalog.Capabilities)
+		ModelList = constant.GetAIPDDTaskModelList()
+		model.InvalidatePricingCache()
+	}
+	return nil
 }
 
 func (a *TaskAdaptor) applyMultipartUploads(c *gin.Context, info *relaycommon.RelayInfo, cfg modelConfig, req *relaycommon.TaskSubmitReq) error {

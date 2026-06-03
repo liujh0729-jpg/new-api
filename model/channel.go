@@ -60,9 +60,12 @@ type Channel struct {
 }
 
 const (
-	aipddAPIKeyEnvName         = "AIPDD_API_KEY"
-	aipddBootstrapRequiredName = "AIPDD_BOOTSTRAP_REQUIRED"
-	aipddEnvChannelName        = "AIPDD"
+	aipddAPIKeyEnvName                    = "AIPDD_API_KEY"
+	aipddBaseURLEnvName                   = "AIPDD_BASE_URL"
+	aipddBootstrapRequiredName            = "AIPDD_BOOTSTRAP_REQUIRED"
+	aipddCatalogSyncOnBootEnvName         = "AIPDD_CATALOG_SYNC_ON_BOOT"
+	aipddCatalogSyncTimeoutSecondsEnvName = "AIPDD_CATALOG_SYNC_TIMEOUT_SECONDS"
+	aipddEnvChannelName                   = "AIPDD"
 )
 
 type ChannelInfo struct {
@@ -270,7 +273,7 @@ func (channel *Channel) GetModels() []string {
 
 func (channel *Channel) ApplyDefaultModels() {
 	if channel.Type == constant.ChannelTypeAIPDD && strings.TrimSpace(channel.Models) == "" {
-		channel.Models = strings.Join(constant.AIPDDTaskModelList, ",")
+		channel.Models = strings.Join(constant.GetAIPDDTaskModelList(), ",")
 	}
 }
 
@@ -278,8 +281,9 @@ func (channel *Channel) BackfillAIPDDDefaultModels() bool {
 	if channel.Type != constant.ChannelTypeAIPDD {
 		return false
 	}
-	models := make([]string, 0, len(constant.AIPDDTaskModelList))
-	seen := make(map[string]bool, len(constant.AIPDDTaskModelList))
+	defaultModels := constant.GetAIPDDTaskModelList()
+	models := make([]string, 0, len(defaultModels))
+	seen := make(map[string]bool, len(defaultModels))
 	changed := false
 	for _, modelName := range channel.GetModels() {
 		modelName = strings.TrimSpace(modelName)
@@ -290,7 +294,7 @@ func (channel *Channel) BackfillAIPDDDefaultModels() bool {
 		models = append(models, modelName)
 		seen[modelName] = true
 	}
-	for _, modelName := range constant.AIPDDTaskModelList {
+	for _, modelName := range defaultModels {
 		if seen[modelName] {
 			continue
 		}
@@ -307,6 +311,14 @@ func (channel *Channel) BackfillAIPDDDefaultModels() bool {
 
 func getAIPDDKeyFromEnv() string {
 	return strings.TrimSpace(os.Getenv(aipddAPIKeyEnvName))
+}
+
+func getAIPDDBaseURLFromEnv() string {
+	baseURL := strings.TrimSpace(os.Getenv(aipddBaseURLEnvName))
+	if baseURL == "" {
+		baseURL = constant.ChannelBaseURLs[constant.ChannelTypeAIPDD]
+	}
+	return strings.TrimRight(baseURL, "/")
 }
 
 func isAIPDDKeyRequiredFromEnv() bool {
@@ -358,7 +370,7 @@ func ensureAIPDDChannelMetadataDefaults(channel *Channel) (bool, error) {
 		channel.Group = "default"
 	}
 	if channel.BaseURL == nil || strings.TrimSpace(*channel.BaseURL) == "" {
-		baseURL := constant.ChannelBaseURLs[constant.ChannelTypeAIPDD]
+		baseURL := getAIPDDBaseURLFromEnv()
 		updates["base_url"] = baseURL
 		channel.BaseURL = &baseURL
 	}
@@ -383,7 +395,7 @@ func ensureAIPDDChannelFromEnv(channels []Channel, key string) ([]Channel, bool,
 
 	channel := selectAIPDDEnvChannel(channels)
 	if channel == nil {
-		baseURL := constant.ChannelBaseURLs[constant.ChannelTypeAIPDD]
+		baseURL := getAIPDDBaseURLFromEnv()
 		channel = &Channel{
 			Type:        constant.ChannelTypeAIPDD,
 			Key:         key,
@@ -418,7 +430,7 @@ func ensureAIPDDChannelFromEnv(channels []Channel, key string) ([]Channel, bool,
 		channel.Status = common.ChannelStatusEnabled
 	}
 	if channel.BaseURL == nil || strings.TrimSpace(*channel.BaseURL) == "" {
-		baseURL := constant.ChannelBaseURLs[constant.ChannelTypeAIPDD]
+		baseURL := getAIPDDBaseURLFromEnv()
 		updates["base_url"] = baseURL
 		channel.BaseURL = &baseURL
 	}
@@ -491,7 +503,7 @@ func (channel *Channel) GetOtherInfo() map[string]interface{} {
 }
 
 func (channel *Channel) SetOtherInfo(otherInfo map[string]interface{}) {
-	otherInfoBytes, err := json.Marshal(otherInfo)
+	otherInfoBytes, err := common.Marshal(otherInfo)
 	if err != nil {
 		common.SysLog(fmt.Sprintf("failed to marshal other info: channel_id=%d, tag=%s, name=%s, error=%v", channel.Id, channel.GetTag(), channel.Name, err))
 		return
