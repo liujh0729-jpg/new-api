@@ -21,17 +21,15 @@ import { useQuery } from '@tanstack/react-query'
 import {
   CheckCircle2,
   Clock3,
+  Code2,
   Copy,
   Eraser,
-  ExternalLink,
   FileJson,
   FlaskConical,
   History,
   Loader2,
   Play,
   RefreshCw,
-  Save,
-  Search,
   Settings2,
   WandSparkles,
 } from 'lucide-react'
@@ -45,6 +43,7 @@ import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import { TitledCard } from '@/components/ui/titled-card'
 import { SectionPageLayout } from '@/components/layout'
@@ -60,6 +59,10 @@ import {
   type TestModel,
   type TestModelKind,
 } from './model-test-platform-data'
+import {
+  buildRequestCodeSnippet,
+  type RequestCodeLanguage,
+} from './request-code-snippets'
 
 declare const __NEW_API_SERVER_URL__: string | undefined
 
@@ -70,7 +73,6 @@ type JsonRecord = Record<string, unknown>
 
 type StoredConfig = {
   baseUrl?: string
-  token?: string
   selectedApiKeyId?: number | string
   selectedModel?: string
   pollMaxAttempts?: number | string
@@ -108,10 +110,35 @@ const DEFAULT_STATUS_KEY =
 const selectClassName =
   'border-input focus-visible:border-ring focus-visible:ring-ring/50 dark:bg-input/30 h-8 w-full rounded-lg border bg-transparent px-2.5 py-1 text-sm outline-none transition-colors focus-visible:ring-3'
 
-const MANUAL_API_KEY_VALUE = '__manual__'
 const LOCALHOST_DEFAULT_BASE_URL = 'http://localhost:3000'
 const DEFAULT_POLL_MAX_ATTEMPTS = 1000
 const POSITIVE_INTEGER_REGEX = /^\d+$/
+
+const REQUEST_CODE_OPTIONS: Array<{
+  language: RequestCodeLanguage
+  tabLabel: string
+  labelKey: string
+  copiedKey: string
+}> = [
+  {
+    language: 'python',
+    tabLabel: 'Python',
+    labelKey: 'Python request code',
+    copiedKey: 'Python request code copied',
+  },
+  {
+    language: 'java',
+    tabLabel: 'Java',
+    labelKey: 'Java request code',
+    copiedKey: 'Java request code copied',
+  },
+  {
+    language: 'nodejs',
+    tabLabel: 'Node.js',
+    labelKey: 'Node.js request code',
+    copiedKey: 'Node.js request code copied',
+  },
+]
 
 function isRecord(value: unknown): value is JsonRecord {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -218,11 +245,22 @@ function createDynamicModel(modelId: string): TestModel {
     : createDynamicChatModel(modelId)
 }
 
-function buildModelOptions(dynamicModelIds: string[]): TestModel[] {
+function buildModelOptions(
+  dynamicModelIds: string[],
+  pendingModelId?: string
+): TestModel[] {
   const knownModels = new Map(TEST_MODELS.map((model) => [model.id, model]))
   const normalizedDynamicIds = dynamicModelIds
     .map((modelId) => modelId.trim())
     .filter(Boolean)
+  const normalizedPendingModelId = pendingModelId?.trim() || ''
+  if (
+    normalizedPendingModelId &&
+    !knownModels.has(normalizedPendingModelId) &&
+    !normalizedDynamicIds.includes(normalizedPendingModelId)
+  ) {
+    normalizedDynamicIds.unshift(normalizedPendingModelId)
+  }
 
   if (normalizedDynamicIds.length === 0) return TEST_MODELS
 
@@ -269,10 +307,10 @@ function parseStoredConfig(): StoredConfig {
 function persistConfig(patch: StoredConfig) {
   if (typeof window === 'undefined') return
   const current = parseStoredConfig()
-  window.localStorage.setItem(
-    MODEL_TEST_STORAGE_KEY,
-    JSON.stringify({ ...current, ...patch })
-  )
+  const next: StoredConfig & { token?: string } = { ...current, ...patch }
+  if (next.selectedApiKeyId === '__manual__') next.selectedApiKeyId = ''
+  delete next.token
+  window.localStorage.setItem(MODEL_TEST_STORAGE_KEY, JSON.stringify(next))
 }
 
 function parsePollMaxAttempts(value: unknown): number | null {
@@ -287,7 +325,14 @@ function getInitialPollMaxAttempts(value: unknown): string {
   return String(parsePollMaxAttempts(value) || DEFAULT_POLL_MAX_ATTEMPTS)
 }
 
-function parseNumberFieldValue(value: FormValue | undefined): number | undefined {
+function getInitialApiKeyId(value: unknown): string {
+  const text = String(value ?? '').trim()
+  return text === '__manual__' ? '' : text
+}
+
+function parseNumberFieldValue(
+  value: FormValue | undefined
+): number | undefined {
   const text = String(value ?? '').trim()
   if (!text) return undefined
   const numberValue = Number(text)
@@ -593,12 +638,12 @@ export function TestBench() {
     staleTime: 60 * 1000,
   })
 
-  const [baseUrl, setBaseUrl] = useState(() => getInitialBaseUrl(stored.baseUrl))
-  const [apiToken, setApiToken] = useState(stored.token || '')
-  const [selectedApiKeyId, setSelectedApiKeyId] = useState(
-    stored.selectedApiKeyId != null
-      ? String(stored.selectedApiKeyId)
-      : MANUAL_API_KEY_VALUE
+  const [baseUrl, setBaseUrl] = useState(() =>
+    getInitialBaseUrl(stored.baseUrl)
+  )
+  const [apiToken, setApiToken] = useState('')
+  const [selectedApiKeyId, setSelectedApiKeyId] = useState(() =>
+    getInitialApiKeyId(stored.selectedApiKeyId)
   )
   const [loadingApiKey, setLoadingApiKey] = useState(false)
   const [selectedModelId, setSelectedModelId] = useState(initialModel)
@@ -612,8 +657,12 @@ export function TestBench() {
     [userModelsQuery.data]
   )
   const modelOptions = useMemo(
-    () => buildModelOptions(dynamicModelIds),
-    [dynamicModelIds]
+    () =>
+      buildModelOptions(
+        dynamicModelIds,
+        userModelsQuery.isLoading ? selectedModelId : undefined
+      ),
+    [dynamicModelIds, selectedModelId, userModelsQuery.isLoading]
   )
   const selectedModel = useMemo(
     () =>
@@ -629,6 +678,8 @@ export function TestBench() {
   )
   const [files, setFiles] = useState<FileValues>({})
   const [rawMode, setRawMode] = useState(false)
+  const [selectedRequestCodeLanguage, setSelectedRequestCodeLanguage] =
+    useState<RequestCodeLanguage>('python')
   const [noPoll, setNoPoll] = useState(false)
   const [pollMaxAttempts, setPollMaxAttempts] = useState(() =>
     getInitialPollMaxAttempts(stored.pollMaxAttempts)
@@ -651,8 +702,6 @@ export function TestBench() {
   const [elapsed, setElapsed] = useState('00:00')
   const [lastTaskId, setLastTaskId] = useState('')
   const [lastQueryEndpoint, setLastQueryEndpoint] = useState('')
-  const [connectionCode, setConnectionCode] = useState('ready')
-  const [saveCode, setSaveCode] = useState('local')
   const [status, setStatus] = useState<RunStatus>({
     code: 'idle',
     title: t('Awaiting test'),
@@ -661,13 +710,31 @@ export function TestBench() {
   })
 
   useEffect(() => {
-    if (selectedApiKeyId !== MANUAL_API_KEY_VALUE || apiToken) return
-    const firstEnabledKey = enabledApiKeys[0]
-    if (firstEnabledKey) setSelectedApiKeyId(String(firstEnabledKey.id))
-  }, [apiToken, enabledApiKeys, selectedApiKeyId])
+    if (apiKeysQuery.isLoading) return
+    if (enabledApiKeys.length === 0) {
+      if (selectedApiKeyId) {
+        setSelectedApiKeyId('')
+        setApiToken('')
+        persistConfig({ selectedApiKeyId: '' })
+      }
+      return
+    }
+
+    const selectedExists = enabledApiKeys.some(
+      (apiKey) => String(apiKey.id) === selectedApiKeyId
+    )
+    if (selectedExists) return
+
+    const nextId = String(enabledApiKeys[0].id)
+    setSelectedApiKeyId(nextId)
+    persistConfig({ selectedApiKeyId: Number(nextId) })
+  }, [apiKeysQuery.isLoading, enabledApiKeys, selectedApiKeyId])
 
   useEffect(() => {
-    if (selectedApiKeyId === MANUAL_API_KEY_VALUE) return
+    if (!selectedApiKeyId) {
+      setApiToken('')
+      return
+    }
     const tokenId = Number(selectedApiKeyId)
     if (!Number.isFinite(tokenId)) return
 
@@ -680,7 +747,7 @@ export function TestBench() {
           throw new Error(result.message || 'Failed to load API key')
         }
         setApiToken(ensureApiKeyPrefix(result.data.key))
-        persistConfig({ selectedApiKeyId: tokenId, token: '' })
+        persistConfig({ selectedApiKeyId: tokenId })
       })
       .catch((error) => {
         if (!active) return
@@ -696,9 +763,10 @@ export function TestBench() {
   }, [selectedApiKeyId])
 
   useEffect(() => {
+    if (userModelsQuery.isLoading) return
     if (modelOptions.some((model) => model.id === selectedModelId)) return
     setSelectedModelId(modelOptions[0]?.id || DEFAULT_TEST_MODEL)
-  }, [modelOptions, selectedModelId])
+  }, [modelOptions, selectedModelId, userModelsQuery.isLoading])
 
   useEffect(() => {
     const nextValues = getDefaultFormValues(selectedModel)
@@ -790,13 +858,22 @@ export function TestBench() {
 
   const handleApiKeySelection = (value: string) => {
     setSelectedApiKeyId(value)
-    if (value === MANUAL_API_KEY_VALUE) {
-      setApiToken(stored.token || '')
-      persistConfig({ selectedApiKeyId: value })
-    } else {
-      setApiToken('')
-      persistConfig({ selectedApiKeyId: Number(value), token: '' })
-    }
+    setApiToken('')
+    const tokenId = value ? Number(value) : NaN
+    persistConfig({
+      selectedApiKeyId: Number.isFinite(tokenId) ? tokenId : '',
+    })
+  }
+
+  const updateBaseUrl = (value: string) => {
+    setBaseUrl(value)
+    persistConfig({ baseUrl: value })
+  }
+
+  const normalizeAndPersistBaseUrl = () => {
+    const normalized = normalizeBaseUrl(baseUrl)
+    setBaseUrl(normalized)
+    persistConfig({ baseUrl: normalized })
   }
 
   const updateField = (field: TestField, value: FormValue) => {
@@ -807,7 +884,10 @@ export function TestBench() {
   }
 
   const updatePollMaxAttempts = (value: string) => {
-    if (/^\d*$/.test(value)) setPollMaxAttempts(value)
+    if (!/^\d*$/.test(value)) return
+    setPollMaxAttempts(value)
+    const attempts = parsePollMaxAttempts(value)
+    if (attempts) persistConfig({ pollMaxAttempts: attempts })
   }
 
   const getRequestBodyFromEditor = () => {
@@ -820,42 +900,6 @@ export function TestBench() {
     return parsed
   }
 
-  const saveConfig = () => {
-    const normalized = normalizeBaseUrl(baseUrl)
-    const normalizedPollMaxAttempts = parsePollMaxAttempts(pollMaxAttempts)
-    if (!normalizedPollMaxAttempts) {
-      toast.error(t('Polling limit must be a positive integer'))
-      return
-    }
-    setBaseUrl(normalized)
-    setPollMaxAttempts(String(normalizedPollMaxAttempts))
-    persistConfig({
-      baseUrl: normalized,
-      token:
-        selectedApiKeyId === MANUAL_API_KEY_VALUE
-          ? ensureApiKeyPrefix(apiToken)
-          : '',
-      selectedApiKeyId:
-        selectedApiKeyId === MANUAL_API_KEY_VALUE
-          ? selectedApiKeyId
-          : Number(selectedApiKeyId),
-      selectedModel: selectedModel.id,
-      pollMaxAttempts: normalizedPollMaxAttempts,
-    })
-    setSaveCode('saved')
-    toast.success(t('Configuration saved to this browser'))
-  }
-
-  const forgetConfig = () => {
-    window.localStorage.removeItem(MODEL_TEST_STORAGE_KEY)
-    setApiToken('')
-    setSelectedApiKeyId(MANUAL_API_KEY_VALUE)
-    setBaseUrl(normalizeBaseUrl())
-    setPollMaxAttempts(String(DEFAULT_POLL_MAX_ATTEMPTS))
-    setSaveCode('local')
-    toast.success(t('Local connection configuration cleared'))
-  }
-
   const copyText = async (text: string, messageKey: string) => {
     const ok = await copyToClipboard(text || '')
     if (ok) {
@@ -863,6 +907,39 @@ export function TestBench() {
     } else {
       toast.error(t('Copy failed'))
     }
+  }
+
+  const getRequestCodeState = (language: RequestCodeLanguage) => {
+    try {
+      const body = getRequestBodyFromEditor()
+      return {
+        code: buildRequestCodeSnippet({
+          language,
+          method: selectedModel.method,
+          url: normalizeBaseUrl(baseUrl) + selectedModel.endpoint,
+          body,
+          files: Object.entries(files).map(([key, file]) => ({
+            key,
+            name: file.name,
+          })),
+        }),
+      }
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : String(error) }
+    }
+  }
+
+  const copySelectedRequestCode = async () => {
+    const option =
+      REQUEST_CODE_OPTIONS.find(
+        (item) => item.language === selectedRequestCodeLanguage
+      ) || REQUEST_CODE_OPTIONS[0]
+    const state = getRequestCodeState(option.language)
+    if ('error' in state) {
+      toast.error(state.error)
+      return
+    }
+    await copyText(state.code, option.copiedKey)
   }
 
   const handleStreamResponse = async (response: Response) => {
@@ -937,7 +1014,7 @@ export function TestBench() {
       }
       const token = ensureApiKeyPrefix(apiToken)
       if (!token) {
-        toast.error(t('Please select or enter an API Key first'))
+        toast.error(t('Please select an API Key first'))
         return
       }
       const queryTemplate = model.queryEndpoint || lastQueryEndpoint
@@ -1051,7 +1128,7 @@ export function TestBench() {
   const runTest = async () => {
     const token = ensureApiKeyPrefix(apiToken)
     if (!token) {
-      toast.error(t('Please select or enter an API Key first'))
+      toast.error(t('Please select an API Key first'))
       return
     }
 
@@ -1159,45 +1236,6 @@ export function TestBench() {
     }
   }
 
-  const testModelsEndpoint = async () => {
-    const token = ensureApiKeyPrefix(apiToken)
-    if (!token) {
-      toast.error(t('Please select or enter an API Key first'))
-      return
-    }
-
-    setConnectionCode('checking')
-    try {
-      const response = await fetch(`${normalizeBaseUrl(baseUrl)}/v1/models`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      const json = await readJsonOrText(response)
-      renderJsonResult(json)
-      if (!response.ok) {
-        throw new Error(extractErrorMessage(json) || `HTTP ${response.status}`)
-      }
-
-      const data = isRecord(json) && Array.isArray(json.data) ? json.data : []
-      const ids = data
-        .map((item) => (isRecord(item) ? getString(item, 'id') : ''))
-        .filter(Boolean)
-      setConnectionCode('connected')
-      setStatus({
-        code: 'models',
-        title: t('Model list validation complete'),
-        text: t('Returned {{count}} models', { count: ids.length }),
-        tone: 'success',
-      })
-      toast.success(
-        t('Model list validated: {{count}} models', { count: ids.length })
-      )
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      setConnectionCode('failed')
-      toast.error(message)
-    }
-  }
-
   const clearResult = () => {
     setResponseJson('')
     setLastTaskId('')
@@ -1234,10 +1272,7 @@ export function TestBench() {
   const selectedApiKey = apiKeys.find(
     (key) => String(key.id) === selectedApiKeyId
   )
-  const apiKeyHint =
-    selectedApiKeyId === MANUAL_API_KEY_VALUE
-      ? t('Manual API Key')
-      : selectedApiKey?.name || t('Loading API key...')
+  const apiKeyHint = selectedApiKey?.name || ''
   const modelSelectionDescription = userModelsQuery.isLoading
     ? t('Loading models...')
     : dynamicModelIds.length > 0
@@ -1247,22 +1282,6 @@ export function TestBench() {
   return (
     <SectionPageLayout>
       <SectionPageLayout.Title>{t('Test Bench')}</SectionPageLayout.Title>
-      <SectionPageLayout.Actions>
-        <Button
-          variant='outline'
-          size='sm'
-          render={
-            <a
-              href='/docs/aipdd-user-guide.zh_CN.md'
-              target='_blank'
-              rel='noreferrer'
-            />
-          }
-        >
-          <ExternalLink className='h-4 w-4' />
-          {t('Request docs')}
-        </Button>
-      </SectionPageLayout.Actions>
       <SectionPageLayout.Content>
         <div className='grid gap-4 xl:grid-cols-[390px_minmax(0,1fr)]'>
           <aside className='space-y-4'>
@@ -1270,7 +1289,7 @@ export function TestBench() {
               title={t('Connection configuration')}
               description={t('API Keys are loaded from your account.')}
               icon={<Settings2 className='h-4 w-4' />}
-              action={<StateBadge code={connectionCode} />}
+              action={<StateBadge code='local' />}
               contentClassName='space-y-4'
             >
               <div className='space-y-2'>
@@ -1280,7 +1299,8 @@ export function TestBench() {
                 />
                 <Input
                   value={baseUrl}
-                  onChange={(event) => setBaseUrl(event.target.value)}
+                  onChange={(event) => updateBaseUrl(event.target.value)}
+                  onBlur={normalizeAndPersistBaseUrl}
                   autoComplete='off'
                   className='font-mono text-xs'
                 />
@@ -1295,71 +1315,37 @@ export function TestBench() {
                   }
                   disabled={apiKeysQuery.isLoading}
                 >
-                  <option value={MANUAL_API_KEY_VALUE}>
-                    {apiKeysQuery.isLoading
-                      ? t('Loading API keys...')
-                      : t('Manual API Key')}
-                  </option>
+                  {apiKeysQuery.isLoading ? (
+                    <option value=''>{t('Loading API keys...')}</option>
+                  ) : null}
+                  {!apiKeysQuery.isLoading && enabledApiKeys.length === 0 ? (
+                    <option value=''>{t('No enabled API keys found')}</option>
+                  ) : null}
+                  {!apiKeysQuery.isLoading && enabledApiKeys.length > 0 ? (
+                    <option value=''>{t('Select API Key')}</option>
+                  ) : null}
                   {enabledApiKeys.map((apiKey) => (
                     <option key={apiKey.id} value={apiKey.id}>
                       {getApiKeyOptionLabel(apiKey)}
                     </option>
                   ))}
                 </select>
-                {selectedApiKeyId === MANUAL_API_KEY_VALUE ? (
-                  <Input
-                    type='password'
-                    value={apiToken}
-                    onChange={(event) => setApiToken(event.target.value)}
-                    placeholder='sk-xxxx'
-                    autoComplete='off'
-                    className='font-mono text-xs'
-                  />
-                ) : (
+                {selectedApiKeyId ? (
                   <div className='text-muted-foreground rounded-lg border border-dashed px-3 py-2 text-xs leading-relaxed'>
                     {loadingApiKey
                       ? t('Loading selected API key...')
                       : t('Selected API key will be loaded before requests.')}
                   </div>
-                )}
+                ) : null}
                 {!apiKeysQuery.isLoading && enabledApiKeys.length === 0 ? (
                   <div className='text-muted-foreground rounded-lg border border-dashed px-3 py-2 text-xs leading-relaxed'>
-                    {t(
-                      'No enabled API keys found. Use manual mode or create one first.'
-                    )}
+                    {t('No enabled API keys found. Create one first.')}
                   </div>
                 ) : null}
               </div>
-              <div className='flex flex-wrap gap-2'>
-                <Button type='button' size='sm' onClick={saveConfig}>
-                  <Save className='h-4 w-4' />
-                  {t('Save configuration')}
-                </Button>
-                <Button
-                  type='button'
-                  variant='outline'
-                  size='sm'
-                  onClick={testModelsEndpoint}
-                >
-                  <Search className='h-4 w-4' />
-                  {t('Validate models')}
-                </Button>
-                <Button
-                  type='button'
-                  variant='destructive'
-                  size='sm'
-                  onClick={forgetConfig}
-                >
-                  <Eraser className='h-4 w-4' />
-                  {t('Clear')}
-                </Button>
-              </div>
               <div className='text-muted-foreground rounded-lg border border-dashed px-3 py-2 text-xs leading-relaxed'>
-                {t(
-                  'Selected API Key IDs are saved locally. Manual API Keys are stored only in this browser.'
-                )}
+                {t('Selected API Key IDs are saved locally.')}
               </div>
-              <StateBadge code={saveCode} className='w-fit' />
             </TitledCard>
 
             <TitledCard
@@ -1467,6 +1453,7 @@ export function TestBench() {
                       parsePollMaxAttempts(pollMaxAttempts) ||
                       DEFAULT_POLL_MAX_ATTEMPTS
                     setPollMaxAttempts(String(normalized))
+                    persistConfig({ pollMaxAttempts: normalized })
                   }}
                   className='text-sm'
                 />
@@ -1628,29 +1615,92 @@ export function TestBench() {
             </div>
 
             <div className='grid gap-4 lg:grid-cols-2'>
-              <TitledCard
-                title='request.json'
-                icon={<FileJson className='h-4 w-4' />}
-                action={
-                  <Button
-                    type='button'
-                    variant='outline'
-                    size='sm'
-                    onClick={formatRequestJson}
+              <div className='min-w-0 space-y-4'>
+                <TitledCard
+                  title='request.json'
+                  icon={<FileJson className='h-4 w-4' />}
+                  action={
+                    <Button
+                      type='button'
+                      variant='outline'
+                      size='sm'
+                      onClick={formatRequestJson}
+                    >
+                      {t('Format')}
+                    </Button>
+                  }
+                  contentClassName='p-0'
+                >
+                  <Textarea
+                    value={requestJson}
+                    onChange={(event) => setRequestJson(event.target.value)}
+                    readOnly={!rawMode}
+                    spellCheck={false}
+                    className='min-h-[320px] resize-y rounded-none border-0 bg-transparent p-4 font-mono text-xs focus-visible:ring-0'
+                  />
+                </TitledCard>
+
+                <TitledCard
+                  title={t('Request code')}
+                  icon={<Code2 className='h-4 w-4' />}
+                  action={
+                    <Button
+                      type='button'
+                      variant='outline'
+                      size='sm'
+                      onClick={() => void copySelectedRequestCode()}
+                    >
+                      <Copy className='h-4 w-4' />
+                      {t('Copy')}
+                    </Button>
+                  }
+                  contentClassName='p-0'
+                >
+                  <Tabs
+                    value={selectedRequestCodeLanguage}
+                    onValueChange={(value) =>
+                      setSelectedRequestCodeLanguage(
+                        value as RequestCodeLanguage
+                      )
+                    }
+                    className='gap-0'
                   >
-                    {t('Format')}
-                  </Button>
-                }
-                contentClassName='p-0'
-              >
-                <Textarea
-                  value={requestJson}
-                  onChange={(event) => setRequestJson(event.target.value)}
-                  readOnly={!rawMode}
-                  spellCheck={false}
-                  className='min-h-[320px] resize-y rounded-none border-0 bg-transparent p-4 font-mono text-xs focus-visible:ring-0'
-                />
-              </TitledCard>
+                    <div className='border-b p-3'>
+                      <TabsList className='grid w-full grid-cols-3'>
+                        {REQUEST_CODE_OPTIONS.map((option) => (
+                          <TabsTrigger
+                            key={option.language}
+                            value={option.language}
+                            title={t(option.labelKey)}
+                          >
+                            {option.tabLabel}
+                          </TabsTrigger>
+                        ))}
+                      </TabsList>
+                    </div>
+                    {REQUEST_CODE_OPTIONS.map((option) => {
+                      const state = getRequestCodeState(option.language)
+                      return (
+                        <TabsContent
+                          key={option.language}
+                          value={option.language}
+                          className='m-0 outline-none'
+                        >
+                          {'error' in state ? (
+                            <div className='text-destructive min-h-[240px] p-4 text-sm leading-relaxed'>
+                              {state.error}
+                            </div>
+                          ) : (
+                            <pre className='bg-muted/10 max-h-[360px] min-h-[240px] overflow-auto p-4 font-mono text-xs leading-5 whitespace-pre-wrap'>
+                              {state.code}
+                            </pre>
+                          )}
+                        </TabsContent>
+                      )
+                    })}
+                  </Tabs>
+                </TitledCard>
+              </div>
 
               <TitledCard
                 title='response.json'
