@@ -48,6 +48,9 @@ export const DEFAULT_GROUP = 'auto' as const
 export const DEFAULT_IMAGE_SIZE = '1024x1024'
 export const SEEDREAM_45_MIN_PIXELS = 3686400
 export const SEEDREAM_45_SAFE_IMAGE_SIZE = '1920x1920'
+export const SEEDREAM_50_LITE_DEFAULT_IMAGE_SIZE = '2K'
+export const SEEDREAM_50_LITE_MIN_PIXELS = 2560 * 1440
+export const SEEDREAM_50_LITE_MAX_PIXELS = 4096 * 4096
 
 export const IMAGE_SIZE_OPTIONS = [
   SEEDREAM_45_SAFE_IMAGE_SIZE,
@@ -57,6 +60,17 @@ export const IMAGE_SIZE_OPTIONS = [
   '1024x1536',
   '1536x1024',
   '512x512',
+] as const
+
+export const SEEDREAM_50_LITE_IMAGE_SIZE_OPTIONS = [
+  SEEDREAM_50_LITE_DEFAULT_IMAGE_SIZE,
+  '3K',
+  '4K',
+  SEEDREAM_45_SAFE_IMAGE_SIZE,
+  '2048x2048',
+  '2560x1440',
+  '1440x2560',
+  '4096x4096',
 ] as const
 
 export const VIDEO_RATIO_OPTIONS = [
@@ -126,6 +140,14 @@ export function isSeedream45Model(model: string): boolean {
   return model.includes('seedream-4-5')
 }
 
+export function isSeedream50LiteModel(model: string): boolean {
+  const normalized = model.trim().toLowerCase().replace(/[_.]/g, '-')
+  return (
+    normalized.includes('seedream-5-0-lite') ||
+    normalized.includes('seedream-5-0-260128')
+  )
+}
+
 export function getImageSizePixels(size: string): number | null {
   const match = size.trim().match(/^(\d+)x(\d+)$/i)
   if (!match) return null
@@ -137,10 +159,45 @@ export function getImageSizePixels(size: string): number | null {
   return width * height
 }
 
+export function isValidSeedream50LiteImageSize(size: string): boolean {
+  const normalizedSize = size.trim()
+  if (!normalizedSize) return true
+  if (['2K', '3K', '4K'].includes(normalizedSize.toUpperCase())) return true
+
+  const match = normalizedSize.match(/^(\d+)x(\d+)$/i)
+  if (!match) return false
+
+  const width = Number(match[1])
+  const height = Number(match[2])
+  if (!Number.isFinite(width) || !Number.isFinite(height)) return false
+  if (width <= 0 || height <= 0) return false
+
+  const pixels = width * height
+  const ratio = width / height
+
+  return (
+    pixels >= SEEDREAM_50_LITE_MIN_PIXELS &&
+    pixels <= SEEDREAM_50_LITE_MAX_PIXELS &&
+    ratio >= 1 / 16 &&
+    ratio <= 16
+  )
+}
+
+export function getImageSizeOptionsForModel(model: string): readonly string[] {
+  if (isSeedream50LiteModel(model)) return SEEDREAM_50_LITE_IMAGE_SIZE_OPTIONS
+  return IMAGE_SIZE_OPTIONS
+}
+
 export function normalizeImageSizeForModel(
   model: string,
   size: string
 ): string {
+  if (isSeedream50LiteModel(model)) {
+    return isValidSeedream50LiteImageSize(size)
+      ? size
+      : SEEDREAM_50_LITE_DEFAULT_IMAGE_SIZE
+  }
+
   if (!isSeedream45Model(model)) return size
 
   const pixels = getImageSizePixels(size)

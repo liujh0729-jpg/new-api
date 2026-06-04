@@ -3972,6 +3972,7 @@
     "Text to Speech": "文生语音",
     "Text to Video": "文生视频",
     "Text-to-image returns synchronously. Seedream 4.5 requires at least 3,686,400 pixels; response_format is usually omitted.": "文生图同步返回。Seedream 4.5 要求至少 3,686,400 像素；通常省略 response_format。",
+    "Text-to-image returns synchronously. Seedream 5.0 lite supports 2K/3K/4K presets or matching pixel sizes.": "文生图同步返回。Seedream 5.0 lite 支持 2K/3K/4K 预设或匹配的像素尺寸。",
     "Text-to-video or image-to-video. Supplying image switches the request to image-to-video.": "文生视频或图生视频。传入 image 后会切换为图生视频。",
     "The administrator account is already initialized. You can keep your existing credentials and continue to the next step.": "管理员账户已初始化。您可以保留现有凭据并继续下一步。",
     "The administrator configured an external link for this document.": "管理员为此文档配置了外部链接。",

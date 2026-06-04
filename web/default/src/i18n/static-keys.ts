@@ -482,6 +482,7 @@ export const STATIC_I18N_KEYS = [
   'AIPDD IndexTTS voice cloning',
   'Do not use /v1/responses here. This test uses Chat Completions for the minimal relay path.',
   'Text-to-image returns synchronously. Seedream 4.5 requires at least 3,686,400 pixels; response_format is usually omitted.',
+  'Text-to-image returns synchronously. Seedream 5.0 lite supports 2K/3K/4K presets or matching pixel sizes.',
   'Text-to-video or image-to-video. Supplying image switches the request to image-to-video.',
   'A lower-cost option for validating the video relay path. Supplying image switches the request to image-to-video.',
   'An image URL or uploaded image is required. Sending only prompt will fail.',

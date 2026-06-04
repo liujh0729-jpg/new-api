@@ -60,7 +60,7 @@ import {
 } from '@/components/ai-elements/prompt-input'
 import { ModelGroupSelector } from '@/components/model-group-selector'
 import {
-  IMAGE_SIZE_OPTIONS,
+  getImageSizeOptionsForModel,
   SEEDANCE_REFERENCE_ACCEPT,
   SEEDANCE_REFERENCE_LIMITS,
   VIDEO_DURATION_OPTIONS,
@@ -172,6 +172,7 @@ export function PlaygroundInput({
   const [text, setText] = useState('')
   const isImageMode = mode === 'image'
   const isVideoMode = mode === 'video'
+  const imageSizeOptions = getImageSizeOptionsForModel(modelValue)
   const ModeIcon = isVideoMode
     ? VideoIcon
     : isImageMode
@@ -370,7 +371,7 @@ export function PlaygroundInput({
                       value={imageSize}
                       onValueChange={onImageSizeChange}
                     >
-                      {IMAGE_SIZE_OPTIONS.map((size) => (
+                      {imageSizeOptions.map((size) => (
                         <DropdownMenuRadioItem key={size} value={size}>
                           {size}
                         </DropdownMenuRadioItem>

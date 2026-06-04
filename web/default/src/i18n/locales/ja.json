@@ -3972,6 +3972,7 @@
     "Text to Speech": "テキスト読み上げ",
     "Text to Video": "テキストから動画",
     "Text-to-image returns synchronously. Seedream 4.5 requires at least 3,686,400 pixels; response_format is usually omitted.": "テキストから画像は同期的に返ります。Seedream 4.5 は最低 3,686,400 ピクセルが必要で、通常 response_format は省略します。",
+    "Text-to-image returns synchronously. Seedream 5.0 lite supports 2K/3K/4K presets or matching pixel sizes.": "テキストから画像は同期的に返ります。Seedream 5.0 lite は 2K/3K/4K プリセット、または対応するピクセルサイズをサポートします。",
     "Text-to-video or image-to-video. Supplying image switches the request to image-to-video.": "テキストから動画、または画像から動画です。image を指定すると画像から動画になります。",
     "The administrator account is already initialized. You can keep your existing credentials and continue to the next step.": "管理者アカウントはすでに初期化されています。既存の認証情報を保持して、次のステップに進むことができます。",
     "The administrator configured an external link for this document.": "管理者がこのドキュメントの外部リンクを設定しました。",

@@ -3972,6 +3972,7 @@
     "Text to Speech": "Texte vers parole",
     "Text to Video": "Texte vers vidéo",
     "Text-to-image returns synchronously. Seedream 4.5 requires at least 3,686,400 pixels; response_format is usually omitted.": "Le texte vers image répond en synchrones. Seedream 4.5 exige au moins 3 686 400 pixels ; response_format est généralement omis.",
+    "Text-to-image returns synchronously. Seedream 5.0 lite supports 2K/3K/4K presets or matching pixel sizes.": "Le texte vers image répond en synchrone. Seedream 5.0 lite prend en charge les préréglages 2K/3K/4K ou les tailles en pixels compatibles.",
     "Text-to-video or image-to-video. Supplying image switches the request to image-to-video.": "Texte vers vidéo ou image vers vidéo. Fournir image bascule la requête en image vers vidéo.",
     "The administrator account is already initialized. You can keep your existing credentials and continue to the next step.": "Le compte administrateur est déjà initialisé. Vous pouvez conserver vos identifiants existants et passer à l'étape suivante.",
     "The administrator configured an external link for this document.": "L'administrateur a configuré un lien externe pour ce document.",

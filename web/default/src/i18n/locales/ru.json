@@ -3972,6 +3972,7 @@
     "Text to Speech": "Текст в речь",
     "Text to Video": "Текст в видео",
     "Text-to-image returns synchronously. Seedream 4.5 requires at least 3,686,400 pixels; response_format is usually omitted.": "Текст-в-изображение возвращается синхронно. Seedream 4.5 требует минимум 3 686 400 пикселей; response_format обычно опускается.",
+    "Text-to-image returns synchronously. Seedream 5.0 lite supports 2K/3K/4K presets or matching pixel sizes.": "Текст-в-изображение возвращается синхронно. Seedream 5.0 lite поддерживает пресеты 2K/3K/4K или совместимые размеры в пикселях.",
     "Text-to-video or image-to-video. Supplying image switches the request to image-to-video.": "Текст-в-видео или изображение-в-видео. Передача image переключает запрос в режим изображение-в-видео.",
     "The administrator account is already initialized. You can keep your existing credentials and continue to the next step.": "Учетная запись администратора уже инициализирована. Вы можете сохранить существующие учетные данные и перейти к следующему шагу.",
     "The administrator configured an external link for this document.": "Администратор настроил внешнюю ссылку для этого документа.",

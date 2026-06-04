@@ -186,6 +186,38 @@ function createDynamicChatModel(modelId: string): TestModel {
   }
 }
 
+function normalizeTemplateModelId(modelId: string): string {
+  return modelId.trim().toLowerCase().replace(/[_.]/g, '-')
+}
+
+function createModelFromTemplate(
+  modelId: string,
+  template: TestModel
+): TestModel {
+  return {
+    ...template,
+    id: modelId,
+    label: modelId,
+  }
+}
+
+function findKnownModelTemplate(modelId: string): TestModel | undefined {
+  const exact = TEST_MODELS.find((model) => model.id === modelId)
+  if (exact) return exact
+
+  const normalizedModelId = normalizeTemplateModelId(modelId)
+  return TEST_MODELS.find(
+    (model) => normalizeTemplateModelId(model.id) === normalizedModelId
+  )
+}
+
+function createDynamicModel(modelId: string): TestModel {
+  const template = findKnownModelTemplate(modelId)
+  return template
+    ? createModelFromTemplate(modelId, template)
+    : createDynamicChatModel(modelId)
+}
+
 function buildModelOptions(dynamicModelIds: string[]): TestModel[] {
   const knownModels = new Map(TEST_MODELS.map((model) => [model.id, model]))
   const normalizedDynamicIds = dynamicModelIds
@@ -195,10 +227,14 @@ function buildModelOptions(dynamicModelIds: string[]): TestModel[] {
   if (normalizedDynamicIds.length === 0) return TEST_MODELS
 
   const dynamicModels = normalizedDynamicIds.map(
-    (modelId) => knownModels.get(modelId) || createDynamicChatModel(modelId)
+    (modelId) => knownModels.get(modelId) || createDynamicModel(modelId)
   )
-  const seen = new Set(dynamicModels.map((model) => model.id))
-  const templateModels = TEST_MODELS.filter((model) => !seen.has(model.id))
+  const seen = new Set(
+    dynamicModels.map((model) => normalizeTemplateModelId(model.id))
+  )
+  const templateModels = TEST_MODELS.filter(
+    (model) => !seen.has(normalizeTemplateModelId(model.id))
+  )
   return [...dynamicModels, ...templateModels]
 }
 
@@ -582,6 +618,7 @@ export function TestBench() {
   const selectedModel = useMemo(
     () =>
       modelOptions.find((model) => model.id === selectedModelId) ||
+      (selectedModelId ? createDynamicModel(selectedModelId) : null) ||
       modelOptions[0] ||
       TEST_MODELS[0],
     [modelOptions, selectedModelId]

@@ -3972,6 +3972,7 @@
     "Text to Speech": "Văn bản thành giọng nói",
     "Text to Video": "Văn bản sang video",
     "Text-to-image returns synchronously. Seedream 4.5 requires at least 3,686,400 pixels; response_format is usually omitted.": "Văn bản sang ảnh trả về đồng bộ. Seedream 4.5 yêu cầu ít nhất 3.686.400 pixel; response_format thường được bỏ qua.",
+    "Text-to-image returns synchronously. Seedream 5.0 lite supports 2K/3K/4K presets or matching pixel sizes.": "Văn bản sang ảnh trả về đồng bộ. Seedream 5.0 lite hỗ trợ các preset 2K/3K/4K hoặc kích thước pixel phù hợp.",
     "Text-to-video or image-to-video. Supplying image switches the request to image-to-video.": "Văn bản sang video hoặc ảnh sang video. Cung cấp image sẽ chuyển yêu cầu sang ảnh sang video.",
     "The administrator account is already initialized. You can keep your existing credentials and continue to the next step.": "Tài khoản quản trị viên đã được khởi tạo. Bạn có thể giữ nguyên thông tin đăng nhập hiện có của mình và tiếp tục sang bước tiếp theo.",
     "The administrator configured an external link for this document.": "Người quản trị đã cấu hình một liên kết ngoài cho tài liệu này.",
