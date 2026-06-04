@@ -3,6 +3,7 @@ package router
 import (
 	"embed"
 	"net/http"
+	"path"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -27,11 +28,18 @@ func SetWebRouter(router *gin.Engine, assets WebAssets) {
 	router.Use(static.Serve("/", webFS))
 	router.NoRoute(func(c *gin.Context) {
 		c.Set(middleware.RouteTagKey, "web")
-		if strings.HasPrefix(c.Request.RequestURI, "/v1") || strings.HasPrefix(c.Request.RequestURI, "/api") || strings.HasPrefix(c.Request.RequestURI, "/assets") {
+		requestPath := c.Request.URL.Path
+		if strings.HasPrefix(requestPath, "/v1") ||
+			strings.HasPrefix(requestPath, "/api") ||
+			strings.HasPrefix(requestPath, "/assets") ||
+			strings.HasPrefix(requestPath, "/static") ||
+			path.Ext(requestPath) != "" {
 			controller.RelayNotFound(c)
 			return
 		}
-		c.Header("Cache-Control", "no-cache")
+		c.Header("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0")
+		c.Header("Pragma", "no-cache")
+		c.Header("Expires", "0")
 		c.Data(http.StatusOK, "text/html; charset=utf-8", assets.IndexPage)
 	})
 }
