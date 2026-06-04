@@ -25,7 +25,6 @@ import {
   MessageSquareIcon,
   ScreenShareIcon,
   CameraIcon,
-  GlobeIcon,
   SendIcon,
   SquareIcon,
   Settings2Icon,
@@ -498,17 +497,6 @@ export function PlaygroundInput({
                 </PromptInputButton>
               </>
             )}
-
-            <PromptInputButton
-              className='border font-medium'
-              disabled={disabled}
-              onClick={() => toast.info(t('Search feature in development'))}
-              variant='outline'
-            >
-              <GlobeIcon size={16} />
-              <span className='hidden sm:inline'>{t('Search')}</span>
-              <span className='sr-only sm:hidden'>{t('Search')}</span>
-            </PromptInputButton>
           </PromptInputTools>
 
           <div className='flex items-center gap-1.5 md:gap-2'>
