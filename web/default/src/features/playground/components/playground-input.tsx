@@ -239,7 +239,7 @@ export function PlaygroundInput({
           onChange={(event) => setText(event.target.value)}
           placeholder={
             isVideoMode
-              ? t('Upload references or describe the Seedance video')
+              ? t('Upload references or describe the video')
               : isImageMode
                 ? t('Describe the image to generate')
                 : t('Ask anything')

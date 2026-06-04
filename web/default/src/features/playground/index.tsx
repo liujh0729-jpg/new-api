@@ -32,7 +32,6 @@ import {
   DEFAULT_GROUP,
   ERROR_MESSAGES,
   SEEDANCE_REFERENCE_LIMITS,
-  isSeedance20VideoModel,
   normalizeImageSizeForModel,
 } from './constants'
 import { usePlaygroundState, useChatHandler } from './hooks'
@@ -139,11 +138,10 @@ export function Playground() {
       const referenceCandidates = buildSeedanceReferenceCandidates(
         message.files || []
       )
-      const validationError = validateSeedanceVideoInput(
+      const validationError = validateVideoInput(
         text,
         referenceCandidates,
         message.files?.length || 0,
-        config.model,
         t
       )
       if (validationError) {
@@ -384,16 +382,12 @@ function inferDataUrlMediaType(url?: string): string {
   return url.slice('data:'.length, end)
 }
 
-function validateSeedanceVideoInput(
+function validateVideoInput(
   text: string,
   references: SeedanceReference[],
   rawFileCount: number,
-  model: string,
   t: (key: string) => string
 ): string | null {
-  if (!isSeedance20VideoModel(model)) {
-    return t('Seedance video mode requires a Seedance 2.0 model')
-  }
   if (!text && references.length === 0) {
     return t('Add text or reference media before generating')
   }

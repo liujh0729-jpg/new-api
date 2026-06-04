@@ -173,6 +173,8 @@ export interface VideoGenerationRequest {
   group?: string
   prompt: string
   duration?: number
+  seconds?: string
+  size?: string
   metadata?: {
     content?: VideoGenerationContentItem[]
     ratio?: string

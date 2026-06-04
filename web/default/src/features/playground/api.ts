@@ -17,11 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { api } from '@/lib/api'
-import {
-  API_ENDPOINTS,
-  ERROR_MESSAGES,
-  isSeedance20VideoModel,
-} from './constants'
+import { API_ENDPOINTS, ERROR_MESSAGES } from './constants'
 import type {
   ChatCompletionRequest,
   ChatCompletionResponse,
@@ -85,7 +81,7 @@ export async function getImageGenerationTask(
 }
 
 /**
- * Send Seedance video generation request
+ * Send video generation request
  */
 export async function sendVideoGeneration(
   payload: VideoGenerationRequest
@@ -97,7 +93,7 @@ export async function sendVideoGeneration(
 }
 
 /**
- * Fetch Seedance video generation task status
+ * Fetch video generation task status
  */
 export async function getVideoGenerationTask(
   taskId: string
@@ -112,7 +108,7 @@ export async function getVideoGenerationTask(
 }
 
 /**
- * Upload local Seedance reference media to AIPDD OSS and return a web URL.
+ * Upload local video reference media to AIPDD OSS and return a web URL.
  */
 export async function uploadReferenceMedia(
   file: File
@@ -171,12 +167,7 @@ export async function getUserModels(
     return []
   }
 
-  const models =
-    mode === 'video'
-      ? data.data.filter((model: string) => isSeedance20VideoModel(model))
-      : data.data
-
-  return models.map((model: string) => ({
+  return data.data.map((model: string) => ({
     label: model,
     value: model,
   }))

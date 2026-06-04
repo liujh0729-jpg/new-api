@@ -37,6 +37,12 @@ function isWebUrl(url: string): boolean {
   return /^https?:\/\//i.test(url.trim())
 }
 
+function getOpenAIVideoSize(ratio: string): string | undefined {
+  if (ratio === '16:9') return '1280x720'
+  if (ratio === '9:16') return '720x1280'
+  return undefined
+}
+
 /**
  * Build API request payload from messages and config
  */
@@ -143,11 +149,15 @@ export function buildVideoGenerationPayload(
     })
     .filter((item): item is VideoGenerationContentItem => item !== null)
 
+  const size = getOpenAIVideoSize(config.video_ratio)
+
   return {
     model: config.model,
     group: config.group,
     prompt,
     duration: config.video_duration,
+    seconds: String(config.video_duration),
+    ...(size ? { size } : {}),
     metadata: {
       content,
       ratio: config.video_ratio,

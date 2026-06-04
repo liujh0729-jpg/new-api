@@ -8,6 +8,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/stretchr/testify/require"
 )
 
@@ -279,6 +280,14 @@ func TestEnsureAIPDDDefaultsSyncsDynamicCatalogOnBoot(t *testing.T) {
 	require.Equal(t, "image_to_video", capability.TaskKind)
 	require.Equal(t, []string{"image", "text"}, capability.InputModalities)
 	require.Equal(t, []string{"video"}, capability.OutputModalities)
+
+	modelPrice, ok := ratio_setting.GetModelPrice("dynamic-aipdd-video", false)
+	require.True(t, ok)
+	require.Equal(t, 0.75, modelPrice)
+
+	var option Option
+	require.NoError(t, DB.Where(&Option{Key: "ModelPrice"}).First(&option).Error)
+	require.Contains(t, option.Value, `"dynamic-aipdd-video":0.75`)
 }
 
 func TestEnsureAIPDDDefaultsRequiresEnvBeforeCatalogSync(t *testing.T) {

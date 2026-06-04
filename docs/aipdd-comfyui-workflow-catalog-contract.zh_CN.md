@@ -1,6 +1,6 @@
 # AIPDD ComfyUI Workflow Catalog 返回规范
 
-本文档用于说明 AIPDD 上游接口 `/scripts/admin/comfyui_workflow` 应如何返回模型能力信息，方便 new-api 在不改变现有规则的前提下识别模型适用场景，并在游乐场中按文本、图片、视频、音频等模式筛选和调用模型。
+本文档用于说明 AIPDD 上游接口 `/scripts/admin/comfyui_workflow` 应如何返回模型能力信息，方便 new-api 在不改变现有规则的前提下识别模型适用场景，并在操练场中按文本、图片、视频、音频等模式筛选和调用模型。
 
 ## 目标
 
@@ -101,7 +101,7 @@ audio-speech
 
 ### taskKind
 
-必填。表示更细的任务类型，用于游乐场生成合适的表单和提示。
+必填。表示更细的任务类型，用于操练场生成合适的表单和提示。
 
 推荐值：
 
@@ -164,7 +164,7 @@ file
 
 | 字段 | 说明 |
 |---|---|
-| `uiType` | 游乐场表单控件类型 |
+| `uiType` | 操练场表单控件类型 |
 | `acceptedMimeTypes` | 文件上传可接受 MIME 类型 |
 | `aliases` | 可选别名，方便兼容前端通用字段 |
 
@@ -417,12 +417,12 @@ switch
 
 在不修改 new-api 现有 endpoint 规则的情况下，AIPDD 上游应保证：
 
-1. 每个可在游乐场调用的 workflow 必须返回 `endpointType`。
+1. 每个可在操练场调用的 workflow 必须返回 `endpointType`。
 2. `endpointType` 必须是 `image-generation`、`openai-video`、`audio-speech` 之一。
 3. 每个可自动生成表单的 workflow 必须返回 `taskKind`。
 4. 每个 workflow 必须返回完整 `params`，其中 `paramKey` 是实际 task_content 字段。
 5. `inputModalities` 和 `outputModalities` 必须能解释该模型的输入输出类型。
-6. 如果某个 workflow 缺少这些结构化字段，new-api 可以仍然把它作为渠道模型同步，但不应展示到游乐场的对应模式里。
+6. 如果某个 workflow 缺少这些结构化字段，new-api 可以仍然把它作为渠道模型同步，但不应展示到操练场的对应模式里。
 
 ## 价格接口保持不变
 

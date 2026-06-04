@@ -10,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/pkg/aipddcatalog"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"gorm.io/gorm"
 )
 
@@ -59,7 +60,48 @@ func syncAIPDDCatalogFromEnv(key string) {
 		return
 	}
 	constant.SetAIPDDCapabilities(catalog.Capabilities)
+	if err := syncAIPDDModelPrices(catalog.ModelPrices); err != nil {
+		common.SysLog("AIPDD model price sync on boot failed: " + err.Error())
+	}
 	common.SysLog("AIPDD catalog synced on boot: models=" + strings.Join(catalog.ModelNames(), ","))
+}
+
+func syncAIPDDModelPrices(modelPrices map[string]float64) error {
+	if len(modelPrices) == 0 {
+		return nil
+	}
+
+	prices := ratio_setting.GetModelPriceCopy()
+	var option Option
+	err := DB.Where(&Option{Key: "ModelPrice"}).First(&option).Error
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
+	if err == nil && strings.TrimSpace(option.Value) != "" {
+		if unmarshalErr := common.Unmarshal([]byte(option.Value), &prices); unmarshalErr != nil {
+			return unmarshalErr
+		}
+	}
+
+	for modelName, price := range modelPrices {
+		modelName = strings.TrimSpace(modelName)
+		if modelName == "" {
+			continue
+		}
+		prices[modelName] = price
+	}
+
+	bytes, err := common.Marshal(prices)
+	if err != nil {
+		return err
+	}
+	if err := ratio_setting.UpdateModelPriceByJSONString(string(bytes)); err != nil {
+		return err
+	}
+
+	option.Key = "ModelPrice"
+	option.Value = string(bytes)
+	return DB.Save(&option).Error
 }
 
 func isAIPDDCatalogSyncOnBootEnabled(key string) bool {

@@ -126,16 +126,6 @@ export const SEEDANCE_REFERENCE_ACCEPT = [
   '.opus',
 ].join(',')
 
-export function isSeedance20VideoModel(model: string): boolean {
-  const normalized = model.toLowerCase().trim()
-  const compact = normalized.replace(/[\s_.]+/g, '-')
-  return (
-    normalized.includes('seedance-2-0') ||
-    normalized.includes('seedance-2.0') ||
-    compact.includes('seedance-2-0')
-  )
-}
-
 export function isSeedream45Model(model: string): boolean {
   return model.includes('seedream-4-5')
 }
