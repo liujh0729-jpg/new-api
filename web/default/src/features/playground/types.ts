@@ -46,6 +46,8 @@ export interface Message {
   activity?: MessageActivity
   status?: MessageStatus
   errorCode?: string | null
+  taskId?: string
+  taskType?: 'image' | 'video'
 }
 
 export interface GeneratedImage {
@@ -138,6 +140,7 @@ export interface ImageGenerationRequest {
   model: string
   group?: string
   prompt: string
+  image?: string
   size?: string
   quality?: string
   n?: number

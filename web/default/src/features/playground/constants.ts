@@ -46,7 +46,7 @@ export const API_ENDPOINTS = {
 export const DEFAULT_GROUP = 'auto' as const
 
 export const DEFAULT_IMAGE_SIZE = '1024x1024'
-export const SEEDREAM_45_MIN_PIXELS = 3686400
+export const SEEDREAM_MIN_PIXELS = 3686400
 export const SEEDREAM_45_SAFE_IMAGE_SIZE = '1920x1920'
 export const SEEDREAM_50_LITE_DEFAULT_IMAGE_SIZE = '2K'
 export const SEEDREAM_50_LITE_MIN_PIXELS = 2560 * 1440
@@ -60,6 +60,15 @@ export const IMAGE_SIZE_OPTIONS = [
   '1024x1536',
   '1536x1024',
   '512x512',
+] as const
+
+export const SEEDREAM_40_45_IMAGE_SIZE_OPTIONS = [
+  SEEDREAM_45_SAFE_IMAGE_SIZE,
+  '2048x2048',
+  '2560x1440',
+  '1440x2560',
+  '3072x3072',
+  '4096x4096',
 ] as const
 
 export const SEEDREAM_50_LITE_IMAGE_SIZE_OPTIONS = [
@@ -80,6 +89,7 @@ export const VIDEO_RATIO_OPTIONS = [
   '4:3',
   '3:4',
 ] as const
+export const SEEDANCE_VIDEO_RATIO_OPTIONS: readonly string[] = VIDEO_RATIO_OPTIONS
 export const VIDEO_DURATION_OPTIONS = [5, 10, 15] as const
 export const DEFAULT_VIDEO_RATIO = '16:9'
 export const DEFAULT_VIDEO_DURATION = 5
@@ -126,16 +136,51 @@ export const SEEDANCE_REFERENCE_ACCEPT = [
   '.opus',
 ].join(',')
 
-export function isSeedream45Model(model: string): boolean {
-  return model.includes('seedream-4-5')
+export const IMAGE_REFERENCE_ACCEPT = [
+  'image/*',
+  '.png',
+  '.jpg',
+  '.jpeg',
+  '.webp',
+  '.gif',
+  '.bmp',
+].join(',')
+export const IMAGE_REFERENCE_LIMITS = {
+  maxFiles: 1,
+  maxFileSize: 30 * 1024 * 1024,
+} as const
+
+function normalizeModelName(model: string): string {
+  return model.trim().toLowerCase().replace(/[_.]/g, '-')
+}
+
+export function isSeedreamModel(model: string): boolean {
+  return normalizeModelName(model).includes('seedream')
+}
+
+export function isSeedream40xModel(model: string): boolean {
+  const normalized = normalizeModelName(model)
+  return (
+    normalized.includes('seedream-4-0') ||
+    normalized.includes('seedream-4-5')
+  )
 }
 
 export function isSeedream50LiteModel(model: string): boolean {
-  const normalized = model.trim().toLowerCase().replace(/[_.]/g, '-')
+  const normalized = normalizeModelName(model)
   return (
     normalized.includes('seedream-5-0-lite') ||
     normalized.includes('seedream-5-0-260128')
   )
+}
+
+export function isSeedanceModel(model: string): boolean {
+  return normalizeModelName(model).includes('seedance')
+}
+
+export function isSeedance20Model(model: string): boolean {
+  const normalized = normalizeModelName(model)
+  return normalized.includes('seedance-2-0')
 }
 
 export function getImageSizePixels(size: string): number | null {
@@ -175,7 +220,13 @@ export function isValidSeedream50LiteImageSize(size: string): boolean {
 
 export function getImageSizeOptionsForModel(model: string): readonly string[] {
   if (isSeedream50LiteModel(model)) return SEEDREAM_50_LITE_IMAGE_SIZE_OPTIONS
+  if (isSeedreamModel(model)) return SEEDREAM_40_45_IMAGE_SIZE_OPTIONS
   return IMAGE_SIZE_OPTIONS
+}
+
+export function getVideoRatioOptionsForModel(model: string): readonly string[] {
+  if (isSeedanceModel(model)) return SEEDANCE_VIDEO_RATIO_OPTIONS
+  return VIDEO_RATIO_OPTIONS
 }
 
 export function normalizeImageSizeForModel(
@@ -188,12 +239,24 @@ export function normalizeImageSizeForModel(
       : SEEDREAM_50_LITE_DEFAULT_IMAGE_SIZE
   }
 
-  if (!isSeedream45Model(model)) return size
+  if (!isSeedreamModel(model)) return size
 
   const pixels = getImageSizePixels(size)
-  if (pixels !== null && pixels >= SEEDREAM_45_MIN_PIXELS) return size
+  if (pixels !== null && pixels >= SEEDREAM_MIN_PIXELS) return size
 
   return SEEDREAM_45_SAFE_IMAGE_SIZE
+}
+
+export function normalizeVideoRatioForModel(
+  model: string,
+  ratio: string
+): string {
+  if (!isSeedanceModel(model)) return ratio
+
+  const options = getVideoRatioOptionsForModel(model)
+  if (options.includes(ratio)) return ratio
+
+  return DEFAULT_VIDEO_RATIO
 }
 
 // Default configuration

@@ -372,6 +372,7 @@ export function sanitizeMessagesOnLoad(messages: Message[]): Message[] {
       (m?.status === MESSAGE_STATUS.LOADING ||
         m?.status === MESSAGE_STATUS.STREAMING)
     ) {
+      if (m.taskId) continue
       targetIndex = i
       break
     }

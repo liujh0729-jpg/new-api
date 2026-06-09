@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useCallback, useRef } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import { SSE } from 'sse.js'
 import { getCommonHeaders } from '@/lib/api'
 import { API_ENDPOINTS, ERROR_MESSAGES } from '../constants'
@@ -141,6 +141,12 @@ export function useStreamRequest() {
       sseSourceRef.current = null
     }
   }, [])
+
+  useEffect(() => {
+    return () => {
+      stopStream()
+    }
+  }, [stopStream])
 
   // eslint-disable-next-line react-hooks/refs
   const isStreaming = sseSourceRef.current !== null

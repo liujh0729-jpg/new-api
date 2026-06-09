@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import {
@@ -110,17 +110,22 @@ export function useChatHandler({
     [onMessageUpdate, t]
   )
 
-  const markImageGenerationLoading = useCallback(() => {
-    onMessageUpdate((prev) =>
-      updateLastAssistantMessage(prev, (message) => ({
-        ...updateCurrentVersionContent(message, ''),
-        images: undefined,
-        activity: 'image_generation',
-        status: MESSAGE_STATUS.STREAMING,
-        isReasoningStreaming: false,
-      }))
-    )
-  }, [onMessageUpdate])
+  const markImageGenerationLoading = useCallback(
+    (taskId?: string) => {
+      onMessageUpdate((prev) =>
+        updateLastAssistantMessage(prev, (message) => ({
+          ...updateCurrentVersionContent(message, ''),
+          images: undefined,
+          activity: 'image_generation',
+          status: MESSAGE_STATUS.STREAMING,
+          isReasoningStreaming: false,
+          taskId: taskId || message.taskId,
+          taskType: 'image',
+        }))
+      )
+    },
+    [onMessageUpdate]
+  )
 
   const completeWithVideos = useCallback(
     (videos: GeneratedVideo[]) => {
@@ -137,17 +142,22 @@ export function useChatHandler({
     [onMessageUpdate, t]
   )
 
-  const markVideoGenerationLoading = useCallback(() => {
-    onMessageUpdate((prev) =>
-      updateLastAssistantMessage(prev, (message) => ({
-        ...updateCurrentVersionContent(message, ''),
-        videos: undefined,
-        activity: 'video_generation',
-        status: MESSAGE_STATUS.STREAMING,
-        isReasoningStreaming: false,
-      }))
-    )
-  }, [onMessageUpdate])
+  const markVideoGenerationLoading = useCallback(
+    (taskId?: string) => {
+      onMessageUpdate((prev) =>
+        updateLastAssistantMessage(prev, (message) => ({
+          ...updateCurrentVersionContent(message, ''),
+          videos: undefined,
+          activity: 'video_generation',
+          status: MESSAGE_STATUS.STREAMING,
+          isReasoningStreaming: false,
+          taskId: taskId || message.taskId,
+          taskType: 'video',
+        }))
+      )
+    },
+    [onMessageUpdate]
+  )
 
   // Handle stream update
   const handleStreamUpdate = useCallback(
@@ -381,13 +391,13 @@ export function useChatHandler({
   )
 
   const sendImageChat = useCallback(
-    async (messages: Message[]) => {
+    async (messages: Message[], imageBase64?: string) => {
       const prompt = [...messages]
         .reverse()
         .find((message) => message.from === 'user')
         ?.versions?.[0]?.content?.trim()
 
-      if (!prompt) {
+      if (!prompt && !imageBase64) {
         handleStreamError(ERROR_MESSAGES.API_REQUEST_ERROR)
         return
       }
@@ -398,7 +408,7 @@ export function useChatHandler({
 
       try {
         const response = await sendImageGeneration(
-          buildImageGenerationPayload(prompt, config)
+          buildImageGenerationPayload(prompt || '', config, imageBase64)
         )
         const images = extractImageResults(response)
         if (images.length > 0) {
@@ -411,7 +421,7 @@ export function useChatHandler({
           if (!taskId) {
             throw new Error(ERROR_MESSAGES.PARSE_ERROR)
           }
-          markImageGenerationLoading()
+          markImageGenerationLoading(taskId)
           await pollImageTask(taskId)
           return
         }
@@ -465,7 +475,7 @@ export function useChatHandler({
           if (!taskId) {
             throw new Error(ERROR_MESSAGES.PARSE_ERROR)
           }
-          markVideoGenerationLoading()
+          markVideoGenerationLoading(taskId)
           await pollVideoTask(taskId)
           return
         }
@@ -489,9 +499,9 @@ export function useChatHandler({
 
   // Send chat request (stream or non-stream based on config)
   const sendChat = useCallback(
-    (messages: Message[]) => {
+    (messages: Message[], imageBase64?: string) => {
       if (config.mode === 'image') {
-        void sendImageChat(messages)
+        void sendImageChat(messages, imageBase64)
         return
       }
       if (config.mode === 'video') {
@@ -530,9 +540,52 @@ export function useChatHandler({
     )
   }, [stopStream, onMessageUpdate])
 
+  useEffect(() => {
+    return () => {
+      imageAbortRef.current = true
+      videoAbortRef.current = true
+    }
+  }, [])
+
+  const resumeTaskPolling = useCallback(
+    (taskId: string, taskType: 'image' | 'video') => {
+      if (taskType === 'image') {
+        imageAbortRef.current = false
+        setIsGenerating(true)
+        pollImageTask(taskId)
+          .catch((error: unknown) => {
+            if (!imageAbortRef.current) {
+              handleStreamError(error)
+            }
+          })
+          .finally(() => {
+            if (!imageAbortRef.current) {
+              setIsGenerating(false)
+            }
+          })
+      } else {
+        videoAbortRef.current = false
+        setIsGenerating(true)
+        pollVideoTask(taskId)
+          .catch((error: unknown) => {
+            if (!videoAbortRef.current) {
+              handleStreamError(error)
+            }
+          })
+          .finally(() => {
+            if (!videoAbortRef.current) {
+              setIsGenerating(false)
+            }
+          })
+      }
+    },
+    [pollImageTask, pollVideoTask, handleStreamError]
+  )
+
   return {
     sendChat,
     stopGeneration,
     isGenerating,
+    resumeTaskPolling,
   }
 }

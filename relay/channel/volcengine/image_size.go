@@ -14,6 +14,26 @@ const (
 
 var seedream50LitePixelSizePattern = regexp.MustCompile(`^(\d+)x(\d+)$`)
 
+var seedream50LiteSupportedSizes = map[string]bool{
+	"2560x1440": true,
+	"2496x1664": true,
+	"3072x1536": true,
+	"3248x1824": true,
+	"3456x1944": true,
+	"3648x1536": true,
+	"3840x2160": true,
+	"4032x2688": true,
+	"4160x2340": true,
+	"4096x1728": true,
+	"4096x2304": true,
+	"4096x3072": true,
+	"2048x2048": true,
+	"3072x3072": true,
+	"4096x4096": true,
+	"1920x1920": true,
+	"1440x2560": true,
+}
+
 func isSeedream50LiteModel(model string) bool {
 	normalized := strings.ToLower(strings.TrimSpace(model))
 	normalized = strings.ReplaceAll(normalized, "_", "-")
@@ -52,6 +72,10 @@ func validateSeedream50LiteImageSize(models []string, size string) error {
 		return seedream50LiteSizeError(normalizedSize)
 	}
 
+	if seedream50LiteSupportedSizes[normalizedSize] {
+		return nil
+	}
+
 	pixels := width * height
 	if pixels < seedream50LiteMinPixels || pixels > seedream50LiteMaxPixels {
 		return seedream50LiteSizeError(normalizedSize)
@@ -84,7 +108,7 @@ func parseImagePixelSize(size string) (int, int, bool) {
 }
 
 func seedream50LiteSizeError(size string) error {
-	return fmt.Errorf("Doubao-Seedream-5.0-lite 不支持当前 size 参数 %q。请使用 2K、3K、4K，或满足总像素 [%d, %d] 且宽高比 [1/16, 16] 的 WIDTHxHEIGHT 尺寸",
+	return fmt.Errorf("Doubao-Seedream-5.0-lite does not support size %q. Please use 2K, 3K, 4K, or a WIDTHxHEIGHT dimension within total pixels [%d, %d] and aspect ratio [1/16, 16]. Recommended sizes: 2K (2560x1440), 3K (3456x1944), 4K (3840x2160)",
 		size,
 		seedream50LiteMinPixels,
 		seedream50LiteMaxPixels,

@@ -90,7 +90,8 @@ export function buildChatCompletionPayload(
  */
 export function buildImageGenerationPayload(
   prompt: string,
-  config: PlaygroundConfig
+  config: PlaygroundConfig,
+  image?: string
 ): ImageGenerationRequest {
   const payload: ImageGenerationRequest = {
     model: config.model,
@@ -99,6 +100,10 @@ export function buildImageGenerationPayload(
     size: normalizeImageSizeForModel(config.model, config.image_size),
     quality: config.image_quality,
     n: config.image_count,
+  }
+
+  if (image) {
+    payload.image = image
   }
 
   return payload

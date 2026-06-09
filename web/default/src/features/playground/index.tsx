@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import type { FileUIPart } from 'ai'
 import { useTranslation } from 'react-i18next'
@@ -33,6 +33,7 @@ import {
   ERROR_MESSAGES,
   SEEDANCE_REFERENCE_LIMITS,
   normalizeImageSizeForModel,
+  normalizeVideoRatioForModel,
 } from './constants'
 import { usePlaygroundState, useChatHandler } from './hooks'
 import {
@@ -60,11 +61,12 @@ export function Playground() {
     updateConfig,
   } = usePlaygroundState()
 
-  const { sendChat, stopGeneration, isGenerating } = useChatHandler({
-    config,
-    parameterEnabled,
-    onMessageUpdate: updateMessages,
-  })
+  const { sendChat, stopGeneration, isGenerating, resumeTaskPolling } =
+    useChatHandler({
+      config,
+      parameterEnabled,
+      onMessageUpdate: updateMessages,
+    })
 
   // Edit dialog state
   const [editingMessageKey, setEditingMessageKey] = useState<string | null>(
@@ -109,6 +111,18 @@ export function Playground() {
     }
   }, [config.mode, config.model, config.image_size, updateConfig])
 
+  useEffect(() => {
+    if (config.mode !== 'video') return
+
+    const normalizedRatio = normalizeVideoRatioForModel(
+      config.model,
+      config.video_ratio
+    )
+    if (normalizedRatio !== config.video_ratio) {
+      updateConfig('video_ratio', normalizedRatio)
+    }
+  }, [config.mode, config.model, config.video_ratio, updateConfig])
+
   // Update groups when data changes
   useEffect(() => {
     if (!groupsData) return
@@ -130,9 +144,26 @@ export function Playground() {
     setGroups(processedGroups)
   }, [groupsData, setGroups])
 
+  const hasResumedRef = useRef(false)
+
+  useEffect(() => {
+    if (hasResumedRef.current) return
+    const last = messages[messages.length - 1]
+    if (
+      last?.from === 'assistant' &&
+      last.taskId &&
+      last.taskType &&
+      (last.status === 'loading' || last.status === 'streaming')
+    ) {
+      hasResumedRef.current = true
+      resumeTaskPolling(last.taskId, last.taskType)
+    }
+  }, [messages, resumeTaskPolling])
+
   const handleSendMessage = async (message: PromptInputMessage) => {
     const text = message.text?.trim() || ''
     let seedanceReferences: SeedanceReference[] = []
+    let imageBase64: string | undefined
 
     if (config.mode === 'video') {
       const referenceCandidates = buildSeedanceReferenceCandidates(
@@ -182,6 +213,13 @@ export function Playground() {
       }
     }
 
+    if (config.mode === 'image') {
+      const imageFile = message.files?.[0]
+      if (imageFile?.sourceFile) {
+        imageBase64 = await readFileAsBase64(imageFile.sourceFile)
+      }
+    }
+
     const userMessage = createUserMessage(text, seedanceReferences)
     const assistantMessage = createLoadingAssistantMessage()
 
@@ -189,7 +227,7 @@ export function Playground() {
     updateMessages(newMessages)
 
     // Send chat request
-    sendChat(newMessages)
+    sendChat(newMessages, imageBase64)
   }
 
   const handleCopyMessage = (message: MessageType) => {
@@ -509,5 +547,20 @@ function readLocalMediaDuration(
     }
     media.src = url
     media.load()
+  })
+}
+
+function readFileAsBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        resolve(reader.result)
+      } else {
+        reject(new Error('failed to read file as base64'))
+      }
+    }
+    reader.onerror = () => reject(new Error('failed to read file'))
+    reader.readAsDataURL(file)
   })
 }

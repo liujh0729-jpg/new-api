@@ -60,10 +60,12 @@ import {
 import { ModelGroupSelector } from '@/components/model-group-selector'
 import {
   getImageSizeOptionsForModel,
+  getVideoRatioOptionsForModel,
+  IMAGE_REFERENCE_ACCEPT,
+  IMAGE_REFERENCE_LIMITS,
   SEEDANCE_REFERENCE_ACCEPT,
   SEEDANCE_REFERENCE_LIMITS,
   VIDEO_DURATION_OPTIONS,
-  VIDEO_RATIO_OPTIONS,
 } from '../constants'
 import type { ModelOption, GroupOption, PlaygroundMode } from '../types'
 
@@ -99,17 +101,19 @@ const imageCounts = [1, 2, 4]
 function PlaygroundSubmitButton({
   disabled,
   isVideoMode,
+  isImageMode,
   text,
 }: {
   disabled?: boolean
   isVideoMode: boolean
+  isImageMode: boolean
   text: string
 }) {
   const { t } = useTranslation()
   const attachments = usePromptInputAttachments()
   const hasText = text.trim().length > 0
   const hasReferences = attachments.files.length > 0
-  const canSubmit = isVideoMode ? hasText || hasReferences : hasText
+  const canSubmit = isVideoMode || isImageMode ? hasText || hasReferences : hasText
 
   return (
     <PromptInputButton
@@ -125,7 +129,7 @@ function PlaygroundSubmitButton({
   )
 }
 
-function SeedanceReferenceAttachments() {
+function ReferenceAttachments() {
   const attachments = usePromptInputAttachments()
   if (attachments.files.length === 0) return null
 
@@ -187,7 +191,7 @@ export function PlaygroundInput({
   const handleSubmit = (message: PromptInputMessage) => {
     const hasText = !!message.text?.trim()
     const hasReferences = !!message.files?.length
-    if (isSubmitDisabled || (!hasText && (!isVideoMode || !hasReferences))) {
+    if (isSubmitDisabled || (!hasText && (!isVideoMode && !isImageMode || !hasReferences))) {
       return
     }
     const result = onSubmit({
@@ -201,12 +205,6 @@ export function PlaygroundInput({
     return result
   }
 
-  const handleFileAction = (action: string) => {
-    toast.info(t('Feature in development'), {
-      description: action,
-    })
-  }
-
   const handleInsertReferenceMarker = () => {
     setText((prev) => {
       if (!prev.trim()) return '@'
@@ -217,17 +215,33 @@ export function PlaygroundInput({
   return (
     <div className='grid shrink-0 gap-4 px-1 md:pb-4'>
       <PromptInput
-        accept={isVideoMode ? SEEDANCE_REFERENCE_ACCEPT : undefined}
+        accept={
+          isVideoMode
+            ? SEEDANCE_REFERENCE_ACCEPT
+            : isImageMode
+              ? IMAGE_REFERENCE_ACCEPT
+              : undefined
+        }
         groupClassName='rounded-xl'
         maxFileSize={
-          isVideoMode ? SEEDANCE_REFERENCE_LIMITS.maxFileSize : undefined
+          isVideoMode
+            ? SEEDANCE_REFERENCE_LIMITS.maxFileSize
+            : isImageMode
+              ? IMAGE_REFERENCE_LIMITS.maxFileSize
+              : undefined
         }
-        maxFiles={isVideoMode ? SEEDANCE_REFERENCE_LIMITS.total : undefined}
+        maxFiles={
+          isVideoMode
+            ? SEEDANCE_REFERENCE_LIMITS.total
+            : isImageMode
+              ? IMAGE_REFERENCE_LIMITS.maxFiles
+              : undefined
+        }
         multiple={isVideoMode}
         onError={(error) => toast.error(error.message)}
         onSubmit={handleSubmit}
       >
-        {isVideoMode && <SeedanceReferenceAttachments />}
+        {(isVideoMode || isImageMode) && <ReferenceAttachments />}
 
         <PromptInputTextarea
           autoComplete='off'
@@ -308,32 +322,44 @@ export function PlaygroundInput({
                 <span className='sr-only sm:hidden'>{t('Attach')}</span>
               </DropdownMenuTrigger>
               <DropdownMenuContent align='start'>
-                {isVideoMode ? (
+                {isVideoMode || isImageMode ? (
                   <PromptInputActionAddAttachments
-                    label={t('Add reference media')}
+                    label={
+                      isVideoMode
+                        ? t('Add reference media')
+                        : t('Add reference image')
+                    }
                   />
                 ) : (
                   <>
                     <DropdownMenuItem
-                      onClick={() => handleFileAction('upload-file')}
+                      onClick={() =>
+                        toast.info(t('Feature in development'))
+                      }
                     >
                       <FileIcon className='mr-2' size={16} />
                       {t('Upload file')}
                     </DropdownMenuItem>
                     <DropdownMenuItem
-                      onClick={() => handleFileAction('upload-photo')}
+                      onClick={() =>
+                        toast.info(t('Feature in development'))
+                      }
                     >
                       <ImageIcon className='mr-2' size={16} />
                       {t('Upload photo')}
                     </DropdownMenuItem>
                     <DropdownMenuItem
-                      onClick={() => handleFileAction('take-screenshot')}
+                      onClick={() =>
+                        toast.info(t('Feature in development'))
+                      }
                     >
                       <ScreenShareIcon className='mr-2' size={16} />
                       {t('Take screenshot')}
                     </DropdownMenuItem>
                     <DropdownMenuItem
-                      onClick={() => handleFileAction('take-photo')}
+                      onClick={() =>
+                        toast.info(t('Feature in development'))
+                      }
                     >
                       <CameraIcon className='mr-2' size={16} />
                       {t('Take photo')}
@@ -437,7 +463,7 @@ export function PlaygroundInput({
                         value={videoRatio}
                         onValueChange={onVideoRatioChange}
                       >
-                        {VIDEO_RATIO_OPTIONS.map((ratio) => (
+                        {getVideoRatioOptionsForModel(modelValue).map((ratio) => (
                           <DropdownMenuRadioItem key={ratio} value={ratio}>
                             {ratio}
                           </DropdownMenuRadioItem>
@@ -524,6 +550,7 @@ export function PlaygroundInput({
               <PlaygroundSubmitButton
                 disabled={isSubmitDisabled}
                 isVideoMode={isVideoMode}
+                isImageMode={isImageMode}
                 text={text}
               />
             )}

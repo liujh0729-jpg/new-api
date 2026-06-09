@@ -21,14 +21,14 @@ type OpenAIErrorWithStatusCode struct {
 }
 
 type GeneralErrorResponse struct {
-	Error    json.RawMessage `json:"error"`
-	Message  string          `json:"message"`
-	Msg      string          `json:"msg"`
-	Err      string          `json:"err"`
-	ErrorMsg string          `json:"error_msg"`
-	Metadata json.RawMessage `json:"metadata,omitempty"`
-	Detail   string          `json:"detail,omitempty"`
-	Header   struct {
+	Error            json.RawMessage `json:"error"`
+	Message          string          `json:"message"`
+	Msg              string          `json:"msg"`
+	Err              string          `json:"err"`
+	ErrorMsg         string          `json:"error_msg"`
+	Metadata         json.RawMessage `json:"metadata,omitempty"`
+	Detail           string          `json:"detail,omitempty"`
+	Header           struct {
 		Message string `json:"message"`
 	} `json:"header"`
 	Response struct {
@@ -36,6 +36,12 @@ type GeneralErrorResponse struct {
 			Message string `json:"message"`
 		} `json:"error"`
 	} `json:"response"`
+	ResponseMetadata struct {
+		Error struct {
+			Code    string `json:"Code"`
+			Message string `json:"Message"`
+		} `json:"Error"`
+	} `json:"ResponseMetadata,omitempty"`
 }
 
 func (e GeneralErrorResponse) TryToOpenAIError() *types.OpenAIError {
@@ -88,6 +94,9 @@ func (e GeneralErrorResponse) ToMessage() string {
 	}
 	if e.Response.Error.Message != "" {
 		return e.Response.Error.Message
+	}
+	if e.ResponseMetadata.Error.Message != "" {
+		return e.ResponseMetadata.Error.Message
 	}
 	return ""
 }

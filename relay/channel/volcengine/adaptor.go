@@ -18,6 +18,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel/openai"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/constant"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/QuantumNous/new-api/types"
 
@@ -395,6 +396,11 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 		return handleTTSResponse(c, resp, info, encoding)
 	}
 
+	if info.RelayMode == constant.RelayModeImagesGenerations || info.RelayMode == constant.RelayModeImagesEdits {
+		usage, err = volcengineImageDoResponse(c, resp, info)
+		return
+	}
+
 	adaptor := openai.Adaptor{}
 	usage, err = adaptor.DoResponse(c, resp, info)
 	return
@@ -406,4 +412,41 @@ func (a *Adaptor) GetModelList() []string {
 
 func (a *Adaptor) GetChannelName() string {
 	return ChannelName
+}
+
+func volcengineImageDoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (*dto.Usage, *types.NewAPIError) {
+	defer service.CloseResponseBodyGracefully(resp)
+
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, types.NewOpenAIError(err, types.ErrorCodeReadResponseBodyFailed, http.StatusInternalServerError)
+	}
+
+	var errResponse dto.GeneralErrorResponse
+	if err := common.Unmarshal(responseBody, &errResponse); err == nil {
+		msg := errResponse.ToMessage()
+		if msg != "" {
+			return nil, types.NewOpenAIError(fmt.Errorf("%s", msg), types.ErrorCodeBadResponseBody, resp.StatusCode)
+		}
+	}
+
+	var usageResp dto.SimpleResponse
+	if err := common.Unmarshal(responseBody, &usageResp); err != nil {
+		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+	}
+
+	service.IOCopyBytesGracefully(c, resp, responseBody)
+
+	if usageResp.InputTokens > 0 {
+		usageResp.PromptTokens += usageResp.InputTokens
+	}
+	if usageResp.OutputTokens > 0 {
+		usageResp.CompletionTokens += usageResp.OutputTokens
+	}
+	if usageResp.InputTokensDetails != nil {
+		usageResp.PromptTokensDetails.ImageTokens += usageResp.InputTokensDetails.ImageTokens
+		usageResp.PromptTokensDetails.TextTokens += usageResp.InputTokensDetails.TextTokens
+	}
+
+	return &usageResp.Usage, nil
 }
