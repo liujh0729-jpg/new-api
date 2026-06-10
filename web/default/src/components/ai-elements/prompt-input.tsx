@@ -103,6 +103,7 @@ export type AttachmentsContext = {
   clear: () => void
   openFileDialog: () => void
   fileInputRef: RefObject<HTMLInputElement | null>
+  addRemote: (item: { url: string; mediaType?: string; filename?: string }) => void
 }
 
 export type TextInputContext = {
@@ -217,14 +218,29 @@ export function PromptInputProvider({
   const remove = useCallback((id: string) => {
     setAttachements((prev) => {
       const found = prev.find((f) => f.id === id)
-      if (found?.url) URL.revokeObjectURL(found.url)
+      if (found?.url?.startsWith('blob:')) URL.revokeObjectURL(found.url)
       return prev.filter((f) => f.id !== id)
     })
   }, [])
 
+  const addRemote = useCallback(
+    (item: { url: string; mediaType?: string; filename?: string }) => {
+      setAttachements((prev) =>
+        prev.concat({
+          id: nanoid(),
+          type: 'file' as const,
+          url: item.url,
+          mediaType: item.mediaType || '',
+          filename: item.filename || '',
+        })
+      )
+    },
+    []
+  )
+
   const clear = useCallback(() => {
     setAttachements((prev) => {
-      for (const f of prev) if (f.url) URL.revokeObjectURL(f.url)
+      for (const f of prev) if (f.url?.startsWith('blob:')) URL.revokeObjectURL(f.url)
       return []
     })
   }, [])
@@ -241,8 +257,9 @@ export function PromptInputProvider({
       clear,
       openFileDialog,
       fileInputRef,
+      addRemote,
     }),
-    [attachements, add, remove, clear, openFileDialog]
+    [attachements, add, remove, clear, openFileDialog, addRemote]
   )
 
   const __registerFileInput = useCallback(
@@ -596,7 +613,7 @@ export const PromptInput = ({
         : (id: string) =>
             setItems((prev) => {
               const found = prev.find((file) => file.id === id)
-              if (found?.url) {
+              if (found?.url?.startsWith('blob:')) {
                 URL.revokeObjectURL(found.url)
               }
               return prev.filter((file) => file.id !== id)
@@ -611,7 +628,7 @@ export const PromptInput = ({
         : () =>
             setItems((prev) => {
               for (const file of prev) {
-                if (file.url) {
+                if (file.url?.startsWith('blob:')) {
                   URL.revokeObjectURL(file.url)
                 }
               }
@@ -626,6 +643,30 @@ export const PromptInput = ({
         ? () => controller.attachments.openFileDialog()
         : openFileDialogLocal,
     [controller, openFileDialogLocal]
+  )
+
+  const addRemoteLocal = useCallback(
+    (item: { url: string; mediaType?: string; filename?: string }) => {
+      setItems((prev) =>
+        prev.concat({
+          id: nanoid(),
+          type: 'file' as const,
+          url: item.url,
+          mediaType: item.mediaType || '',
+          filename: item.filename || '',
+        })
+      )
+    },
+    []
+  )
+
+  const addRemote = useMemo(
+    () =>
+      controller
+        ? (item: { url: string; mediaType?: string; filename?: string }) =>
+            controller.attachments.addRemote(item)
+        : addRemoteLocal,
+    [controller, addRemoteLocal]
   )
 
   // Let provider know about our hidden file input so external menus can call openFileDialog()
@@ -696,7 +737,7 @@ export const PromptInput = ({
     () => () => {
       if (!usingProvider) {
         for (const f of filesRef.current) {
-          if (f.url) URL.revokeObjectURL(f.url)
+          if (f.url?.startsWith('blob:')) URL.revokeObjectURL(f.url)
         }
       }
     },
@@ -731,8 +772,9 @@ export const PromptInput = ({
       clear,
       openFileDialog,
       fileInputRef: inputRef,
+      addRemote,
     }),
-    [files, add, remove, clear, openFileDialog]
+    [files, add, remove, clear, openFileDialog, addRemote]
   )
 
   const handleSubmit: FormEventHandler<HTMLFormElement> = (event) => {

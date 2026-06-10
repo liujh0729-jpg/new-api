@@ -58,6 +58,7 @@ import {
   usePromptInputAttachments,
 } from '@/components/ai-elements/prompt-input'
 import { ModelGroupSelector } from '@/components/model-group-selector'
+import { MaterialSelectorDialog } from './material-selector-dialog'
 import {
   getImageSizeOptionsForModel,
   getVideoRatioOptionsForModel,
@@ -130,17 +131,25 @@ function PlaygroundSubmitButton({
 }
 
 function ReferenceAttachments() {
+  const { t } = useTranslation()
   const attachments = usePromptInputAttachments()
   if (attachments.files.length === 0) return null
 
   return (
     <div className='flex flex-wrap gap-2 px-4 pt-3'>
-      {attachments.files.map((attachment) => (
-        <PromptInputAttachment
-          className='max-w-48'
-          data={attachment}
-          key={attachment.id}
-        />
+      {attachments.files.map((attachment, index) => (
+        <div className='relative' key={attachment.id}>
+          <span
+            aria-label={t('Reference {{n}}', { n: index + 1 })}
+            className='pointer-events-none absolute -left-1.5 -top-1.5 z-10 flex size-4 items-center justify-center rounded-full bg-primary text-[9px] font-semibold text-primary-foreground shadow-sm'
+          >
+            {index + 1}
+          </span>
+          <PromptInputAttachment
+            className='max-w-48'
+            data={attachment}
+          />
+        </div>
       ))}
     </div>
   )
@@ -173,6 +182,7 @@ export function PlaygroundInput({
 }: PlaygroundInputProps) {
   const { t } = useTranslation()
   const [text, setText] = useState('')
+  const [isMaterialSelectorOpen, setIsMaterialSelectorOpen] = useState(false)
   const isImageMode = mode === 'image'
   const isVideoMode = mode === 'video'
   const imageSizeOptions = getImageSizeOptionsForModel(modelValue)
@@ -206,10 +216,7 @@ export function PlaygroundInput({
   }
 
   const handleInsertReferenceMarker = () => {
-    setText((prev) => {
-      if (!prev.trim()) return '@'
-      return prev.endsWith(' ') ? `${prev}@` : `${prev} @`
-    })
+    setIsMaterialSelectorOpen(true)
   }
 
   return (
@@ -508,20 +515,22 @@ export function PlaygroundInput({
                     </DropdownMenuGroup>
                   </DropdownMenuContent>
                 </DropdownMenu>
-
-                <PromptInputButton
-                  className='border font-medium'
-                  disabled={disabled}
-                  onClick={handleInsertReferenceMarker}
-                  type='button'
-                  variant='outline'
-                >
-                  <AtSignIcon size={16} />
-                  <span className='sr-only'>
-                    {t('Insert reference marker')}
-                  </span>
-                </PromptInputButton>
               </>
+            )}
+
+            {(isImageMode || isVideoMode) && (
+              <PromptInputButton
+                className='border font-medium'
+                disabled={disabled}
+                onClick={handleInsertReferenceMarker}
+                type='button'
+                variant='outline'
+              >
+                <AtSignIcon size={16} />
+                <span className='sr-only'>
+                  {t('Select reference material')}
+                </span>
+              </PromptInputButton>
             )}
           </PromptInputTools>
 
@@ -556,6 +565,14 @@ export function PlaygroundInput({
             )}
           </div>
         </PromptInputFooter>
+
+        {mode !== 'chat' && (
+          <MaterialSelectorDialog
+            open={isMaterialSelectorOpen}
+            onOpenChange={setIsMaterialSelectorOpen}
+            mode={mode as 'image' | 'video'}
+          />
+        )}
       </PromptInput>
     </div>
   )

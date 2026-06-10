@@ -33,6 +33,7 @@ import {
   CreditCard,
   ListTodo,
   Settings,
+  Image as ImageIcon,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { WORKSPACE_IDS } from '@/components/layout/lib/workspace-registry'
@@ -59,6 +60,11 @@ export function useSidebarData(): SidebarData {
             title: t('Playground'),
             url: '/playground',
             icon: FlaskConical,
+          },
+          {
+            title: t('Material Library'),
+            url: '/materials',
+            icon: ImageIcon,
           },
           {
             title: t('Test Bench'),

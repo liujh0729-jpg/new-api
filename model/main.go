@@ -262,6 +262,7 @@ func migrateDB() error {
 		&PasskeyCredential{},
 		&Option{},
 		&Redemption{},
+		&Material{},
 		&Ability{},
 		&Log{},
 		&Midjourney{},
@@ -297,6 +298,9 @@ func migrateDB() error {
 	if err := EnsureAIPDDDefaults(); err != nil {
 		return err
 	}
+	if err := EnsureCNProviderDefaults(); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -314,6 +318,7 @@ func migrateDBFast() error {
 		{&PasskeyCredential{}, "PasskeyCredential"},
 		{&Option{}, "Option"},
 		{&Redemption{}, "Redemption"},
+		{&Material{}, "Material"},
 		{&Ability{}, "Ability"},
 		{&Log{}, "Log"},
 		{&Midjourney{}, "Midjourney"},
@@ -367,6 +372,9 @@ func migrateDBFast() error {
 		}
 	}
 	if err := EnsureAIPDDDefaults(); err != nil {
+		return err
+	}
+	if err := EnsureCNProviderDefaults(); err != nil {
 		return err
 	}
 	common.SysLog("database migrated")

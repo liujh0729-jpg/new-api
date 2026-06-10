@@ -67,6 +67,13 @@ func SetRelayRouter(router *gin.Engine) {
 	playgroundUtilityRouter.Use(middleware.UserAuth())
 	{
 		playgroundUtilityRouter.POST("/reference-media/upload", controller.PlaygroundUploadReferenceMedia)
+
+		playgroundUtilityRouter.POST("/material/upload", controller.UploadMaterial)
+		playgroundUtilityRouter.GET("/material", controller.GetMaterials)
+		playgroundUtilityRouter.GET("/material/search", controller.SearchMaterials)
+		playgroundUtilityRouter.PUT("/material", controller.UpdateMaterial)
+		playgroundUtilityRouter.DELETE("/material/:id", controller.DeleteMaterial)
+		playgroundUtilityRouter.GET("/material/file/:id", controller.ServeMaterialFile)
 	}
 
 	playgroundRouter := router.Group("/pg")
