@@ -29,7 +29,7 @@ const route = getRouteApi('/_authenticated/materials/')
 export function MaterialsTable() {
   const { t } = useTranslation()
   const columns = useMaterialsColumns()
-  const { refreshTrigger, setPreviewMaterial } = useMaterials()
+  const { refreshTrigger } = useMaterials()
   const isMobile = useMediaQuery('(max-width: 640px)')
   const [rowSelection, setRowSelection] = useState({})
   const [sorting, setSorting] = useState<SortingState>([])
@@ -50,6 +50,10 @@ export function MaterialsTable() {
     globalFilter: { enabled: true, key: 'filter' },
     columnFilters: [{ columnId: 'type', searchKey: 'type', type: 'array' }],
   })
+  const typeFilters = useMemo(() => {
+    const value = columnFilters.find((filter) => filter.id === 'type')?.value
+    return Array.isArray(value) ? (value as string[]) : []
+  }, [columnFilters])
 
   const { data, isLoading, isFetching } = useQuery({
     queryKey: [
@@ -57,17 +61,22 @@ export function MaterialsTable() {
       pagination.pageIndex + 1,
       pagination.pageSize,
       globalFilter,
+      typeFilters.join(','),
       refreshTrigger,
     ],
     queryFn: async () => {
-      const hasFilter = globalFilter?.trim()
+      const hasFilter = Boolean(globalFilter?.trim() || typeFilters.length)
       const params = {
         p: pagination.pageIndex + 1,
         page_size: pagination.pageSize,
       }
 
       const result = hasFilter
-        ? await searchMaterials({ ...params, keyword: globalFilter })
+        ? await searchMaterials({
+            ...params,
+            keyword: globalFilter,
+            type: typeFilters,
+          })
         : await getMaterials(params)
 
       return {
@@ -116,7 +125,7 @@ export function MaterialsTable() {
     onPaginationChange,
     onGlobalFilterChange,
     onColumnFiltersChange,
-    manualPagination: !globalFilter,
+    manualPagination: true,
     pageCount: Math.ceil((data?.total || 0) / pagination.pageSize),
   })
 
@@ -139,8 +148,7 @@ export function MaterialsTable() {
       <TableRow
         key={row.id}
         data-state={row.getIsSelected() && 'selected'}
-        className='cursor-pointer transition-colors hover:bg-muted/50'
-        onClick={() => setPreviewMaterial(row.original)}
+        className='transition-colors hover:bg-muted/50'
       >
         {row.getVisibleCells().map((cell) => (
           <TableCell key={cell.id}>

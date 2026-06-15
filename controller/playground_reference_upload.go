@@ -15,11 +15,15 @@ import (
 	"gorm.io/gorm"
 )
 
-const playgroundReferenceUploadMaxBytes int64 = 30 * 1024 * 1024
+const playgroundReferenceUploadMaxBytes int64 = materialUploadMaxBytes
 
 func PlaygroundUploadReferenceMedia(c *gin.Context) {
 	fileHeader, err := c.FormFile("file")
 	if err != nil {
+		if isMaterialUploadTooLargeError(err) {
+			playgroundReferenceUploadError(c, http.StatusRequestEntityTooLarge, "upload_file_too_large", materialUploadTooLargeMessage())
+			return
+		}
 		playgroundReferenceUploadError(c, http.StatusBadRequest, "invalid_upload", "file is required")
 		return
 	}
@@ -28,8 +32,14 @@ func PlaygroundUploadReferenceMedia(c *gin.Context) {
 			c,
 			http.StatusRequestEntityTooLarge,
 			"upload_file_too_large",
-			fmt.Sprintf("file size exceeds the %d MB limit", playgroundReferenceUploadMaxBytes/(1024*1024)),
+			materialUploadTooLargeMessage(),
 		)
+		return
+	}
+	fileHeader.Filename = sanitizeMaterialFileName(fileHeader.Filename)
+	mimeType, _, err := detectMaterialFileType(fileHeader)
+	if err != nil {
+		playgroundReferenceUploadError(c, http.StatusBadRequest, "unsupported_media_type", err.Error())
 		return
 	}
 
@@ -65,7 +75,7 @@ func PlaygroundUploadReferenceMedia(c *gin.Context) {
 	common.ApiSuccess(c, gin.H{
 		"url":        uploadedURL,
 		"filename":   fileHeader.Filename,
-		"media_type": fileHeader.Header.Get("Content-Type"),
+		"media_type": mimeType,
 	})
 }
 

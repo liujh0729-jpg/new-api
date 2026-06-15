@@ -99,7 +99,7 @@ export const SEEDANCE_REFERENCE_LIMITS = {
   image: 9,
   video: 3,
   audio: 3,
-  maxFileSize: 30 * 1024 * 1024,
+  maxFileSize: 300 * 1024 * 1024,
   minVideoDurationSeconds: 2,
   maxVideoDurationSeconds: 15.2,
   maxVideoTotalDurationSeconds: 15.2,
@@ -147,7 +147,7 @@ export const IMAGE_REFERENCE_ACCEPT = [
 ].join(',')
 export const IMAGE_REFERENCE_LIMITS = {
   maxFiles: 1,
-  maxFileSize: 30 * 1024 * 1024,
+  maxFileSize: 300 * 1024 * 1024,
 } as const
 
 function normalizeModelName(model: string): string {

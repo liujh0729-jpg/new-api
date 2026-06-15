@@ -30,6 +30,45 @@ var openAIModels []dto.OpenAIModels
 var openAIModelsMap map[string]dto.OpenAIModels
 var channelId2Models map[int][]string
 
+var taskModelChannelTypes = []int{
+	constant.ChannelTypeSunoAPI,
+	constant.ChannelTypeAli,
+	constant.ChannelTypeKling,
+	constant.ChannelTypeJimeng,
+	constant.ChannelTypeVertexAi,
+	constant.ChannelTypeVidu,
+	constant.ChannelTypeDoubaoVideo,
+	constant.ChannelTypeVolcEngine,
+	constant.ChannelTypeSora,
+	constant.ChannelTypeGemini,
+	constant.ChannelTypeMiniMax,
+}
+
+func appendOpenAIModels(owner string, modelNames []string) {
+	for _, modelName := range normalizeModelNames(modelNames) {
+		openAIModels = append(openAIModels, dto.OpenAIModels{
+			Id:      modelName,
+			Object:  "model",
+			Created: 1626777600,
+			OwnedBy: owner,
+		})
+	}
+}
+
+func mergeChannelModels(channelType int, modelNames []string) {
+	channelId2Models[channelType] = mergeModelNames(channelId2Models[channelType], modelNames)
+}
+
+func appendTaskAdaptorModels(channelType int) {
+	adaptor := relay.GetTaskAdaptor(constant.TaskPlatform(fmt.Sprintf("%d", channelType)))
+	if adaptor == nil {
+		return
+	}
+	modelNames := adaptor.GetModelList()
+	appendOpenAIModels(adaptor.GetChannelName(), modelNames)
+	mergeChannelModels(channelType, modelNames)
+}
+
 func init() {
 	// https://platform.openai.com/docs/models/model-endpoint-compatibility
 	for i := 0; i < constant.APITypeDummy; i++ {
@@ -37,57 +76,13 @@ func init() {
 			continue
 		}
 		adaptor := relay.GetAdaptor(i)
-		channelName := adaptor.GetChannelName()
-		modelNames := adaptor.GetModelList()
-		for _, modelName := range modelNames {
-			openAIModels = append(openAIModels, dto.OpenAIModels{
-				Id:      modelName,
-				Object:  "model",
-				Created: 1626777600,
-				OwnedBy: channelName,
-			})
-		}
+		appendOpenAIModels(adaptor.GetChannelName(), adaptor.GetModelList())
 	}
-	for _, modelName := range ai360.ModelList {
-		openAIModels = append(openAIModels, dto.OpenAIModels{
-			Id:      modelName,
-			Object:  "model",
-			Created: 1626777600,
-			OwnedBy: ai360.ChannelName,
-		})
-	}
-	for _, modelName := range moonshot.ModelList {
-		openAIModels = append(openAIModels, dto.OpenAIModels{
-			Id:      modelName,
-			Object:  "model",
-			Created: 1626777600,
-			OwnedBy: moonshot.ChannelName,
-		})
-	}
-	for _, modelName := range lingyiwanwu.ModelList {
-		openAIModels = append(openAIModels, dto.OpenAIModels{
-			Id:      modelName,
-			Object:  "model",
-			Created: 1626777600,
-			OwnedBy: lingyiwanwu.ChannelName,
-		})
-	}
-	for _, modelName := range minimax.ModelList {
-		openAIModels = append(openAIModels, dto.OpenAIModels{
-			Id:      modelName,
-			Object:  "model",
-			Created: 1626777600,
-			OwnedBy: minimax.ChannelName,
-		})
-	}
-	for _, modelName := range constant.GetAIPDDTaskModelList() {
-		openAIModels = append(openAIModels, dto.OpenAIModels{
-			Id:      modelName,
-			Object:  "model",
-			Created: 1626777600,
-			OwnedBy: taskaipdd.ChannelName,
-		})
-	}
+	appendOpenAIModels(ai360.ChannelName, ai360.ModelList)
+	appendOpenAIModels(moonshot.ChannelName, moonshot.ModelList)
+	appendOpenAIModels(lingyiwanwu.ChannelName, lingyiwanwu.ModelList)
+	appendOpenAIModels(minimax.ChannelName, minimax.ModelList)
+	appendOpenAIModels(taskaipdd.ChannelName, constant.GetAIPDDTaskModelList())
 	for modelName, _ := range constant.MidjourneyModel2Action {
 		openAIModels = append(openAIModels, dto.OpenAIModels{
 			Id:      modelName,
@@ -95,10 +90,6 @@ func init() {
 			Created: 1626777600,
 			OwnedBy: "midjourney",
 		})
-	}
-	openAIModelsMap = make(map[string]dto.OpenAIModels)
-	for _, aiModel := range openAIModels {
-		openAIModelsMap[aiModel.Id] = aiModel
 	}
 	channelId2Models = make(map[int][]string)
 	for i := 1; i <= constant.ChannelTypeDummy; i++ {
@@ -111,12 +102,19 @@ func init() {
 		}}
 		adaptor := relay.GetAdaptor(apiType)
 		adaptor.Init(meta)
-		channelId2Models[i] = adaptor.GetModelList()
+		mergeChannelModels(i, adaptor.GetModelList())
+	}
+	for _, channelType := range taskModelChannelTypes {
+		appendTaskAdaptorModels(channelType)
 	}
 	channelId2Models[constant.ChannelTypeAIPDD] = constant.GetAIPDDTaskModelList()
 	openAIModels = lo.UniqBy(openAIModels, func(m dto.OpenAIModels) string {
 		return m.Id
 	})
+	openAIModelsMap = make(map[string]dto.OpenAIModels, len(openAIModels))
+	for _, aiModel := range openAIModels {
+		openAIModelsMap[aiModel.Id] = aiModel
+	}
 }
 
 func getOpenAIModel(modelName string) (dto.OpenAIModels, bool) {

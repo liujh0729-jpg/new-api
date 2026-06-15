@@ -50,6 +50,26 @@ const getGroupDefaults = (settings: BillingSettings) => ({
     settings['group_ratio_setting.group_special_usable_group'],
 })
 
+const getCurrencyDefaults = (settings: BillingSettings) => {
+  const quotaDisplayType = parseCurrencyDisplayType(
+    settings['general_setting.quota_display_type']
+  )
+
+  return {
+    QuotaPerUnit: settings.QuotaPerUnit,
+    USDExchangeRate: settings.USDExchangeRate,
+    DisplayInCurrencyEnabled: quotaDisplayType !== 'TOKENS',
+    DisplayTokenStatEnabled: settings.DisplayTokenStatEnabled,
+    general_setting: {
+      quota_display_type: quotaDisplayType,
+      custom_currency_symbol:
+        settings['general_setting.custom_currency_symbol'] ?? '¤',
+      custom_currency_exchange_rate:
+        settings['general_setting.custom_currency_exchange_rate'] ?? 1,
+    },
+  }
+}
+
 const BILLING_SECTIONS = [
   {
     id: 'quota',
@@ -79,23 +99,7 @@ const BILLING_SECTIONS = [
     titleKey: 'Currency & Display',
     descriptionKey: 'Configure currency conversion and quota display options',
     build: (settings: BillingSettings) => (
-      <PricingSection
-        defaultValues={{
-          QuotaPerUnit: settings.QuotaPerUnit,
-          USDExchangeRate: settings.USDExchangeRate,
-          DisplayInCurrencyEnabled: settings.DisplayInCurrencyEnabled,
-          DisplayTokenStatEnabled: settings.DisplayTokenStatEnabled,
-          general_setting: {
-            quota_display_type: parseCurrencyDisplayType(
-              settings['general_setting.quota_display_type']
-            ),
-            custom_currency_symbol:
-              settings['general_setting.custom_currency_symbol'] ?? '¤',
-            custom_currency_exchange_rate:
-              settings['general_setting.custom_currency_exchange_rate'] ?? 1,
-          },
-        }}
-      />
+      <PricingSection defaultValues={getCurrencyDefaults(settings)} />
     ),
   },
   {

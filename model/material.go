@@ -3,6 +3,7 @@ package model
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 
@@ -90,8 +91,11 @@ func SearchMaterialsByUser(userId int, keyword string, typeFilter string, startI
 		}
 		query = query.Where(nameCol+" LIKE ?", "%"+keyword+"%")
 	}
-	if typeFilter != "" {
-		query = query.Where("type = ?", typeFilter)
+	typeFilters := normalizeMaterialTypeFilters(typeFilter)
+	if len(typeFilters) == 1 {
+		query = query.Where("type = ?", typeFilters[0])
+	} else if len(typeFilters) > 1 {
+		query = query.Where("type IN ?", typeFilters)
 	}
 
 	err = query.Count(&total).Error
@@ -111,6 +115,25 @@ func SearchMaterialsByUser(userId int, keyword string, typeFilter string, startI
 	}
 
 	return materials, total, nil
+}
+
+func normalizeMaterialTypeFilters(typeFilter string) []string {
+	allowed := map[string]bool{
+		MaterialTypeImage: true,
+		MaterialTypeVideo: true,
+		MaterialTypeAudio: true,
+	}
+	seen := make(map[string]bool)
+	filters := make([]string, 0, 3)
+	for _, item := range strings.Split(typeFilter, ",") {
+		item = strings.ToLower(strings.TrimSpace(item))
+		if !allowed[item] || seen[item] {
+			continue
+		}
+		seen[item] = true
+		filters = append(filters, item)
+	}
+	return filters
 }
 
 func GetMaterialByIdAndUser(id int, userId int) (*Material, error) {

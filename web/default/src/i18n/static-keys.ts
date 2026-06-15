@@ -519,6 +519,17 @@ export const STATIC_I18N_KEYS = [
   'Synthesis text',
   'Reference audio URL',
   'Emotion audio URL',
+
+  // Material library dynamic messages
+  'Material uploaded successfully',
+  'Material updated successfully',
+  'Material deleted successfully',
+  'Failed to load materials',
+  'Failed to search materials',
+  'Failed to upload material',
+  'Failed to update material',
+  'Failed to delete material',
+
   'Upload references or describe the video',
   'Upload image',
   'Upload load_video',

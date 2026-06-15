@@ -45,7 +45,7 @@ export interface GetMaterialsResponse {
 
 export interface SearchMaterialsParams {
   keyword?: string
-  type?: string
+  type?: string | string[]
   p?: number
   page_size?: number
 }

@@ -5,7 +5,7 @@ export const MATERIAL_TYPE = {
 } as const
 
 export const ACCEPTED_FILE_TYPES = 'image/*,video/*,audio/*'
-export const MAX_UPLOAD_SIZE_MB = 30
+export const MAX_UPLOAD_SIZE_MB = 300
 export const MAX_UPLOAD_SIZE_BYTES = MAX_UPLOAD_SIZE_MB * 1024 * 1024
 
 export const SUCCESS_MESSAGES = {

@@ -66,9 +66,9 @@ func SetRelayRouter(router *gin.Engine) {
 	playgroundUtilityRouter.Use(middleware.SystemPerformanceCheck())
 	playgroundUtilityRouter.Use(middleware.UserAuth())
 	{
-		playgroundUtilityRouter.POST("/reference-media/upload", controller.PlaygroundUploadReferenceMedia)
+		playgroundUtilityRouter.POST("/reference-media/upload", middleware.UserUploadRateLimit(), controller.PlaygroundUploadReferenceMedia)
 
-		playgroundUtilityRouter.POST("/material/upload", controller.UploadMaterial)
+		playgroundUtilityRouter.POST("/material/upload", middleware.UserUploadRateLimit(), controller.UploadMaterial)
 		playgroundUtilityRouter.GET("/material", controller.GetMaterials)
 		playgroundUtilityRouter.GET("/material/search", controller.SearchMaterials)
 		playgroundUtilityRouter.PUT("/material", controller.UpdateMaterial)

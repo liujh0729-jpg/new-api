@@ -20,8 +20,9 @@ export async function searchMaterials(
 ): Promise<GetMaterialsResponse> {
   const { keyword = '', type = '', p = 1, page_size = 10 } = params
   let url = `/pg/material/search?keyword=${encodeURIComponent(keyword)}&p=${p}&page_size=${page_size}`
-  if (type) {
-    url += `&type=${encodeURIComponent(type)}`
+  const typeFilter = Array.isArray(type) ? type.filter(Boolean).join(',') : type
+  if (typeFilter) {
+    url += `&type=${encodeURIComponent(typeFilter)}`
   }
   const res = await api.get(url)
   return res.data

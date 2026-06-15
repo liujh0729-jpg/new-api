@@ -32,6 +32,11 @@ type userModelsResponse struct {
 	Data    []string `json:"data"`
 }
 
+type dashboardModelsResponse struct {
+	Success bool             `json:"success"`
+	Data    map[int][]string `json:"data"`
+}
+
 func setupModelListControllerTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 
@@ -158,6 +163,63 @@ func pricingByModelName(pricings []model.Pricing) map[string]model.Pricing {
 		byName[pricing.ModelName] = pricing
 	}
 	return byName
+}
+
+func TestChannelListModelsIncludesTaskAdaptorModels(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/channel/models", nil)
+
+	ChannelListModels(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var payload listModelsResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
+	require.True(t, payload.Success)
+
+	ids := make(map[string]bool, len(payload.Data))
+	for _, item := range payload.Data {
+		ids[item.Id] = true
+	}
+
+	require.True(t, ids["suno_music"], "expected Suno task model in channel model list")
+	require.True(t, ids["kling-v2-master"], "expected Kling task model in channel model list")
+	require.True(t, ids["viduq2"], "expected Vidu task model in channel model list")
+	require.True(t, ids["doubao-seedance-2-0-260128"], "expected Doubao video task model in channel model list")
+	require.True(t, ids["MiniMax-Hailuo-2.3"], "expected Hailuo task model in channel model list")
+	require.True(t, ids["sora-2-pro"], "expected Sora task model in channel model list")
+}
+
+func TestRetrieveModelIncludesTaskAdaptorModels(t *testing.T) {
+	aiModel, ok := getOpenAIModel("suno_music")
+
+	require.True(t, ok)
+	require.Equal(t, "suno_music", aiModel.Id)
+	require.Equal(t, "suno", aiModel.OwnedBy)
+}
+
+func TestDashboardListModelsMergesTaskAdaptorModelsByChannelType(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/dashboard/models", nil)
+
+	DashboardListModels(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var payload dashboardModelsResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
+	require.True(t, payload.Success)
+
+	require.Contains(t, payload.Data[constant.ChannelTypeSunoAPI], "suno_music")
+	require.Contains(t, payload.Data[constant.ChannelTypeKling], "kling-v2-master")
+	require.Contains(t, payload.Data[constant.ChannelTypeVidu], "viduq2")
+	require.Contains(t, payload.Data[constant.ChannelTypeDoubaoVideo], "doubao-seedance-2-0-260128")
+	require.Contains(t, payload.Data[constant.ChannelTypeSora], "sora-2-pro")
+
+	require.Contains(t, payload.Data[constant.ChannelTypeAli], "qwen-plus")
+	require.Contains(t, payload.Data[constant.ChannelTypeAli], "wan2.5-i2v-preview")
+	require.Contains(t, payload.Data[constant.ChannelTypeMiniMax], "MiniMax-M2.7")
+	require.Contains(t, payload.Data[constant.ChannelTypeMiniMax], "MiniMax-Hailuo-2.3")
 }
 
 func TestPricingIncludesAIPDDCatalogModelsByDefault(t *testing.T) {
