@@ -34,13 +34,11 @@ export NEW_API_TOKEN="sk-xxxx"
 | --- | --- | --- | --- | --- | --- |
 | 图生图 | `aipdd-flux-gguf` | `POST /v1/images/generations` | `GET /v1/images/generations/{task_id}` | `image`，可选 `prompt` | 按次 |
 | 文生图 | `aipdd-flux-gguf-t2i` | `POST /v1/images/generations` | `GET /v1/images/generations/{task_id}` | `prompt` 或 `text` | 按次 |
-| 图生视频 | `aipdd-wan2.2-wanx` | `POST /v1/videos` | `GET /v1/videos/{task_id}` | `image`、`prompt`、`duration` | 按秒 |
-| 主体替换视频 | `aipdd-wan2.2-animater` | `POST /v1/videos` | `GET /v1/videos/{task_id}` | `load_video`、`prompt`、`negative_prompt` | 按次 |
+| 图生视频 | `aipdd-wan2.2-wanx` | `POST /v1/videos` | `GET /v1/videos/{task_id}` | `image`、`prompt`，可选 `negative_prompt`、`fps` | 按次 |
+| 主体替换视频 | `aipdd-wan2.2-animater` | `POST /v1/videos` | `GET /v1/videos/{task_id}` | `video`、`prompt`，可选 `image` | 按次 |
 | 动作迁移视频 | `aipdd-mimic-motion` | `POST /v1/videos` | `GET /v1/videos/{task_id}` | `motion_video`、`appearance_image` | 按次 |
 | 对口型视频 | `aipdd-latentsync-1.5` | `POST /v1/videos` | `GET /v1/videos/{task_id}` | `video`、`LoadAudio` | 按次 |
 | 声音复刻 | `aipdd-indextts` | `POST /v1/audio/speech` | `GET /v1/audio/speech/{task_id}` | `input`、`audio` | 按次 |
-
-`aipdd-wan2.2-wanx` 的 `duration` 只支持 `5` 或 `10`，不传默认 `5` 秒。
 
 ## 提交任务示例
 
@@ -78,8 +76,7 @@ curl "${BASE_URL}v1/videos" \
   -d '{
     "model": "aipdd-wan2.2-wanx",
     "image": "https://example.com/input.png",
-    "prompt": "镜头缓慢推进，画面稳定，电影感",
-    "duration": 5
+    "prompt": "镜头缓慢推进，画面稳定，电影感"
   }'
 ```
 
@@ -193,7 +190,6 @@ curl "${BASE_URL}v1/videos" \
   -H "Authorization: Bearer $NEW_API_TOKEN" \
   -F "model=aipdd-wan2.2-wanx" \
   -F "prompt=镜头缓慢推进，电影感" \
-  -F "duration=5" \
   -F "image=@input.png"
 ```
 
@@ -203,7 +199,7 @@ curl "${BASE_URL}v1/videos" \
 | --- | --- |
 | `aipdd-flux-gguf` | `image` |
 | `aipdd-wan2.2-wanx` | `image` |
-| `aipdd-wan2.2-animater` | `load_video` |
+| `aipdd-wan2.2-animater` | `video`，也可用 `load_video` 作为兼容别名；可选 `image` |
 | `aipdd-mimic-motion` | `motion_video`、`appearance_image` |
 | `aipdd-latentsync-1.5` | `video`、`LoadAudio`，也可用 `audio` 作为音频别名 |
 | `aipdd-indextts` | `audio`，也可用 `ref_audio`；可选 `emotion_audio` |
@@ -214,6 +210,5 @@ curl "${BASE_URL}v1/videos" \
 | --- | --- |
 | `401` | 检查 `Authorization: Bearer <NEW_API_TOKEN>` 是否正确 |
 | `model_not_found` | 联系管理员确认 AIPDD 渠道和模型已启用 |
-| `duration must be 5 or 10 seconds` | `aipdd-wan2.2-wanx` 的 `duration` 只能填 `5` 或 `10` |
 | 一直 `queued` | 上游仍在排队，建议低频轮询或联系服务方检查队列 |
 | 没有结果 URL | 任务未完成时不会返回结果 URL，请等到完成状态后再读取 |

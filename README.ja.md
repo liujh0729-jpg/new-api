@@ -122,7 +122,7 @@
 
 | パラメータ | 必須になる場合 | 説明 |
 |------|----------------|------|
-| `AIPDD_API_KEY` | 内蔵 AIPDD タスクモデルを使う場合 | 上流 AIPDD API Key。[app.aipdd.work](https://app.aipdd.work) で登録して取得してください。設定すると、デフォルト URL `https://api.aipdd.work` の `AIPDD` チャンネルを自動作成または同期し、キーを `X-API-Key` として送信します。 |
+| `AIPDD_API_KEY` | 内蔵 AIPDD タスクモデルを使う場合 | 上流 AIPDD API Key。[app.aipdd.work](https://app.aipdd.work) で登録して取得してください。設定すると、デフォルト URL `https://new.api.aipdd.work` の `AIPDD` チャンネルを自動作成または同期し、キーを `X-API-Key` として送信します。 |
 | `SQL_DSN` | MySQL/PostgreSQL を使う場合 | データベース接続文字列。デフォルト SQLite では省略できますが、データ永続化のため `/data` をマウントしてください。 |
 | `SESSION_SECRET` | 本番または複数インスタンス構成 | 再起動や複数インスタンスでログイン状態を安定させる固定セッションシークレット。 |
 | `CRYPTO_SECRET` | Redis または複数インスタンス構成 | 共有キャッシュやインスタンス間データを復号できるようにする固定暗号化シークレット。 |

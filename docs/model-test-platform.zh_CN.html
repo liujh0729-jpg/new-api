@@ -1035,12 +1035,11 @@
         endpoint: "/v1/videos",
         queryEndpoint: "/v1/videos/{task_id}",
         method: "POST",
-        billing: "按秒",
-        note: "必须传 image 和 prompt。duration 只支持 5 或 10。",
+        billing: "按次",
+        note: "必须传 image 和 prompt。",
         fields: [
           { key: "image", label: "输入图片 URL", type: "url", required: true, example: "https://example.com/input.png", file: true, fileLabel: "或上传 image" },
-          { key: "prompt", label: "视频提示词", type: "textarea", required: true, example: "slow camera push in, stable motion, cinematic" },
-          { key: "duration", label: "时长", type: "select", required: true, example: "5", options: ["5", "10"] }
+          { key: "prompt", label: "视频提示词", type: "textarea", required: true, example: "slow camera push in, stable motion, cinematic" }
         ]
       },
       {
@@ -1053,11 +1052,11 @@
         queryEndpoint: "/v1/videos/{task_id}",
         method: "POST",
         billing: "按次",
-        note: "必须传 load_video、prompt、negative_prompt。",
+        note: "必须传 video 和 prompt；image 可选。",
         fields: [
-          { key: "load_video", label: "源视频 URL", type: "url", required: true, example: "https://example.com/source.mp4", file: true, fileLabel: "或上传 load_video" },
+          { key: "video", label: "源视频 URL", type: "url", required: true, example: "https://example.com/source.mp4", file: true, fileLabel: "或上传 video" },
           { key: "prompt", label: "正向提示词", type: "textarea", required: true, example: "natural motion, stable subject" },
-          { key: "negative_prompt", label: "反向提示词", type: "textarea", required: true, example: "low quality, distorted, flicker" }
+          { key: "image", label: "参考图 URL", type: "url", required: false, example: "https://example.com/reference.png", file: true, fileLabel: "或上传 image" }
         ]
       },
       {

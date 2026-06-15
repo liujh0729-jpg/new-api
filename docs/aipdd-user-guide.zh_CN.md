@@ -49,7 +49,7 @@ export NEW_API_TOKEN="sk-xxxx"
 | Doubao 视频生成 | `doubao-seedance-1.5` | `POST /v1/videos` | `GET /v1/videos/{task_id}` | 异步任务 / 按次 |
 | Flux 图生图 | `aipdd-flux-gguf` | `POST /v1/images/generations` | `GET /v1/images/generations/{task_id}` | 异步任务 / 按次 |
 | Flux 文生图 | `aipdd-flux-gguf-t2i` | `POST /v1/images/generations` | `GET /v1/images/generations/{task_id}` | 异步任务 / 按次 |
-| Wan2.2 图生视频 | `aipdd-wan2.2-wanx` | `POST /v1/videos` | `GET /v1/videos/{task_id}` | 异步任务 / 按秒 |
+| Wan2.2 图生视频 | `aipdd-wan2.2-wanx` | `POST /v1/videos` | `GET /v1/videos/{task_id}` | 异步任务 / 按次 |
 | Wan2.2 主体替换 | `aipdd-wan2.2-animater` | `POST /v1/videos` | `GET /v1/videos/{task_id}` | 异步任务 / 按次 |
 | MimicMotion 动作迁移 | `aipdd-mimic-motion` | `POST /v1/videos` | `GET /v1/videos/{task_id}` | 异步任务 / 按次 |
 | Latentsync 对口型 | `aipdd-latentsync-1.5` | `POST /v1/videos` | `GET /v1/videos/{task_id}` | 异步任务 / 按次 |
@@ -352,15 +352,14 @@ curl "$BASE_URL/v1/images/generations" \
 | 参数 | 说明 |
 | --- | --- |
 | `image` | 输入图片 URL。也可以使用 `images` 数组，系统取第一张。 |
-| `prompt` | 视频提示词。会同时用于工作流 `prompt` 和 `positive_prompt`。 |
+| `prompt` | 视频提示词。 |
 
 可选参数：
 
 | 参数 | 说明 |
 | --- | --- |
-| `positive_prompt` | 正向提示词。优先级高于 `prompt`。 |
-| `duration` | 视频时长，只支持 `5` 或 `10`。不传默认 `5`。 |
-| `seconds` | `duration` 的兼容字段，只支持 `5` 或 `10`。 |
+| `negative_prompt` | 反向提示词。 |
+| `fps` | 帧率参数，按上游工作流支持值透传。 |
 
 JSON 示例：
 
@@ -371,8 +370,7 @@ curl "$BASE_URL/v1/videos" \
   -d '{
     "model": "aipdd-wan2.2-wanx",
     "image": "https://example.com/input.png",
-    "prompt": "slow camera push in, stable motion, cinematic",
-    "duration": 5
+    "prompt": "slow camera push in, stable motion, cinematic"
   }'
 ```
 
@@ -383,7 +381,6 @@ curl "$BASE_URL/v1/videos" \
   -H "Authorization: Bearer $NEW_API_TOKEN" \
   -F "model=aipdd-wan2.2-wanx" \
   -F "prompt=slow camera push in, stable motion, cinematic" \
-  -F "duration=5" \
   -F "image=@input.png"
 ```
 
@@ -397,15 +394,15 @@ curl "$BASE_URL/v1/videos" \
 
 | 参数 | 说明 |
 | --- | --- |
-| `load_video` | 源视频 URL。 |
+| `video` | 源视频 URL。兼容旧字段 `load_video`。 |
 | `prompt` 或 `positive_prompt` | 正向提示词，会映射到工作流 `positive_prompt`。 |
-| `negative_prompt` | 反向提示词，会映射到工作流 `negative_prompt`。 |
 
 可选参数：
 
 | 参数 | 说明 |
 | --- | --- |
-| `fullpath` | 工作流可选路径参数。普通调用一般不需要传。 |
+| `image` | 可选参考图片 URL。兼容旧字段 `fullpath`。 |
+| `filename_prefix` | 工作流输出文件名前缀。普通调用一般不需要传。 |
 
 JSON 示例：
 
@@ -415,9 +412,8 @@ curl "$BASE_URL/v1/videos" \
   -H "Content-Type: application/json" \
   -d '{
     "model": "aipdd-wan2.2-animater",
-    "load_video": "https://example.com/source.mp4",
-    "prompt": "natural motion, stable subject",
-    "negative_prompt": "low quality, distorted, flicker"
+    "video": "https://example.com/source.mp4",
+    "prompt": "natural motion, stable subject"
   }'
 ```
 
@@ -428,8 +424,7 @@ curl "$BASE_URL/v1/videos" \
   -H "Authorization: Bearer $NEW_API_TOKEN" \
   -F "model=aipdd-wan2.2-animater" \
   -F "prompt=natural motion, stable subject" \
-  -F "negative_prompt=low quality, distorted, flicker" \
-  -F "load_video=@source.mp4"
+  -F "video=@source.mp4"
 ```
 
 ### MimicMotion 动作迁移
@@ -553,7 +548,7 @@ curl "$BASE_URL/v1/audio/speech" \
 | `aipdd-flux-gguf` | `image` | `file`、`input_reference`、`reference`、`images` |
 | `aipdd-flux-gguf-t2i` | 无文件 | 无 |
 | `aipdd-wan2.2-wanx` | `image` | `file`、`input_reference`、`reference`、`images` |
-| `aipdd-wan2.2-animater` | `load_video` | `file`、`input_reference`、`reference`、`video` |
+| `aipdd-wan2.2-animater` | `video`，可选 `image` | `video` 可用 `file`、`input_reference`、`reference`、`load_video`；`image` 可用 `fullpath`、`reference_image`、`appearance_image` |
 | `aipdd-mimic-motion` | `motion_video`、`appearance_image` | `motion_video` 可用 `video`、`load_video`、`input_reference`、`motion`；`appearance_image` 可用 `image`、`reference_image`、`appearance`、`person` |
 | `aipdd-latentsync-1.5` | `video`、`LoadAudio` | `video` 可用 `file`、`input_reference`、`reference`、`load_video`；`LoadAudio` 可用 `audio`、`input_audio`、`voice` |
 | `aipdd-indextts` | `audio`，可选 `emotion_audio` | `audio` 可用 `file`、`input_reference`、`ref_audio`、`reference_audio`、`voice` |
@@ -709,20 +704,11 @@ AIPDD 上游返回的是数字 `task_status` 和 `task_result`；Doubao Seedance
 | `doubao-seedance-1.5` | 按次 |
 | `aipdd-flux-gguf` | 按次 |
 | `aipdd-flux-gguf-t2i` | 按次 |
-| `aipdd-wan2.2-wanx` | 按秒 |
+| `aipdd-wan2.2-wanx` | 按次 |
 | `aipdd-wan2.2-animater` | 按次 |
 | `aipdd-mimic-motion` | 按次 |
 | `aipdd-latentsync-1.5` | 按次 |
 | `aipdd-indextts` | 按次 |
-
-`aipdd-wan2.2-wanx` 只支持两档时长：
-
-| `duration` | 费用 |
-| --- | --- |
-| `5` | 0.1 元 |
-| `10` | 0.2 元 |
-
-等价单价为 `0.02 元/秒`。创建任务时按提交时长预扣费。
 
 具体扣费金额以线上 `/api/pricing` 返回的模型价格和用户分组倍率为准。
 
@@ -735,7 +721,6 @@ AIPDD 上游返回的是数字 `task_status` 和 `task_result`；Doubao Seedance
 | `unsupported_model` | 模型名不在当前模型列表中，或该供应商适配器不支持。 | 检查 `model` 是否拼写正确。 |
 | `invalid_endpoint` | 模型和接口不匹配。 | 图片模型走 `/v1/images/generations`，视频模型走 `/v1/videos`，音频模型走 `/v1/audio/speech`。 |
 | `not implemented` | 调用了当前渠道不支持的接口。 | DeepSeek 不要走 `/v1/responses`，改用 `/v1/chat/completions`。 |
-| `duration must be 5 or 10 seconds` | `aipdd-wan2.2-wanx` 时长不合法。 | `duration` 只能传 `5` 或 `10`。 |
 | `task_not_exist` | 查询的 `task_id` 不属于当前用户或不存在。 | 确认保存的是创建响应里的公开 `task_id`。 |
 | 一直 `queued` | 上游仍在排队或未开始执行。 | 继续低频轮询，必要时联系服务方检查上游队列。 |
 | 没有结果 URL | 任务尚未完成，或上游完成但没有返回有效 URL。 | 等待完成状态后再读取；若已完成仍为空，联系服务方排查。 |

@@ -38,7 +38,6 @@ const (
 	ModelMimicMotion      = constant.AIPDDModelMimicMotion
 	ModelLatentsync15     = constant.AIPDDModelLatentsync15
 	ModelIndexTTS         = constant.AIPDDModelIndexTTS
-	defaultTaskType       = "0"
 	defaultTaskNamePrefix = "new-api"
 )
 
@@ -54,25 +53,28 @@ type TaskAdaptor struct {
 }
 
 type createTaskPayload struct {
-	TaskName    string  `json:"task_name"`
-	TaskType    string  `json:"task_type"`
-	TaskCost    float64 `json:"task_cost"`
-	TaskService string  `json:"task_service"`
-	TaskContent string  `json:"task_content"`
-	ScriptID    string  `json:"script_id"`
-	ScriptCode  string  `json:"script_code"`
+	RequestID    string         `json:"requestId,omitempty"`
+	TaskName     string         `json:"taskName,omitempty"`
+	TaskTypeCode string         `json:"taskTypeCode"`
+	Priority     int            `json:"priority,omitempty"`
+	Input        map[string]any `json:"input"`
+	Requirements map[string]any `json:"requirements,omitempty"`
 }
 
 type createTaskResponse struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
 	Data    struct {
-		ID         string  `json:"id"`
-		TaskName   string  `json:"task_name"`
-		TaskType   string  `json:"task_type"`
-		TaskStatus int     `json:"task_status"`
-		TaskCost   float64 `json:"task_cost"`
-		TaskTime   string  `json:"task_time"`
+		ID           string  `json:"id"`
+		TaskID       string  `json:"taskId"`
+		RequestID    string  `json:"requestId"`
+		TaskName     string  `json:"taskName"`
+		TaskTypeCode string  `json:"taskTypeCode"`
+		Status       string  `json:"status"`
+		TaskType     string  `json:"task_type"`
+		TaskStatus   int     `json:"task_status"`
+		TaskCost     float64 `json:"task_cost"`
+		TaskTime     string  `json:"task_time"`
 	} `json:"data"`
 }
 
@@ -90,9 +92,17 @@ type ossUploadResponse struct {
 
 type aipddTask struct {
 	ID             string  `json:"id"`
+	TaskID         string  `json:"taskId"`
+	RequestID      string  `json:"requestId"`
 	TaskName       string  `json:"task_name"`
 	TaskType       string  `json:"task_type"`
+	TaskTypeCode   string  `json:"taskTypeCode"`
 	TaskStatus     int     `json:"task_status"`
+	Status         string  `json:"status"`
+	Progress       int     `json:"progress"`
+	Stage          string  `json:"stage"`
+	ResultReady    bool    `json:"resultReady"`
+	Message        string  `json:"message"`
 	TaskTime       string  `json:"task_time"`
 	TaskCost       float64 `json:"task_cost"`
 	TaskService    string  `json:"task_service"`
@@ -107,6 +117,11 @@ type aipddTask struct {
 	Icon           float64 `json:"icon"`
 	ScriptID       string  `json:"script_id"`
 	ScriptCode     string  `json:"script_code"`
+	Output         any     `json:"output"`
+	ObjectRefs     any     `json:"objectRefs"`
+	DownloadRefs   any     `json:"downloadRefs"`
+	ResultStatus   string  `json:"resultStatus"`
+	Checksum       string  `json:"checksum"`
 }
 
 func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
@@ -174,7 +189,7 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 }
 
 func (a *TaskAdaptor) BuildRequestURL(_ *relaycommon.RelayInfo) (string, error) {
-	return fmt.Sprintf("%s/comfyui/task/create", a.baseURL), nil
+	return fmt.Sprintf("%s/shared-tasks/tasks", a.baseURL), nil
 }
 
 func (a *TaskAdaptor) BuildRequestHeader(_ *gin.Context, req *http.Request, _ *relaycommon.RelayInfo) error {
@@ -229,14 +244,15 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	if aipddResp.Code != 0 && aipddResp.Code != http.StatusOK {
 		return "", nil, service.TaskErrorWrapper(fmt.Errorf("%s", aipddResp.Message), "aipdd_task_create_failed", http.StatusBadGateway)
 	}
-	if strings.TrimSpace(aipddResp.Data.ID) == "" {
+	upstreamTaskID := firstNonEmpty(aipddResp.Data.ID, aipddResp.Data.TaskID)
+	if strings.TrimSpace(upstreamTaskID) == "" {
 		return "", nil, service.TaskErrorWrapper(fmt.Errorf("task_id is empty"), "invalid_response", http.StatusInternalServerError)
 	}
 
 	cfg, _ := a.resolveModelConfig(ginRequestContext(c), firstNonEmpty(info.UpstreamModelName, info.OriginModelName))
 	writeCreateTaskResponse(c, info, cfg)
 
-	return aipddResp.Data.ID, responseBody, nil
+	return upstreamTaskID, responseBody, nil
 }
 
 func writeCreateTaskResponse(c *gin.Context, info *relaycommon.RelayInfo, cfg modelConfig) {
@@ -277,19 +293,138 @@ func (a *TaskAdaptor) FetchTask(baseURL, key string, body map[string]any, proxy 
 		return nil, fmt.Errorf("invalid task_id")
 	}
 
-	uri := fmt.Sprintf("%s/comfyui/task/%s", strings.TrimRight(baseURL, "/"), url.PathEscape(taskID))
-	req, err := http.NewRequest(http.MethodGet, uri, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("X-API-Key", key)
-
 	client, err := service.GetHttpClientWithProxy(proxy)
 	if err != nil {
 		return nil, fmt.Errorf("new proxy http client failed: %w", err)
 	}
-	return client.Do(req)
+	if client == nil {
+		client = http.DefaultClient
+	}
+
+	detailURI := fmt.Sprintf("%s/shared-tasks/tasks/%s/detail", strings.TrimRight(baseURL, "/"), url.PathEscape(taskID))
+	detailResp, detailBody, err := aipddGet(client, detailURI, key)
+	if err != nil {
+		return nil, err
+	}
+	if detailResp.StatusCode < http.StatusOK || detailResp.StatusCode >= http.StatusMultipleChoices {
+		return responseWithBody(detailResp, detailBody), nil
+	}
+
+	shouldFetchResult, resultTaskID := shouldFetchAIPDDResult(detailBody)
+	if !shouldFetchResult {
+		return responseWithBody(detailResp, detailBody), nil
+	}
+	if resultTaskID == "" {
+		resultTaskID = taskID
+	}
+
+	resultURI := fmt.Sprintf("%s/shared-tasks/tasks/%s/result", strings.TrimRight(baseURL, "/"), url.PathEscape(resultTaskID))
+	resultResp, resultBody, err := aipddGet(client, resultURI, key)
+	if err != nil {
+		return nil, err
+	}
+	if resultResp.StatusCode < http.StatusOK || resultResp.StatusCode >= http.StatusMultipleChoices {
+		return responseWithBody(resultResp, resultBody), nil
+	}
+	return responseWithBody(detailResp, mergeAIPDDResultBody(detailBody, resultBody)), nil
+}
+
+func aipddGet(client *http.Client, uri, key string) (*http.Response, []byte, error) {
+	req, err := http.NewRequest(http.MethodGet, uri, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("X-API-Key", key)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, nil, err
+	}
+	return resp, body, nil
+}
+
+func responseWithBody(resp *http.Response, body []byte) *http.Response {
+	if resp == nil {
+		resp = &http.Response{StatusCode: http.StatusOK}
+	}
+	resp.Body = io.NopCloser(bytes.NewReader(body))
+	resp.ContentLength = int64(len(body))
+	if resp.Header == nil {
+		resp.Header = make(http.Header)
+	}
+	resp.Header.Set("Content-Type", "application/json")
+	return resp
+}
+
+func shouldFetchAIPDDResult(detailBody []byte) (bool, string) {
+	var detail taskDetailResponse
+	if err := common.Unmarshal(detailBody, &detail); err != nil || detail.Data == nil {
+		return false, ""
+	}
+	if detail.Code != 0 && detail.Code != http.StatusOK {
+		return false, ""
+	}
+	task := detail.Data
+	status := strings.ToUpper(strings.TrimSpace(task.Status))
+	if status == "SUCCESS" && task.ResultReady {
+		return true, firstNonEmpty(task.ID, task.TaskID)
+	}
+	return false, ""
+}
+
+func mergeAIPDDResultBody(detailBody, resultBody []byte) []byte {
+	var detail map[string]any
+	var result map[string]any
+	if err := common.Unmarshal(detailBody, &detail); err != nil {
+		return resultBody
+	}
+	if err := common.Unmarshal(resultBody, &result); err != nil {
+		return detailBody
+	}
+
+	detailData, ok := mapValue(detail["data"])
+	if !ok {
+		return resultBody
+	}
+	resultData, ok := mapValue(result["data"])
+	if !ok {
+		return detailBody
+	}
+
+	if taskID := firstNonEmpty(anyToString(resultData["taskId"]), anyToString(detailData["id"]), anyToString(detailData["taskId"])); taskID != "" {
+		if anyToString(detailData["id"]) == "" {
+			detailData["id"] = taskID
+		}
+		detailData["taskId"] = taskID
+	}
+	if status := anyToString(resultData["status"]); status != "" {
+		detailData["resultStatus"] = status
+	}
+	for _, key := range []string{"output", "objectRefs", "downloadRefs", "checksum", "validatedAt", "updatedAt"} {
+		if value, ok := resultData[key]; ok {
+			detailData[key] = value
+		}
+	}
+	detailData["task_result"] = resultData
+	detail["data"] = detailData
+
+	merged, err := common.Marshal(detail)
+	if err != nil {
+		return detailBody
+	}
+	return merged
+}
+
+func mapValue(value any) (map[string]any, bool) {
+	typed, ok := value.(map[string]any)
+	return typed, ok
 }
 
 func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error) {
@@ -310,24 +445,29 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	}
 
 	task := aipddResp.Data
+	resultPayload := aipddResultPayload(task)
 	taskInfo := &relaycommon.TaskInfo{
 		Code:   0,
-		TaskID: task.ID,
+		TaskID: firstNonEmpty(task.ID, task.TaskID),
 	}
 
-	if reason, failed := failedTaskResultReason(task.TaskResult); failed {
+	if reason, failed := failedTaskResultReason(resultPayload); failed {
 		taskInfo.Status = model.TaskStatusFailure
 		taskInfo.Progress = taskcommon.ProgressComplete
 		taskInfo.Reason = reason
 		return taskInfo, nil
 	}
 
-	resultURLs := extractResultURLs(task.TaskResult)
+	resultURLs := extractResultURLs(resultPayload)
 	if len(resultURLs) > 0 {
 		taskInfo.Status = model.TaskStatusSuccess
 		taskInfo.Progress = taskcommon.ProgressComplete
 		taskInfo.Url = resultURLs[0]
 		return taskInfo, nil
+	}
+
+	if strings.TrimSpace(task.Status) != "" {
+		return parseAIPDDComputeTaskStatus(task, taskInfo), nil
 	}
 
 	switch task.TaskStatus {
@@ -366,6 +506,77 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	return taskInfo, nil
 }
 
+func parseAIPDDComputeTaskStatus(task *aipddTask, taskInfo *relaycommon.TaskInfo) *relaycommon.TaskInfo {
+	status := strings.ToUpper(strings.TrimSpace(task.Status))
+	if task.Progress > 0 {
+		taskInfo.Progress = strconv.Itoa(task.Progress)
+	}
+
+	switch status {
+	case "QUEUED", "RETRY_WAIT":
+		taskInfo.Status = model.TaskStatusSubmitted
+		if taskInfo.Progress == "" {
+			taskInfo.Progress = taskcommon.ProgressSubmitted
+		}
+	case "ASSIGNED", "RUNNING":
+		taskInfo.Status = model.TaskStatusInProgress
+		if taskInfo.Progress == "" {
+			taskInfo.Progress = taskcommon.ProgressInProgress
+		}
+	case "SUCCESS":
+		if task.ResultReady {
+			taskInfo.Status = model.TaskStatusFailure
+			taskInfo.Progress = taskcommon.ProgressComplete
+			taskInfo.Reason = "AIPDD task succeeded without result URL"
+		} else {
+			taskInfo.Status = model.TaskStatusInProgress
+			if taskInfo.Progress == "" {
+				taskInfo.Progress = taskcommon.ProgressInProgress
+			}
+		}
+	case "FAILED", "CANCELED", "EXPIRED":
+		taskInfo.Status = model.TaskStatusFailure
+		taskInfo.Progress = taskcommon.ProgressComplete
+		taskInfo.Reason = firstNonEmpty(strings.TrimSpace(task.Message), strings.TrimSpace(task.Stage), "AIPDD task failed")
+	default:
+		taskInfo.Status = model.TaskStatusInProgress
+		if taskInfo.Progress == "" {
+			taskInfo.Progress = taskcommon.ProgressInProgress
+		}
+	}
+	return taskInfo
+}
+
+func aipddResultPayload(task *aipddTask) any {
+	if task == nil {
+		return nil
+	}
+	if task.TaskResult != nil {
+		return task.TaskResult
+	}
+
+	payload := map[string]any{}
+	if task.Output != nil {
+		payload["output"] = task.Output
+	}
+	if task.ObjectRefs != nil {
+		payload["objectRefs"] = task.ObjectRefs
+	}
+	if task.DownloadRefs != nil {
+		payload["downloadRefs"] = task.DownloadRefs
+	}
+	if task.Checksum != "" {
+		payload["checksum"] = task.Checksum
+	}
+	if task.ResultStatus != "" {
+		payload["status"] = task.ResultStatus
+	}
+	if len(payload) == 0 {
+		return nil
+	}
+	return payload
+}
+
 func (a *TaskAdaptor) GetModelList() []string {
 	return constant.GetAIPDDTaskModelList()
 }
@@ -380,13 +591,13 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, erro
 
 	var detail taskDetailResponse
 	if err := common.Unmarshal(originTask.Data, &detail); err == nil && detail.Data != nil {
-		urls := extractResultURLs(detail.Data.TaskResult)
+		urls := extractResultURLs(aipddResultPayload(detail.Data))
 		if len(urls) > 1 {
 			openAIVideo.SetMetadata("urls", urls)
 		}
 		if originTask.Status == model.TaskStatusFailure {
 			openAIVideo.Error = &dto.OpenAIVideoError{
-				Message: taskResultText(detail.Data.TaskResult),
+				Message: firstNonEmpty(taskResultText(aipddResultPayload(detail.Data)), detail.Data.Message),
 				Code:    "aipdd_task_failed",
 			}
 		}
@@ -414,24 +625,23 @@ func (a *TaskAdaptor) convertToRequestPayload(req relaycommon.TaskSubmitReq, inf
 		return nil, err
 	}
 
-	contentBytes, err := common.Marshal(content)
-	if err != nil {
-		return nil, err
-	}
-
 	taskName := metadataString(req.Metadata, "task_name")
 	if strings.TrimSpace(taskName) == "" {
 		taskName = fmt.Sprintf("%s:%s", defaultTaskNamePrefix, cfg.ModelName)
 	}
+	requestID := ""
+	if info != nil {
+		requestID = strings.TrimSpace(info.PublicTaskID)
+	}
+	if requestID == "" {
+		requestID = metadataString(req.Metadata, "request_id")
+	}
 
 	return &createTaskPayload{
-		TaskName:    taskName,
-		TaskType:    defaultTaskType,
-		TaskCost:    cfg.TaskCost,
-		TaskService: cfg.ScriptCode,
-		TaskContent: string(contentBytes),
-		ScriptID:    cfg.ScriptID,
-		ScriptCode:  cfg.ScriptCode,
+		RequestID:    requestID,
+		TaskName:     taskName,
+		TaskTypeCode: cfg.ScriptCode,
+		Input:        content,
 	}, nil
 }
 
@@ -656,6 +866,8 @@ func UploadFileToOSS(ctx context.Context, baseURL, apiKey, proxy string, fileHea
 	}
 	uploadedURL := firstNonEmpty(
 		anyToString(uploadResp.Data["url"]),
+		anyToString(uploadResp.Data["public_url"]),
+		anyToString(uploadResp.Data["publicUrl"]),
 		anyToString(uploadResp.Data["file_url"]),
 		anyToString(uploadResp.Data["download_url"]),
 	)
@@ -1033,7 +1245,7 @@ func extractResultURLs(value any) []string {
 		}
 		return cleanURLList(urls)
 	case map[string]any:
-		for _, key := range []string{"url", "urls", "result", "results", "output", "outputs", "video", "videos", "image", "images", "audio", "audios", "file", "files", "data"} {
+		for _, key := range []string{"url", "urls", "public_url", "publicUrl", "signed_url", "signedUrl", "download_url", "downloadUrl", "result", "results", "output", "outputs", "objectRefs", "downloadRefs", "video", "videos", "image", "images", "audio", "audios", "file", "files", "data"} {
 			if nested, ok := v[key]; ok {
 				if urls := extractResultURLs(nested); len(urls) > 0 {
 					return urls

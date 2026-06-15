@@ -35,17 +35,14 @@ func TestConvertToRequestPayloadBuildsIndexTTSContent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("convertToRequestPayload returned error: %v", err)
 	}
-	if payload.ScriptCode != "aipdd_IndexTTS" {
-		t.Fatalf("unexpected script code: %s", payload.ScriptCode)
+	if payload.TaskTypeCode != "aipdd_IndexTTS" {
+		t.Fatalf("unexpected task type code: %s", payload.TaskTypeCode)
 	}
 	if payload.TaskName != "voice clone" {
 		t.Fatalf("unexpected task name: %s", payload.TaskName)
 	}
 
-	var content map[string]string
-	if err := common.Unmarshal([]byte(payload.TaskContent), &content); err != nil {
-		t.Fatalf("unmarshal task content: %v", err)
-	}
+	content := payload.Input
 	if content["audio"] != "https://cdn.example.com/reference.wav" {
 		t.Fatalf("audio was not forwarded: %#v", content)
 	}
@@ -86,10 +83,7 @@ func TestConvertToRequestPayloadDoesNotForwardFilenameForVideoModels(t *testing.
 				t.Fatalf("convertToRequestPayload returned error: %v", err)
 			}
 
-			var content map[string]any
-			if err := common.Unmarshal([]byte(payload.TaskContent), &content); err != nil {
-				t.Fatalf("unmarshal task content: %v", err)
-			}
+			content := payload.Input
 			if _, ok := content["filename"]; ok {
 				t.Fatalf("filename should not be forwarded: %#v", content)
 			}
@@ -102,13 +96,12 @@ func TestConvertToRequestPayloadForAllAIPDDModels(t *testing.T) {
 	tests := []struct {
 		name       string
 		req        relaycommon.TaskSubmitReq
-		wantScript string
-		wantID     string
+		wantCode   string
 		wantFields map[string]string
 	}{
 		{
-			name:       ModelFluxGGUF,
-			wantScript: "FLUX-GGUF-V2",
+			name:     ModelFluxGGUF,
+			wantCode: "FLUX-GGUF-V2",
 			req: relaycommon.TaskSubmitReq{
 				Model:  ModelFluxGGUF,
 				Prompt: "a cinematic robot",
@@ -117,9 +110,8 @@ func TestConvertToRequestPayloadForAllAIPDDModels(t *testing.T) {
 			wantFields: map[string]string{"image": "https://cdn.example.com/input.png", "positive_prompt": "a cinematic robot"},
 		},
 		{
-			name:       ModelFluxGGUFT2I,
-			wantScript: "FLUX-GGUF-T2I-V2",
-			wantID:     "aa6e64ce-bc73-4295-b78a-a269e5d3c1a9",
+			name:     ModelFluxGGUFT2I,
+			wantCode: "FLUX-GGUF-T2I-V2",
 			req: relaycommon.TaskSubmitReq{
 				Model:  ModelFluxGGUFT2I,
 				Prompt: "a cinematic robot",
@@ -127,19 +119,19 @@ func TestConvertToRequestPayloadForAllAIPDDModels(t *testing.T) {
 			wantFields: map[string]string{"text": "a cinematic robot"},
 		},
 		{
-			name:       ModelWan22Wanx,
-			wantScript: "aipdd_wan2.2_wanx",
+			name:     ModelWan22Wanx,
+			wantCode: "aipdd_wan2.2_wanx",
 			req: relaycommon.TaskSubmitReq{
 				Model:    ModelWan22Wanx,
 				Prompt:   "camera push in",
 				Image:    "https://cdn.example.com/input.png",
 				Duration: 10,
 			},
-			wantFields: map[string]string{"image": "https://cdn.example.com/input.png", "prompt": "camera push in", "positive_prompt": "camera push in", "duration": "10"},
+			wantFields: map[string]string{"image": "https://cdn.example.com/input.png", "prompt": "camera push in"},
 		},
 		{
-			name:       ModelWan22Animater,
-			wantScript: "aipdd_Wan2.2-Animater",
+			name:     ModelWan22Animater,
+			wantCode: "aipdd_Wan2.2-Animater",
 			req: relaycommon.TaskSubmitReq{
 				Model:  ModelWan22Animater,
 				Prompt: "replace subject",
@@ -148,11 +140,11 @@ func TestConvertToRequestPayloadForAllAIPDDModels(t *testing.T) {
 					"negative_prompt": "low quality",
 				},
 			},
-			wantFields: map[string]string{"load_video": "https://cdn.example.com/subject.mp4", "positive_prompt": "replace subject", "negative_prompt": "low quality"},
+			wantFields: map[string]string{"video": "https://cdn.example.com/subject.mp4", "positive_prompt": "replace subject"},
 		},
 		{
-			name:       ModelMimicMotion,
-			wantScript: "aipdd_mimic_motion",
+			name:     ModelMimicMotion,
+			wantCode: "aipdd_mimic_motion",
 			req: relaycommon.TaskSubmitReq{
 				Model: ModelMimicMotion,
 				Metadata: map[string]interface{}{
@@ -163,8 +155,8 @@ func TestConvertToRequestPayloadForAllAIPDDModels(t *testing.T) {
 			wantFields: map[string]string{"motion_video": "https://cdn.example.com/motion.mp4", "appearance_image": "https://cdn.example.com/person.png"},
 		},
 		{
-			name:       ModelLatentsync15,
-			wantScript: "aipdd_latentsync1.5",
+			name:     ModelLatentsync15,
+			wantCode: "aipdd_latentsync1.5",
 			req: relaycommon.TaskSubmitReq{
 				Model: ModelLatentsync15,
 				Metadata: map[string]interface{}{
@@ -175,8 +167,8 @@ func TestConvertToRequestPayloadForAllAIPDDModels(t *testing.T) {
 			wantFields: map[string]string{"video": "https://cdn.example.com/lips.mp4", "LoadAudio": "https://cdn.example.com/speech.wav"},
 		},
 		{
-			name:       ModelIndexTTS,
-			wantScript: "aipdd_IndexTTS",
+			name:     ModelIndexTTS,
+			wantCode: "aipdd_IndexTTS",
 			req: relaycommon.TaskSubmitReq{
 				Model: ModelIndexTTS,
 				Metadata: map[string]interface{}{
@@ -194,16 +186,10 @@ func TestConvertToRequestPayloadForAllAIPDDModels(t *testing.T) {
 			if err != nil {
 				t.Fatalf("convertToRequestPayload returned error: %v", err)
 			}
-			if payload.ScriptCode != tt.wantScript {
-				t.Fatalf("unexpected script code: %s", payload.ScriptCode)
+			if payload.TaskTypeCode != tt.wantCode {
+				t.Fatalf("unexpected task type code: %s", payload.TaskTypeCode)
 			}
-			if tt.wantID != "" && payload.ScriptID != tt.wantID {
-				t.Fatalf("unexpected script id: %s", payload.ScriptID)
-			}
-			var content map[string]any
-			if err := common.Unmarshal([]byte(payload.TaskContent), &content); err != nil {
-				t.Fatalf("unmarshal task content: %v", err)
-			}
+			content := payload.Input
 			for key, want := range tt.wantFields {
 				if got := anyToString(content[key]); got != want {
 					t.Fatalf("unexpected %s: got %q want %q in %#v", key, got, want, content)
@@ -213,7 +199,7 @@ func TestConvertToRequestPayloadForAllAIPDDModels(t *testing.T) {
 	}
 }
 
-func TestWan22WanxDurationBilling(t *testing.T) {
+func TestWan22WanxDoesNotSendDurationToJavaBackend(t *testing.T) {
 	adaptor := &TaskAdaptor{}
 	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
 	ctx.Set("task_request", relaycommon.TaskSubmitReq{
@@ -221,17 +207,21 @@ func TestWan22WanxDurationBilling(t *testing.T) {
 		Duration: 5,
 	})
 	ratios := adaptor.EstimateBilling(ctx, relayInfoWithModel(ModelWan22Wanx))
-	if ratios["seconds"] != 5 {
-		t.Fatalf("unexpected 5s billing ratio: %#v", ratios)
+	if ratios != nil {
+		t.Fatalf("wanx should not provide duration billing ratios for Java backend: %#v", ratios)
 	}
 
-	ctx.Set("task_request", relaycommon.TaskSubmitReq{
-		Model:   ModelWan22Wanx,
-		Seconds: "10",
-	})
-	ratios = adaptor.EstimateBilling(ctx, relayInfoWithModel(ModelWan22Wanx))
-	if ratios["seconds"] != 10 {
-		t.Fatalf("unexpected 10s billing ratio: %#v", ratios)
+	payload, err := adaptor.convertToRequestPayload(relaycommon.TaskSubmitReq{
+		Model:    ModelWan22Wanx,
+		Prompt:   "camera push in",
+		Image:    "https://cdn.example.com/input.png",
+		Duration: 10,
+	}, relayInfoWithModel(ModelWan22Wanx))
+	if err != nil {
+		t.Fatalf("convertToRequestPayload returned error: %v", err)
+	}
+	if _, ok := payload.Input["duration"]; ok {
+		t.Fatalf("duration should not be sent to Java backend input: %#v", payload.Input)
 	}
 }
 
@@ -311,13 +301,10 @@ func TestBuildRequestBodyUploadsMultipartFileToAIPDDOSS(t *testing.T) {
 	if err := common.Unmarshal(bodyBytes, &payload); err != nil {
 		t.Fatalf("unmarshal payload: %v", err)
 	}
-	if payload.TaskCost != 2000 {
-		t.Fatalf("unexpected task_cost: %v", payload.TaskCost)
+	if payload.TaskTypeCode != "aipdd_wan2.2_wanx" {
+		t.Fatalf("unexpected task type code: %s", payload.TaskTypeCode)
 	}
-	var content map[string]any
-	if err := common.Unmarshal([]byte(payload.TaskContent), &content); err != nil {
-		t.Fatalf("unmarshal task content: %v", err)
-	}
+	content := payload.Input
 	if got := anyToString(content["image"]); got != "https://oss.example.com/files/input.png" {
 		t.Fatalf("uploaded image URL was not injected: got %q content=%#v", got, content)
 	}
@@ -380,10 +367,9 @@ func TestBuildRequestBodyDoesNotInjectFilenameForVideoUploads(t *testing.T) {
 				"fullpath": "fullpath.mp4",
 			},
 			wantFields: map[string]string{
-				"load_video":      "https://oss.aipdd.work/distributed_compute/443/15e6278f-a3ca-4682-89ef-802af9913273/ComfyUI_00006_.mp4",
-				"fullpath":        "https://oss.aipdd.work/files/ef5220cd-18e7-47be-b99c-e4390e03168f.mp4",
+				"video":           "https://oss.aipdd.work/distributed_compute/443/15e6278f-a3ca-4682-89ef-802af9913273/ComfyUI_00006_.mp4",
+				"image":           "https://oss.aipdd.work/files/ef5220cd-18e7-47be-b99c-e4390e03168f.mp4",
 				"positive_prompt": "natural motion, stable subject",
-				"negative_prompt": "low quality, distorted, flicker",
 			},
 		},
 		{
@@ -451,11 +437,8 @@ func TestBuildRequestBodyDoesNotInjectFilenameForVideoUploads(t *testing.T) {
 			if err := common.Unmarshal(bodyBytes, &payload); err != nil {
 				t.Fatalf("unmarshal payload: %v", err)
 			}
-			var content map[string]any
-			if err := common.Unmarshal([]byte(payload.TaskContent), &content); err != nil {
-				t.Fatalf("unmarshal task content: %v", err)
-			}
-			t.Logf("task_content=%s", payload.TaskContent)
+			content := payload.Input
+			t.Logf("input=%#v", payload.Input)
 			for key, want := range tt.wantFields {
 				if got := anyToString(content[key]); got != want {
 					t.Fatalf("unexpected %s: got %q want %q in %#v", key, got, want, content)
@@ -499,35 +482,30 @@ func TestResolveAIPDDUploadTargetAliases(t *testing.T) {
 	}
 }
 
-func TestWan22WanxRejectsUnsupportedDuration(t *testing.T) {
+func TestWan22WanxIgnoresUnsupportedDurationForJavaBackend(t *testing.T) {
 	adaptor := &TaskAdaptor{}
-	_, err := adaptor.convertToRequestPayload(relaycommon.TaskSubmitReq{
+	payload, err := adaptor.convertToRequestPayload(relaycommon.TaskSubmitReq{
 		Model:    ModelWan22Wanx,
 		Prompt:   "camera push in",
 		Image:    "https://cdn.example.com/input.png",
 		Duration: 7,
 	}, relayInfoWithModel(ModelWan22Wanx))
-	if err == nil {
-		t.Fatal("expected duration validation error")
-	}
-}
-
-func TestFluxGGUFAllowsPromptOnly(t *testing.T) {
-	adaptor := &TaskAdaptor{}
-	payload, err := adaptor.convertToRequestPayload(relaycommon.TaskSubmitReq{
-		Model:  ModelFluxGGUF,
-		Prompt: "a cinematic robot",
-	}, relayInfoWithModel(ModelFluxGGUF))
 	if err != nil {
 		t.Fatalf("convertToRequestPayload returned error: %v", err)
 	}
-
-	var content map[string]any
-	if err := common.Unmarshal([]byte(payload.TaskContent), &content); err != nil {
-		t.Fatalf("unmarshal task content: %v", err)
+	if _, ok := payload.Input["duration"]; ok {
+		t.Fatalf("duration should not be forwarded: %#v", payload.Input)
 	}
-	if got := anyToString(content["positive_prompt"]); got != "a cinematic robot" {
-		t.Fatalf("unexpected positive_prompt: got %q content=%#v", got, content)
+}
+
+func TestFluxGGUFRequiresImageForJavaBackend(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+	_, err := adaptor.convertToRequestPayload(relaycommon.TaskSubmitReq{
+		Model:  ModelFluxGGUF,
+		Prompt: "a cinematic robot",
+	}, relayInfoWithModel(ModelFluxGGUF))
+	if err == nil {
+		t.Fatal("expected missing image validation error")
 	}
 }
 
@@ -535,8 +513,8 @@ func TestPerCallBillingCapabilities(t *testing.T) {
 	if !constant.IsAIPDDPerCallBillingModel(ModelWan22Animater) {
 		t.Fatal("subject replacement should be per-call billed")
 	}
-	if constant.IsAIPDDPerCallBillingModel(ModelWan22Wanx) {
-		t.Fatal("wanx image-to-video should be duration billed")
+	if !constant.IsAIPDDPerCallBillingModel(ModelWan22Wanx) {
+		t.Fatal("wanx image-to-video should be per-call billed for Java backend")
 	}
 }
 
@@ -566,6 +544,71 @@ func TestDoResponseReturnsAsyncTaskForIndexTTS(t *testing.T) {
 	}
 	if body["task_id"] != "task_public" || body["object"] != "audio.speech.task" {
 		t.Fatalf("unexpected async task response: %#v", body)
+	}
+}
+
+func TestDoResponseParsesJavaCreateTaskResponse(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	adaptor := &TaskAdaptor{}
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(strings.NewReader(`{"code":0,"message":"created","data":{"id":"java-task","taskTypeCode":"aipdd_IndexTTS","status":"QUEUED"}}`)),
+	}
+	info := relayInfoWithModel(ModelIndexTTS)
+	info.OriginModelName = ModelIndexTTS
+	info.PublicTaskID = "task_public"
+
+	taskID, _, taskErr := adaptor.DoResponse(ctx, resp, info)
+	if taskErr != nil {
+		t.Fatalf("DoResponse returned task error: %v", taskErr)
+	}
+	if taskID != "java-task" {
+		t.Fatalf("unexpected upstream task id: %s", taskID)
+	}
+}
+
+func TestFetchTaskFollowsJavaResultEndpoint(t *testing.T) {
+	var sawDetail bool
+	var sawResult bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-API-Key") != "aipdd-key" {
+			t.Fatalf("unexpected api key header: %q", r.Header.Get("X-API-Key"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/shared-tasks/tasks/java-task/detail":
+			sawDetail = true
+			_, _ = w.Write([]byte(`{"code":0,"message":"fetched","data":{"id":"java-task","taskTypeCode":"aipdd_wan2.2_wanx","status":"SUCCESS","progress":100,"resultReady":true}}`))
+		case "/shared-tasks/tasks/java-task/result":
+			sawResult = true
+			_, _ = w.Write([]byte(`{"code":0,"message":"fetched","data":{"taskId":"java-task","status":"PENDING_CONFIRMATION","output":{"url":"https://oss.example.com/result.mp4"}}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	adaptor := &TaskAdaptor{}
+	resp, err := adaptor.FetchTask(server.URL, "aipdd-key", map[string]any{"task_id": "java-task"}, "")
+	if err != nil {
+		t.Fatalf("FetchTask returned error: %v", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read response body: %v", err)
+	}
+	info, err := adaptor.ParseTaskResult(body)
+	if err != nil {
+		t.Fatalf("ParseTaskResult returned error: %v", err)
+	}
+	if !sawDetail || !sawResult {
+		t.Fatalf("expected detail and result endpoints to be called, detail=%v result=%v", sawDetail, sawResult)
+	}
+	if info.Status != model.TaskStatusSuccess || info.Url != "https://oss.example.com/result.mp4" {
+		t.Fatalf("unexpected task info: %+v body=%s", info, string(body))
 	}
 }
 

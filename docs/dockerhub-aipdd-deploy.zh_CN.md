@@ -40,7 +40,7 @@ docker pull 1317b90/new-api-aipdd:25d72410
 openssl rand -hex 32
 ```
 
-注意：该镜像默认启用 AIPDD 引导检查和上游模型 catalog 同步，使用 AIPDD 内置模型时必须设置 `AIPDD_API_KEY`。设置后系统会自动请求 `https://api.aipdd.work/scripts/admin/comfyui_workflow`、`/fee-rules` 和 `/system/awcoin-rate`，并创建或同步名为 `AIPDD` 的渠道。
+注意：该镜像默认启用 AIPDD 引导检查和上游模型 catalog 同步，使用 AIPDD 内置模型时必须设置 `AIPDD_API_KEY`。设置后系统会自动请求 `https://new.api.aipdd.work/scripts/admin/comfyui_workflow`、`/fee-rules` 和 `/system/awcoin-rate`，并创建或同步名为 `AIPDD` 的渠道。
 
 ## 方案一：Docker Compose 部署
 
@@ -216,7 +216,7 @@ AIPDD_API_KEY=你的 AIPDD 上游 API Key
 
 - 创建或同步渠道 `AIPDD`。
 - 渠道类型设置为 `AIPDD`。
-- Base URL 设置为 `https://api.aipdd.work`。
+- Base URL 设置为 `https://new.api.aipdd.work`。
 - 分组设置为 `default`。
 - 将 `AIPDD_API_KEY` 作为上游密钥使用。
 - 优先从 AIPDD 上游 catalog 获取模型列表、workflow 参数、端点类型和价格。
@@ -227,7 +227,7 @@ AIPDD_API_KEY=你的 AIPDD 上游 API Key
 
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
-| `AIPDD_BASE_URL` | `https://api.aipdd.work` | AIPDD 上游地址 |
+| `AIPDD_BASE_URL` | `https://new.api.aipdd.work` | AIPDD 上游地址 |
 | `AIPDD_CATALOG_SYNC_ON_BOOT` | `true` | 容器启动时是否同步上游模型 catalog |
 | `AIPDD_CATALOG_SYNC_TIMEOUT_SECONDS` | `10` | 启动同步超时时间 |
 
@@ -243,7 +243,7 @@ AIPDD_API_KEY=你的 AIPDD 上游 API Key
 | --- | --- |
 | 名称 | `AIPDD` |
 | 类型 | `AIPDD` |
-| Base URL | `https://api.aipdd.work` |
+| Base URL | `https://new.api.aipdd.work` |
 | 密钥 | AIPDD 上游 API Key |
 | 分组 | `default`，或你的业务分组 |
 | 状态 | 启用 |
