@@ -426,9 +426,9 @@ switch
 
 ## 价格接口保持不变
 
-`/fee-rules` 继续作为实际扣费规则来源。
+新 Java 后端已将任务定价迁移到 `price_rule`，`/scripts/admin/comfyui_workflow` 返回的 `priceAWcoin` 是 new-api 的主要价格来源。
 
-`/scripts/admin/comfyui_workflow` 中的 `priceAWcoin` 可以保留，但 new-api 更推荐以 `/fee-rules` 中和 `script_code` 匹配的 `price` 为准。
+旧版 `/fee-rules` 仍作为兼容接口处理：如果可用，new-api 会用其中和 `script_code` 匹配的 `price` 覆盖 `priceAWcoin`；如果返回 404 或不可用，不影响 catalog 同步。
 
 `/system/awcoin-rate` 应继续返回：
 
@@ -445,4 +445,3 @@ switch
 ```
 
 new-api 会用 `usd` 将 AIPDD 积分价格换算成自身的 `model_price`。
-

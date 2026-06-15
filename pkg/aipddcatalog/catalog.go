@@ -119,7 +119,7 @@ func Fetch(ctx context.Context, client *http.Client, baseURL, apiKey string) (Ca
 	}
 	feeRules, err := fetchFeeRules(ctx, client, baseURL, apiKey)
 	if err != nil {
-		return Catalog{}, err
+		feeRules = nil
 	}
 	awcoinUSDRate, _ := fetchAWCoinUSDRate(ctx, client, baseURL, apiKey)
 	return convertScriptsToCatalog(scripts, feeRules, awcoinUSDRate), nil

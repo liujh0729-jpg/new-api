@@ -111,6 +111,50 @@ func TestFetchBuildsCatalogFromScriptsAndFeeRules(t *testing.T) {
 	require.Equal(t, "audio", dynamic.UploadTargets[0].ParamKey)
 }
 
+func TestFetchFallsBackToScriptPricesWhenFeeRulesUnavailable(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/scripts/admin/comfyui_workflow":
+			_, _ = w.Write([]byte(`{
+				"code": 200,
+				"message": "ok",
+				"data": [
+					{
+						"id": "script-flux",
+						"code": "FLUX-GGUF-T2I-V2",
+						"name": "Flux T2I",
+						"priceAWcoin": 123,
+						"params": [
+							{"paramKey": "text", "dataType": "string", "isRequired": true, "orderNo": 1}
+						]
+					}
+				]
+			}`))
+		case "/fee-rules":
+			http.NotFound(w, r)
+		case "/system/awcoin-rate":
+			_, _ = w.Write([]byte(`{
+				"code": 200,
+				"message": "ok",
+				"data": {"usd": 0.0015}
+			}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	catalog, err := Fetch(ctx, server.Client(), server.URL, "test-key")
+	require.NoError(t, err)
+	require.Equal(t, []string{constant.AIPDDModelFluxGGUFT2I}, catalog.ModelNames())
+	require.Equal(t, 0.1845, catalog.ModelPrices[constant.AIPDDModelFluxGGUFT2I])
+	require.Equal(t, float64(123), catalog.Capabilities[0].TaskCost)
+}
+
 func TestConvertUpstreamPriceToModelPriceFallsBackToAWCoinRMBRate(t *testing.T) {
 	t.Setenv(envUSDPerCoin, "")
 	t.Setenv(envCoinsPerRMB, "")

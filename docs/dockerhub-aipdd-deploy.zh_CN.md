@@ -40,7 +40,7 @@ docker pull 1317b90/new-api-aipdd:25d72410
 openssl rand -hex 32
 ```
 
-注意：该镜像默认启用 AIPDD 引导检查和上游模型 catalog 同步，使用 AIPDD 内置模型时必须设置 `AIPDD_API_KEY`。设置后系统会自动请求 `https://new.api.aipdd.work/scripts/admin/comfyui_workflow`、`/fee-rules` 和 `/system/awcoin-rate`，并创建或同步名为 `AIPDD` 的渠道。
+注意：该镜像默认启用 AIPDD 引导检查和上游模型 catalog 同步，使用 AIPDD 内置模型时必须设置 `AIPDD_API_KEY`。设置后系统会自动请求 `https://new.api.aipdd.work/scripts/admin/comfyui_workflow` 和 `/system/awcoin-rate`，并创建或同步名为 `AIPDD` 的渠道；若旧版 `/fee-rules` 仍可用，会优先用它覆盖脚本中的展示价格。
 
 ## 方案一：Docker Compose 部署
 
