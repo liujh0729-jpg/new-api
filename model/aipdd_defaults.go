@@ -23,10 +23,14 @@ func EnsureAIPDDDefaults() error {
 		return err
 	}
 	syncAIPDDCatalogFromEnv(key)
+	openAIModels := syncAIPDDOpenAIModelsFromEnv(key)
 
 	changed, err := ensureAIPDDModelCatalogDefaults()
 	if err != nil {
 		return err
+	}
+	if err := syncAIPDDOpenAIModelRatios(openAIModels); err != nil {
+		common.SysLog("AIPDD OpenAI model ratio sync on boot failed: " + err.Error())
 	}
 	if err := EnsureAIPDDChannelDefaults(); err != nil {
 		return err
@@ -64,6 +68,54 @@ func syncAIPDDCatalogFromEnv(key string) {
 		common.SysLog("AIPDD model price sync on boot failed: " + err.Error())
 	}
 	common.SysLog("AIPDD catalog synced on boot: models=" + strings.Join(catalog.ModelNames(), ","))
+}
+
+func syncAIPDDOpenAIModelsFromEnv(key string) []string {
+	key = strings.TrimSpace(key)
+	if key == "" || !isAIPDDCatalogSyncOnBootEnabled(key) {
+		return nil
+	}
+
+	timeoutSeconds := common.GetEnvOrDefault(aipddCatalogSyncTimeoutSecondsEnvName, 10)
+	if timeoutSeconds <= 0 {
+		timeoutSeconds = 10
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSeconds)*time.Second)
+	defer cancel()
+
+	models, err := aipddcatalog.FetchOpenAIModels(ctx, http.DefaultClient, getAIPDDBaseURLFromEnv(), key)
+	if err != nil {
+		common.SysLog("AIPDD OpenAI model sync on boot failed: " + err.Error())
+		return nil
+	}
+	if len(models) == 0 {
+		common.SysLog("AIPDD OpenAI model sync on boot returned no models")
+		constant.ResetAIPDDOpenAIModels()
+		return nil
+	}
+	constant.SetAIPDDOpenAIModels(models)
+	common.SysLog("AIPDD OpenAI models synced on boot: models=" + strings.Join(models, ","))
+	return models
+}
+
+func EnsureAIPDDOpenAIModelDefaults(modelNames []string) error {
+	constant.SetAIPDDOpenAIModels(modelNames)
+	modelNames = constant.GetAIPDDOpenAIModelList()
+	if len(modelNames) == 0 {
+		return nil
+	}
+
+	changed, err := ensureAIPDDModelCatalogDefaults()
+	if err != nil {
+		return err
+	}
+	if err := syncAIPDDOpenAIModelRatios(modelNames); err != nil {
+		return err
+	}
+	if changed {
+		InvalidatePricingCache()
+	}
+	return nil
 }
 
 func syncAIPDDModelPrices(modelPrices map[string]float64) error {
@@ -104,6 +156,52 @@ func syncAIPDDModelPrices(modelPrices map[string]float64) error {
 	return DB.Save(&option).Error
 }
 
+func syncAIPDDOpenAIModelRatios(modelNames []string) error {
+	if len(modelNames) == 0 {
+		return nil
+	}
+
+	ratios := ratio_setting.GetModelRatioCopy()
+	var option Option
+	err := DB.Where(&Option{Key: "ModelRatio"}).First(&option).Error
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
+	if err == nil && strings.TrimSpace(option.Value) != "" {
+		if unmarshalErr := common.Unmarshal([]byte(option.Value), &ratios); unmarshalErr != nil {
+			return unmarshalErr
+		}
+	}
+
+	changed := false
+	for _, modelName := range modelNames {
+		modelName = strings.TrimSpace(modelName)
+		if modelName == "" {
+			continue
+		}
+		if _, exists := ratios[modelName]; exists {
+			continue
+		}
+		ratios[modelName] = 1
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+
+	bytes, err := common.Marshal(ratios)
+	if err != nil {
+		return err
+	}
+	if err := ratio_setting.UpdateModelRatioByJSONString(string(bytes)); err != nil {
+		return err
+	}
+
+	option.Key = "ModelRatio"
+	option.Value = string(bytes)
+	return DB.Save(&option).Error
+}
+
 func isAIPDDCatalogSyncOnBootEnabled(key string) bool {
 	raw := strings.TrimSpace(common.GetEnvOrDefaultString(aipddCatalogSyncOnBootEnvName, ""))
 	if raw != "" {
@@ -125,7 +223,27 @@ func ensureAIPDDModelCatalogDefaults() (bool, error) {
 		}
 		changed = changed || itemChanged
 	}
+	for _, modelName := range constant.GetAIPDDOpenAIModelList() {
+		itemChanged, err := ensureAIPDDModelCatalogItem(aipddOpenAIModelCatalog(modelName), vendorID)
+		if err != nil {
+			return false, err
+		}
+		changed = changed || itemChanged
+	}
 	return changed, nil
+}
+
+func aipddOpenAIModelCatalog(modelName string) defaultCatalogModel {
+	modelName = strings.TrimSpace(modelName)
+	return defaultCatalogModel{
+		ModelName:     modelName,
+		VendorName:    "AIPDD",
+		Description:   "AIPDD OpenAI 兼容 LLM 模型 " + modelName + "，通过 /v1/chat/completions 调用。",
+		Icon:          constant.AIPDDLogoPath,
+		Tags:          "AIPDD,LLM,文本生成,OpenAI兼容",
+		ChannelType:   constant.ChannelTypeAIPDD,
+		EndpointTypes: []constant.EndpointType{constant.EndpointTypeOpenAI},
+	}
 }
 
 func ensureAIPDDVendor() (int, bool, error) {

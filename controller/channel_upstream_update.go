@@ -269,11 +269,7 @@ func fetchChannelUpstreamModelIDs(channel *model.Channel) ([]string, error) {
 	if channel.Type == constant.ChannelTypeAIPDD {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(defaultTimeoutSeconds)*time.Second)
 		defer cancel()
-		catalog, err := refreshAIPDDCatalogForChannel(ctx, channel)
-		if err != nil {
-			return nil, err
-		}
-		return normalizeModelNames(catalog.ModelNames()), nil
+		return fetchAIPDDModelIDsForChannel(ctx, channel)
 	}
 
 	if channel.Type == constant.ChannelTypeOllama {

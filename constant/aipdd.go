@@ -261,6 +261,8 @@ var defaultAIPDDCapabilities = cloneAIPDDCapabilities(AIPDDCapabilities)
 
 var AIPDDTaskModelList = buildAIPDDTaskModelList(AIPDDCapabilities)
 
+var AIPDDOpenAIModelList []string
+
 var aipddCapabilityByAlias = buildAIPDDCapabilityByAlias(AIPDDCapabilities)
 
 var defaultAIPDDCapabilityByAlias = buildAIPDDCapabilityByAlias(defaultAIPDDCapabilities)
@@ -346,8 +348,19 @@ func SetAIPDDCapabilities(capabilities []AIPDDCapability) {
 	aipddCapabilityByAlias = buildAIPDDCapabilityByAlias(cloned)
 }
 
+func SetAIPDDOpenAIModels(models []string) {
+	models = normalizeAIPDDModelList(models)
+	aipddCapabilitiesLock.Lock()
+	defer aipddCapabilitiesLock.Unlock()
+	AIPDDOpenAIModelList = models
+}
+
 func ResetAIPDDCapabilities() {
 	SetAIPDDCapabilities(defaultAIPDDCapabilities)
+}
+
+func ResetAIPDDOpenAIModels() {
+	SetAIPDDOpenAIModels(nil)
 }
 
 func GetAIPDDCapability(modelName string) (AIPDDCapability, bool) {
@@ -374,9 +387,36 @@ func GetAIPDDTaskModelList() []string {
 	return append([]string(nil), AIPDDTaskModelList...)
 }
 
+func GetAIPDDOpenAIModelList() []string {
+	aipddCapabilitiesLock.RLock()
+	defer aipddCapabilitiesLock.RUnlock()
+	return append([]string(nil), AIPDDOpenAIModelList...)
+}
+
+func GetAIPDDModelList() []string {
+	aipddCapabilitiesLock.RLock()
+	defer aipddCapabilitiesLock.RUnlock()
+	return mergeAIPDDModelLists(AIPDDTaskModelList, AIPDDOpenAIModelList)
+}
+
 func IsAIPDDTaskModel(modelName string) bool {
 	_, ok := GetAIPDDCapability(modelName)
 	return ok
+}
+
+func IsAIPDDOpenAIModel(modelName string) bool {
+	modelName = strings.TrimSpace(modelName)
+	if modelName == "" {
+		return false
+	}
+	aipddCapabilitiesLock.RLock()
+	defer aipddCapabilitiesLock.RUnlock()
+	for _, item := range AIPDDOpenAIModelList {
+		if item == modelName {
+			return true
+		}
+	}
+	return false
 }
 
 func IsAIPDDPerCallBillingModel(modelName string) bool {
@@ -387,7 +427,48 @@ func IsAIPDDPerCallBillingModel(modelName string) bool {
 func GetAIPDDEndpointTypes(modelName string) []EndpointType {
 	capability, ok := GetAIPDDCapability(modelName)
 	if !ok {
-		return nil
+		modelName = strings.TrimSpace(modelName)
+		if modelName == "" {
+			return nil
+		}
+		if IsAIPDDOpenAIModel(modelName) {
+			return []EndpointType{EndpointTypeOpenAI}
+		}
+		return []EndpointType{EndpointTypeOpenAI}
 	}
 	return []EndpointType{capability.EndpointType}
+}
+
+func normalizeAIPDDModelList(models []string) []string {
+	normalized := make([]string, 0, len(models))
+	seen := make(map[string]bool, len(models))
+	for _, modelName := range models {
+		modelName = strings.TrimSpace(modelName)
+		if modelName == "" || seen[modelName] {
+			continue
+		}
+		normalized = append(normalized, modelName)
+		seen[modelName] = true
+	}
+	return normalized
+}
+
+func mergeAIPDDModelLists(lists ...[]string) []string {
+	total := 0
+	for _, list := range lists {
+		total += len(list)
+	}
+	merged := make([]string, 0, total)
+	seen := make(map[string]bool, total)
+	for _, list := range lists {
+		for _, modelName := range list {
+			modelName = strings.TrimSpace(modelName)
+			if modelName == "" || seen[modelName] {
+				continue
+			}
+			merged = append(merged, modelName)
+			seen[modelName] = true
+		}
+	}
+	return merged
 }

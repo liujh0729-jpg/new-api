@@ -95,6 +95,14 @@ type awcoinRateResponse struct {
 	} `json:"data"`
 }
 
+type openAIModelsResponse struct {
+	Data []openAIModel `json:"data"`
+}
+
+type openAIModel struct {
+	ID string `json:"id"`
+}
+
 func FetchWithTimeout(baseURL, apiKey string, timeout time.Duration) (Catalog, error) {
 	if timeout <= 0 {
 		timeout = time.Duration(defaultTimeoutSeconds) * time.Second
@@ -123,6 +131,26 @@ func Fetch(ctx context.Context, client *http.Client, baseURL, apiKey string) (Ca
 	}
 	awcoinUSDRate, _ := fetchAWCoinUSDRate(ctx, client, baseURL, apiKey)
 	return convertScriptsToCatalog(scripts, feeRules, awcoinUSDRate), nil
+}
+
+func FetchOpenAIModels(ctx context.Context, client *http.Client, baseURL, apiKey string) ([]string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if client == nil {
+		client = http.DefaultClient
+	}
+	baseURL = normalizeBaseURL(baseURL)
+
+	var response openAIModelsResponse
+	if err := getJSON(ctx, client, baseURL, "/v1/models", nil, apiKey, &response); err != nil {
+		return nil, err
+	}
+	models := make([]string, 0, len(response.Data))
+	for _, item := range response.Data {
+		models = append(models, item.ID)
+	}
+	return normalizeStringList(models), nil
 }
 
 func (c Catalog) ModelNames() []string {

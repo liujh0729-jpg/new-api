@@ -202,7 +202,11 @@ func TestEnsureAIPDDDefaultsCreatesChannelAndModelCatalog(t *testing.T) {
 func TestEnsureAIPDDDefaultsSyncsDynamicCatalogOnBoot(t *testing.T) {
 	truncateTables(t)
 	constant.ResetAIPDDCapabilities()
-	t.Cleanup(constant.ResetAIPDDCapabilities)
+	constant.ResetAIPDDOpenAIModels()
+	t.Cleanup(func() {
+		constant.ResetAIPDDCapabilities()
+		constant.ResetAIPDDOpenAIModels()
+	})
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -248,6 +252,15 @@ func TestEnsureAIPDDDefaultsSyncsDynamicCatalogOnBoot(t *testing.T) {
 				"message": "ok",
 				"data": {"rmb": 0.01, "usd": 0.0015}
 			}`))
+		case "/v1/models":
+			require.Equal(t, "sk-test-env-key", r.Header.Get("X-API-Key"))
+			_, _ = w.Write([]byte(`{
+				"object": "list",
+				"data": [
+					{"id": "gemma3:1b"},
+					{"id": "qwen2.5:0.5b"}
+				]
+			}`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -263,17 +276,25 @@ func TestEnsureAIPDDDefaultsSyncsDynamicCatalogOnBoot(t *testing.T) {
 	var channel Channel
 	require.NoError(t, DB.Where("type = ?", constant.ChannelTypeAIPDD).First(&channel).Error)
 	require.Equal(t, server.URL, *channel.BaseURL)
-	require.Equal(t, "dynamic-aipdd-video", channel.Models)
+	require.Equal(t, "dynamic-aipdd-video,gemma3:1b,qwen2.5:0.5b", channel.Models)
 
 	var ability Ability
 	require.NoError(t, DB.Where("channel_id = ? AND model = ?", channel.Id, "dynamic-aipdd-video").First(&ability).Error)
 	require.True(t, ability.Enabled)
+	var llmAbility Ability
+	require.NoError(t, DB.Where("channel_id = ? AND model = ?", channel.Id, "gemma3:1b").First(&llmAbility).Error)
+	require.True(t, llmAbility.Enabled)
 
 	var item Model
 	require.NoError(t, DB.Where("model_name = ?", "dynamic-aipdd-video").First(&item).Error)
 	require.Equal(t, constant.AIPDDLogoPath, item.Icon)
 	require.Contains(t, item.Tags, "image_to_video")
 	require.Equal(t, marshalEndpointTypes([]constant.EndpointType{constant.EndpointTypeOpenAIVideo}), item.Endpoints)
+	var llmItem Model
+	require.NoError(t, DB.Where("model_name = ?", "gemma3:1b").First(&llmItem).Error)
+	require.Equal(t, constant.AIPDDLogoPath, llmItem.Icon)
+	require.Contains(t, llmItem.Tags, "LLM")
+	require.Equal(t, marshalEndpointTypes([]constant.EndpointType{constant.EndpointTypeOpenAI}), llmItem.Endpoints)
 
 	capability, ok := constant.GetAIPDDCapability("dynamic-aipdd-video")
 	require.True(t, ok)
@@ -288,6 +309,9 @@ func TestEnsureAIPDDDefaultsSyncsDynamicCatalogOnBoot(t *testing.T) {
 	var option Option
 	require.NoError(t, DB.Where(&Option{Key: "ModelPrice"}).First(&option).Error)
 	require.Contains(t, option.Value, `"dynamic-aipdd-video":0.75`)
+	var ratioOption Option
+	require.NoError(t, DB.Where(&Option{Key: "ModelRatio"}).First(&ratioOption).Error)
+	require.Contains(t, ratioOption.Value, `"gemma3:1b":1`)
 }
 
 func TestEnsureAIPDDDefaultsRequiresEnvBeforeCatalogSync(t *testing.T) {

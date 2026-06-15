@@ -273,7 +273,7 @@ func (channel *Channel) GetModels() []string {
 
 func (channel *Channel) ApplyDefaultModels() {
 	if channel.Type == constant.ChannelTypeAIPDD && strings.TrimSpace(channel.Models) == "" {
-		channel.Models = strings.Join(constant.GetAIPDDTaskModelList(), ",")
+		channel.Models = strings.Join(constant.GetAIPDDModelList(), ",")
 	}
 }
 
@@ -281,7 +281,7 @@ func (channel *Channel) BackfillAIPDDDefaultModels() bool {
 	if channel.Type != constant.ChannelTypeAIPDD {
 		return false
 	}
-	defaultModels := constant.GetAIPDDTaskModelList()
+	defaultModels := constant.GetAIPDDModelList()
 	models := make([]string, 0, len(defaultModels))
 	seen := make(map[string]bool, len(defaultModels))
 	changed := false

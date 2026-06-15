@@ -192,6 +192,10 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, header *http.Header, info *
 			}
 		}
 	}
+	if info.ChannelType == constant.ChannelTypeAIPDD {
+		header.Set("X-API-Key", info.ApiKey)
+		return nil
+	}
 	if info.RelayMode == relayconstant.RelayModeRealtime {
 		swp := c.Request.Header.Get("Sec-WebSocket-Protocol")
 		if swp != "" {

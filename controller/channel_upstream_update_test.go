@@ -1,8 +1,12 @@
 package controller
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/stretchr/testify/require"
@@ -125,6 +129,98 @@ func TestCollectPendingUpstreamModelChangesFromModels_WithIgnoredRegexPatterns(t
 
 	require.Equal(t, []string{"claude-3-5-sonnet"}, pendingAddModels)
 	require.Equal(t, []string{}, pendingRemoveModels)
+}
+
+func TestFetchChannelUpstreamModelIDsMergesAIPDDTaskAndOpenAIModels(t *testing.T) {
+	setupModelListControllerTestDB(t)
+	constant.ResetAIPDDCapabilities()
+	constant.ResetAIPDDOpenAIModels()
+	t.Cleanup(func() {
+		constant.ResetAIPDDCapabilities()
+		constant.ResetAIPDDOpenAIModels()
+	})
+
+	seenAPIKey := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-API-Key") == "sk-test-key" {
+			seenAPIKey = true
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/scripts/admin/comfyui_workflow":
+			_, _ = w.Write([]byte(`{
+				"code": 200,
+				"message": "ok",
+				"data": [
+					{
+						"id": "dynamic-script-id",
+						"code": "dynamic-aipdd-video",
+						"name": "Dynamic AIPDD Video",
+						"description": "dynamic model from upstream",
+						"priceAWcoin": 500,
+						"endpointType": "openai-video",
+						"taskKind": "image_to_video",
+						"inputModalities": ["image", "text"],
+						"outputModalities": ["video"],
+						"params": [
+							{"paramKey": "image", "dataType": "string", "isRequired": true, "orderNo": 1, "uiType": "image_url"},
+							{"paramKey": "prompt", "dataType": "string", "isRequired": true, "orderNo": 2, "uiType": "textarea"}
+						]
+					}
+				]
+			}`))
+		case "/fee-rules":
+			_, _ = w.Write([]byte(`{
+				"code": 200,
+				"message": "ok",
+				"data": {
+					"total": 1,
+					"page": 1,
+					"pageSize": 100,
+					"list": [
+						{"key": "dynamic-aipdd-video", "name": "Dynamic AIPDD Video", "type": "comfyUI_workflow", "price": 500, "unit": "次"}
+					]
+				}
+			}`))
+		case "/system/awcoin-rate":
+			_, _ = w.Write([]byte(`{
+				"code": 200,
+				"message": "ok",
+				"data": {"rmb": 0.01, "usd": 0.0015}
+			}`))
+		case "/v1/models":
+			_, _ = w.Write([]byte(`{
+				"object": "list",
+				"data": [
+					{"id": "gemma3:1b"},
+					{"id": "qwen2.5:0.5b"}
+				]
+			}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	channel := &model.Channel{
+		Type:    constant.ChannelTypeAIPDD,
+		Key:     "sk-test-key",
+		BaseURL: &server.URL,
+	}
+	models, err := fetchChannelUpstreamModelIDs(channel)
+	require.NoError(t, err)
+	require.True(t, seenAPIKey)
+	require.Equal(t, []string{"dynamic-aipdd-video", "gemma3:1b", "qwen2.5:0.5b"}, models)
+
+	var llmModel model.Model
+	require.NoError(t, model.DB.Where("model_name = ?", "gemma3:1b").First(&llmModel).Error)
+	endpointBytes, err := common.Marshal([]constant.EndpointType{constant.EndpointTypeOpenAI})
+	require.NoError(t, err)
+	require.Equal(t, string(endpointBytes), llmModel.Endpoints)
+
+	var ratioOption model.Option
+	require.NoError(t, model.DB.Where(&model.Option{Key: "ModelRatio"}).First(&ratioOption).Error)
+	require.Contains(t, ratioOption.Value, `"gemma3:1b":1`)
 }
 
 func TestBuildUpstreamModelUpdateTaskNotificationContent_OmitOverflowDetails(t *testing.T) {

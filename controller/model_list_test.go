@@ -54,7 +54,7 @@ func setupModelListControllerTestDB(t *testing.T) *gorm.DB {
 	model.DB = db
 	model.LOG_DB = db
 
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Channel{}, &model.Ability{}, &model.Model{}, &model.Vendor{}))
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Channel{}, &model.Ability{}, &model.Model{}, &model.Vendor{}, &model.Option{}))
 
 	t.Cleanup(func() {
 		sqlDB, err := db.DB()
@@ -477,6 +477,8 @@ func TestGetUserModelsFiltersImageEndpointForPlayground(t *testing.T) {
 
 func TestGetUserModelsFiltersChatEndpointForPlayground(t *testing.T) {
 	db := setupModelListControllerTestDB(t)
+	constant.ResetAIPDDOpenAIModels()
+	t.Cleanup(constant.ResetAIPDDOpenAIModels)
 	model.InvalidatePricingCache()
 
 	require.NoError(t, db.Create(&model.User{
@@ -517,6 +519,16 @@ func TestGetUserModelsFiltersChatEndpointForPlayground(t *testing.T) {
 	}
 	require.NoError(t, volcImageChannel.Insert())
 
+	aipddChannel := &model.Channel{
+		Type:   constant.ChannelTypeAIPDD,
+		Key:    "aipdd-test-key",
+		Name:   "aipdd",
+		Models: "gemma3:1b," + constant.AIPDDModelFluxGGUFT2I,
+		Status: common.ChannelStatusEnabled,
+		Group:  "default",
+	}
+	require.NoError(t, aipddChannel.Insert())
+
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
 	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/user/models?endpoint_type=openai", nil)
@@ -529,8 +541,10 @@ func TestGetUserModelsFiltersChatEndpointForPlayground(t *testing.T) {
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
 	require.True(t, payload.Success)
 	require.Contains(t, payload.Data, "gpt-4o")
+	require.Contains(t, payload.Data, "gemma3:1b")
 	require.NotContains(t, payload.Data, "doubao-seedance-2.0")
 	require.NotContains(t, payload.Data, "doubao-seedream-4-5")
+	require.NotContains(t, payload.Data, constant.AIPDDModelFluxGGUFT2I)
 }
 
 func TestListModelsIncludesTieredBillingModel(t *testing.T) {

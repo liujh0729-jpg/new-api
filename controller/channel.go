@@ -1030,6 +1030,26 @@ func FetchModels(c *gin.Context) {
 		return
 	}
 
+	if req.Type == constant.ChannelTypeAIPDD {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), time.Duration(defaultTimeoutSeconds)*time.Second)
+		defer cancel()
+
+		models, err := fetchAIPDDModelIDs(ctx, http.DefaultClient, baseURL, key)
+		if err != nil {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": fmt.Sprintf("获取AIPDD模型失败: %s", err.Error()),
+			})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"success": true,
+			"data":    models,
+		})
+		return
+	}
+
 	client := &http.Client{}
 	url := fmt.Sprintf("%s/v1/models", baseURL)
 

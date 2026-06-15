@@ -111,6 +111,39 @@ func TestFetchBuildsCatalogFromScriptsAndFeeRules(t *testing.T) {
 	require.Equal(t, "audio", dynamic.UploadTargets[0].ParamKey)
 }
 
+func TestFetchOpenAIModels(t *testing.T) {
+	seenAPIKey := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-API-Key") == "test-key" {
+			seenAPIKey = true
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/models":
+			_, _ = w.Write([]byte(`{
+				"object": "list",
+				"data": [
+					{"id": "gemma3:1b", "object": "model"},
+					{"id": "gemma3:1b", "object": "model"},
+					{"id": "qwen2.5:0.5b", "object": "model"},
+					{"id": "", "object": "model"}
+				]
+			}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	models, err := FetchOpenAIModels(ctx, server.Client(), server.URL, "test-key")
+	require.NoError(t, err)
+	require.True(t, seenAPIKey)
+	require.Equal(t, []string{"gemma3:1b", "qwen2.5:0.5b"}, models)
+}
+
 func TestFetchFallsBackToScriptPricesWhenFeeRulesUnavailable(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

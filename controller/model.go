@@ -107,7 +107,7 @@ func init() {
 	for _, channelType := range taskModelChannelTypes {
 		appendTaskAdaptorModels(channelType)
 	}
-	channelId2Models[constant.ChannelTypeAIPDD] = constant.GetAIPDDTaskModelList()
+	channelId2Models[constant.ChannelTypeAIPDD] = constant.GetAIPDDModelList()
 	openAIModels = lo.UniqBy(openAIModels, func(m dto.OpenAIModels) string {
 		return m.Id
 	})
@@ -129,6 +129,14 @@ func getOpenAIModel(modelName string) (dto.OpenAIModels, bool) {
 			OwnedBy: taskaipdd.ChannelName,
 		}, true
 	}
+	if constant.IsAIPDDOpenAIModel(modelName) {
+		return dto.OpenAIModels{
+			Id:      modelName,
+			Object:  "model",
+			Created: 1626777600,
+			OwnedBy: taskaipdd.ChannelName,
+		}, true
+	}
 	return dto.OpenAIModels{}, false
 }
 
@@ -138,7 +146,7 @@ func getChannelListOpenAIModels() []dto.OpenAIModels {
 	for _, item := range models {
 		seen[item.Id] = true
 	}
-	for _, modelName := range constant.GetAIPDDTaskModelList() {
+	for _, modelName := range constant.GetAIPDDModelList() {
 		if seen[modelName] {
 			continue
 		}
@@ -160,7 +168,7 @@ func getDashboardChannelModels() map[int][]string {
 	for channelType, models := range channelId2Models {
 		out[channelType] = append([]string(nil), models...)
 	}
-	out[constant.ChannelTypeAIPDD] = constant.GetAIPDDTaskModelList()
+	out[constant.ChannelTypeAIPDD] = constant.GetAIPDDModelList()
 	return out
 }
 

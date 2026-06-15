@@ -435,7 +435,7 @@ func getChannelAbilityModels(channel *Channel) []string {
 		}
 	}
 	if len(models) == 0 && channel.Type == constant.ChannelTypeAIPDD {
-		return constant.GetAIPDDTaskModelList()
+		return constant.GetAIPDDModelList()
 	}
 	return models
 }
