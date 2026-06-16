@@ -31,6 +31,12 @@ import {
 import { ChevronDown, Copy, Plus, Trash2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+import { useSystemConfigStore } from '@/stores/system-config-store'
+import {
+  billingCurrencyFromUSD,
+  billingCurrencyToUSD,
+  getBillingCurrencyLabel,
+} from '@/lib/currency'
 import { cn } from '@/lib/utils'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
@@ -99,7 +105,6 @@ import {
   tryParseVisualConfig,
 } from '@/features/pricing/lib/tier-expr'
 
-const PRICE_SUFFIX = '$/1M tokens'
 const CACHE_PRICE_VARS = BILLING_EXTRA_VARS.filter(
   (variable) => variable.group === 'cache'
 )
@@ -517,14 +522,28 @@ type PriceFieldProps = {
 }
 
 function PriceField({ label, hint, value, onChange }: PriceFieldProps) {
+  const currencyKey = useSystemConfigStore((state) => {
+    const currency = state.config.currency
+    return [
+      currency.quotaDisplayType,
+      currency.usdExchangeRate,
+      currency.customCurrencySymbol,
+      currency.customCurrencyExchangeRate,
+    ].join(':')
+  })
+  const displayValue = useMemo(() => {
+    void currencyKey
+    return billingCurrencyFromUSD(Number.isFinite(value) ? value : 0)
+  }, [currencyKey, value])
+
   return (
     <div className='w-36 space-y-0.5'>
       <Label className='text-muted-foreground text-xs'>{label}</Label>
       <DraftNumberInput
         min={0}
         step={0.01}
-        value={Number.isFinite(value) ? value : 0}
-        onValueChange={onChange}
+        value={displayValue}
+        onValueChange={(next) => onChange(billingCurrencyToUSD(next))}
         className='h-8 w-full'
       />
       {hint && <p className='text-muted-foreground text-xs'>{hint}</p>}
@@ -554,7 +573,20 @@ function VisualTierCard({
   onAddCondition,
 }: VisualTierCardProps) {
   const { t } = useTranslation()
+  const currencyKey = useSystemConfigStore((state) => {
+    const currency = state.config.currency
+    return [
+      currency.quotaDisplayType,
+      currency.usdExchangeRate,
+      currency.customCurrencySymbol,
+      currency.customCurrencyExchangeRate,
+    ].join(':')
+  })
   const cacheMode = getTierCacheMode(tier)
+  const priceSuffix = useMemo(() => {
+    void currencyKey
+    return `${getBillingCurrencyLabel()}/1M ${t('tokens')}`
+  }, [currencyKey, t])
 
   const handleConditionChange = (
     conditionIndex: number,
@@ -678,7 +710,7 @@ function VisualTierCard({
         <div className='flex items-center justify-between gap-3'>
           <Label className='text-sm font-semibold'>{t('Token prices')}</Label>
           <span className='bg-muted text-muted-foreground rounded-md px-2 py-1 text-xs'>
-            {PRICE_SUFFIX}
+            {priceSuffix}
           </span>
         </div>
 

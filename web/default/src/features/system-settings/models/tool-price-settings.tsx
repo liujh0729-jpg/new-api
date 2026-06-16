@@ -20,6 +20,12 @@ import { memo, useCallback, useEffect, useMemo, useState } from 'react'
 import { Code2, Copy, Eye, Plus, Trash2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+import { useSystemConfigStore } from '@/stores/system-config-store'
+import {
+  billingCurrencyFromUSD,
+  billingCurrencyToUSD,
+  getBillingCurrencyLabel,
+} from '@/lib/currency'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -35,6 +41,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { useUpdateOption } from '../hooks/use-update-option'
 
 const OPTION_KEY = 'tool_price_setting.prices'
+const numericDraftRegex = /^(\d+(\.\d*)?|\.\d*)?$/
 
 const DEFAULT_PRICES: Record<string, number> = {
   web_search: 10.0,
@@ -71,6 +78,21 @@ function objectToRows(prices: Record<string, number>): ToolPriceRow[] {
   }))
 }
 
+function formatNumber(value: number): string {
+  return Number.parseFloat(value.toFixed(12)).toString()
+}
+
+function formatDisplayPrice(value: number): string {
+  return formatNumber(billingCurrencyFromUSD(value))
+}
+
+function formatStoredPrice(value: string): number {
+  if (!value) return 0
+  const num = Number(value)
+  if (!Number.isFinite(num)) return 0
+  return billingCurrencyToUSD(num)
+}
+
 function parseInitialPrices(
   rawValue: string | undefined
 ): Record<string, number> {
@@ -105,6 +127,19 @@ export const ToolPriceSettings = memo(function ToolPriceSettings({
   const [jsonText, setJsonText] = useState('')
   const [jsonError, setJsonError] = useState('')
   const [nextRowId, setNextRowId] = useState(1)
+  const currencyKey = useSystemConfigStore((state) => {
+    const currency = state.config.currency
+    return [
+      currency.quotaDisplayType,
+      currency.usdExchangeRate,
+      currency.customCurrencySymbol,
+      currency.customCurrencyExchangeRate,
+    ].join(':')
+  })
+  const priceUnitLabel = useMemo(() => {
+    void currencyKey
+    return `${getBillingCurrencyLabel()}/1K`
+  }, [currencyKey])
 
   useEffect(() => {
     const prices = parseInitialPrices(defaultValue)
@@ -203,9 +238,7 @@ export const ToolPriceSettings = memo(function ToolPriceSettings({
       <Alert>
         <AlertDescription className='space-y-1 text-sm'>
           <div>
-            {t(
-              'Configure per-tool unit prices ($/1K calls). Per-request models do not incur additional tool fees.'
-            )}
+            {t('Tool prices')}: {priceUnitLabel}
           </div>
           <div>
             <span className='font-medium'>{t('Format')}:</span>{' '}
@@ -267,7 +300,7 @@ export const ToolPriceSettings = memo(function ToolPriceSettings({
               <TableRow>
                 <TableHead>{t('Tool identifier')}</TableHead>
                 <TableHead className='w-[200px]'>
-                  {t('Price ($/1K calls)')}
+                  {t('Price')} ({priceUnitLabel})
                 </TableHead>
                 <TableHead className='w-[80px] text-right'>
                   {t('Actions')}
@@ -297,18 +330,9 @@ export const ToolPriceSettings = memo(function ToolPriceSettings({
                       />
                     </TableCell>
                     <TableCell>
-                      <Input
-                        type='number'
-                        min={0}
-                        step={0.5}
+                      <ToolPriceInput
                         value={row.price}
-                        onChange={(e) =>
-                          updateRow(
-                            row.id,
-                            'price',
-                            Number(e.target.value) || 0
-                          )
-                        }
+                        onChange={(value) => updateRow(row.id, 'price', value)}
                       />
                     </TableCell>
                     <TableCell className='text-right'>
@@ -353,3 +377,49 @@ export const ToolPriceSettings = memo(function ToolPriceSettings({
     </div>
   )
 })
+
+function ToolPriceInput(props: {
+  value: number
+  onChange: (value: number) => void
+}) {
+  const currencyKey = useSystemConfigStore((state) => {
+    const currency = state.config.currency
+    return [
+      currency.quotaDisplayType,
+      currency.usdExchangeRate,
+      currency.customCurrencySymbol,
+      currency.customCurrencyExchangeRate,
+    ].join(':')
+  })
+  const displayValue = formatDisplayPrice(props.value)
+  const sourceValue = `${currencyKey}:${displayValue}`
+  const [focused, setFocused] = useState(false)
+  const [draftState, setDraftState] = useState(() => ({
+    source: sourceValue,
+    draft: displayValue,
+  }))
+  let value = focused ? draftState.draft : displayValue
+
+  if (!focused && draftState.source !== sourceValue) {
+    value = displayValue
+    setDraftState({ source: sourceValue, draft: displayValue })
+  }
+
+  const handleChange = (value: string) => {
+    if (!numericDraftRegex.test(value)) return
+    setDraftState({ source: sourceValue, draft: value })
+    props.onChange(formatStoredPrice(value))
+  }
+
+  return (
+    <Input
+      type='text'
+      inputMode='decimal'
+      min={0}
+      value={value}
+      onFocus={() => setFocused(true)}
+      onBlur={() => setFocused(false)}
+      onChange={(e) => handleChange(e.target.value)}
+    />
+  )
+}

@@ -7,6 +7,8 @@ const materialsSearchSchema = z.object({
   pageSize: z.number().optional().catch(10),
   filter: z.string().optional().catch(''),
   type: z.array(z.string()).optional().catch([]),
+  source: z.array(z.string()).optional().catch([]),
+  time: z.array(z.string()).optional().catch([]),
 })
 
 export const Route = createFileRoute('/_authenticated/materials/')({

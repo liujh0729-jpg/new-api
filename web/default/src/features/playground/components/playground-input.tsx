@@ -58,17 +58,18 @@ import {
   usePromptInputAttachments,
 } from '@/components/ai-elements/prompt-input'
 import { ModelGroupSelector } from '@/components/model-group-selector'
-import { MaterialSelectorDialog } from './material-selector-dialog'
 import {
   getImageSizeOptionsForModel,
+  getVideoDurationRangeForModel,
   getVideoRatioOptionsForModel,
   IMAGE_REFERENCE_ACCEPT,
   IMAGE_REFERENCE_LIMITS,
+  normalizeVideoDurationForModel,
   SEEDANCE_REFERENCE_ACCEPT,
   SEEDANCE_REFERENCE_LIMITS,
-  VIDEO_DURATION_OPTIONS,
 } from '../constants'
 import type { ModelOption, GroupOption, PlaygroundMode } from '../types'
+import { MaterialSelectorDialog } from './material-selector-dialog'
 
 interface PlaygroundInputProps {
   onSubmit: (message: PromptInputMessage) => void | Promise<void>
@@ -114,7 +115,8 @@ function PlaygroundSubmitButton({
   const attachments = usePromptInputAttachments()
   const hasText = text.trim().length > 0
   const hasReferences = attachments.files.length > 0
-  const canSubmit = isVideoMode || isImageMode ? hasText || hasReferences : hasText
+  const canSubmit =
+    isVideoMode || isImageMode ? hasText || hasReferences : hasText
 
   return (
     <PromptInputButton
@@ -141,14 +143,11 @@ function ReferenceAttachments() {
         <div className='relative' key={attachment.id}>
           <span
             aria-label={t('Reference {{n}}', { n: index + 1 })}
-            className='pointer-events-none absolute -left-1.5 -top-1.5 z-10 flex size-4 items-center justify-center rounded-full bg-primary text-[9px] font-semibold text-primary-foreground shadow-sm'
+            className='bg-primary text-primary-foreground pointer-events-none absolute -top-1.5 -left-1.5 z-10 flex size-4 items-center justify-center rounded-full text-[9px] font-semibold shadow-sm'
           >
             {index + 1}
           </span>
-          <PromptInputAttachment
-            className='max-w-48'
-            data={attachment}
-          />
+          <PromptInputAttachment className='max-w-48' data={attachment} />
         </div>
       ))}
     </div>
@@ -186,6 +185,17 @@ export function PlaygroundInput({
   const isImageMode = mode === 'image'
   const isVideoMode = mode === 'video'
   const imageSizeOptions = getImageSizeOptionsForModel(modelValue)
+  const videoDurationRange = getVideoDurationRangeForModel(modelValue)
+  const normalizedVideoDuration = normalizeVideoDurationForModel(
+    modelValue,
+    videoDuration
+  )
+  const videoDurationPercent =
+    videoDurationRange.max === videoDurationRange.min
+      ? 100
+      : ((normalizedVideoDuration - videoDurationRange.min) /
+          (videoDurationRange.max - videoDurationRange.min)) *
+        100
   const ModeIcon = isVideoMode
     ? VideoIcon
     : isImageMode
@@ -201,7 +211,10 @@ export function PlaygroundInput({
   const handleSubmit = (message: PromptInputMessage) => {
     const hasText = !!message.text?.trim()
     const hasReferences = !!message.files?.length
-    if (isSubmitDisabled || (!hasText && (!isVideoMode && !isImageMode || !hasReferences))) {
+    if (
+      isSubmitDisabled ||
+      (!hasText && ((!isVideoMode && !isImageMode) || !hasReferences))
+    ) {
       return
     }
     const result = onSubmit({
@@ -217,6 +230,12 @@ export function PlaygroundInput({
 
   const handleInsertReferenceMarker = () => {
     setIsMaterialSelectorOpen(true)
+  }
+
+  const handleVideoDurationChange = (value: string) => {
+    onVideoDurationChange(
+      normalizeVideoDurationForModel(modelValue, Number.parseInt(value, 10))
+    )
   }
 
   return (
@@ -244,7 +263,7 @@ export function PlaygroundInput({
               ? IMAGE_REFERENCE_LIMITS.maxFiles
               : undefined
         }
-        multiple={isVideoMode}
+        multiple={isVideoMode || isImageMode}
         onError={(error) => toast.error(error.message)}
         onSubmit={handleSubmit}
       >
@@ -334,39 +353,31 @@ export function PlaygroundInput({
                     label={
                       isVideoMode
                         ? t('Add reference media')
-                        : t('Add reference image')
+                        : t('Add reference images')
                     }
                   />
                 ) : (
                   <>
                     <DropdownMenuItem
-                      onClick={() =>
-                        toast.info(t('Feature in development'))
-                      }
+                      onClick={() => toast.info(t('Feature in development'))}
                     >
                       <FileIcon className='mr-2' size={16} />
                       {t('Upload file')}
                     </DropdownMenuItem>
                     <DropdownMenuItem
-                      onClick={() =>
-                        toast.info(t('Feature in development'))
-                      }
+                      onClick={() => toast.info(t('Feature in development'))}
                     >
                       <ImageIcon className='mr-2' size={16} />
                       {t('Upload photo')}
                     </DropdownMenuItem>
                     <DropdownMenuItem
-                      onClick={() =>
-                        toast.info(t('Feature in development'))
-                      }
+                      onClick={() => toast.info(t('Feature in development'))}
                     >
                       <ScreenShareIcon className='mr-2' size={16} />
                       {t('Take screenshot')}
                     </DropdownMenuItem>
                     <DropdownMenuItem
-                      onClick={() =>
-                        toast.info(t('Feature in development'))
-                      }
+                      onClick={() => toast.info(t('Feature in development'))}
                     >
                       <CameraIcon className='mr-2' size={16} />
                       {t('Take photo')}
@@ -470,11 +481,13 @@ export function PlaygroundInput({
                         value={videoRatio}
                         onValueChange={onVideoRatioChange}
                       >
-                        {getVideoRatioOptionsForModel(modelValue).map((ratio) => (
-                          <DropdownMenuRadioItem key={ratio} value={ratio}>
-                            {ratio}
-                          </DropdownMenuRadioItem>
-                        ))}
+                        {getVideoRatioOptionsForModel(modelValue).map(
+                          (ratio) => (
+                            <DropdownMenuRadioItem key={ratio} value={ratio}>
+                              {ratio}
+                            </DropdownMenuRadioItem>
+                          )
+                        )}
                       </DropdownMenuRadioGroup>
                     </DropdownMenuGroup>
                   </DropdownMenuContent>
@@ -492,26 +505,40 @@ export function PlaygroundInput({
                     }
                   >
                     <ClockIcon size={16} />
-                    <span>{videoDuration}s</span>
+                    <span>{normalizedVideoDuration}s</span>
                   </DropdownMenuTrigger>
-                  <DropdownMenuContent align='start' className='min-w-32'>
+                  <DropdownMenuContent align='start' className='w-64'>
                     <DropdownMenuGroup>
-                      <DropdownMenuLabel>{t('Duration')}</DropdownMenuLabel>
-                      <DropdownMenuRadioGroup
-                        value={String(videoDuration)}
-                        onValueChange={(value) =>
-                          onVideoDurationChange(Number.parseInt(value, 10))
-                        }
-                      >
-                        {VIDEO_DURATION_OPTIONS.map((duration) => (
-                          <DropdownMenuRadioItem
-                            key={duration}
-                            value={String(duration)}
-                          >
-                            {duration}s
-                          </DropdownMenuRadioItem>
-                        ))}
-                      </DropdownMenuRadioGroup>
+                      <div className='flex items-center justify-between px-2 py-1.5'>
+                        <DropdownMenuLabel className='p-0'>
+                          {t('Duration')}
+                        </DropdownMenuLabel>
+                        <span className='text-foreground text-sm font-semibold'>
+                          {normalizedVideoDuration}s
+                        </span>
+                      </div>
+                      <div className='space-y-2 px-2 pb-2'>
+                        <input
+                          aria-label={t('Duration')}
+                          className='accent-primary h-2 w-full cursor-pointer rounded-full'
+                          disabled={disabled}
+                          max={videoDurationRange.max}
+                          min={videoDurationRange.min}
+                          onChange={(event) =>
+                            handleVideoDurationChange(event.target.value)
+                          }
+                          step={videoDurationRange.step}
+                          style={{
+                            background: `linear-gradient(to right, hsl(var(--primary)) ${videoDurationPercent}%, hsl(var(--muted)) ${videoDurationPercent}%)`,
+                          }}
+                          type='range'
+                          value={normalizedVideoDuration}
+                        />
+                        <div className='text-muted-foreground flex items-center justify-between text-xs'>
+                          <span>{videoDurationRange.min}s</span>
+                          <span>{videoDurationRange.max}s</span>
+                        </div>
+                      </div>
                     </DropdownMenuGroup>
                   </DropdownMenuContent>
                 </DropdownMenu>

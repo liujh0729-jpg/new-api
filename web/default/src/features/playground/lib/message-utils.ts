@@ -259,10 +259,7 @@ export function updateAssistantMessageWithError(
   errorCode?: string
 ): Message[] {
   return updateLastAssistantMessage(messages, (message) => {
-    const updatedMessage = updateCurrentVersionContent(
-      message,
-      `${ERROR_MESSAGES.API_REQUEST_ERROR}: ${errorMessage}`
-    )
+    const updatedMessage = updateCurrentVersionContent(message, errorMessage)
     return {
       ...updatedMessage,
       status: MESSAGE_STATUS.ERROR,

@@ -343,9 +343,24 @@ function normalizeFieldValue(
   field: TestField,
   value: FormValue | undefined
 ): FormValue | number | undefined {
-  if (field.type === 'number') return parseNumberFieldValue(value)
+  if (field.type === 'number' || field.type === 'range') {
+    return parseNumberFieldValue(value)
+  }
   if (value === '' || value == null) return undefined
   return value
+}
+
+function getRangeFieldValue(
+  field: TestField,
+  value: FormValue | undefined
+): number {
+  const range = field.range
+  const min = range?.min ?? 0
+  const max = range?.max ?? 100
+  const rawValue =
+    parseNumberFieldValue(value) ?? parseNumberFieldValue(String(field.example))
+  const numericValue = rawValue ?? min
+  return Math.min(max, Math.max(min, Math.round(numericValue)))
 }
 
 function parseHistory(): HistoryItem[] {
@@ -1835,6 +1850,17 @@ function ParameterField({
   const { t } = useTranslation()
   const requiredHint = field.required ? t('Required') : t('Optional')
   const wide = field.type === 'textarea' || field.file
+  const rangeValue =
+    field.type === 'range' ? getRangeFieldValue(field, value) : 0
+  const range = field.range
+  const rangeMin = range?.min ?? 0
+  const rangeMax = range?.max ?? 100
+  const rangeStep = range?.step ?? 1
+  const rangeUnit = range?.unit ?? ''
+  const rangePercent =
+    rangeMax === rangeMin
+      ? 100
+      : ((rangeValue - rangeMin) / (rangeMax - rangeMin)) * 100
 
   if (field.type === 'checkbox') {
     return (
@@ -1873,6 +1899,36 @@ function ParameterField({
             </option>
           ))}
         </select>
+      ) : field.type === 'range' ? (
+        <div className='bg-muted/20 rounded-lg border px-3 py-2.5'>
+          <div className='mb-2 flex items-center justify-between gap-3 text-xs'>
+            <span className='text-muted-foreground'>
+              {rangeMin}
+              {rangeUnit}
+            </span>
+            <span className='text-foreground font-semibold'>
+              {rangeValue}
+              {rangeUnit}
+            </span>
+            <span className='text-muted-foreground'>
+              {rangeMax}
+              {rangeUnit}
+            </span>
+          </div>
+          <input
+            aria-label={t(field.labelKey)}
+            className='accent-primary h-2 w-full cursor-pointer rounded-full'
+            max={rangeMax}
+            min={rangeMin}
+            onChange={(event) => onChange(event.target.value)}
+            step={rangeStep}
+            style={{
+              background: `linear-gradient(to right, hsl(var(--primary)) ${rangePercent}%, hsl(var(--muted)) ${rangePercent}%)`,
+            }}
+            type='range'
+            value={rangeValue}
+          />
+        </div>
       ) : (
         <Input
           type={field.type === 'url' ? 'url' : field.type}

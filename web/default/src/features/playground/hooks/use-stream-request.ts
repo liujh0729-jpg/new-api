@@ -16,19 +16,27 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback } from 'react'
 import { SSE } from 'sse.js'
 import { getCommonHeaders } from '@/lib/api'
 import { API_ENDPOINTS, ERROR_MESSAGES } from '../constants'
 import type { ChatCompletionRequest, ChatCompletionChunk } from '../types'
 
+let activeStreamSource: SSE | null = null
+let activeStreamComplete = false
+
+function closeStreamSource(source: SSE): void {
+  source.close()
+
+  if (activeStreamSource === source) {
+    activeStreamSource = null
+  }
+}
+
 /**
  * Hook for handling streaming chat completion requests
  */
 export function useStreamRequest() {
-  const sseSourceRef = useRef<SSE | null>(null)
-  const isStreamCompleteRef = useRef(false)
-
   const sendStreamRequest = useCallback(
     (
       payload: ChatCompletionRequest,
@@ -36,30 +44,36 @@ export function useStreamRequest() {
       onComplete: () => void,
       onError: (error: string, errorCode?: string) => void
     ) => {
+      if (activeStreamSource) {
+        activeStreamComplete = true
+        closeStreamSource(activeStreamSource)
+      }
+
       const source = new SSE(API_ENDPOINTS.CHAT_COMPLETIONS, {
         headers: getCommonHeaders(),
         method: 'POST',
         payload: JSON.stringify(payload),
       })
 
-      sseSourceRef.current = source
-      isStreamCompleteRef.current = false
+      activeStreamSource = source
+      activeStreamComplete = false
 
       const closeSource = () => {
-        source.close()
-        sseSourceRef.current = null
+        closeStreamSource(source)
       }
 
       const handleError = (errorMessage: string, errorCode?: string) => {
-        if (!isStreamCompleteRef.current) {
+        if (!activeStreamComplete && activeStreamSource === source) {
           onError(errorMessage, errorCode)
           closeSource()
         }
       }
 
       source.addEventListener('message', (e: MessageEvent) => {
+        if (activeStreamSource !== source) return
+
         if (e.data === '[DONE]') {
-          isStreamCompleteRef.current = true
+          activeStreamComplete = true
           closeSource()
           onComplete()
           return
@@ -84,41 +98,38 @@ export function useStreamRequest() {
         }
       })
 
-      source.addEventListener('error', (e: Event & { data?: string }) => {
-        // Only handle errors if stream didn't complete normally
-        if (source.readyState !== 2) {
-          // eslint-disable-next-line no-console
-          console.error('SSE Error:', e)
-          let errorMessage = e.data || ERROR_MESSAGES.API_REQUEST_ERROR
-          let errorCode: string | undefined
-          if (e.data) {
-            try {
-              const parsed = JSON.parse(e.data) as {
-                error?: { message?: string; code?: string }
-              }
-              if (parsed?.error) {
-                errorMessage = parsed.error.message || errorMessage
-                errorCode = parsed.error.code || undefined
-              }
-            } catch {
-              // not JSON, use raw string
-            }
-          }
-          handleError(errorMessage, errorCode)
-        }
-      })
-
       source.addEventListener(
-        'readystatechange',
-        (e: Event & { readyState?: number }) => {
-          const status = (source as unknown as { status?: number }).status
-          if (
-            e.readyState !== undefined &&
-            e.readyState >= 2 &&
-            status !== undefined &&
-            status !== 200
-          ) {
-            handleError(`HTTP ${status}: ${ERROR_MESSAGES.CONNECTION_CLOSED}`)
+        'error',
+        (e: Event & { data?: string; responseCode?: number }) => {
+          if (activeStreamSource !== source) return
+
+          // Only handle errors if stream didn't complete normally
+          if (source.readyState !== 2) {
+            // eslint-disable-next-line no-console
+            console.error('SSE Error:', e)
+            let errorMessage =
+              e.data ||
+              (e.responseCode
+                ? `HTTP ${e.responseCode}: ${ERROR_MESSAGES.CONNECTION_CLOSED}`
+                : ERROR_MESSAGES.API_REQUEST_ERROR)
+            let errorCode: string | undefined
+            if (e.data) {
+              try {
+                const parsed = JSON.parse(e.data) as {
+                  error?: { message?: string; code?: string }
+                }
+                if (parsed?.error) {
+                  errorMessage = parsed.error.message || errorMessage
+                  errorCode = parsed.error.code || undefined
+                }
+              } catch {
+                // not JSON, use raw string
+              }
+            }
+            if (!errorCode && e.responseCode === 402) {
+              errorCode = 'payment_required'
+            }
+            handleError(errorMessage, errorCode)
           }
         }
       )
@@ -129,32 +140,26 @@ export function useStreamRequest() {
         // eslint-disable-next-line no-console
         console.error('Failed to start SSE stream:', error)
         onError(ERROR_MESSAGES.STREAM_START_ERROR)
-        sseSourceRef.current = null
+        if (activeStreamSource === source) {
+          activeStreamSource = null
+        }
       }
     },
     []
   )
 
   const stopStream = useCallback(() => {
-    if (sseSourceRef.current) {
-      sseSourceRef.current.close()
-      sseSourceRef.current = null
+    if (activeStreamSource) {
+      activeStreamComplete = true
+      closeStreamSource(activeStreamSource)
     }
   }, [])
 
-  useEffect(() => {
-    return () => {
-      stopStream()
-    }
-  }, [stopStream])
-
-  // eslint-disable-next-line react-hooks/refs
-  const isStreaming = sseSourceRef.current !== null
+  const isStreaming = activeStreamSource !== null
 
   return {
     sendStreamRequest,
     stopStream,
-    // eslint-disable-next-line react-hooks/refs
     isStreaming,
   }
 }

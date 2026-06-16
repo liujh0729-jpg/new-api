@@ -1,14 +1,19 @@
 import { type ColumnDef } from '@tanstack/react-table'
+import { Image, Video, Music } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { formatTimestampToDate } from '@/lib/format'
 import { Checkbox } from '@/components/ui/checkbox'
 import { DataTableColumnHeader } from '@/components/data-table'
 import { StatusBadge } from '@/components/status-badge'
+import { MATERIAL_SOURCE_TYPE } from '../constants'
+import {
+  formatFileSize,
+  getMaterialPreviewUrl,
+  getMaterialTimeRange,
+} from '../lib'
 import { type Material } from '../types'
-import { formatFileSize } from '../lib'
 import { DataTableRowActions } from './data-table-row-actions'
 import { useMaterials } from './materials-provider'
-import { Image, Video, Music } from 'lucide-react'
 
 export function useMaterialsColumns(): ColumnDef<Material>[] {
   const { t } = useTranslation()
@@ -45,10 +50,11 @@ export function useMaterialsColumns(): ColumnDef<Material>[] {
         const material = row.original
         const isImage = material.type === 'image'
         const isVideo = material.type === 'video'
+        const previewUrl = getMaterialPreviewUrl(material.id)
 
         return (
           <div
-            className='flex size-10 cursor-pointer items-center justify-center overflow-hidden rounded border border-border bg-muted transition-colors hover:ring-2 hover:ring-primary/50'
+            className='border-border bg-muted hover:ring-primary/50 flex size-10 cursor-pointer items-center justify-center overflow-hidden rounded border transition-colors hover:ring-2'
             onClick={(e) => {
               e.stopPropagation()
               setPreviewMaterial(material)
@@ -56,14 +62,14 @@ export function useMaterialsColumns(): ColumnDef<Material>[] {
           >
             {isImage ? (
               <img
-                src={material.url}
+                src={previewUrl}
                 alt={material.name}
                 className='size-full object-cover'
                 loading='lazy'
               />
             ) : isVideo ? (
               <video
-                src={material.url}
+                src={previewUrl}
                 preload='metadata'
                 muted
                 playsInline
@@ -87,10 +93,33 @@ export function useMaterialsColumns(): ColumnDef<Material>[] {
       },
     },
     {
-      accessorKey: 'type',
+      accessorKey: 'source_type',
       meta: { label: t('Type'), mobileBadge: true },
       header: ({ column }) => (
         <DataTableColumnHeader column={column} title={t('Type')} />
+      ),
+      cell: ({ row }) => {
+        const sourceType =
+          (row.getValue('source_type') as string) ||
+          MATERIAL_SOURCE_TYPE.MATERIAL
+        const label =
+          sourceType === MATERIAL_SOURCE_TYPE.AI_OUTPUT
+            ? t('AI Output')
+            : t('Material')
+
+        return <StatusBadge label={label} variant='neutral' copyable={false} />
+      },
+      filterFn: (row, id, value) => {
+        const sourceType =
+          (row.getValue(id) as string) || MATERIAL_SOURCE_TYPE.MATERIAL
+        return value.length === 0 || value.includes(sourceType)
+      },
+    },
+    {
+      accessorKey: 'type',
+      meta: { label: t('Media Type'), mobileBadge: true },
+      header: ({ column }) => (
+        <DataTableColumnHeader column={column} title={t('Media Type')} />
       ),
       cell: ({ row }) => {
         const type = row.getValue('type') as string
@@ -142,7 +171,7 @@ export function useMaterialsColumns(): ColumnDef<Material>[] {
       ),
       cell: ({ row }) => {
         return (
-          <div className='max-w-[180px] truncate text-muted-foreground text-sm'>
+          <div className='text-muted-foreground max-w-[180px] truncate text-sm'>
             {row.getValue('file_name')}
           </div>
         )
@@ -177,6 +206,19 @@ export function useMaterialsColumns(): ColumnDef<Material>[] {
             {formatTimestampToDate(row.getValue('created_time'))}
           </div>
         )
+      },
+      filterFn: (row, id, value) => {
+        const selected = Array.isArray(value) ? value[0] : undefined
+        const range = getMaterialTimeRange(selected)
+        const createdTime = row.getValue(id) as number
+        if (!range.created_after && !range.created_before) return true
+        if (range.created_after && createdTime < range.created_after) {
+          return false
+        }
+        if (range.created_before && createdTime > range.created_before) {
+          return false
+        }
+        return true
       },
     },
     {

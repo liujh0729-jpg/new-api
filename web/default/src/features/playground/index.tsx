@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import type { FileUIPart } from 'ai'
 import { useTranslation } from 'react-i18next'
@@ -27,12 +27,17 @@ import type {
 } from '@/components/ai-elements/prompt-input'
 import { getUserModels, getUserGroups, uploadReferenceMedia } from './api'
 import { PlaygroundChat } from './components/playground-chat'
+import {
+  PlaygroundHistoryMobileHeader,
+  PlaygroundHistorySidebar,
+} from './components/playground-history'
 import { PlaygroundInput } from './components/playground-input'
 import {
   DEFAULT_GROUP,
   ERROR_MESSAGES,
   SEEDANCE_REFERENCE_LIMITS,
   normalizeImageSizeForModel,
+  normalizeVideoDurationForModel,
   normalizeVideoRatioForModel,
 } from './constants'
 import { usePlaygroundState, useChatHandler } from './hooks'
@@ -51,6 +56,8 @@ export function Playground() {
   const { t } = useTranslation()
   const {
     config,
+    activeConversationId,
+    conversations,
     parameterEnabled,
     messages,
     models,
@@ -59,6 +66,9 @@ export function Playground() {
     setModels,
     setGroups,
     updateConfig,
+    createConversation,
+    selectConversation,
+    deleteConversation,
   } = usePlaygroundState()
 
   const { sendChat, stopGeneration, isGenerating, resumeTaskPolling } =
@@ -67,6 +77,16 @@ export function Playground() {
       parameterEnabled,
       onMessageUpdate: updateMessages,
     })
+  const hasPendingMessage = useMemo(
+    () =>
+      messages.some(
+        (message) =>
+          message.from === 'assistant' &&
+          (message.status === 'loading' || message.status === 'streaming')
+      ),
+    [messages]
+  )
+  const isGenerationActive = isGenerating || hasPendingMessage
 
   // Edit dialog state
   const [editingMessageKey, setEditingMessageKey] = useState<string | null>(
@@ -123,6 +143,18 @@ export function Playground() {
     }
   }, [config.mode, config.model, config.video_ratio, updateConfig])
 
+  useEffect(() => {
+    if (config.mode !== 'video') return
+
+    const normalizedDuration = normalizeVideoDurationForModel(
+      config.model,
+      config.video_duration
+    )
+    if (normalizedDuration !== config.video_duration) {
+      updateConfig('video_duration', normalizedDuration)
+    }
+  }, [config.mode, config.model, config.video_duration, updateConfig])
+
   // Update groups when data changes
   useEffect(() => {
     if (!groupsData) return
@@ -144,10 +176,9 @@ export function Playground() {
     setGroups(processedGroups)
   }, [groupsData, setGroups])
 
-  const hasResumedRef = useRef(false)
+  const resumedTaskKeyRef = useRef<string | null>(null)
 
   useEffect(() => {
-    if (hasResumedRef.current) return
     const last = messages[messages.length - 1]
     if (
       last?.from === 'assistant' &&
@@ -155,15 +186,17 @@ export function Playground() {
       last.taskType &&
       (last.status === 'loading' || last.status === 'streaming')
     ) {
-      hasResumedRef.current = true
+      const taskKey = `${activeConversationId}:${last.taskType}:${last.taskId}`
+      if (resumedTaskKeyRef.current === taskKey) return
+      resumedTaskKeyRef.current = taskKey
       resumeTaskPolling(last.taskId, last.taskType)
     }
-  }, [messages, resumeTaskPolling])
+  }, [activeConversationId, messages, resumeTaskPolling])
 
   const handleSendMessage = async (message: PromptInputMessage) => {
     const text = message.text?.trim() || ''
     let seedanceReferences: SeedanceReference[] = []
-    let imageBase64: string | undefined
+    let imageReferences: string[] | undefined
 
     if (config.mode === 'video') {
       const referenceCandidates = buildSeedanceReferenceCandidates(
@@ -205,7 +238,7 @@ export function Playground() {
       } catch (error) {
         const uploadError = normalizePlaygroundError(error, t)
         toast.error(uploadError.message)
-        throw new Error(uploadError.message)
+        throw new Error(uploadError.message, { cause: error })
       } finally {
         if (hasLocalReferences) {
           setIsUploadingReferences(false)
@@ -214,9 +247,9 @@ export function Playground() {
     }
 
     if (config.mode === 'image') {
-      const imageFile = message.files?.[0]
-      if (imageFile?.sourceFile) {
-        imageBase64 = await readFileAsBase64(imageFile.sourceFile)
+      imageReferences = await resolveImageReferences(message.files || [])
+      if (imageReferences.length === 0) {
+        imageReferences = undefined
       }
     }
 
@@ -227,7 +260,7 @@ export function Playground() {
     updateMessages(newMessages)
 
     // Send chat request
-    sendChat(newMessages, imageBase64)
+    sendChat(newMessages, imageReferences)
   }
 
   const handleCopyMessage = (message: MessageType) => {
@@ -294,52 +327,74 @@ export function Playground() {
   }
 
   return (
-    <div className='relative flex size-full flex-col overflow-hidden'>
-      {/* Full-width scroll container: scrolling works even over side whitespace */}
-      <div className='flex flex-1 flex-col overflow-hidden'>
-        <PlaygroundChat
-          messages={messages}
-          onCopyMessage={handleCopyMessage}
-          onRegenerateMessage={handleRegenerateMessage}
-          onEditMessage={handleEditMessage}
-          onDeleteMessage={handleDeleteMessage}
-          isGenerating={isGenerating}
-          editingKey={editingMessageKey}
-          onCancelEdit={handleEditOpenChange}
-          onSaveEdit={(newContent) => applyEdit(newContent, false)}
-          onSaveEditAndSubmit={(newContent) => applyEdit(newContent, true)}
-        />
-      </div>
+    <div className='relative flex size-full overflow-hidden'>
+      <PlaygroundHistorySidebar
+        activeConversationId={activeConversationId}
+        conversations={conversations}
+        disabled={isGenerationActive}
+        onDeleteConversation={deleteConversation}
+        onNewConversation={createConversation}
+        onSelectConversation={selectConversation}
+      />
 
-      {/* Input area: center content and constrain to the same container width */}
-      <div className='mx-auto w-full max-w-4xl'>
-        <PlaygroundInput
-          disabled={isUploadingReferences}
-          groups={groups}
-          groupValue={config.group}
-          imageCount={config.image_count}
-          imageQuality={config.image_quality}
-          imageSize={config.image_size}
-          isGenerating={isGenerating}
-          isModelLoading={isLoadingModels}
-          mode={config.mode}
-          modelValue={config.model}
-          models={models}
-          onGroupChange={(value) => updateConfig('group', value)}
-          onImageCountChange={(value) => updateConfig('image_count', value)}
-          onImageQualityChange={(value) => updateConfig('image_quality', value)}
-          onImageSizeChange={(value) => updateConfig('image_size', value)}
-          onModeChange={(value) => updateConfig('mode', value)}
-          onModelChange={(value) => updateConfig('model', value)}
-          onStop={stopGeneration}
-          onSubmit={handleSendMessage}
-          onVideoDurationChange={(value) =>
-            updateConfig('video_duration', value)
-          }
-          onVideoRatioChange={(value) => updateConfig('video_ratio', value)}
-          videoDuration={config.video_duration}
-          videoRatio={config.video_ratio}
+      <div className='flex min-w-0 flex-1 flex-col overflow-hidden'>
+        <PlaygroundHistoryMobileHeader
+          activeConversationId={activeConversationId}
+          conversations={conversations}
+          disabled={isGenerationActive}
+          onDeleteConversation={deleteConversation}
+          onNewConversation={createConversation}
+          onSelectConversation={selectConversation}
         />
+
+        {/* Full-width scroll container: scrolling works even over side whitespace */}
+        <div className='flex flex-1 flex-col overflow-hidden'>
+          <PlaygroundChat
+            messages={messages}
+            onCopyMessage={handleCopyMessage}
+            onRegenerateMessage={handleRegenerateMessage}
+            onEditMessage={handleEditMessage}
+            onDeleteMessage={handleDeleteMessage}
+            isGenerating={isGenerationActive}
+            editingKey={editingMessageKey}
+            onCancelEdit={handleEditOpenChange}
+            onSaveEdit={(newContent) => applyEdit(newContent, false)}
+            onSaveEditAndSubmit={(newContent) => applyEdit(newContent, true)}
+          />
+        </div>
+
+        {/* Input area: center content and constrain to the same container width */}
+        <div className='mx-auto w-full max-w-4xl'>
+          <PlaygroundInput
+            disabled={isUploadingReferences}
+            groups={groups}
+            groupValue={config.group}
+            imageCount={config.image_count}
+            imageQuality={config.image_quality}
+            imageSize={config.image_size}
+            isGenerating={isGenerationActive}
+            isModelLoading={isLoadingModels}
+            mode={config.mode}
+            modelValue={config.model}
+            models={models}
+            onGroupChange={(value) => updateConfig('group', value)}
+            onImageCountChange={(value) => updateConfig('image_count', value)}
+            onImageQualityChange={(value) =>
+              updateConfig('image_quality', value)
+            }
+            onImageSizeChange={(value) => updateConfig('image_size', value)}
+            onModeChange={(value) => updateConfig('mode', value)}
+            onModelChange={(value) => updateConfig('model', value)}
+            onStop={stopGeneration}
+            onSubmit={handleSendMessage}
+            onVideoDurationChange={(value) =>
+              updateConfig('video_duration', value)
+            }
+            onVideoRatioChange={(value) => updateConfig('video_ratio', value)}
+            videoDuration={config.video_duration}
+            videoRatio={config.video_ratio}
+          />
+        </div>
       </div>
     </div>
   )
@@ -550,7 +605,22 @@ function readLocalMediaDuration(
   })
 }
 
-function readFileAsBase64(file: File): Promise<string> {
+async function resolveImageReferences(
+  files: PromptInputSubmittedFile[]
+): Promise<string[]> {
+  const images = await Promise.all(
+    files.map(async (file) => {
+      if (file.sourceFile) {
+        return readFileAsDataURL(file.sourceFile)
+      }
+      return file.url?.trim() || ''
+    })
+  )
+
+  return images.filter(Boolean)
+}
+
+function readFileAsDataURL(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
     reader.onload = () => {

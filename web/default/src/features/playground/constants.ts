@@ -89,8 +89,30 @@ export const VIDEO_RATIO_OPTIONS = [
   '4:3',
   '3:4',
 ] as const
-export const SEEDANCE_VIDEO_RATIO_OPTIONS: readonly string[] = VIDEO_RATIO_OPTIONS
-export const VIDEO_DURATION_OPTIONS = [5, 10, 15] as const
+export const SEEDANCE_VIDEO_RATIO_OPTIONS: readonly string[] =
+  VIDEO_RATIO_OPTIONS
+
+export type VideoDurationRange = {
+  min: number
+  max: number
+  step: number
+}
+
+export const DEFAULT_VIDEO_DURATION_RANGE: VideoDurationRange = {
+  min: 5,
+  max: 15,
+  step: 5,
+}
+export const SEEDANCE_10_VIDEO_DURATION_RANGE: VideoDurationRange = {
+  min: 2,
+  max: 12,
+  step: 1,
+}
+export const SEEDANCE_15_20_VIDEO_DURATION_RANGE: VideoDurationRange = {
+  min: 4,
+  max: 15,
+  step: 1,
+}
 export const DEFAULT_VIDEO_RATIO = '16:9'
 export const DEFAULT_VIDEO_DURATION = 5
 export const DEFAULT_VIDEO_RESOLUTION = '720p'
@@ -146,7 +168,7 @@ export const IMAGE_REFERENCE_ACCEPT = [
   '.bmp',
 ].join(',')
 export const IMAGE_REFERENCE_LIMITS = {
-  maxFiles: 1,
+  maxFiles: 10,
   maxFileSize: 300 * 1024 * 1024,
 } as const
 
@@ -161,8 +183,7 @@ export function isSeedreamModel(model: string): boolean {
 export function isSeedream40xModel(model: string): boolean {
   const normalized = normalizeModelName(model)
   return (
-    normalized.includes('seedream-4-0') ||
-    normalized.includes('seedream-4-5')
+    normalized.includes('seedream-4-0') || normalized.includes('seedream-4-5')
   )
 }
 
@@ -181,6 +202,16 @@ export function isSeedanceModel(model: string): boolean {
 export function isSeedance20Model(model: string): boolean {
   const normalized = normalizeModelName(model)
   return normalized.includes('seedance-2-0')
+}
+
+export function isSeedance15Model(model: string): boolean {
+  const normalized = normalizeModelName(model)
+  return normalized.includes('seedance-1-5')
+}
+
+export function isSeedance10Model(model: string): boolean {
+  const normalized = normalizeModelName(model)
+  return normalized.includes('seedance-1-0')
 }
 
 export function getImageSizePixels(size: string): number | null {
@@ -229,6 +260,14 @@ export function getVideoRatioOptionsForModel(model: string): readonly string[] {
   return VIDEO_RATIO_OPTIONS
 }
 
+export function getVideoDurationRangeForModel(model: string) {
+  if (isSeedance20Model(model) || isSeedance15Model(model)) {
+    return SEEDANCE_15_20_VIDEO_DURATION_RANGE
+  }
+  if (isSeedance10Model(model)) return SEEDANCE_10_VIDEO_DURATION_RANGE
+  return DEFAULT_VIDEO_DURATION_RANGE
+}
+
 export function normalizeImageSizeForModel(
   model: string,
   size: string
@@ -257,6 +296,18 @@ export function normalizeVideoRatioForModel(
   if (options.includes(ratio)) return ratio
 
   return DEFAULT_VIDEO_RATIO
+}
+
+export function normalizeVideoDurationForModel(
+  model: string,
+  duration: number
+): number {
+  const range = getVideoDurationRangeForModel(model)
+  const numericDuration = Number(duration)
+  if (!Number.isFinite(numericDuration)) return DEFAULT_VIDEO_DURATION
+
+  const roundedDuration = Math.round(numericDuration)
+  return Math.min(range.max, Math.max(range.min, roundedDuration))
 }
 
 // Default configuration
@@ -292,6 +343,7 @@ export const STORAGE_KEYS = {
   CONFIG: 'playground_config',
   MESSAGES: 'playground_messages',
   PARAMETER_ENABLED: 'playground_parameter_enabled',
+  CONVERSATIONS_PREFIX: 'playground_conversations_v1',
   VIDEO_DURATION_DEFAULT_MIGRATED:
     'playground_video_duration_default_v5_migrated',
 } as const

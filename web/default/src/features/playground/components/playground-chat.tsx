@@ -21,6 +21,12 @@ import { ExternalLinkIcon, ImageIcon, MusicIcon, VideoIcon } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Textarea } from '@/components/ui/textarea'
 import {
   Branch,
@@ -68,6 +74,12 @@ interface PlaygroundChatProps {
   onSaveEdit?: (newContent: string) => void
   onCancelEdit?: (open: boolean) => void
   onSaveEditAndSubmit?: (newContent: string) => void
+}
+
+type GeneratedMediaPreview = {
+  src: string
+  title: string
+  type: 'image' | 'video'
 }
 
 function ReferenceLabel({ reference }: { reference: SeedanceReference }) {
@@ -201,6 +213,8 @@ export function PlaygroundChat({
   const { t } = useTranslation()
   const [editText, setEditText] = useState('')
   const [originalText, setOriginalText] = useState('')
+  const [mediaPreview, setMediaPreview] =
+    useState<GeneratedMediaPreview | null>(null)
 
   useEffect(() => {
     if (!editingKey) return
@@ -219,287 +233,362 @@ export function PlaygroundChat({
     [editText, originalText]
   )
   return (
-    <Conversation>
-      {/* Remove outer padding; apply padding to inner centered container to align with input */}
-      <ConversationContent className='p-0'>
-        <div className='mx-auto w-full max-w-4xl px-4 py-4'>
-          {messages.map((message, messageIndex) => {
-            const { versions = [] } = message
-            const isLastAssistantMessage =
-              messageIndex === messages.length - 1 &&
-              message.from === MESSAGE_ROLES.ASSISTANT
-            return (
-              <Branch defaultBranch={0} key={message.key}>
-                <BranchMessages>
-                  {versions.map((version, versionIndex) => (
-                    <Message
-                      className='group flex-row-reverse'
-                      from={message.from}
-                      key={`${message.key}-${version.id}-${versionIndex}`}
-                    >
-                      <div className='w-full min-w-0 flex-1 basis-full py-1'>
-                        {isEditing(message.key) ? (
-                          <div className='space-y-2'>
-                            <Textarea
-                              value={editText}
-                              onChange={(e) => setEditText(e.target.value)}
-                              className='font-mono text-sm'
-                              rows={8}
-                            />
-                            <div className='flex gap-2'>
-                              {/* Save & Submit only makes sense for user messages */}
-                              {message.from === MESSAGE_ROLES.USER && (
+    <>
+      <Conversation>
+        {/* Remove outer padding; apply padding to inner centered container to align with input */}
+        <ConversationContent className='p-0'>
+          <div className='mx-auto w-full max-w-4xl px-4 py-4'>
+            {messages.map((message, messageIndex) => {
+              const { versions = [] } = message
+              const isLastAssistantMessage =
+                messageIndex === messages.length - 1 &&
+                message.from === MESSAGE_ROLES.ASSISTANT
+              return (
+                <Branch defaultBranch={0} key={message.key}>
+                  <BranchMessages>
+                    {versions.map((version, versionIndex) => (
+                      <Message
+                        className='group flex-row-reverse'
+                        from={message.from}
+                        key={`${message.key}-${version.id}-${versionIndex}`}
+                      >
+                        <div className='w-full min-w-0 flex-1 basis-full py-1'>
+                          {isEditing(message.key) ? (
+                            <div className='space-y-2'>
+                              <Textarea
+                                value={editText}
+                                onChange={(e) => setEditText(e.target.value)}
+                                className='font-mono text-sm'
+                                rows={8}
+                              />
+                              <div className='flex gap-2'>
+                                {/* Save & Submit only makes sense for user messages */}
+                                {message.from === MESSAGE_ROLES.USER && (
+                                  <Button
+                                    size='sm'
+                                    onClick={() =>
+                                      onSaveEditAndSubmit?.(editText)
+                                    }
+                                    disabled={isEmpty || !isChanged}
+                                  >
+                                    Save & Submit
+                                  </Button>
+                                )}
                                 <Button
                                   size='sm'
-                                  onClick={() =>
-                                    onSaveEditAndSubmit?.(editText)
-                                  }
+                                  onClick={() => onSaveEdit?.(editText)}
                                   disabled={isEmpty || !isChanged}
                                 >
-                                  Save & Submit
+                                  Save
                                 </Button>
-                              )}
-                              <Button
-                                size='sm'
-                                onClick={() => onSaveEdit?.(editText)}
-                                disabled={isEmpty || !isChanged}
-                              >
-                                Save
-                              </Button>
-                              <Button
-                                size='sm'
-                                variant='outline'
-                                onClick={() => onCancelEdit?.(false)}
-                              >
-                                Cancel
-                              </Button>
+                                <Button
+                                  size='sm'
+                                  variant='outline'
+                                  onClick={() => onCancelEdit?.(false)}
+                                >
+                                  Cancel
+                                </Button>
+                              </div>
                             </div>
-                          </div>
-                        ) : (
-                          <>
-                            {(() => {
-                              const isAssistant =
-                                message.from === MESSAGE_ROLES.ASSISTANT
-                              const hasSources = !!message.sources?.length
-                              const showReasoning =
-                                isAssistant && !!message.reasoning?.content
-                              const showLoader =
-                                isAssistant &&
-                                !message.isReasoningStreaming &&
-                                (message.status === 'loading' ||
-                                  (message.status === 'streaming' &&
-                                    !version.content))
-                              const showMessageContent =
-                                (message.from === MESSAGE_ROLES.USER ||
-                                  !message.isReasoningStreaming) &&
-                                !!version.content
-                              const generatedImages = message.images || []
-                              const generatedVideos = message.videos || []
-                              const seedanceReferences =
-                                message.seedanceReferences || []
-                              const loaderText =
-                                message.activity === 'image_generation'
-                                  ? t('Generating image...')
-                                  : message.activity === 'video_generation'
-                                    ? t('Generating video...')
-                                    : 'Responding...'
+                          ) : (
+                            <>
+                              {(() => {
+                                const isAssistant =
+                                  message.from === MESSAGE_ROLES.ASSISTANT
+                                const hasSources = !!message.sources?.length
+                                const showReasoning =
+                                  isAssistant && !!message.reasoning?.content
+                                const showLoader =
+                                  isAssistant &&
+                                  !message.isReasoningStreaming &&
+                                  (message.status === 'loading' ||
+                                    (message.status === 'streaming' &&
+                                      !version.content))
+                                const showMessageContent =
+                                  (message.from === MESSAGE_ROLES.USER ||
+                                    !message.isReasoningStreaming) &&
+                                  !!version.content
+                                const generatedImages = message.images || []
+                                const generatedVideos = message.videos || []
+                                const seedanceReferences =
+                                  message.seedanceReferences || []
+                                const loaderText =
+                                  message.activity === 'image_generation'
+                                    ? t('Generating image...')
+                                    : message.activity === 'video_generation'
+                                      ? t('Generating video...')
+                                      : 'Responding...'
 
-                              // Extract visible content (remove <think> tags for assistant messages)
-                              const displayContent = isAssistant
-                                ? parseThinkTags(version.content).visibleContent
-                                : version.content
+                                // Extract visible content (remove <think> tags for assistant messages)
+                                const displayContent = isAssistant
+                                  ? parseThinkTags(version.content)
+                                      .visibleContent
+                                  : version.content
 
-                              const actions = (
-                                <MessageActions
-                                  message={message}
-                                  onCopy={onCopyMessage}
-                                  onRegenerate={onRegenerateMessage}
-                                  onEdit={onEditMessage}
-                                  onDelete={onDeleteMessage}
-                                  isGenerating={isGenerating}
-                                  alwaysVisible={isLastAssistantMessage}
-                                  className='mt-1'
-                                />
-                              )
+                                const actions = (
+                                  <MessageActions
+                                    message={message}
+                                    onCopy={onCopyMessage}
+                                    onRegenerate={onRegenerateMessage}
+                                    onEdit={onEditMessage}
+                                    onDelete={onDeleteMessage}
+                                    isGenerating={isGenerating}
+                                    alwaysVisible={isLastAssistantMessage}
+                                    className='mt-1'
+                                  />
+                                )
 
-                              return (
-                                <>
-                                  {/* Sources */}
-                                  {hasSources && (
-                                    <Sources>
-                                      <SourcesTrigger
-                                        count={message.sources!.length}
-                                      />
-                                      <SourcesContent>
-                                        {message.sources!.map(
-                                          (source, sourceIndex) => (
-                                            <Source
-                                              href={source.href}
-                                              key={`${message.key}-source-${sourceIndex}`}
-                                              title={source.title}
-                                            />
-                                          )
-                                        )}
-                                      </SourcesContent>
-                                    </Sources>
-                                  )}
+                                return (
+                                  <>
+                                    {/* Sources */}
+                                    {hasSources && (
+                                      <Sources>
+                                        <SourcesTrigger
+                                          count={message.sources!.length}
+                                        />
+                                        <SourcesContent>
+                                          {message.sources!.map(
+                                            (source, sourceIndex) => (
+                                              <Source
+                                                href={source.href}
+                                                key={`${message.key}-source-${sourceIndex}`}
+                                                title={source.title}
+                                              />
+                                            )
+                                          )}
+                                        </SourcesContent>
+                                      </Sources>
+                                    )}
 
-                                  {/* Reasoning */}
-                                  {showReasoning && (
-                                    <Reasoning
-                                      defaultOpen={true}
-                                      isStreaming={message.isReasoningStreaming}
-                                    >
-                                      <ReasoningTrigger />
-                                      <ReasoningContent>
-                                        {message.reasoning!.content}
-                                      </ReasoningContent>
-                                    </Reasoning>
-                                  )}
+                                    {/* Reasoning */}
+                                    {showReasoning && (
+                                      <Reasoning
+                                        defaultOpen={true}
+                                        isStreaming={
+                                          message.isReasoningStreaming
+                                        }
+                                      >
+                                        <ReasoningTrigger />
+                                        <ReasoningContent>
+                                          {message.reasoning!.content}
+                                        </ReasoningContent>
+                                      </Reasoning>
+                                    )}
 
-                                  {/* Loader */}
-                                  {showLoader && (
-                                    <div className='flex items-center gap-2 py-2'>
-                                      <Loader />
-                                      <Shimmer className='text-sm' duration={1}>
-                                        {loaderText}
-                                      </Shimmer>
-                                    </div>
-                                  )}
+                                    {/* Loader */}
+                                    {showLoader && (
+                                      <div className='flex items-center gap-2 py-2'>
+                                        <Loader />
+                                        <Shimmer
+                                          className='text-sm'
+                                          duration={1}
+                                        >
+                                          {loaderText}
+                                        </Shimmer>
+                                      </div>
+                                    )}
 
-                                  {/* Error or Content */}
-                                  {message.status === 'error' ? (
-                                    <>
-                                      <MessageError
-                                        message={message}
-                                        className='mb-2'
-                                      />
-                                      {actions}
-                                    </>
-                                  ) : (
-                                    (showMessageContent ||
-                                      generatedImages.length > 0 ||
-                                      generatedVideos.length > 0 ||
-                                      seedanceReferences.length > 0) && (
+                                    {/* Error or Content */}
+                                    {message.status === 'error' ? (
                                       <>
-                                        {showMessageContent && (
-                                          <MessageContent
-                                            variant='flat'
-                                            className={cn(
-                                              getMessageContentStyles()
-                                            )}
-                                          >
-                                            <Response>
-                                              {displayContent}
-                                            </Response>
-                                          </MessageContent>
-                                        )}
-                                        {seedanceReferences.length > 0 && (
-                                          <SeedanceReferences
-                                            messageKey={message.key}
-                                            references={seedanceReferences}
-                                          />
-                                        )}
-                                        {generatedImages.length > 0 && (
-                                          <div className='grid grid-cols-1 gap-3 py-2 sm:grid-cols-2'>
-                                            {generatedImages.map(
-                                              (image, imageIndex) => {
-                                                const src = getImageSrc(image)
-                                                if (!src) return null
-
-                                                return (
-                                                  <a
-                                                    className='group/image bg-muted block aspect-square overflow-hidden rounded-lg border'
-                                                    href={src}
-                                                    key={`${message.key}-image-${imageIndex}`}
-                                                    rel='noreferrer'
-                                                    target='_blank'
-                                                  >
-                                                    <img
-                                                      alt={
-                                                        image.revised_prompt ||
-                                                        'Generated image'
-                                                      }
-                                                      className='size-full object-contain transition-transform duration-200 group-hover/image:scale-[1.01]'
-                                                      loading='lazy'
-                                                      src={src}
-                                                    />
-                                                  </a>
-                                                )
-                                              }
-                                            )}
-                                          </div>
-                                        )}
-                                        {generatedVideos.length > 0 && (
-                                          <div className='grid grid-cols-1 gap-3 py-2'>
-                                            {generatedVideos.map(
-                                              (video, videoIndex) => {
-                                                const src = getVideoSrc(video)
-                                                if (!src) return null
-
-                                                return (
-                                                  <div
-                                                    className='bg-muted overflow-hidden rounded-lg border'
-                                                    key={`${message.key}-video-${videoIndex}`}
-                                                  >
-                                                    <video
-                                                      className='aspect-video w-full bg-black object-contain'
-                                                      controls
-                                                      playsInline
-                                                      preload='metadata'
-                                                      src={src}
-                                                    />
-                                                    <div className='flex items-center justify-between gap-2 px-3 py-2'>
-                                                      <span className='text-muted-foreground truncate text-xs'>
-                                                        {video.task_id ||
-                                                          t('Generated video')}
-                                                      </span>
-                                                      <a
-                                                        className='text-muted-foreground hover:text-foreground inline-flex items-center gap-1 text-xs'
-                                                        href={src}
-                                                        rel='noreferrer'
-                                                        target='_blank'
-                                                      >
-                                                        {t('Open')}
-                                                        <ExternalLinkIcon
-                                                          size={12}
-                                                        />
-                                                      </a>
-                                                    </div>
-                                                  </div>
-                                                )
-                                              }
-                                            )}
-                                          </div>
-                                        )}
+                                        <MessageError
+                                          message={message}
+                                          className='mb-2'
+                                        />
                                         {actions}
                                       </>
-                                    )
-                                  )}
-                                </>
-                              )
-                            })()}
-                          </>
-                        )}
-                      </div>
-                    </Message>
-                  ))}
-                </BranchMessages>
+                                    ) : (
+                                      (showMessageContent ||
+                                        generatedImages.length > 0 ||
+                                        generatedVideos.length > 0 ||
+                                        seedanceReferences.length > 0) && (
+                                        <>
+                                          {showMessageContent && (
+                                            <MessageContent
+                                              variant='flat'
+                                              className={cn(
+                                                getMessageContentStyles()
+                                              )}
+                                            >
+                                              <Response>
+                                                {displayContent}
+                                              </Response>
+                                            </MessageContent>
+                                          )}
+                                          {seedanceReferences.length > 0 && (
+                                            <SeedanceReferences
+                                              messageKey={message.key}
+                                              references={seedanceReferences}
+                                            />
+                                          )}
+                                          {generatedImages.length > 0 && (
+                                            <div className='grid grid-cols-1 gap-3 py-2 sm:grid-cols-2'>
+                                              {generatedImages.map(
+                                                (image, imageIndex) => {
+                                                  const src = getImageSrc(image)
+                                                  if (!src) return null
 
-                {/* Branch selector for multiple versions */}
-                {versions.length > 1 && (
-                  <BranchSelector className='px-0' from={message.from}>
-                    <BranchPrevious />
-                    <BranchPage />
-                    <BranchNext />
-                  </BranchSelector>
-                )}
-              </Branch>
-            )
-          })}
-        </div>
-      </ConversationContent>
-      <ConversationScrollButton />
-    </Conversation>
+                                                  return (
+                                                    <button
+                                                      aria-label={t(
+                                                        'Click to preview image'
+                                                      )}
+                                                      className='group/image bg-muted block aspect-square overflow-hidden rounded-lg border'
+                                                      key={`${message.key}-image-${imageIndex}`}
+                                                      onClick={() =>
+                                                        setMediaPreview({
+                                                          src,
+                                                          title:
+                                                            image.revised_prompt ||
+                                                            t(
+                                                              'Generated result {{index}}',
+                                                              {
+                                                                index:
+                                                                  imageIndex +
+                                                                  1,
+                                                              }
+                                                            ),
+                                                          type: 'image',
+                                                        })
+                                                      }
+                                                      type='button'
+                                                    >
+                                                      <img
+                                                        alt={
+                                                          image.revised_prompt ||
+                                                          t('Generated image')
+                                                        }
+                                                        className='size-full object-contain transition-transform duration-200 group-hover/image:scale-[1.01]'
+                                                        loading='lazy'
+                                                        src={src}
+                                                      />
+                                                    </button>
+                                                  )
+                                                }
+                                              )}
+                                            </div>
+                                          )}
+                                          {generatedVideos.length > 0 && (
+                                            <div className='grid grid-cols-1 gap-3 py-2'>
+                                              {generatedVideos.map(
+                                                (video, videoIndex) => {
+                                                  const src = getVideoSrc(video)
+                                                  if (!src) return null
+
+                                                  return (
+                                                    <div
+                                                      className='bg-muted overflow-hidden rounded-lg border'
+                                                      key={`${message.key}-video-${videoIndex}`}
+                                                    >
+                                                      <video
+                                                        className='aspect-video w-full bg-black object-contain'
+                                                        controls
+                                                        playsInline
+                                                        preload='metadata'
+                                                        src={src}
+                                                      />
+                                                      <div className='flex items-center justify-between gap-2 px-3 py-2'>
+                                                        <span className='text-muted-foreground truncate text-xs'>
+                                                          {video.task_id ||
+                                                            t(
+                                                              'Generated video'
+                                                            )}
+                                                        </span>
+                                                        <Button
+                                                          className='text-muted-foreground hover:text-foreground h-7 gap-1 px-2 text-xs'
+                                                          onClick={() =>
+                                                            setMediaPreview({
+                                                              src,
+                                                              title:
+                                                                video.task_id ||
+                                                                t(
+                                                                  'Generated result {{index}}',
+                                                                  {
+                                                                    index:
+                                                                      videoIndex +
+                                                                      1,
+                                                                  }
+                                                                ),
+                                                              type: 'video',
+                                                            })
+                                                          }
+                                                          size='sm'
+                                                          variant='ghost'
+                                                        >
+                                                          {t('Preview')}
+                                                          <ExternalLinkIcon
+                                                            size={12}
+                                                          />
+                                                        </Button>
+                                                      </div>
+                                                    </div>
+                                                  )
+                                                }
+                                              )}
+                                            </div>
+                                          )}
+                                          {actions}
+                                        </>
+                                      )
+                                    )}
+                                  </>
+                                )
+                              })()}
+                            </>
+                          )}
+                        </div>
+                      </Message>
+                    ))}
+                  </BranchMessages>
+
+                  {/* Branch selector for multiple versions */}
+                  {versions.length > 1 && (
+                    <BranchSelector className='px-0' from={message.from}>
+                      <BranchPrevious />
+                      <BranchPage />
+                      <BranchNext />
+                    </BranchSelector>
+                  )}
+                </Branch>
+              )
+            })}
+          </div>
+        </ConversationContent>
+        <ConversationScrollButton />
+      </Conversation>
+
+      <Dialog
+        open={!!mediaPreview}
+        onOpenChange={(open) => {
+          if (!open) setMediaPreview(null)
+        }}
+      >
+        <DialogContent className='sm:max-w-4xl'>
+          <DialogHeader>
+            <DialogTitle>
+              {mediaPreview?.title || t('Result preview')}
+            </DialogTitle>
+          </DialogHeader>
+          <div className='bg-muted/50 flex max-h-[75vh] min-h-[240px] items-center justify-center rounded-lg border'>
+            {mediaPreview?.type === 'image' && (
+              <img
+                alt={mediaPreview.title}
+                className='max-h-[75vh] w-full rounded-lg object-contain'
+                src={mediaPreview.src}
+              />
+            )}
+            {mediaPreview?.type === 'video' && (
+              <video
+                className='max-h-[75vh] w-full rounded-lg bg-black object-contain'
+                controls
+                playsInline
+                preload='metadata'
+                src={mediaPreview.src}
+              />
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
   )
 }

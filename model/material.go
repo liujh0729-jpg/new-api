@@ -15,6 +15,7 @@ type Material struct {
 	UserId      int            `json:"user_id" gorm:"index"`
 	Name        string         `json:"name" gorm:"type:varchar(191);index"`
 	Type        string         `json:"type" gorm:"type:varchar(16);index"`
+	SourceType  string         `json:"source_type" gorm:"type:varchar(16);index;default:material"`
 	MimeType    string         `json:"mime_type" gorm:"type:varchar(128)"`
 	FileName    string         `json:"file_name" gorm:"type:varchar(255)"`
 	Url         string         `json:"url" gorm:"type:varchar(1024)"`
@@ -35,11 +36,26 @@ const (
 	MaterialTypeVideo = "video"
 	MaterialTypeAudio = "audio"
 
+	MaterialSourceTypeUpload   = "material"
+	MaterialSourceTypeAIOutput = "ai_output"
+
 	StorageTypeOSS   = "oss"
 	StorageTypeLocal = "local"
 )
 
+type MaterialSearchFilters struct {
+	Keyword          string
+	TypeFilter       string
+	SourceTypeFilter string
+	CreatedAfter     int64
+	CreatedBefore    int64
+}
+
 func GetMaterialsByUser(userId int, startIdx int, num int) (materials []*Material, total int64, err error) {
+	return SearchMaterialsByUser(userId, MaterialSearchFilters{}, startIdx, num)
+}
+
+func SearchMaterialsByUser(userId int, filters MaterialSearchFilters, startIdx int, num int) (materials []*Material, total int64, err error) {
 	tx := DB.Begin()
 	if tx.Error != nil {
 		return nil, 0, tx.Error
@@ -47,17 +63,20 @@ func GetMaterialsByUser(userId int, startIdx int, num int) (materials []*Materia
 	defer func() {
 		if r := recover(); r != nil {
 			tx.Rollback()
-			err = fmt.Errorf("panic in GetMaterialsByUser: %v", r)
+			err = fmt.Errorf("panic in SearchMaterialsByUser: %v", r)
 		}
 	}()
 
-	err = tx.Model(&Material{}).Where("user_id = ?", userId).Count(&total).Error
+	query := buildMaterialQuery(tx.Model(&Material{}).Where("user_id = ?", userId), filters)
+
+	err = query.Count(&total).Error
 	if err != nil {
 		tx.Rollback()
 		return nil, 0, err
 	}
 
-	err = tx.Where("user_id = ?", userId).Order("id desc").Limit(num).Offset(startIdx).Find(&materials).Error
+	query = buildMaterialQuery(tx.Model(&Material{}).Where("user_id = ?", userId), filters)
+	err = query.Order("id DESC").Offset(startIdx).Limit(num).Find(&materials).Error
 	if err != nil {
 		tx.Rollback()
 		return nil, 0, err
@@ -70,20 +89,8 @@ func GetMaterialsByUser(userId int, startIdx int, num int) (materials []*Materia
 	return materials, total, nil
 }
 
-func SearchMaterialsByUser(userId int, keyword string, typeFilter string, startIdx int, num int) (materials []*Material, total int64, err error) {
-	tx := DB.Begin()
-	if tx.Error != nil {
-		return nil, 0, tx.Error
-	}
-	defer func() {
-		if r := recover(); r != nil {
-			tx.Rollback()
-			err = fmt.Errorf("panic in SearchMaterialsByUser: %v", r)
-		}
-	}()
-
-	query := tx.Model(&Material{}).Where("user_id = ?", userId)
-
+func buildMaterialQuery(query *gorm.DB, filters MaterialSearchFilters) *gorm.DB {
+	keyword := strings.TrimSpace(filters.Keyword)
 	if keyword != "" {
 		nameCol := "`name`"
 		if common.UsingPostgreSQL {
@@ -91,30 +98,25 @@ func SearchMaterialsByUser(userId int, keyword string, typeFilter string, startI
 		}
 		query = query.Where(nameCol+" LIKE ?", "%"+keyword+"%")
 	}
-	typeFilters := normalizeMaterialTypeFilters(typeFilter)
+
+	typeFilters := normalizeMaterialTypeFilters(filters.TypeFilter)
 	if len(typeFilters) == 1 {
 		query = query.Where("type = ?", typeFilters[0])
 	} else if len(typeFilters) > 1 {
 		query = query.Where("type IN ?", typeFilters)
 	}
 
-	err = query.Count(&total).Error
-	if err != nil {
-		tx.Rollback()
-		return nil, 0, err
+	sourceTypeFilters := normalizeMaterialSourceTypeFilters(filters.SourceTypeFilter)
+	query = applyMaterialSourceTypeFilter(query, sourceTypeFilters)
+
+	if filters.CreatedAfter > 0 {
+		query = query.Where("created_time >= ?", filters.CreatedAfter)
+	}
+	if filters.CreatedBefore > 0 {
+		query = query.Where("created_time <= ?", filters.CreatedBefore)
 	}
 
-	err = query.Order("id desc").Limit(num).Offset(startIdx).Find(&materials).Error
-	if err != nil {
-		tx.Rollback()
-		return nil, 0, err
-	}
-
-	if err = tx.Commit().Error; err != nil {
-		return nil, 0, err
-	}
-
-	return materials, total, nil
+	return query
 }
 
 func normalizeMaterialTypeFilters(typeFilter string) []string {
@@ -136,6 +138,34 @@ func normalizeMaterialTypeFilters(typeFilter string) []string {
 	return filters
 }
 
+func normalizeMaterialSourceTypeFilters(sourceTypeFilter string) []string {
+	allowed := map[string]bool{
+		MaterialSourceTypeUpload:   true,
+		MaterialSourceTypeAIOutput: true,
+	}
+	seen := make(map[string]bool)
+	filters := make([]string, 0, 2)
+	for _, item := range strings.Split(sourceTypeFilter, ",") {
+		item = strings.ToLower(strings.TrimSpace(item))
+		if !allowed[item] || seen[item] {
+			continue
+		}
+		seen[item] = true
+		filters = append(filters, item)
+	}
+	return filters
+}
+
+func applyMaterialSourceTypeFilter(query *gorm.DB, sourceTypes []string) *gorm.DB {
+	if len(sourceTypes) == 0 || len(sourceTypes) == 2 {
+		return query
+	}
+	if sourceTypes[0] == MaterialSourceTypeUpload {
+		return query.Where("(source_type = ? OR source_type = ? OR source_type IS NULL)", MaterialSourceTypeUpload, "")
+	}
+	return query.Where("source_type = ?", sourceTypes[0])
+}
+
 func GetMaterialByIdAndUser(id int, userId int) (*Material, error) {
 	if id == 0 {
 		return nil, errors.New("id 为空！")
@@ -155,6 +185,38 @@ func (m *Material) Insert() error {
 	return DB.Create(m).Error
 }
 
+func CreateGeneratedMaterial(material *Material) (*Material, error) {
+	if material == nil {
+		return nil, errors.New("material is nil")
+	}
+	if material.UserId == 0 {
+		return nil, errors.New("user id is required")
+	}
+	if strings.TrimSpace(material.Url) == "" {
+		return nil, errors.New("material url is required")
+	}
+	material.SourceType = MaterialSourceTypeAIOutput
+
+	var existing Material
+	err := DB.Where(
+		"user_id = ? AND url = ? AND source_type = ?",
+		material.UserId,
+		material.Url,
+		MaterialSourceTypeAIOutput,
+	).First(&existing).Error
+	if err == nil {
+		return &existing, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+
+	if err = DB.Create(material).Error; err != nil {
+		return nil, err
+	}
+	return material, nil
+}
+
 func (m *Material) UpdateName() error {
 	return DB.Model(m).Select("name", "updated_time").Updates(m).Error
 }
@@ -172,4 +234,13 @@ func DeleteMaterialByIdAndUser(id int, userId int) error {
 		return err
 	}
 	return material.Delete()
+}
+
+func EnsureMaterialSourceTypeDefault() error {
+	if !DB.Migrator().HasColumn(&Material{}, "source_type") {
+		return nil
+	}
+	return DB.Model(&Material{}).
+		Where("source_type = ? OR source_type IS NULL", "").
+		Update("source_type", MaterialSourceTypeUpload).Error
 }

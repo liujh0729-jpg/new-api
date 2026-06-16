@@ -286,6 +286,9 @@ func migrateDB() error {
 	if err != nil {
 		return err
 	}
+	if err := EnsureMaterialSourceTypeDefault(); err != nil {
+		return err
+	}
 	if common.UsingSQLite {
 		if err := ensureSubscriptionPlanTableSQLite(); err != nil {
 			return err
@@ -370,6 +373,9 @@ func migrateDBFast() error {
 		if err := DB.AutoMigrate(&SubscriptionPlan{}); err != nil {
 			return err
 		}
+	}
+	if err := EnsureMaterialSourceTypeDefault(); err != nil {
+		return err
 	}
 	if err := EnsureAIPDDDefaults(); err != nil {
 		return err

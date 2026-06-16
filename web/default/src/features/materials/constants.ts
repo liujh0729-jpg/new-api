@@ -4,6 +4,18 @@ export const MATERIAL_TYPE = {
   AUDIO: 'audio',
 } as const
 
+export const MATERIAL_SOURCE_TYPE = {
+  MATERIAL: 'material',
+  AI_OUTPUT: 'ai_output',
+} as const
+
+export const MATERIAL_TIME_FILTER = {
+  TODAY: 'today',
+  LAST_7_DAYS: 'last_7_days',
+  LAST_30_DAYS: 'last_30_days',
+  LAST_90_DAYS: 'last_90_days',
+} as const
+
 export const ACCEPTED_FILE_TYPES = 'image/*,video/*,audio/*'
 export const MAX_UPLOAD_SIZE_MB = 300
 export const MAX_UPLOAD_SIZE_BYTES = MAX_UPLOAD_SIZE_MB * 1024 * 1024

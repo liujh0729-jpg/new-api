@@ -16,15 +16,18 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect, useMemo } from 'react'
+import { useAuthStore } from '@/stores/auth-store'
 import { DEFAULT_CONFIG, DEFAULT_PARAMETER_ENABLED } from '../constants'
 import {
+  createPlaygroundConversation,
+  getConversationTitle,
   loadConfig,
-  saveConfig,
+  loadConversationState,
   loadParameterEnabled,
+  saveConfig,
+  saveConversationState,
   saveParameterEnabled,
-  loadMessages,
-  saveMessages,
 } from '../lib'
 import type {
   Message,
@@ -32,67 +35,158 @@ import type {
   ParameterEnabled,
   ModelOption,
   GroupOption,
+  PlaygroundConversation,
+  PlaygroundConversationState,
 } from '../types'
+
+type MessagesUpdater = Message[] | ((prev: Message[]) => Message[])
+type ConversationStateUpdater =
+  | PlaygroundConversationState
+  | ((prev: PlaygroundConversationState) => PlaygroundConversationState)
+
+function loadDefaultConfig(): PlaygroundConfig {
+  return { ...DEFAULT_CONFIG, ...loadConfig() }
+}
+
+function loadDefaultParameterEnabled(): ParameterEnabled {
+  return { ...DEFAULT_PARAMETER_ENABLED, ...loadParameterEnabled() }
+}
+
+function loadInitialConversationState(
+  userId?: number | string | null
+): PlaygroundConversationState {
+  return loadConversationState(
+    userId,
+    loadDefaultConfig(),
+    loadDefaultParameterEnabled()
+  )
+}
+
+function getActiveConversation(
+  state: PlaygroundConversationState
+): PlaygroundConversation {
+  return (
+    state.conversations.find(
+      (conversation) => conversation.id === state.activeConversationId
+    ) || state.conversations[0]!
+  )
+}
+
+function sortConversations(
+  conversations: PlaygroundConversation[]
+): PlaygroundConversation[] {
+  return [...conversations].sort((a, b) => b.updatedAt - a.updatedAt)
+}
+
+function replaceConversation(
+  state: PlaygroundConversationState,
+  conversation: PlaygroundConversation
+): PlaygroundConversationState {
+  return {
+    ...state,
+    conversations: state.conversations.map((item) =>
+      item.id === conversation.id ? conversation : item
+    ),
+  }
+}
 
 /**
  * Main state management hook for playground
  */
 export function usePlaygroundState() {
-  // Load initial state from localStorage
-  const [config, setConfig] = useState<PlaygroundConfig>(() => {
-    const savedConfig = loadConfig()
-    return { ...DEFAULT_CONFIG, ...savedConfig }
-  })
-
-  const [parameterEnabled, setParameterEnabled] = useState<ParameterEnabled>(
-    () => {
-      const saved = loadParameterEnabled()
-      return { ...DEFAULT_PARAMETER_ENABLED, ...saved }
-    }
-  )
-
-  const [messages, setMessages] = useState<Message[]>(() => {
-    return loadMessages() || []
-  })
-
+  const userId = useAuthStore((state) => state.auth.user?.id)
+  const [conversationState, setConversationState] =
+    useState<PlaygroundConversationState>(() =>
+      loadInitialConversationState(userId)
+    )
   const [models, setModels] = useState<ModelOption[]>([])
   const [groups, setGroups] = useState<GroupOption[]>([])
+
+  useEffect(() => {
+    setConversationState(loadInitialConversationState(userId))
+  }, [userId])
+
+  const persistConversationState = useCallback(
+    (updater: ConversationStateUpdater) => {
+      setConversationState((prev) => {
+        const nextState =
+          typeof updater === 'function' ? updater(prev) : updater
+        saveConversationState(userId, nextState)
+        return nextState
+      })
+    },
+    [userId]
+  )
+
+  const activeConversation = getActiveConversation(conversationState)
+  const config = activeConversation.config
+  const parameterEnabled = activeConversation.parameterEnabled
+  const messages = activeConversation.messages
+  const conversations = useMemo(
+    () => sortConversations(conversationState.conversations),
+    [conversationState.conversations]
+  )
 
   // Update config with automatic save
   const updateConfig = useCallback(
     <K extends keyof PlaygroundConfig>(key: K, value: PlaygroundConfig[K]) => {
-      setConfig((prev) => {
-        const updated = { ...prev, [key]: value }
-        saveConfig(updated)
-        return updated
+      persistConversationState((prev) => {
+        const active = getActiveConversation(prev)
+        const updatedConfig = { ...active.config, [key]: value }
+        const updatedConversation = {
+          ...active,
+          config: updatedConfig,
+          title: getConversationTitle(active.messages, updatedConfig.mode),
+          updatedAt: Date.now(),
+        }
+
+        saveConfig(updatedConfig)
+        return replaceConversation(prev, updatedConversation)
       })
     },
-    []
+    [persistConversationState]
   )
 
   // Update parameter enabled with automatic save
   const updateParameterEnabled = useCallback(
     (key: keyof ParameterEnabled, value: boolean) => {
-      setParameterEnabled((prev) => {
-        const updated = { ...prev, [key]: value }
-        saveParameterEnabled(updated)
-        return updated
+      persistConversationState((prev) => {
+        const active = getActiveConversation(prev)
+        const updatedParameterEnabled = {
+          ...active.parameterEnabled,
+          [key]: value,
+        }
+        const updatedConversation = {
+          ...active,
+          parameterEnabled: updatedParameterEnabled,
+          updatedAt: Date.now(),
+        }
+
+        saveParameterEnabled(updatedParameterEnabled)
+        return replaceConversation(prev, updatedConversation)
       })
     },
-    []
+    [persistConversationState]
   )
 
   // Update messages with automatic save
   const updateMessages = useCallback(
-    (updater: Message[] | ((prev: Message[]) => Message[])) => {
-      setMessages((prev) => {
-        const newMessages =
-          typeof updater === 'function' ? updater(prev) : updater
-        saveMessages(newMessages)
-        return newMessages
+    (updater: MessagesUpdater) => {
+      persistConversationState((prev) => {
+        const active = getActiveConversation(prev)
+        const nextMessages =
+          typeof updater === 'function' ? updater(active.messages) : updater
+        const updatedConversation = {
+          ...active,
+          messages: nextMessages,
+          title: getConversationTitle(nextMessages, active.config.mode),
+          updatedAt: Date.now(),
+        }
+
+        return replaceConversation(prev, updatedConversation)
       })
     },
-    []
+    [persistConversationState]
   )
 
   // Clear all messages
@@ -100,16 +194,102 @@ export function usePlaygroundState() {
     updateMessages([])
   }, [updateMessages])
 
+  const createConversation = useCallback(() => {
+    persistConversationState((prev) => {
+      const active = getActiveConversation(prev)
+      if (active.messages.length === 0) return prev
+
+      const conversation = createPlaygroundConversation(
+        loadDefaultConfig(),
+        loadDefaultParameterEnabled()
+      )
+      return {
+        ...prev,
+        activeConversationId: conversation.id,
+        conversations: [conversation, ...prev.conversations],
+      }
+    })
+  }, [persistConversationState])
+
+  const selectConversation = useCallback(
+    (conversationId: string) => {
+      persistConversationState((prev) => {
+        if (
+          prev.activeConversationId === conversationId ||
+          !prev.conversations.some(
+            (conversation) => conversation.id === conversationId
+          )
+        ) {
+          return prev
+        }
+
+        return {
+          ...prev,
+          activeConversationId: conversationId,
+        }
+      })
+    },
+    [persistConversationState]
+  )
+
+  const deleteConversation = useCallback(
+    (conversationId: string) => {
+      persistConversationState((prev) => {
+        const remaining = prev.conversations.filter(
+          (conversation) => conversation.id !== conversationId
+        )
+
+        if (remaining.length === prev.conversations.length) return prev
+
+        if (remaining.length === 0) {
+          const conversation = createPlaygroundConversation(
+            loadDefaultConfig(),
+            loadDefaultParameterEnabled()
+          )
+          return {
+            ...prev,
+            activeConversationId: conversation.id,
+            conversations: [conversation],
+          }
+        }
+
+        const activeConversationId =
+          prev.activeConversationId === conversationId
+            ? sortConversations(remaining)[0]!.id
+            : prev.activeConversationId
+
+        return {
+          ...prev,
+          activeConversationId,
+          conversations: remaining,
+        }
+      })
+    },
+    [persistConversationState]
+  )
+
   // Reset config to defaults
   const resetConfig = useCallback(() => {
-    setConfig(DEFAULT_CONFIG)
-    setParameterEnabled(DEFAULT_PARAMETER_ENABLED)
-    saveConfig(DEFAULT_CONFIG)
-    saveParameterEnabled(DEFAULT_PARAMETER_ENABLED)
-  }, [])
+    persistConversationState((prev) => {
+      const active = getActiveConversation(prev)
+      const updatedConversation = {
+        ...active,
+        config: DEFAULT_CONFIG,
+        parameterEnabled: DEFAULT_PARAMETER_ENABLED,
+        title: getConversationTitle(active.messages, DEFAULT_CONFIG.mode),
+        updatedAt: Date.now(),
+      }
+
+      saveConfig(DEFAULT_CONFIG)
+      saveParameterEnabled(DEFAULT_PARAMETER_ENABLED)
+      return replaceConversation(prev, updatedConversation)
+    })
+  }, [persistConversationState])
 
   return {
     // State
+    activeConversationId: conversationState.activeConversationId,
+    conversations,
     config,
     parameterEnabled,
     messages,
@@ -125,6 +305,9 @@ export function usePlaygroundState() {
     updateParameterEnabled,
     updateMessages,
     clearMessages,
+    createConversation,
+    selectConversation,
+    deleteConversation,
     resetConfig,
   }
 }

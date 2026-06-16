@@ -20,6 +20,7 @@ export type TestFieldType =
   | 'text'
   | 'textarea'
   | 'number'
+  | 'range'
   | 'select'
   | 'checkbox'
   | 'url'
@@ -37,6 +38,12 @@ export type TestField = {
   example?: string | boolean
   options?: string[]
   attrs?: Record<string, string>
+  range?: {
+    min: number
+    max: number
+    step?: number
+    unit?: string
+  }
   file?: boolean
   fileLabelKey?: string
 }
@@ -76,10 +83,15 @@ function videoSeedanceFields(examplePrompt: string): TestField[] {
     {
       key: 'duration',
       labelKey: 'Duration',
-      type: 'select',
+      type: 'range',
       optional: true,
       example: '5',
-      options: ['5', '10'],
+      range: {
+        min: 4,
+        max: 15,
+        step: 1,
+        unit: 's',
+      },
     },
     {
       key: 'ratio',

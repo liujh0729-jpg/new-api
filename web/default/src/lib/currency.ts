@@ -422,6 +422,58 @@ export function formatBillingCurrencyFromUSD(
 }
 
 /**
+ * Convert a USD billing amount into the current billing display currency.
+ *
+ * Billing displays intentionally fall back to USD when the general quota
+ * display mode is tokens-only.
+ */
+export function billingCurrencyFromUSD(
+  amountUSD: number | null | undefined
+): number {
+  if (amountUSD == null || Number.isNaN(amountUSD)) return 0
+
+  const config = getConfig()
+  const meta = getBillingDisplayMeta(config)
+  const exchangeRate =
+    meta.kind === 'currency' || meta.kind === 'custom' ? meta.exchangeRate : 1
+
+  return amountUSD * exchangeRate
+}
+
+/**
+ * Convert a value entered in the current billing display currency back to USD.
+ */
+export function billingCurrencyToUSD(
+  amount: number | null | undefined
+): number {
+  if (amount == null || Number.isNaN(amount)) return 0
+
+  const config = getConfig()
+  const meta = getBillingDisplayMeta(config)
+  const exchangeRate =
+    meta.kind === 'currency' || meta.kind === 'custom' ? meta.exchangeRate : 1
+
+  return exchangeRate > 0 ? amount / exchangeRate : amount
+}
+
+export function getBillingCurrencyLabel(): string {
+  const config = getConfig()
+  const meta = getBillingDisplayMeta(config)
+
+  if (meta.kind === 'currency') return meta.currencyCode
+  if (meta.kind === 'custom') return meta.symbol
+  return 'USD'
+}
+
+export function getBillingCurrencySymbol(): string {
+  const config = getConfig()
+  const meta = getBillingDisplayMeta(config)
+
+  if (meta.kind === 'currency' || meta.kind === 'custom') return meta.symbol
+  return '$'
+}
+
+/**
  * Format raw quota values (token units) to display currency.
  *
  * Converts raw quota/token amounts to USD first, then formats according

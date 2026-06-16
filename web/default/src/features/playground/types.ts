@@ -141,6 +141,7 @@ export interface ImageGenerationRequest {
   group?: string
   prompt: string
   image?: string
+  images?: string[]
   size?: string
   quality?: string
   n?: number
@@ -233,6 +234,22 @@ export interface ParameterEnabled {
   frequency_penalty: boolean
   presence_penalty: boolean
   seed: boolean
+}
+
+export interface PlaygroundConversation {
+  id: string
+  title: string
+  config: PlaygroundConfig
+  parameterEnabled: ParameterEnabled
+  messages: Message[]
+  createdAt: number
+  updatedAt: number
+}
+
+export interface PlaygroundConversationState {
+  version: 1
+  activeConversationId: string
+  conversations: PlaygroundConversation[]
 }
 
 // Model and group options

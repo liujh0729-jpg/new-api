@@ -9,9 +9,9 @@ import {
 } from '@/components/ui/dialog'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Skeleton } from '@/components/ui/skeleton'
-import { useMaterials } from './materials-provider'
-import { formatFileSize } from '../lib'
 import { MATERIAL_TYPE } from '../constants'
+import { formatFileSize, getMaterialPreviewUrl } from '../lib'
+import { useMaterials } from './materials-provider'
 
 export function MaterialsPreviewDialog() {
   const { t } = useTranslation()
@@ -38,6 +38,7 @@ export function MaterialsPreviewDialog() {
   }
 
   if (!previewMaterial) return null
+  const previewUrl = getMaterialPreviewUrl(previewMaterial.id)
 
   return (
     <Dialog open={!!previewMaterial} onOpenChange={handleOpenChange}>
@@ -66,7 +67,7 @@ export function MaterialsPreviewDialog() {
 
               {previewMaterial.type === MATERIAL_TYPE.IMAGE && (
                 <img
-                  src={previewMaterial.url}
+                  src={previewUrl}
                   alt={previewMaterial.name}
                   className={`max-h-[65vh] w-full rounded-lg object-contain ${
                     isLoading || hasError ? 'opacity-0' : 'opacity-100'
@@ -78,7 +79,7 @@ export function MaterialsPreviewDialog() {
 
               {previewMaterial.type === MATERIAL_TYPE.VIDEO && (
                 <video
-                  src={previewMaterial.url}
+                  src={previewUrl}
                   controls
                   playsInline
                   className={`max-h-[65vh] w-full rounded-lg ${
@@ -92,7 +93,7 @@ export function MaterialsPreviewDialog() {
               {previewMaterial.type === MATERIAL_TYPE.AUDIO && (
                 <div className='w-full px-8 py-12'>
                   <audio
-                    src={previewMaterial.url}
+                    src={previewUrl}
                     controls
                     className='w-full'
                     onLoadedMetadata={handleMediaLoad}
@@ -112,7 +113,7 @@ export function MaterialsPreviewDialog() {
 
             <div className='bg-muted mt-4 rounded-md p-3'>
               <p className='text-muted-foreground font-mono text-xs break-all'>
-                {previewMaterial.url}
+                {previewUrl}
               </p>
             </div>
           </div>

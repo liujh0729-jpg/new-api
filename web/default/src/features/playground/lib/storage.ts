@@ -16,9 +16,169 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { DEFAULT_VIDEO_DURATION, STORAGE_KEYS } from '../constants'
-import type { PlaygroundConfig, ParameterEnabled, Message } from '../types'
+import { nanoid } from 'nanoid'
+import {
+  DEFAULT_CONFIG,
+  DEFAULT_PARAMETER_ENABLED,
+  DEFAULT_VIDEO_DURATION,
+  STORAGE_KEYS,
+  normalizeVideoDurationForModel,
+} from '../constants'
+import type {
+  PlaygroundConfig,
+  ParameterEnabled,
+  Message,
+  PlaygroundConversation,
+  PlaygroundConversationState,
+  PlaygroundMode,
+} from '../types'
 import { sanitizeMessagesOnLoad } from './message-utils'
+
+const CONVERSATION_STATE_VERSION = 1 as const
+const CONVERSATION_TITLE_MAX_LENGTH = 60
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+export function getConversationStorageKey(
+  userId?: number | string | null
+): string {
+  const suffix = userId === undefined || userId === null ? 'anonymous' : userId
+  return `${STORAGE_KEYS.CONVERSATIONS_PREFIX}_user_${suffix}`
+}
+
+function truncateTitle(title: string): string {
+  if (title.length <= CONVERSATION_TITLE_MAX_LENGTH) return title
+  return `${title.slice(0, CONVERSATION_TITLE_MAX_LENGTH - 3).trimEnd()}...`
+}
+
+export function getConversationTitle(
+  messages: Message[],
+  mode: PlaygroundMode
+): string {
+  const firstUserText =
+    messages
+      .find((message) => message.from === 'user')
+      ?.versions?.[0]?.content?.replace(/\s+/g, ' ')
+      .trim() || ''
+
+  if (firstUserText) return truncateTitle(firstUserText)
+  if (mode === 'image') return 'Image conversation'
+  if (mode === 'video') return 'Video conversation'
+  return 'New conversation'
+}
+
+export function createPlaygroundConversation(
+  config: PlaygroundConfig,
+  parameterEnabled: ParameterEnabled,
+  messages: Message[] = []
+): PlaygroundConversation {
+  const now = Date.now()
+  return {
+    id: nanoid(),
+    title: getConversationTitle(messages, config.mode),
+    config,
+    parameterEnabled,
+    messages,
+    createdAt: now,
+    updatedAt: now,
+  }
+}
+
+function createDefaultConversationState(
+  config: PlaygroundConfig,
+  parameterEnabled: ParameterEnabled
+): PlaygroundConversationState {
+  const conversation = createPlaygroundConversation(config, parameterEnabled)
+  return {
+    version: CONVERSATION_STATE_VERSION,
+    activeConversationId: conversation.id,
+    conversations: [conversation],
+  }
+}
+
+function normalizeConversation(
+  value: unknown,
+  configFallback: PlaygroundConfig,
+  parameterFallback: ParameterEnabled
+): PlaygroundConversation | null {
+  if (!isObject(value)) return null
+
+  const id = typeof value.id === 'string' && value.id ? value.id : nanoid()
+  const config = (
+    isObject(value.config)
+      ? { ...DEFAULT_CONFIG, ...configFallback, ...value.config }
+      : configFallback
+  ) as PlaygroundConfig
+  const parameterEnabled = (
+    isObject(value.parameterEnabled)
+      ? {
+          ...DEFAULT_PARAMETER_ENABLED,
+          ...parameterFallback,
+          ...value.parameterEnabled,
+        }
+      : parameterFallback
+  ) as ParameterEnabled
+  const messages = Array.isArray(value.messages)
+    ? sanitizeMessagesOnLoad(value.messages as Message[])
+    : []
+  const createdAt =
+    typeof value.createdAt === 'number' && Number.isFinite(value.createdAt)
+      ? value.createdAt
+      : Date.now()
+  const updatedAt =
+    typeof value.updatedAt === 'number' && Number.isFinite(value.updatedAt)
+      ? value.updatedAt
+      : createdAt
+  const title =
+    typeof value.title === 'string' && value.title.trim()
+      ? value.title.trim()
+      : getConversationTitle(messages, config.mode)
+
+  return {
+    id,
+    title,
+    config,
+    parameterEnabled,
+    messages,
+    createdAt,
+    updatedAt,
+  }
+}
+
+function normalizeConversationState(
+  value: unknown,
+  configFallback: PlaygroundConfig,
+  parameterFallback: ParameterEnabled
+): PlaygroundConversationState | null {
+  if (!isObject(value) || !Array.isArray(value.conversations)) return null
+
+  const conversations = value.conversations
+    .map((conversation) =>
+      normalizeConversation(conversation, configFallback, parameterFallback)
+    )
+    .filter(
+      (conversation): conversation is PlaygroundConversation =>
+        conversation !== null
+    )
+
+  if (conversations.length === 0) return null
+
+  const activeConversationId =
+    typeof value.activeConversationId === 'string' &&
+    conversations.some(
+      (conversation) => conversation.id === value.activeConversationId
+    )
+      ? value.activeConversationId
+      : [...conversations].sort((a, b) => b.updatedAt - a.updatedAt)[0].id
+
+  return {
+    version: CONVERSATION_STATE_VERSION,
+    activeConversationId,
+    conversations,
+  }
+}
 
 /**
  * Load playground config from localStorage
@@ -42,6 +202,12 @@ export function loadConfig(): Partial<PlaygroundConfig> {
           'true'
         )
         return migrated
+      }
+      if (typeof config.video_duration === 'number') {
+        config.video_duration = normalizeVideoDurationForModel(
+          config.model || '',
+          config.video_duration
+        )
       }
       return config
     }
@@ -128,6 +294,51 @@ export function saveMessages(messages: Message[]): void {
   } catch (error) {
     // eslint-disable-next-line no-console
     console.error('Failed to save messages:', error)
+  }
+}
+
+/**
+ * Load user-scoped playground conversations from localStorage.
+ */
+export function loadConversationState(
+  userId: number | string | null | undefined,
+  configFallback: PlaygroundConfig,
+  parameterFallback: ParameterEnabled
+): PlaygroundConversationState {
+  try {
+    const saved = localStorage.getItem(getConversationStorageKey(userId))
+    if (saved) {
+      const normalized = normalizeConversationState(
+        JSON.parse(saved),
+        configFallback,
+        parameterFallback
+      )
+      if (normalized) return normalized
+    }
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error('Failed to load playground conversations:', error)
+  }
+
+  return createDefaultConversationState(configFallback, parameterFallback)
+}
+
+/**
+ * Save user-scoped playground conversations to localStorage.
+ */
+export function saveConversationState(
+  userId: number | string | null | undefined,
+  state: PlaygroundConversationState
+): void {
+  try {
+    localStorage.setItem(
+      getConversationStorageKey(userId),
+      JSON.stringify(state)
+    )
+    localStorage.removeItem(STORAGE_KEYS.MESSAGES)
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error('Failed to save playground conversations:', error)
   }
 }
 

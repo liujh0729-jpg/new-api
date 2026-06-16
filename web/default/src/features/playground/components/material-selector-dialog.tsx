@@ -18,7 +18,6 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useState, useEffect, useCallback } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { useTranslation } from 'react-i18next'
 import {
   Image,
   Video,
@@ -28,6 +27,8 @@ import {
   SearchIcon,
   X,
 } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
+import { Button } from '@/components/ui/button'
 import {
   Dialog,
   DialogContent,
@@ -35,7 +36,6 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
-import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import {
   Select,
@@ -47,7 +47,7 @@ import {
 } from '@/components/ui/select'
 import { usePromptInputAttachments } from '@/components/ai-elements/prompt-input'
 import { searchMaterials } from '@/features/materials/api'
-import { formatFileSize } from '@/features/materials/lib'
+import { formatFileSize, getMaterialPreviewUrl } from '@/features/materials/lib'
 import type { Material } from '@/features/materials/types'
 
 const PAGE_SIZE_OPTIONS = [12, 24, 48]
@@ -133,18 +133,19 @@ export function MaterialSelectorDialog({
 
   const renderCard = (material: Material) => {
     const isImage = material.type === 'image'
+    const previewUrl = getMaterialPreviewUrl(material.id)
 
     return (
       <button
         key={material.id}
-        className='group flex flex-col overflow-hidden rounded-lg border bg-card text-left transition-colors hover:border-primary/50 hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none'
+        className='group bg-card hover:border-primary/50 hover:bg-accent/50 focus-visible:ring-ring flex flex-col overflow-hidden rounded-lg border text-left transition-colors focus-visible:ring-2 focus-visible:outline-none'
         onClick={() => handleSelect(material)}
         type='button'
       >
-        <div className='relative aspect-video overflow-hidden bg-muted'>
+        <div className='bg-muted relative aspect-video overflow-hidden'>
           {isImage && material.url ? (
             <img
-              src={material.url}
+              src={previewUrl}
               alt={material.name}
               className='h-full w-full object-cover transition-transform group-hover:scale-105'
               loading='lazy'
@@ -154,15 +155,13 @@ export function MaterialSelectorDialog({
               {renderIcon(material.type)}
             </div>
           )}
-          <div className='absolute right-1.5 top-1.5 rounded bg-background/80 px-1.5 py-0.5 text-xs font-medium backdrop-blur-sm'>
+          <div className='bg-background/80 absolute top-1.5 right-1.5 rounded px-1.5 py-0.5 text-xs font-medium backdrop-blur-sm'>
             {material.type}
           </div>
         </div>
         <div className='flex flex-col gap-0.5 p-2.5'>
-          <div className='truncate text-sm font-medium'>
-            {material.name}
-          </div>
-          <div className='flex items-center gap-1.5 text-xs text-muted-foreground'>
+          <div className='truncate text-sm font-medium'>{material.name}</div>
+          <div className='text-muted-foreground flex items-center gap-1.5 text-xs'>
             {renderIcon(material.type)}
             <span>{formatFileSize(material.file_size)}</span>
           </div>
@@ -190,7 +189,7 @@ export function MaterialSelectorDialog({
 
         <div className='flex items-center gap-3'>
           <div className='relative flex-1'>
-            <SearchIcon className='absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground' />
+            <SearchIcon className='text-muted-foreground absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2' />
             <Input
               placeholder={t('Search materials...')}
               value={keyword}
@@ -201,7 +200,7 @@ export function MaterialSelectorDialog({
               <Button
                 variant='ghost'
                 size='icon'
-                className='absolute right-1 top-1/2 h-7 w-7 -translate-y-1/2'
+                className='absolute top-1/2 right-1 h-7 w-7 -translate-y-1/2'
                 onClick={() => setKeyword('')}
               >
                 <X className='h-4 w-4' />
@@ -231,15 +230,15 @@ export function MaterialSelectorDialog({
             <div className='grid grid-cols-2 gap-3 p-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5'>
               {Array.from({ length: pageSize }).map((_, i) => (
                 <div key={i} className='flex flex-col gap-2'>
-                  <div className='aspect-video animate-pulse rounded-lg bg-muted' />
-                  <div className='h-4 w-3/4 animate-pulse rounded bg-muted' />
-                  <div className='h-3 w-1/2 animate-pulse rounded bg-muted' />
+                  <div className='bg-muted aspect-video animate-pulse rounded-lg' />
+                  <div className='bg-muted h-4 w-3/4 animate-pulse rounded' />
+                  <div className='bg-muted h-3 w-1/2 animate-pulse rounded' />
                 </div>
               ))}
             </div>
           ) : materials.length === 0 ? (
             <div className='flex h-full items-center justify-center py-24'>
-              <p className='text-sm text-muted-foreground'>
+              <p className='text-muted-foreground text-sm'>
                 {t('No materials found')}
               </p>
             </div>
@@ -252,10 +251,8 @@ export function MaterialSelectorDialog({
 
         {totalPages > 1 && (
           <div className='flex items-center justify-between'>
-            <div className='flex items-center gap-2 text-sm text-muted-foreground'>
-              <span>
-                {t('Total {{count}} materials', { count: total })}
-              </span>
+            <div className='text-muted-foreground flex items-center gap-2 text-sm'>
+              <span>{t('Total {{count}} materials', { count: total })}</span>
               <Select
                 items={PAGE_SIZE_OPTIONS.map((ps) => ({
                   value: `${ps}`,

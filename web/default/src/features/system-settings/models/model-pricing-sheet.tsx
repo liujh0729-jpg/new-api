@@ -22,6 +22,14 @@ import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { AlertTriangle, ChevronDown } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import { useSystemConfigStore } from '@/stores/system-config-store'
+import {
+  billingCurrencyFromUSD,
+  billingCurrencyToUSD,
+  formatBillingCurrencyFromUSD,
+  getBillingCurrencyLabel,
+  getBillingCurrencySymbol,
+} from '@/lib/currency'
 import { cn } from '@/lib/utils'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
@@ -222,6 +230,28 @@ function formatNumber(value: unknown): string {
   return Number.parseFloat(num.toFixed(12)).toString()
 }
 
+function formatDisplayBillingDraft(value: unknown): string {
+  const num = toNumberOrNull(value)
+  if (num === null) return ''
+  return formatNumber(billingCurrencyFromUSD(num))
+}
+
+function formatStoredBillingDraft(value: unknown): string {
+  const num = toNumberOrNull(value)
+  if (num === null) return ''
+  return formatNumber(billingCurrencyToUSD(num))
+}
+
+function formatDisplayBillingPrice(value: unknown): string {
+  const num = toNumberOrNull(value)
+  if (num === null) return ''
+  return formatBillingCurrencyFromUSD(num, {
+    digitsLarge: 4,
+    digitsSmall: 6,
+    abbreviate: false,
+  })
+}
+
 function ratioToBasePrice(ratio: unknown): string {
   const num = toNumberOrNull(ratio)
   if (num === null) return ''
@@ -315,7 +345,9 @@ function buildPreviewRows(
       {
         key: 'price',
         label: 'ModelPrice',
-        value: values.price || t('Empty'),
+        value: values.price
+          ? formatDisplayBillingPrice(values.price)
+          : t('Empty'),
       },
     ]
   }
@@ -324,14 +356,14 @@ function buildPreviewRows(
     {
       key: 'inputPrice',
       label: t('Input price'),
-      value: promptPrice ? `$${promptPrice}` : t('Empty'),
+      value: promptPrice ? formatDisplayBillingPrice(promptPrice) : t('Empty'),
     },
     {
       key: 'completion',
       label: t('Completion price'),
       value:
         laneEnabled.completion && lanePrices.completion
-          ? `$${lanePrices.completion}`
+          ? formatDisplayBillingPrice(lanePrices.completion)
           : t('Empty'),
     },
     {
@@ -339,7 +371,7 @@ function buildPreviewRows(
       label: t('Cache read price'),
       value:
         laneEnabled.cache && lanePrices.cache
-          ? `$${lanePrices.cache}`
+          ? formatDisplayBillingPrice(lanePrices.cache)
           : t('Empty'),
     },
     {
@@ -347,7 +379,7 @@ function buildPreviewRows(
       label: t('Cache write price'),
       value:
         laneEnabled.createCache && lanePrices.createCache
-          ? `$${lanePrices.createCache}`
+          ? formatDisplayBillingPrice(lanePrices.createCache)
           : t('Empty'),
     },
     {
@@ -355,7 +387,7 @@ function buildPreviewRows(
       label: t('Image input price'),
       value:
         laneEnabled.image && lanePrices.image
-          ? `$${lanePrices.image}`
+          ? formatDisplayBillingPrice(lanePrices.image)
           : t('Empty'),
     },
     {
@@ -363,7 +395,7 @@ function buildPreviewRows(
       label: t('Audio input price'),
       value:
         laneEnabled.audioInput && lanePrices.audioInput
-          ? `$${lanePrices.audioInput}`
+          ? formatDisplayBillingPrice(lanePrices.audioInput)
           : t('Empty'),
     },
     {
@@ -371,7 +403,7 @@ function buildPreviewRows(
       label: t('Audio output price'),
       value:
         laneEnabled.audioOutput && lanePrices.audioOutput
-          ? `$${lanePrices.audioOutput}`
+          ? formatDisplayBillingPrice(lanePrices.audioOutput)
           : t('Empty'),
     },
   ]
@@ -419,6 +451,7 @@ export function ModelPricingEditorPanel({
   className,
 }: ModelPricingEditorPanelProps) {
   const { t } = useTranslation()
+  const currency = useSystemConfigStore((state) => state.config.currency)
   const [pricingMode, setPricingMode] = useState<PricingMode>('per-token')
   const [promptPrice, setPromptPrice] = useState('')
   const [lanePrices, setLanePrices] = useState<Record<LaneKey, string>>({
@@ -431,6 +464,7 @@ export function ModelPricingEditorPanel({
   const [requestRuleExpr, setRequestRuleExpr] = useState('')
   const [previewOpen, setPreviewOpen] = useState(true)
   const isEditMode = !!editData
+  const priceUnitLabel = `${getBillingCurrencyLabel()}/1M ${t('tokens')}`
 
   const form = useForm<ModelPricingFormValues>({
     resolver: zodResolver(createModelPricingSchema(t)),
@@ -615,29 +649,29 @@ export function ModelPricingEditorPanel({
   }
 
   const watchedValues = form.watch()
-  const previewRows = useMemo(
-    () =>
-      buildPreviewRows(
-        watchedValues,
-        pricingMode,
-        billingExpr,
-        requestRuleExpr,
-        promptPrice,
-        lanePrices,
-        laneEnabled,
-        t
-      ),
-    [
-      billingExpr,
-      laneEnabled,
-      lanePrices,
-      pricingMode,
-      promptPrice,
-      requestRuleExpr,
-      t,
+  const previewRows = useMemo(() => {
+    void currency
+    return buildPreviewRows(
       watchedValues,
-    ]
-  )
+      pricingMode,
+      billingExpr,
+      requestRuleExpr,
+      promptPrice,
+      lanePrices,
+      laneEnabled,
+      t
+    )
+  }, [
+    billingExpr,
+    laneEnabled,
+    lanePrices,
+    pricingMode,
+    promptPrice,
+    requestRuleExpr,
+    t,
+    watchedValues,
+    currency,
+  ])
 
   const warnings = useMemo(() => {
     const nextWarnings: string[] = []
@@ -820,7 +854,7 @@ export function ModelPricingEditorPanel({
                         onChange={handlePromptPriceChange}
                       />
                       <FieldDescription>
-                        {t('USD price per 1M input tokens.')}
+                        {t('Price')} ({priceUnitLabel})
                       </FieldDescription>
                     </Field>
 
@@ -863,28 +897,16 @@ export function ModelPricingEditorPanel({
                       <FormItem>
                         <FormLabel>{t('Fixed price')}</FormLabel>
                         <FormControl>
-                          <InputGroup>
-                            <InputGroupAddon>$</InputGroupAddon>
-                            <InputGroupInput
-                              inputMode='decimal'
-                              placeholder='0.01'
-                              {...field}
-                              onChange={(event) => {
-                                const value = event.target.value
-                                if (numericDraftRegex.test(value)) {
-                                  field.onChange(value)
-                                }
-                              }}
-                            />
-                            <InputGroupAddon align='inline-end'>
-                              {t('per request')}
-                            </InputGroupAddon>
-                          </InputGroup>
+                          <PriceInput
+                            value={field.value || ''}
+                            placeholder='0.01'
+                            suffix={t('per request')}
+                            onChange={field.onChange}
+                          />
                         </FormControl>
                         <FormDescription>
-                          {t(
-                            'Cost in USD per request, regardless of tokens used.'
-                          )}
+                          {t('Price')} ({getBillingCurrencyLabel()}/
+                          {t('request')})
                         </FormDescription>
                         <FormMessage />
                       </FormItem>
@@ -979,19 +1001,52 @@ function PriceInput(props: {
   value: string
   placeholder?: string
   disabled?: boolean
+  suffix?: string
   onChange: (value: string) => void
 }) {
+  const currencyKey = useSystemConfigStore((state) => {
+    const currency = state.config.currency
+    return [
+      currency.quotaDisplayType,
+      currency.usdExchangeRate,
+      currency.customCurrencySymbol,
+      currency.customCurrencyExchangeRate,
+    ].join(':')
+  })
+  const suffix = props.suffix ?? `${getBillingCurrencyLabel()}/1M`
+  const displayValue = formatDisplayBillingDraft(props.value)
+  const sourceValue = `${currencyKey}:${displayValue}`
+  const [focused, setFocused] = useState(false)
+  const [draftState, setDraftState] = useState(() => ({
+    source: sourceValue,
+    draft: displayValue,
+  }))
+  let value = focused ? draftState.draft : displayValue
+
+  if (!focused && draftState.source !== sourceValue) {
+    value = displayValue
+    setDraftState({ source: sourceValue, draft: displayValue })
+  }
+
+  const handleChange = (value: string) => {
+    if (!numericDraftRegex.test(value)) return
+    setDraftState({ source: sourceValue, draft: value })
+    props.onChange(formatStoredBillingDraft(value))
+  }
+
   return (
     <InputGroup>
-      <InputGroupAddon>$</InputGroupAddon>
+      <InputGroupAddon>{getBillingCurrencySymbol()}</InputGroupAddon>
       <InputGroupInput
         inputMode='decimal'
-        value={props.value}
+        value={value}
         placeholder={props.placeholder}
         disabled={props.disabled}
-        onChange={(event) => props.onChange(event.target.value)}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
+        onChange={(event) => handleChange(event.target.value)}
       />
-      <InputGroupAddon align='inline-end'>$/1M</InputGroupAddon>
+      <InputGroupAddon align='inline-end'>{suffix}</InputGroupAddon>
     </InputGroup>
   )
 }
@@ -1007,7 +1062,20 @@ function PriceLane(props: {
   onChange: (value: string) => void
 }) {
   const { t } = useTranslation()
+  const currencyKey = useSystemConfigStore((state) => {
+    const currency = state.config.currency
+    return [
+      currency.quotaDisplayType,
+      currency.usdExchangeRate,
+      currency.customCurrencySymbol,
+      currency.customCurrencyExchangeRate,
+    ].join(':')
+  })
   const effectiveDisabled = props.disabled || !props.enabled
+  const priceUnitLabel = useMemo(() => {
+    void currencyKey
+    return `${getBillingCurrencyLabel()}/1M ${t('tokens')}`
+  }, [currencyKey, t])
 
   return (
     <Field
@@ -1037,7 +1105,7 @@ function PriceLane(props: {
       />
       <FieldDescription>
         {props.enabled
-          ? t('USD price per 1M tokens.')
+          ? `${t('Price')} (${priceUnitLabel})`
           : t('Disabled lanes are omitted on save.')}
       </FieldDescription>
     </Field>

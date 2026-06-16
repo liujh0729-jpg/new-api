@@ -16,9 +16,17 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+import {
+  createGeneratedMaterial,
+  uploadMaterial,
+} from '@/features/materials/api'
+import {
+  MATERIAL_SOURCE_TYPE,
+  MATERIAL_TYPE,
+} from '@/features/materials/constants'
 import {
   getImageGenerationTask,
   getVideoGenerationTask,
@@ -66,6 +74,90 @@ const IMAGE_TASK_POLL_TIMEOUT_MS = 20 * 60 * 1000
 const VIDEO_TASK_POLL_INTERVAL_MS = 3000
 const VIDEO_TASK_INITIAL_POLL_DELAY_MS = 1500
 const VIDEO_TASK_POLL_TIMEOUT_MS = 30 * 60 * 1000
+type TaskType = 'image' | 'video'
+
+const taskAbortTokens: Record<TaskType, number> = {
+  image: 0,
+  video: 0,
+}
+const activeTaskPolls = new Map<string, Promise<void>>()
+
+function isPersistableGeneratedUrl(url?: string): url is string {
+  if (!url) return false
+  const value = url.trim().toLowerCase()
+  return !!value && !value.startsWith('data:') && !value.startsWith('blob:')
+}
+
+function extensionForMime(mimeType: string, fallback: string): string {
+  const normalized = mimeType.toLowerCase()
+  if (normalized.includes('jpeg')) return '.jpg'
+  if (normalized.includes('png')) return '.png'
+  if (normalized.includes('webp')) return '.webp'
+  if (normalized.includes('gif')) return '.gif'
+  if (normalized.includes('mp4')) return '.mp4'
+  if (normalized.includes('webm')) return '.webm'
+  if (normalized.includes('quicktime')) return '.mov'
+  return fallback
+}
+
+function base64ToFile(
+  base64: string,
+  mimeType: string,
+  fileName: string
+): File {
+  const binary = window.atob(base64)
+  const bytes = new Uint8Array(binary.length)
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index)
+  }
+
+  const buffer = new ArrayBuffer(bytes.byteLength)
+  new Uint8Array(buffer).set(bytes)
+  return new File([buffer], fileName, { type: mimeType })
+}
+
+function logGeneratedMaterialFailures(
+  results: PromiseSettledResult<unknown>[]
+) {
+  for (const result of results) {
+    if (result.status === 'rejected') {
+      // eslint-disable-next-line no-console
+      console.warn(
+        'Failed to save generated output to material library:',
+        result.reason
+      )
+    }
+  }
+}
+
+function getTaskAbortToken(taskType: TaskType): number {
+  return taskAbortTokens[taskType]
+}
+
+function abortTaskGeneration(taskType: TaskType): void {
+  taskAbortTokens[taskType] += 1
+}
+
+function isTaskAbortRequested(taskType: TaskType, token: number): boolean {
+  return taskAbortTokens[taskType] !== token
+}
+
+function runExclusiveTaskPoll(
+  key: string,
+  poller: () => Promise<void>
+): Promise<void> {
+  const activePoll = activeTaskPolls.get(key)
+  if (activePoll) return activePoll
+
+  const poll = poller().finally(() => {
+    if (activeTaskPolls.get(key) === poll) {
+      activeTaskPolls.delete(key)
+    }
+  })
+
+  activeTaskPolls.set(key, poll)
+  return poll
+}
 
 function getHttpStatus(error: unknown): number | undefined {
   if (typeof error !== 'object' || error === null) return undefined
@@ -76,8 +168,7 @@ function getHttpStatus(error: unknown): number | undefined {
 function isTransientPollingError(error: unknown): boolean {
   const status = getHttpStatus(error)
   return (
-    status === 429 ||
-    (status !== undefined && status >= 500 && status < 600)
+    status === 429 || (status !== undefined && status >= 500 && status < 600)
   )
 }
 
@@ -92,11 +183,70 @@ export function useChatHandler({
   const { t } = useTranslation()
   const { sendStreamRequest, stopStream } = useStreamRequest()
   const [isGenerating, setIsGenerating] = useState(false)
-  const imageAbortRef = useRef(false)
-  const videoAbortRef = useRef(false)
+
+  const saveGeneratedImagesToMaterials = useCallback(
+    (images: GeneratedImage[]) => {
+      const now = Date.now()
+      const jobs: Promise<unknown>[] = []
+
+      images.forEach((image, index) => {
+        try {
+          const mimeType = image.mime_type || 'image/png'
+          const fileName = `generated-image-${now}-${index + 1}${extensionForMime(mimeType, '.png')}`
+          if (isPersistableGeneratedUrl(image.url)) {
+            jobs.push(
+              createGeneratedMaterial({
+                name: image.revised_prompt || t('Generated image'),
+                type: MATERIAL_TYPE.IMAGE,
+                mime_type: mimeType,
+                file_name: fileName,
+                url: image.url,
+              })
+            )
+            return
+          }
+          if (image.b64_json) {
+            const file = base64ToFile(image.b64_json, mimeType, fileName)
+            jobs.push(uploadMaterial(file, MATERIAL_SOURCE_TYPE.AI_OUTPUT))
+          }
+        } catch (error) {
+          jobs.push(Promise.reject(error))
+        }
+      })
+
+      if (jobs.length > 0) {
+        void Promise.allSettled(jobs).then(logGeneratedMaterialFailures)
+      }
+    },
+    [t]
+  )
+
+  const saveGeneratedVideosToMaterials = useCallback(
+    (videos: GeneratedVideo[]) => {
+      const now = Date.now()
+      const jobs = videos
+        .filter((video) => isPersistableGeneratedUrl(video.url))
+        .map((video, index) => {
+          const mimeType = video.mime_type || 'video/mp4'
+          return createGeneratedMaterial({
+            name: video.task_id || t('Generated video'),
+            type: MATERIAL_TYPE.VIDEO,
+            mime_type: mimeType,
+            file_name: `generated-video-${now}-${index + 1}${extensionForMime(mimeType, '.mp4')}`,
+            url: video.url,
+          })
+        })
+
+      if (jobs.length > 0) {
+        void Promise.allSettled(jobs).then(logGeneratedMaterialFailures)
+      }
+    },
+    [t]
+  )
 
   const completeWithImages = useCallback(
     (images: GeneratedImage[]) => {
+      saveGeneratedImagesToMaterials(images)
       onMessageUpdate((prev) =>
         updateLastAssistantMessage(prev, (message) => ({
           ...updateCurrentVersionContent(message, t('Generated image')),
@@ -107,7 +257,7 @@ export function useChatHandler({
         }))
       )
     },
-    [onMessageUpdate, t]
+    [onMessageUpdate, saveGeneratedImagesToMaterials, t]
   )
 
   const markImageGenerationLoading = useCallback(
@@ -129,6 +279,7 @@ export function useChatHandler({
 
   const completeWithVideos = useCallback(
     (videos: GeneratedVideo[]) => {
+      saveGeneratedVideosToMaterials(videos)
       onMessageUpdate((prev) =>
         updateLastAssistantMessage(prev, (message) => ({
           ...updateCurrentVersionContent(message, t('Generated video')),
@@ -139,7 +290,7 @@ export function useChatHandler({
         }))
       )
     },
-    [onMessageUpdate, t]
+    [onMessageUpdate, saveGeneratedVideosToMaterials, t]
   )
 
   const markVideoGenerationLoading = useCallback(
@@ -291,125 +442,136 @@ export function useChatHandler({
   )
 
   const pollImageTask = useCallback(
-    async (taskId: string) => {
-      const deadline = Date.now() + IMAGE_TASK_POLL_TIMEOUT_MS
-      let attempt = 0
+    async (taskId: string, abortToken = getTaskAbortToken('image')) => {
+      return runExclusiveTaskPoll(`image:${taskId}`, async () => {
+        const deadline = Date.now() + IMAGE_TASK_POLL_TIMEOUT_MS
+        let attempt = 0
 
-      while (Date.now() < deadline) {
-        if (imageAbortRef.current) return
+        while (Date.now() < deadline) {
+          if (isTaskAbortRequested('image', abortToken)) return
 
-        await new Promise((resolve) =>
-          setTimeout(
-            resolve,
-            attempt === 0
-              ? IMAGE_TASK_INITIAL_POLL_DELAY_MS
-              : IMAGE_TASK_POLL_INTERVAL_MS
+          await new Promise((resolve) =>
+            setTimeout(
+              resolve,
+              attempt === 0
+                ? IMAGE_TASK_INITIAL_POLL_DELAY_MS
+                : IMAGE_TASK_POLL_INTERVAL_MS
+            )
           )
-        )
-        attempt += 1
-        if (imageAbortRef.current) return
+          attempt += 1
+          if (isTaskAbortRequested('image', abortToken)) return
 
-        const response = await getImageGenerationTask(taskId)
-        const task = parseImageTaskResponse(response)
-        const status = task.status || 'processing'
-        markImageGenerationLoading()
+          const response = await getImageGenerationTask(taskId)
+          if (isTaskAbortRequested('image', abortToken)) return
 
-        if (status === 'failed') {
-          throw new Error(task.error || ERROR_MESSAGES.IMAGE_TASK_FAILED)
-        }
+          const task = parseImageTaskResponse(response)
+          const status = task.status || 'processing'
+          markImageGenerationLoading()
 
-        if (status === 'succeeded') {
-          if (task.images.length > 0) {
-            completeWithImages(task.images)
-            return
+          if (status === 'failed') {
+            throw new Error(task.error || ERROR_MESSAGES.IMAGE_TASK_FAILED)
           }
-          throw new Error(ERROR_MESSAGES.PARSE_ERROR)
-        }
-      }
 
-      throw new Error(ERROR_MESSAGES.IMAGE_TASK_TIMEOUT)
+          if (status === 'succeeded') {
+            if (task.images.length > 0) {
+              completeWithImages(task.images)
+              return
+            }
+            throw new Error(ERROR_MESSAGES.PARSE_ERROR)
+          }
+        }
+
+        throw new Error(ERROR_MESSAGES.IMAGE_TASK_TIMEOUT)
+      })
     },
     [completeWithImages, markImageGenerationLoading]
   )
 
   const pollVideoTask = useCallback(
-    async (taskId: string) => {
-      const deadline = Date.now() + VIDEO_TASK_POLL_TIMEOUT_MS
-      let attempt = 0
+    async (taskId: string, abortToken = getTaskAbortToken('video')) => {
+      return runExclusiveTaskPoll(`video:${taskId}`, async () => {
+        const deadline = Date.now() + VIDEO_TASK_POLL_TIMEOUT_MS
+        let attempt = 0
 
-      while (Date.now() < deadline) {
-        if (videoAbortRef.current) return
+        while (Date.now() < deadline) {
+          if (isTaskAbortRequested('video', abortToken)) return
 
-        await new Promise((resolve) =>
-          setTimeout(
-            resolve,
-            attempt === 0
-              ? VIDEO_TASK_INITIAL_POLL_DELAY_MS
-              : VIDEO_TASK_POLL_INTERVAL_MS
+          await new Promise((resolve) =>
+            setTimeout(
+              resolve,
+              attempt === 0
+                ? VIDEO_TASK_INITIAL_POLL_DELAY_MS
+                : VIDEO_TASK_POLL_INTERVAL_MS
+            )
           )
-        )
-        attempt += 1
-        if (videoAbortRef.current) return
+          attempt += 1
+          if (isTaskAbortRequested('video', abortToken)) return
 
-        let response: TaskFetchResponse
-        try {
-          response = await getVideoGenerationTask(taskId)
-        } catch (error: unknown) {
-          if (isTransientPollingError(error)) {
-            markVideoGenerationLoading()
-            continue
+          let response: TaskFetchResponse
+          try {
+            response = await getVideoGenerationTask(taskId)
+          } catch (error: unknown) {
+            if (isTaskAbortRequested('video', abortToken)) return
+            if (isTransientPollingError(error)) {
+              markVideoGenerationLoading()
+              continue
+            }
+            throw error
           }
-          throw error
-        }
-        const task = parseVideoTaskResponse(response)
-        const status = task.status || 'processing'
-        markVideoGenerationLoading()
+          if (isTaskAbortRequested('video', abortToken)) return
 
-        if (status === 'failed') {
-          throw new Error(task.error || ERROR_MESSAGES.VIDEO_TASK_FAILED)
+          const task = parseVideoTaskResponse(response)
+          const status = task.status || 'processing'
+          markVideoGenerationLoading()
+
+          if (status === 'failed') {
+            throw new Error(task.error || ERROR_MESSAGES.VIDEO_TASK_FAILED)
+          }
+
+          if (status === 'succeeded') {
+            const resolvedTaskId = task.taskId || taskId
+            const proxyUrl = `/v1/videos/${encodeURIComponent(resolvedTaskId)}/content`
+            const videos =
+              task.videos.length > 0
+                ? task.videos.map((video) => ({
+                    ...video,
+                    url: video.url?.trim() || proxyUrl,
+                    task_id: video.task_id || resolvedTaskId,
+                  }))
+                : [{ url: proxyUrl, task_id: resolvedTaskId }]
+            completeWithVideos(videos)
+            return
+          }
         }
 
-        if (status === 'succeeded') {
-          const resolvedTaskId = task.taskId || taskId
-          const proxyUrl = `/v1/videos/${encodeURIComponent(resolvedTaskId)}/content`
-          const videos =
-            task.videos.length > 0
-              ? task.videos.map((video) => ({
-                  ...video,
-                  url: video.url?.trim() || proxyUrl,
-                  task_id: video.task_id || resolvedTaskId,
-                }))
-              : [{ url: proxyUrl, task_id: resolvedTaskId }]
-          completeWithVideos(videos)
-          return
-        }
-      }
-
-      throw new Error(ERROR_MESSAGES.VIDEO_TASK_TIMEOUT)
+        throw new Error(ERROR_MESSAGES.VIDEO_TASK_TIMEOUT)
+      })
     },
     [completeWithVideos, markVideoGenerationLoading]
   )
 
   const sendImageChat = useCallback(
-    async (messages: Message[], imageBase64?: string) => {
+    async (messages: Message[], imageReferences?: string[]) => {
       const prompt = [...messages]
         .reverse()
         .find((message) => message.from === 'user')
         ?.versions?.[0]?.content?.trim()
 
-      if (!prompt && !imageBase64) {
+      if (!prompt && (!imageReferences || imageReferences.length === 0)) {
         handleStreamError(ERROR_MESSAGES.API_REQUEST_ERROR)
         return
       }
 
-      imageAbortRef.current = false
+      const abortToken = getTaskAbortToken('image')
       setIsGenerating(true)
       markImageGenerationLoading()
 
       try {
         const response = await sendImageGeneration(
-          buildImageGenerationPayload(prompt || '', config, imageBase64)
+          buildImageGenerationPayload(prompt || '', config, imageReferences)
         )
+        if (isTaskAbortRequested('image', abortToken)) return
+
         const images = extractImageResults(response)
         if (images.length > 0) {
           completeWithImages(images)
@@ -422,13 +584,13 @@ export function useChatHandler({
             throw new Error(ERROR_MESSAGES.PARSE_ERROR)
           }
           markImageGenerationLoading(taskId)
-          await pollImageTask(taskId)
+          await pollImageTask(taskId, abortToken)
           return
         }
 
         throw new Error(ERROR_MESSAGES.PARSE_ERROR)
       } catch (error: unknown) {
-        if (imageAbortRef.current) return
+        if (isTaskAbortRequested('image', abortToken)) return
         handleStreamError(error)
       } finally {
         setIsGenerating(false)
@@ -456,7 +618,7 @@ export function useChatHandler({
         return
       }
 
-      videoAbortRef.current = false
+      const abortToken = getTaskAbortToken('video')
       setIsGenerating(true)
       markVideoGenerationLoading()
 
@@ -464,6 +626,8 @@ export function useChatHandler({
         const response = await sendVideoGeneration(
           buildVideoGenerationPayload(prompt, references, config)
         )
+        if (isTaskAbortRequested('video', abortToken)) return
+
         const videos = extractVideoResults(response)
         if (videos.length > 0) {
           completeWithVideos(videos)
@@ -476,13 +640,13 @@ export function useChatHandler({
             throw new Error(ERROR_MESSAGES.PARSE_ERROR)
           }
           markVideoGenerationLoading(taskId)
-          await pollVideoTask(taskId)
+          await pollVideoTask(taskId, abortToken)
           return
         }
 
         throw new Error(ERROR_MESSAGES.PARSE_ERROR)
       } catch (error: unknown) {
-        if (videoAbortRef.current) return
+        if (isTaskAbortRequested('video', abortToken)) return
         handleStreamError(error)
       } finally {
         setIsGenerating(false)
@@ -499,9 +663,9 @@ export function useChatHandler({
 
   // Send chat request (stream or non-stream based on config)
   const sendChat = useCallback(
-    (messages: Message[], imageBase64?: string) => {
+    (messages: Message[], imageReferences?: string[]) => {
       if (config.mode === 'image') {
-        void sendImageChat(messages, imageBase64)
+        void sendImageChat(messages, imageReferences)
         return
       }
       if (config.mode === 'video') {
@@ -526,8 +690,8 @@ export function useChatHandler({
 
   // Stop generation
   const stopGeneration = useCallback(() => {
-    imageAbortRef.current = true
-    videoAbortRef.current = true
+    abortTaskGeneration('image')
+    abortTaskGeneration('video')
     stopStream()
     setIsGenerating(false)
     onMessageUpdate((prev) =>
@@ -540,40 +704,32 @@ export function useChatHandler({
     )
   }, [stopStream, onMessageUpdate])
 
-  useEffect(() => {
-    return () => {
-      imageAbortRef.current = true
-      videoAbortRef.current = true
-    }
-  }, [])
-
   const resumeTaskPolling = useCallback(
     (taskId: string, taskType: 'image' | 'video') => {
+      const abortToken = getTaskAbortToken(taskType)
       if (taskType === 'image') {
-        imageAbortRef.current = false
         setIsGenerating(true)
-        pollImageTask(taskId)
+        pollImageTask(taskId, abortToken)
           .catch((error: unknown) => {
-            if (!imageAbortRef.current) {
+            if (!isTaskAbortRequested('image', abortToken)) {
               handleStreamError(error)
             }
           })
           .finally(() => {
-            if (!imageAbortRef.current) {
+            if (!isTaskAbortRequested('image', abortToken)) {
               setIsGenerating(false)
             }
           })
       } else {
-        videoAbortRef.current = false
         setIsGenerating(true)
-        pollVideoTask(taskId)
+        pollVideoTask(taskId, abortToken)
           .catch((error: unknown) => {
-            if (!videoAbortRef.current) {
+            if (!isTaskAbortRequested('video', abortToken)) {
               handleStreamError(error)
             }
           })
           .finally(() => {
-            if (!videoAbortRef.current) {
+            if (!isTaskAbortRequested('video', abortToken)) {
               setIsGenerating(false)
             }
           })

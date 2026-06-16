@@ -25,6 +25,35 @@ export interface PlaygroundErrorDetails {
 
 const SEEDANCE_PRIVACY_ERROR_MESSAGE =
   'Seedance rejected the reference media because it may contain a real person. Use text-only generation or replace the reference with non-real-person media.'
+const UPSTREAM_BALANCE_INSUFFICIENT_MESSAGE =
+  'The selected model service is temporarily unavailable because its upstream balance is insufficient. Please try again later or contact an administrator.'
+const USER_QUOTA_INSUFFICIENT_MESSAGE =
+  'Your account balance is insufficient. Please add credits and try again.'
+
+const LOCAL_QUOTA_CODE_PARTS = [
+  'insufficientuserquota',
+  'preconsumetokenquotafailed',
+]
+
+const UPSTREAM_BALANCE_CODE_PARTS = [
+  'accountoverdue',
+  'arrearage',
+  'balanceinsufficient',
+  'balancenotenough',
+  'billinghardlimitreached',
+  'creditnotenough',
+  'creditsnotenough',
+  'freequotaexceeded',
+  'insufficientbalance',
+  'insufficientcredit',
+  'insufficientcredits',
+  'insufficientquota',
+  'noavailablecredit',
+  'paymentrequired',
+  'prepaidquotaexhausted',
+  'quotaexceeded',
+  'quotaexhausted',
+]
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
@@ -58,6 +87,14 @@ function parseJsonObjectFromString(value: string): unknown {
     }
   }
   return undefined
+}
+
+function normalizeForCodeMatch(value?: string): string {
+  return (value || '').toLowerCase().replace(/[^a-z0-9\u4e00-\u9fa5]/g, '')
+}
+
+function normalizeForMessageMatch(value?: string): string {
+  return (value || '').toLowerCase()
 }
 
 function extractPlaygroundErrorDetails(
@@ -128,6 +165,53 @@ function isSeedancePrivacyError(code?: string, message?: string): boolean {
   )
 }
 
+function isLocalQuotaError(code?: string, message?: string): boolean {
+  const normalizedCode = normalizeForCodeMatch(code)
+  const normalizedMessage = normalizeForMessageMatch(message)
+
+  return (
+    LOCAL_QUOTA_CODE_PARTS.some((part) => normalizedCode.includes(part)) ||
+    normalizedMessage.includes('用户额度不足') ||
+    normalizedMessage.includes('订阅额度不足') ||
+    normalizedMessage.includes('quota_not_enough')
+  )
+}
+
+function isUpstreamBalanceError(code?: string, message?: string): boolean {
+  const normalizedCode = normalizeForCodeMatch(code)
+  const normalizedMessage = normalizeForMessageMatch(message)
+
+  if (
+    UPSTREAM_BALANCE_CODE_PARTS.some((part) => normalizedCode.includes(part))
+  ) {
+    return true
+  }
+
+  return (
+    normalizedMessage.includes('http 402') ||
+    normalizedMessage.includes('payment required') ||
+    normalizedMessage.includes('insufficient account balance') ||
+    normalizedMessage.includes('insufficient balance') ||
+    normalizedMessage.includes('account balance is insufficient') ||
+    normalizedMessage.includes('credit balance is too low') ||
+    normalizedMessage.includes('not enough credits') ||
+    normalizedMessage.includes('requires more credits') ||
+    normalizedMessage.includes('please add credits') ||
+    normalizedMessage.includes('purchase credits') ||
+    normalizedMessage.includes('out of credit') ||
+    normalizedMessage.includes('hard limit') ||
+    normalizedMessage.includes('exceeded your current quota') ||
+    normalizedMessage.includes('quota has been exhausted') ||
+    normalizedMessage.includes('allocated quota exceeded') ||
+    normalizedMessage.includes('prepaid quota') ||
+    normalizedMessage.includes('余额不足') ||
+    normalizedMessage.includes('余额已耗尽') ||
+    normalizedMessage.includes('额度不足') ||
+    normalizedMessage.includes('额度已用完') ||
+    normalizedMessage.includes('欠费')
+  )
+}
+
 export function normalizePlaygroundError(
   error: unknown,
   t: (key: string) => string,
@@ -140,6 +224,20 @@ export function normalizePlaygroundError(
   if (isSeedancePrivacyError(code, message)) {
     return {
       message: t(SEEDANCE_PRIVACY_ERROR_MESSAGE),
+      code,
+    }
+  }
+
+  if (isLocalQuotaError(code, message)) {
+    return {
+      message: t(USER_QUOTA_INSUFFICIENT_MESSAGE),
+      code,
+    }
+  }
+
+  if (isUpstreamBalanceError(code, message)) {
+    return {
+      message: t(UPSTREAM_BALANCE_INSUFFICIENT_MESSAGE),
       code,
     }
   }

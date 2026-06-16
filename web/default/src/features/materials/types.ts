@@ -5,6 +5,7 @@ export const materialSchema = z.object({
   user_id: z.number(),
   name: z.string(),
   type: z.string(),
+  source_type: z.string().default('material'),
   mime_type: z.string(),
   file_name: z.string(),
   url: z.string(),
@@ -30,6 +31,10 @@ export interface ApiResponse<T = unknown> {
 export interface GetMaterialsParams {
   p?: number
   page_size?: number
+  type?: string | string[]
+  source_type?: string | string[]
+  created_after?: number
+  created_before?: number
 }
 
 export interface GetMaterialsResponse {
@@ -46,8 +51,23 @@ export interface GetMaterialsResponse {
 export interface SearchMaterialsParams {
   keyword?: string
   type?: string | string[]
+  source_type?: string | string[]
+  created_after?: number
+  created_before?: number
   p?: number
   page_size?: number
+}
+
+export interface CreateGeneratedMaterialPayload {
+  name?: string
+  type: string
+  mime_type?: string
+  file_name?: string
+  url: string
+  file_size?: number
+  width?: number
+  height?: number
+  duration?: number
 }
 
 export type MaterialsDialogType = 'update' | 'delete'

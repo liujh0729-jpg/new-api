@@ -38,6 +38,8 @@ import { useMediaQuery } from '@/hooks'
 import { Copy, Pencil, Plus, Trash2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+import { useSystemConfigStore } from '@/stores/system-config-store'
+import { formatBillingCurrencyFromUSD } from '@/lib/currency'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
@@ -98,9 +100,10 @@ type ModelRow = {
 
 const STORAGE_KEY = 'model-ratio-column-visibility'
 
-const hasValue = (value?: string) => value !== undefined && value !== ''
+const hasValue = (value?: number | string) =>
+  value !== undefined && value !== ''
 
-const toNumberOrNull = (value?: string) => {
+const toNumberOrNull = (value?: number | string) => {
   if (!hasValue(value)) return null
   const num = Number(value)
   return Number.isFinite(num) ? num : null
@@ -108,6 +111,16 @@ const toNumberOrNull = (value?: string) => {
 
 const formatPrice = (value: number) => {
   return Number.parseFloat(value.toFixed(12)).toString()
+}
+
+const formatBillingPrice = (value?: number | string) => {
+  const num = toNumberOrNull(value)
+  if (num === null) return ''
+  return formatBillingCurrencyFromUSD(num, {
+    digitsLarge: 4,
+    digitsSmall: 6,
+    abbreviate: false,
+  })
 }
 
 const ratioToPrice = (ratio?: string, denominator?: string) => {
@@ -150,7 +163,9 @@ const getPriceSummary = (row: ModelRow, t: (key: string) => string) => {
     return getExpressionSummary(row, t)
   }
   if (row.billingMode === 'per-request') {
-    return row.price ? `$${row.price} / ${t('request')}` : t('Unset price')
+    return row.price
+      ? `${formatBillingPrice(row.price)} / ${t('request')}`
+      : t('Unset price')
   }
 
   const inputPrice = ratioToPrice(row.ratio)
@@ -166,8 +181,8 @@ const getPriceSummary = (row: ModelRow, t: (key: string) => string) => {
   ].filter(hasValue).length
 
   return extraCount > 0
-    ? `${t('Input')} $${inputPrice} · ${extraCount} ${t('extras')}`
-    : `${t('Input')} $${inputPrice}`
+    ? `${t('Input')} ${formatBillingPrice(inputPrice)} · ${extraCount} ${t('extras')}`
+    : `${t('Input')} ${formatBillingPrice(inputPrice)}`
 }
 
 const getPriceDetail = (row: ModelRow, t: (key: string) => string) => {
@@ -185,11 +200,11 @@ const getPriceDetail = (row: ModelRow, t: (key: string) => string) => {
 
   const details = [
     row.completionRatio &&
-      `${t('Output')} $${ratioToPrice(row.completionRatio, inputPrice)}`,
+      `${t('Output')} ${formatBillingPrice(ratioToPrice(row.completionRatio, inputPrice))}`,
     row.cacheRatio &&
-      `${t('Cache')} $${ratioToPrice(row.cacheRatio, inputPrice)}`,
+      `${t('Cache')} ${formatBillingPrice(ratioToPrice(row.cacheRatio, inputPrice))}`,
     row.createCacheRatio &&
-      `${t('Cache write')} $${ratioToPrice(row.createCacheRatio, inputPrice)}`,
+      `${t('Cache write')} ${formatBillingPrice(ratioToPrice(row.createCacheRatio, inputPrice))}`,
   ].filter(Boolean)
 
   return details.length > 0 ? details.join(' · ') : t('Base input price only')
@@ -210,6 +225,7 @@ export const ModelRatioVisualEditor = memo(
     onChange,
   }: ModelRatioVisualEditorProps) {
     const { t } = useTranslation()
+    const currency = useSystemConfigStore((state) => state.config.currency)
     const isMobile = useMediaQuery('(max-width: 767px)')
     const [sheetOpen, setSheetOpen] = useState(false)
     const [editorOpen, setEditorOpen] = useState(false)
@@ -560,6 +576,7 @@ export const ModelRatioVisualEditor = memo(
     )
 
     const columns = useMemo<ColumnDef<ModelRow>[]>(() => {
+      void currency
       return [
         {
           id: 'select',
@@ -672,7 +689,7 @@ export const ModelRatioVisualEditor = memo(
           enableHiding: false,
         },
       ]
-    }, [handleEdit, handleDelete, t])
+    }, [currency, handleEdit, handleDelete, t])
 
     const table = useReactTable({
       data: models,

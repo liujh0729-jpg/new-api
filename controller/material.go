@@ -7,16 +7,21 @@ import (
 	"mime"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	taskaipdd "github.com/QuantumNous/new-api/relay/channel/task/aipdd"
+	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/system_setting"
 
 	"github.com/gin-gonic/gin"
 )
@@ -25,6 +30,7 @@ const (
 	materialUploadMaxBytes   int64 = constant.PlaygroundUploadMaxMB * 1024 * 1024
 	materialNameMaxRunes           = 191
 	materialFileNameMaxRunes       = 255
+	materialURLMaxRunes            = 1024
 )
 
 func uploadMaterialFile(ctx context.Context, header *multipart.FileHeader) (url string, storageType string, err error) {
@@ -97,6 +103,19 @@ func UploadMaterial(c *gin.Context) {
 	}
 
 	fileHeader.Filename = sanitizeMaterialFileName(fileHeader.Filename)
+	sourceType, err := normalizeMaterialSourceType(c.PostForm("source_type"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": err.Error(),
+			"error": gin.H{
+				"code":    "invalid_source_type",
+				"message": err.Error(),
+				"type":    "invalid_request_error",
+			},
+		})
+		return
+	}
 	mimeType, materialType, err := detectMaterialFileType(fileHeader)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -131,6 +150,7 @@ func UploadMaterial(c *gin.Context) {
 		UserId:      c.GetInt("id"),
 		Name:        truncateRunes(fileName, materialNameMaxRunes),
 		Type:        materialType,
+		SourceType:  sourceType,
 		MimeType:    mimeType,
 		FileName:    fileName,
 		Url:         uploadedURL,
@@ -165,7 +185,12 @@ func UploadMaterial(c *gin.Context) {
 func GetMaterials(c *gin.Context) {
 	userId := c.GetInt("id")
 	pageInfo := common.GetPageQuery(c)
-	materials, total, err := model.GetMaterialsByUser(userId, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
+	filters, err := getMaterialSearchFilters(c, false)
+	if err != nil {
+		materialBadRequest(c, err)
+		return
+	}
+	materials, total, err := model.SearchMaterialsByUser(userId, filters, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -177,10 +202,13 @@ func GetMaterials(c *gin.Context) {
 
 func SearchMaterials(c *gin.Context) {
 	userId := c.GetInt("id")
-	keyword := c.Query("keyword")
-	typeFilter := c.Query("type")
 	pageInfo := common.GetPageQuery(c)
-	materials, total, err := model.SearchMaterialsByUser(userId, keyword, typeFilter, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
+	filters, err := getMaterialSearchFilters(c, true)
+	if err != nil {
+		materialBadRequest(c, err)
+		return
+	}
+	materials, total, err := model.SearchMaterialsByUser(userId, filters, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -188,6 +216,73 @@ func SearchMaterials(c *gin.Context) {
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(materials)
 	common.ApiSuccess(c, pageInfo)
+}
+
+func CreateGeneratedMaterial(c *gin.Context) {
+	userId := c.GetInt("id")
+	var req struct {
+		Name     string   `json:"name"`
+		Type     string   `json:"type"`
+		MimeType string   `json:"mime_type"`
+		FileName string   `json:"file_name"`
+		Url      string   `json:"url"`
+		FileSize int64    `json:"file_size"`
+		Width    *int     `json:"width"`
+		Height   *int     `json:"height"`
+		Duration *float64 `json:"duration"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	materialURL, err := normalizeGeneratedMaterialURL(req.Url)
+	if err != nil {
+		materialBadRequest(c, err)
+		return
+	}
+	materialType, mimeType, err := normalizeGeneratedMaterialMedia(req.Type, req.MimeType, materialURL)
+	if err != nil {
+		materialBadRequest(c, err)
+		return
+	}
+
+	now := common.GetTimestamp()
+	fileName := generatedMaterialFileName(req.FileName, materialURL, materialType, mimeType, now)
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		name = fileName
+	}
+	name = truncateRunes(name, materialNameMaxRunes)
+	fileSize := req.FileSize
+	if fileSize < 0 {
+		fileSize = 0
+	}
+
+	material := &model.Material{
+		UserId:      userId,
+		Name:        name,
+		Type:        materialType,
+		SourceType:  model.MaterialSourceTypeAIOutput,
+		MimeType:    mimeType,
+		FileName:    fileName,
+		Url:         materialURL,
+		StorageType: model.StorageTypeOSS,
+		FileSize:    fileSize,
+		Width:       req.Width,
+		Height:      req.Height,
+		Duration:    req.Duration,
+		Status:      1,
+		CreatedTime: now,
+		UpdatedTime: now,
+	}
+
+	savedMaterial, err := model.CreateGeneratedMaterial(material)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, savedMaterial)
 }
 
 func UpdateMaterial(c *gin.Context) {
@@ -271,13 +366,14 @@ func ServeMaterialFile(c *gin.Context) {
 	}
 
 	if material.StorageType != model.StorageTypeLocal {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"success": false,
-			"message": "this material is not stored locally",
-		})
+		serveRemoteMaterialFile(c, material)
 		return
 	}
 
+	serveLocalMaterialFile(c, material)
+}
+
+func serveLocalMaterialFile(c *gin.Context, material *model.Material) {
 	if material.FilePath == "" {
 		c.JSON(http.StatusNotFound, gin.H{
 			"success": false,
@@ -299,6 +395,143 @@ func ServeMaterialFile(c *gin.Context) {
 		"filename": sanitizeMaterialFileName(material.FileName),
 	}))
 	c.File(material.FilePath)
+}
+
+func serveRemoteMaterialFile(c *gin.Context, material *model.Material) {
+	materialURL := strings.TrimSpace(material.Url)
+	if materialURL == "" {
+		c.JSON(http.StatusNotFound, gin.H{
+			"success": false,
+			"message": "material url not found",
+		})
+		return
+	}
+
+	if isSameOriginMaterialPath(materialURL) {
+		c.Redirect(http.StatusTemporaryRedirect, materialURL)
+		return
+	}
+
+	fetchSetting := system_setting.GetFetchSetting()
+	if err := common.ValidateURLWithFetchSetting(materialURL, fetchSetting.EnableSSRFProtection, fetchSetting.AllowPrivateIp, fetchSetting.DomainFilterMode, fetchSetting.IpFilterMode, fetchSetting.DomainList, fetchSetting.IpList, fetchSetting.AllowedPorts, fetchSetting.ApplyIPFilterForDomain); err != nil {
+		c.JSON(http.StatusForbidden, gin.H{
+			"success": false,
+			"message": fmt.Sprintf("request blocked: %v", err),
+		})
+		return
+	}
+
+	client, err := service.GetHttpClientWithProxy("")
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"message": "failed to create proxy client",
+		})
+		return
+	}
+	if client == nil {
+		client = http.DefaultClient
+	}
+
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 60*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, materialURL, nil)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"message": "failed to create proxy request",
+		})
+		return
+	}
+	copyMaterialProxyRequestHeaders(c, req)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{
+			"success": false,
+			"message": "failed to fetch material content",
+		})
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
+		c.JSON(http.StatusBadGateway, gin.H{
+			"success": false,
+			"message": fmt.Sprintf("upstream service returned status %d", resp.StatusCode),
+		})
+		return
+	}
+
+	copyMaterialProxyResponseHeaders(c, resp.Header)
+	setMaterialContentHeaders(c, material, resp.Header.Get("Content-Type"))
+	c.Writer.Header().Set("Cache-Control", "private, max-age=86400")
+	c.Writer.WriteHeader(resp.StatusCode)
+	if _, err = io.Copy(c.Writer, resp.Body); err != nil {
+		common.SysLog(fmt.Sprintf("failed to stream material content: %s", err.Error()))
+	}
+}
+
+func copyMaterialProxyRequestHeaders(c *gin.Context, req *http.Request) {
+	for _, header := range []string{"Range", "If-Range"} {
+		if value := c.GetHeader(header); value != "" {
+			req.Header.Set(header, value)
+		}
+	}
+}
+
+func copyMaterialProxyResponseHeaders(c *gin.Context, header http.Header) {
+	for key, values := range header {
+		switch strings.ToLower(key) {
+		case "content-disposition", "content-type", "transfer-encoding", "connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailer", "upgrade":
+			continue
+		default:
+			for _, value := range values {
+				c.Writer.Header().Add(key, value)
+			}
+		}
+	}
+}
+
+func setMaterialContentHeaders(c *gin.Context, material *model.Material, upstreamContentType string) {
+	contentType := normalizeMaterialContentType(material, upstreamContentType)
+	c.Writer.Header().Set("Content-Type", contentType)
+	c.Writer.Header().Set("Content-Disposition", mime.FormatMediaType("inline", map[string]string{
+		"filename": materialProxyFilename(material, contentType),
+	}))
+}
+
+func normalizeMaterialContentType(material *model.Material, upstreamContentType string) string {
+	materialMime := normalizeMimeType(material.MimeType)
+	if materialMime != "" && !isGenericMaterialMime(materialMime) {
+		return materialMime
+	}
+	upstreamContentType = strings.TrimSpace(upstreamContentType)
+	upstreamMediaType := upstreamContentType
+	if parsed, _, err := mime.ParseMediaType(upstreamContentType); err == nil {
+		upstreamMediaType = parsed
+	}
+	if upstreamMediaType != "" && !isGenericMaterialMime(upstreamMediaType) {
+		return upstreamContentType
+	}
+	if inferred := materialMimeFromURL(material.Url); inferred != "" {
+		return inferred
+	}
+	return defaultMaterialMimeType(material.Type)
+}
+
+func materialProxyFilename(material *model.Material, contentType string) string {
+	filename := sanitizeMaterialFileName(material.FileName)
+	if filename == "upload.bin" {
+		filename = sanitizeMaterialFileName(material.Name)
+	}
+	if path.Ext(filename) != "" {
+		return filename
+	}
+	if ext := defaultMaterialExtension(material.Type, contentType); ext != "" {
+		return filename + ext
+	}
+	return filename
 }
 
 func detectMaterialFileType(header *multipart.FileHeader) (mimeType string, materialType string, err error) {
@@ -356,6 +589,139 @@ func materialTypeFromMime(mimeType string) string {
 	default:
 		return ""
 	}
+}
+
+func normalizeMaterialSourceType(value string) (string, error) {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return model.MaterialSourceTypeUpload, nil
+	}
+	switch value {
+	case model.MaterialSourceTypeUpload, model.MaterialSourceTypeAIOutput:
+		return value, nil
+	default:
+		return "", fmt.Errorf("unsupported material source type: %s", value)
+	}
+}
+
+func normalizeGeneratedMaterialURL(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", fmt.Errorf("material url is required")
+	}
+	if utf8.RuneCountInString(value) > materialURLMaxRunes {
+		return "", fmt.Errorf("material url cannot exceed %d characters", materialURLMaxRunes)
+	}
+	if strings.HasPrefix(strings.ToLower(value), "data:") {
+		return "", fmt.Errorf("data urls must be uploaded as files")
+	}
+	if strings.HasPrefix(value, "//") {
+		return "", fmt.Errorf("material url must be http, https, or an absolute path")
+	}
+	if isSameOriginMaterialPath(value) {
+		return value, nil
+	}
+	parsedURL, err := url.Parse(value)
+	if err != nil || parsedURL == nil {
+		return "", fmt.Errorf("invalid material url")
+	}
+	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
+		return "", fmt.Errorf("material url must be http, https, or an absolute path")
+	}
+	if parsedURL.Host == "" {
+		return "", fmt.Errorf("invalid material url")
+	}
+	return value, nil
+}
+
+func normalizeGeneratedMaterialMedia(requestType string, requestMimeType string, materialURL string) (string, string, error) {
+	mimeType := normalizeMimeType(requestMimeType)
+	materialType := strings.ToLower(strings.TrimSpace(requestType))
+	if materialType == "" && mimeType != "" {
+		materialType = materialTypeFromMime(mimeType)
+	}
+	if mimeType == "" {
+		mimeType = materialMimeFromURL(materialURL)
+	}
+	if materialType == "" && mimeType != "" {
+		materialType = materialTypeFromMime(mimeType)
+	}
+	if !isSupportedMaterialType(materialType) {
+		return "", "", fmt.Errorf("unsupported material type: %s", firstNonEmptyString(materialType, requestType, mimeType))
+	}
+	inferredType := materialTypeFromMime(mimeType)
+	if inferredType != "" && inferredType != materialType {
+		return "", "", fmt.Errorf("material type does not match mime type")
+	}
+	if mimeType == "" {
+		mimeType = defaultMaterialMimeType(materialType)
+	}
+	return materialType, mimeType, nil
+}
+
+func isSupportedMaterialType(materialType string) bool {
+	switch materialType {
+	case model.MaterialTypeImage, model.MaterialTypeVideo, model.MaterialTypeAudio:
+		return true
+	default:
+		return false
+	}
+}
+
+func materialMimeFromURL(rawURL string) string {
+	parsedURL, err := url.Parse(rawURL)
+	if err == nil && parsedURL != nil {
+		if mimeType := materialMimeFromExtension(parsedURL.Path); mimeType != "" {
+			return mimeType
+		}
+	}
+	return materialMimeFromExtension(rawURL)
+}
+
+func isSameOriginMaterialPath(value string) bool {
+	return strings.HasPrefix(value, "/") && !strings.HasPrefix(value, "//")
+}
+
+func defaultMaterialMimeType(materialType string) string {
+	switch materialType {
+	case model.MaterialTypeImage:
+		return "image/png"
+	case model.MaterialTypeVideo:
+		return "video/mp4"
+	case model.MaterialTypeAudio:
+		return "audio/mpeg"
+	default:
+		return "application/octet-stream"
+	}
+}
+
+func defaultMaterialExtension(materialType string, mimeType string) string {
+	if extensions, err := mime.ExtensionsByType(mimeType); err == nil && len(extensions) > 0 {
+		return extensions[0]
+	}
+	switch materialType {
+	case model.MaterialTypeImage:
+		return ".png"
+	case model.MaterialTypeVideo:
+		return ".mp4"
+	case model.MaterialTypeAudio:
+		return ".mp3"
+	default:
+		return ".bin"
+	}
+}
+
+func generatedMaterialFileName(requestFileName string, rawURL string, materialType string, mimeType string, timestamp int64) string {
+	fileName := sanitizeMaterialFileName(requestFileName)
+	if fileName == "upload.bin" {
+		if parsedURL, err := url.Parse(rawURL); err == nil && parsedURL != nil {
+			fileName = sanitizeMaterialFileName(path.Base(parsedURL.Path))
+		}
+	}
+	if fileName == "upload.bin" || filepath.Ext(fileName) == "" {
+		fileName = fmt.Sprintf("ai-output-%d%s", timestamp, defaultMaterialExtension(materialType, mimeType))
+	}
+	return truncateRunes(fileName, materialFileNameMaxRunes)
 }
 
 func materialMimeFromExtension(filename string) string {
@@ -425,6 +791,55 @@ func normalizeMaterialName(name string) (string, error) {
 		return "", fmt.Errorf("material name cannot exceed %d characters", materialNameMaxRunes)
 	}
 	return name, nil
+}
+
+func getMaterialSearchFilters(c *gin.Context, includeKeyword bool) (model.MaterialSearchFilters, error) {
+	createdAfter, err := parseMaterialTimestampQuery(c, "created_after")
+	if err != nil {
+		return model.MaterialSearchFilters{}, err
+	}
+	createdBefore, err := parseMaterialTimestampQuery(c, "created_before")
+	if err != nil {
+		return model.MaterialSearchFilters{}, err
+	}
+	if createdAfter > 0 && createdBefore > 0 && createdAfter > createdBefore {
+		return model.MaterialSearchFilters{}, fmt.Errorf("created_after cannot be greater than created_before")
+	}
+
+	filters := model.MaterialSearchFilters{
+		TypeFilter:       c.Query("type"),
+		SourceTypeFilter: c.Query("source_type"),
+		CreatedAfter:     createdAfter,
+		CreatedBefore:    createdBefore,
+	}
+	if includeKeyword {
+		filters.Keyword = c.Query("keyword")
+	}
+	return filters, nil
+}
+
+func parseMaterialTimestampQuery(c *gin.Context, key string) (int64, error) {
+	value := strings.TrimSpace(c.Query(key))
+	if value == "" {
+		return 0, nil
+	}
+	timestamp, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || timestamp < 0 {
+		return 0, fmt.Errorf("%s must be a valid timestamp", key)
+	}
+	return timestamp, nil
+}
+
+func materialBadRequest(c *gin.Context, err error) {
+	c.JSON(http.StatusBadRequest, gin.H{
+		"success": false,
+		"message": err.Error(),
+		"error": gin.H{
+			"code":    "invalid_request",
+			"message": err.Error(),
+			"type":    "invalid_request_error",
+		},
+	})
 }
 
 func truncateRunes(value string, maxRunes int) string {

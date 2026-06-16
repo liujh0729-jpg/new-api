@@ -17,12 +17,14 @@ import {
 import { useMediaQuery } from '@/hooks'
 import { useTranslation } from 'react-i18next'
 import { useTableUrlState } from '@/hooks/use-table-url-state'
-import { DataTablePage } from '@/components/data-table'
 import { TableRow, TableCell } from '@/components/ui/table'
+import { DataTablePage } from '@/components/data-table'
 import { getMaterials, searchMaterials } from '../api'
+import { MATERIAL_SOURCE_TYPE, MATERIAL_TIME_FILTER } from '../constants'
+import { getMaterialTimeRange } from '../lib'
+import type { Material } from '../types'
 import { useMaterialsColumns } from './materials-columns'
 import { useMaterials } from './materials-provider'
-import type { Material } from '../types'
 
 const route = getRouteApi('/_authenticated/materials/')
 
@@ -48,12 +50,32 @@ export function MaterialsTable() {
     navigate: route.useNavigate(),
     pagination: { defaultPage: 1, defaultPageSize: isMobile ? 10 : 20 },
     globalFilter: { enabled: true, key: 'filter' },
-    columnFilters: [{ columnId: 'type', searchKey: 'type', type: 'array' }],
+    columnFilters: [
+      { columnId: 'type', searchKey: 'type', type: 'array' },
+      { columnId: 'source_type', searchKey: 'source', type: 'array' },
+      { columnId: 'created_time', searchKey: 'time', type: 'array' },
+    ],
   })
   const typeFilters = useMemo(() => {
     const value = columnFilters.find((filter) => filter.id === 'type')?.value
     return Array.isArray(value) ? (value as string[]) : []
   }, [columnFilters])
+  const sourceTypeFilters = useMemo(() => {
+    const value = columnFilters.find(
+      (filter) => filter.id === 'source_type'
+    )?.value
+    return Array.isArray(value) ? (value as string[]) : []
+  }, [columnFilters])
+  const timeFilters = useMemo(() => {
+    const value = columnFilters.find(
+      (filter) => filter.id === 'created_time'
+    )?.value
+    return Array.isArray(value) ? (value as string[]) : []
+  }, [columnFilters])
+  const timeRange = useMemo(
+    () => getMaterialTimeRange(timeFilters[0]),
+    [timeFilters]
+  )
 
   const { data, isLoading, isFetching } = useQuery({
     queryKey: [
@@ -62,20 +84,32 @@ export function MaterialsTable() {
       pagination.pageSize,
       globalFilter,
       typeFilters.join(','),
+      sourceTypeFilters.join(','),
+      timeFilters.join(','),
+      timeRange.created_after,
+      timeRange.created_before,
       refreshTrigger,
     ],
     queryFn: async () => {
-      const hasFilter = Boolean(globalFilter?.trim() || typeFilters.length)
+      const hasFilter = Boolean(
+        globalFilter?.trim() ||
+        typeFilters.length ||
+        sourceTypeFilters.length ||
+        timeRange.created_after ||
+        timeRange.created_before
+      )
       const params = {
         p: pagination.pageIndex + 1,
         page_size: pagination.pageSize,
+        type: typeFilters,
+        source_type: sourceTypeFilters,
+        ...timeRange,
       }
 
       const result = hasFilter
         ? await searchMaterials({
             ...params,
             keyword: globalFilter,
-            type: typeFilters,
           })
         : await getMaterials(params)
 
@@ -142,13 +176,29 @@ export function MaterialsTable() {
     ],
     [t]
   )
+  const sourceTypeOptions = useMemo(
+    () => [
+      { label: t('Material'), value: MATERIAL_SOURCE_TYPE.MATERIAL },
+      { label: t('AI Output'), value: MATERIAL_SOURCE_TYPE.AI_OUTPUT },
+    ],
+    [t]
+  )
+  const timeOptions = useMemo(
+    () => [
+      { label: t('Today'), value: MATERIAL_TIME_FILTER.TODAY },
+      { label: t('Last 7 days'), value: MATERIAL_TIME_FILTER.LAST_7_DAYS },
+      { label: t('Last 30 days'), value: MATERIAL_TIME_FILTER.LAST_30_DAYS },
+      { label: t('Last 90 days'), value: MATERIAL_TIME_FILTER.LAST_90_DAYS },
+    ],
+    [t]
+  )
 
   const renderRow = (row: Row<Material>) => {
     return (
       <TableRow
         key={row.id}
         data-state={row.getIsSelected() && 'selected'}
-        className='transition-colors hover:bg-muted/50'
+        className='hover:bg-muted/50 transition-colors'
       >
         {row.getVisibleCells().map((cell) => (
           <TableCell key={cell.id}>
@@ -175,9 +225,21 @@ export function MaterialsTable() {
         searchPlaceholder: t('Filter by name, filename or ID...'),
         filters: [
           {
-            columnId: 'type',
+            columnId: 'source_type',
             title: t('Type'),
+            options: sourceTypeOptions,
+            singleSelect: true,
+          },
+          {
+            columnId: 'type',
+            title: t('Media Type'),
             options: typeOptions,
+          },
+          {
+            columnId: 'created_time',
+            title: t('Time'),
+            options: timeOptions,
+            singleSelect: true,
           },
         ],
       }}
