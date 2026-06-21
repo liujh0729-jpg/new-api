@@ -37,6 +37,14 @@ function isWebUrl(url: string): boolean {
   return /^https?:\/\//i.test(url.trim())
 }
 
+function isDataReferenceUrl(url: string): boolean {
+  return /^data:(image|video|audio)\//i.test(url.trim())
+}
+
+function isValidReferenceUrl(url: string): boolean {
+  return isWebUrl(url) || isDataReferenceUrl(url)
+}
+
 function getOpenAIVideoSize(ratio: string): string | undefined {
   if (ratio === '16:9') return '1280x720'
   if (ratio === '9:16') return '720x1280'
@@ -121,7 +129,7 @@ export function buildVideoGenerationPayload(
   references: SeedanceReference[],
   config: PlaygroundConfig
 ): VideoGenerationRequest {
-  if (references.some((reference) => !isWebUrl(reference.url))) {
+  if (references.some((reference) => !isValidReferenceUrl(reference.url))) {
     throw new Error(ERROR_MESSAGES.VIDEO_REFERENCE_UPLOAD_REQUIRED)
   }
 

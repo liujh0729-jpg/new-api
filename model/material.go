@@ -205,6 +205,24 @@ func CreateGeneratedMaterial(material *Material) (*Material, error) {
 		MaterialSourceTypeAIOutput,
 	).First(&existing).Error
 	if err == nil {
+		updates := map[string]interface{}{}
+		if existing.FileSize <= 0 && material.FileSize > 0 {
+			updates["file_size"] = material.FileSize
+			existing.FileSize = material.FileSize
+		}
+		if strings.TrimSpace(existing.MimeType) == "" && strings.TrimSpace(material.MimeType) != "" {
+			updates["mime_type"] = material.MimeType
+			existing.MimeType = material.MimeType
+		}
+		if len(updates) > 0 {
+			updates["updated_time"] = common.GetTimestamp()
+			if updateErr := DB.Model(&existing).Updates(updates).Error; updateErr != nil {
+				return nil, updateErr
+			}
+			if updatedAt, ok := updates["updated_time"].(int64); ok {
+				existing.UpdatedTime = updatedAt
+			}
+		}
 		return &existing, nil
 	}
 	if !errors.Is(err, gorm.ErrRecordNotFound) {

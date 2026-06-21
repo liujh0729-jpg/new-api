@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -59,4 +60,45 @@ func TestCopyMaterialProxyResponseHeadersSkipsDownloadHeaders(t *testing.T) {
 	require.Empty(t, recorder.Header().Get("Content-Disposition"))
 	require.Empty(t, recorder.Header().Get("Content-Type"))
 	require.Equal(t, "bytes 0-1023/2048", recorder.Header().Get("Content-Range"))
+}
+
+func TestRequestGeneratedMaterialRemoteMetadataUsesHeadContentLength(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, http.MethodHead, r.Method)
+		w.Header().Set("Content-Type", "image/webp")
+		w.Header().Set("Content-Length", "12345")
+	}))
+	defer server.Close()
+
+	metadata := requestGeneratedMaterialRemoteMetadata(
+		context.Background(),
+		server.Client(),
+		http.MethodHead,
+		server.URL,
+	)
+
+	require.EqualValues(t, 12345, metadata.FileSize)
+	require.Equal(t, "image/webp", metadata.MimeType)
+}
+
+func TestRequestGeneratedMaterialRemoteMetadataUsesContentRangeTotal(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, http.MethodGet, r.Method)
+		require.Equal(t, "bytes=0-0", r.Header.Get("Range"))
+		w.Header().Set("Content-Type", "image/jpeg")
+		w.Header().Set("Content-Range", "bytes 0-0/98765")
+		w.WriteHeader(http.StatusPartialContent)
+		_, _ = w.Write([]byte{1})
+	}))
+	defer server.Close()
+
+	metadata := requestGeneratedMaterialRemoteMetadata(
+		context.Background(),
+		server.Client(),
+		http.MethodGet,
+		server.URL,
+	)
+
+	require.EqualValues(t, 98765, metadata.FileSize)
+	require.Equal(t, "image/jpeg", metadata.MimeType)
 }

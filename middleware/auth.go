@@ -173,6 +173,24 @@ func UserAuth() func(c *gin.Context) {
 	}
 }
 
+func UserAuthWithQueryUserID() func(c *gin.Context) {
+	return func(c *gin.Context) {
+		applyQueryUserIDHeader(c)
+		authHelper(c, common.RoleCommonUser)
+	}
+}
+
+func applyQueryUserIDHeader(c *gin.Context) {
+	if c == nil || c.Request == nil || c.Request.Header.Get("New-Api-User") != "" {
+		return
+	}
+	userID := strings.TrimSpace(c.Query("user_id"))
+	if userID == "" {
+		return
+	}
+	c.Request.Header.Set("New-Api-User", userID)
+}
+
 func AdminAuth() func(c *gin.Context) {
 	return func(c *gin.Context) {
 		authHelper(c, common.RoleAdminUser)

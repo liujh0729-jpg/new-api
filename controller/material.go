@@ -27,11 +27,17 @@ import (
 )
 
 const (
-	materialUploadMaxBytes   int64 = constant.PlaygroundUploadMaxMB * 1024 * 1024
-	materialNameMaxRunes           = 191
-	materialFileNameMaxRunes       = 255
-	materialURLMaxRunes            = 1024
+	materialUploadMaxBytes       int64 = constant.PlaygroundUploadMaxMB * 1024 * 1024
+	materialNameMaxRunes               = 191
+	materialFileNameMaxRunes           = 255
+	materialURLMaxRunes                = 1024
+	materialMetadataProbeTimeout       = 5 * time.Second
 )
+
+type generatedMaterialRemoteMetadata struct {
+	FileSize int64
+	MimeType string
+}
 
 func uploadMaterialFile(ctx context.Context, header *multipart.FileHeader) (url string, storageType string, err error) {
 	channel, err := getPlaygroundAIPDDUploadChannel()
@@ -246,6 +252,12 @@ func CreateGeneratedMaterial(c *gin.Context) {
 		materialBadRequest(c, err)
 		return
 	}
+	remoteMetadata := probeGeneratedMaterialRemoteMetadata(c.Request.Context(), materialURL)
+	if strings.TrimSpace(req.MimeType) == "" && remoteMetadata.MimeType != "" {
+		if inferredType := materialTypeFromMime(remoteMetadata.MimeType); inferredType == materialType {
+			mimeType = remoteMetadata.MimeType
+		}
+	}
 
 	now := common.GetTimestamp()
 	fileName := generatedMaterialFileName(req.FileName, materialURL, materialType, mimeType, now)
@@ -255,6 +267,9 @@ func CreateGeneratedMaterial(c *gin.Context) {
 	}
 	name = truncateRunes(name, materialNameMaxRunes)
 	fileSize := req.FileSize
+	if fileSize <= 0 && remoteMetadata.FileSize > 0 {
+		fileSize = remoteMetadata.FileSize
+	}
 	if fileSize < 0 {
 		fileSize = 0
 	}
@@ -470,6 +485,103 @@ func serveRemoteMaterialFile(c *gin.Context, material *model.Material) {
 	if _, err = io.Copy(c.Writer, resp.Body); err != nil {
 		common.SysLog(fmt.Sprintf("failed to stream material content: %s", err.Error()))
 	}
+}
+
+func probeGeneratedMaterialRemoteMetadata(ctx context.Context, materialURL string) generatedMaterialRemoteMetadata {
+	materialURL = strings.TrimSpace(materialURL)
+	if materialURL == "" || isSameOriginMaterialPath(materialURL) {
+		return generatedMaterialRemoteMetadata{}
+	}
+
+	parsedURL, err := url.Parse(materialURL)
+	if err != nil || parsedURL == nil || parsedURL.Host == "" {
+		return generatedMaterialRemoteMetadata{}
+	}
+	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
+		return generatedMaterialRemoteMetadata{}
+	}
+
+	fetchSetting := system_setting.GetFetchSetting()
+	if err = common.ValidateURLWithFetchSetting(materialURL, fetchSetting.EnableSSRFProtection, fetchSetting.AllowPrivateIp, fetchSetting.DomainFilterMode, fetchSetting.IpFilterMode, fetchSetting.DomainList, fetchSetting.IpList, fetchSetting.AllowedPorts, fetchSetting.ApplyIPFilterForDomain); err != nil {
+		return generatedMaterialRemoteMetadata{}
+	}
+
+	client, err := service.GetHttpClientWithProxy("")
+	if err != nil || client == nil {
+		client = http.DefaultClient
+	}
+
+	metadata := requestGeneratedMaterialRemoteMetadata(ctx, client, http.MethodHead, materialURL)
+	if metadata.FileSize > 0 {
+		return metadata
+	}
+	fallbackMetadata := requestGeneratedMaterialRemoteMetadata(ctx, client, http.MethodGet, materialURL)
+	if fallbackMetadata.MimeType == "" {
+		fallbackMetadata.MimeType = metadata.MimeType
+	}
+	return fallbackMetadata
+}
+
+func requestGeneratedMaterialRemoteMetadata(ctx context.Context, client *http.Client, method string, materialURL string) generatedMaterialRemoteMetadata {
+	requestCtx, cancel := context.WithTimeout(ctx, materialMetadataProbeTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(requestCtx, method, materialURL, nil)
+	if err != nil {
+		return generatedMaterialRemoteMetadata{}
+	}
+	if method == http.MethodGet {
+		req.Header.Set("Range", "bytes=0-0")
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return generatedMaterialRemoteMetadata{}
+	}
+	defer resp.Body.Close()
+	if method == http.MethodGet {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1024))
+	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusBadRequest {
+		return generatedMaterialRemoteMetadata{}
+	}
+
+	return generatedMaterialRemoteMetadata{
+		FileSize: firstPositiveInt64(
+			parseContentRangeTotal(resp.Header.Get("Content-Range")),
+			resp.ContentLength,
+		),
+		MimeType: normalizeMimeType(resp.Header.Get("Content-Type")),
+	}
+}
+
+func firstPositiveInt64(values ...int64) int64 {
+	for _, value := range values {
+		if value > 0 {
+			return value
+		}
+	}
+	return 0
+}
+
+func parseContentRangeTotal(value string) int64 {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0
+	}
+	index := strings.LastIndex(value, "/")
+	if index < 0 || index+1 >= len(value) {
+		return 0
+	}
+	total := strings.TrimSpace(value[index+1:])
+	if total == "" || total == "*" {
+		return 0
+	}
+	parsed, err := strconv.ParseInt(total, 10, 64)
+	if err != nil || parsed < 0 {
+		return 0
+	}
+	return parsed
 }
 
 func copyMaterialProxyRequestHeaders(c *gin.Context, req *http.Request) {

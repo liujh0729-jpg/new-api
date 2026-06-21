@@ -22,12 +22,15 @@ import { DEFAULT_CONFIG, DEFAULT_PARAMETER_ENABLED } from '../constants'
 import {
   createPlaygroundConversation,
   getConversationTitle,
+  getConversationStorageKey,
   loadConfig,
   loadConversationState,
   loadParameterEnabled,
+  PLAYGROUND_CONVERSATION_STATE_EVENT,
   saveConfig,
   saveConversationState,
   saveParameterEnabled,
+  type PlaygroundConversationStateEventDetail,
 } from '../lib'
 import type {
   Message,
@@ -106,14 +109,35 @@ export function usePlaygroundState() {
     setConversationState(loadInitialConversationState(userId))
   }, [userId])
 
+  useEffect(() => {
+    const storageKey = getConversationStorageKey(userId)
+    const handleConversationStateChange = (event: Event) => {
+      const detail = (
+        event as CustomEvent<PlaygroundConversationStateEventDetail>
+      ).detail
+      if (detail?.storageKey !== storageKey) return
+      setConversationState(detail.state)
+    }
+
+    window.addEventListener(
+      PLAYGROUND_CONVERSATION_STATE_EVENT,
+      handleConversationStateChange
+    )
+    return () => {
+      window.removeEventListener(
+        PLAYGROUND_CONVERSATION_STATE_EVENT,
+        handleConversationStateChange
+      )
+    }
+  }, [userId])
+
   const persistConversationState = useCallback(
     (updater: ConversationStateUpdater) => {
-      setConversationState((prev) => {
-        const nextState =
-          typeof updater === 'function' ? updater(prev) : updater
-        saveConversationState(userId, nextState)
-        return nextState
-      })
+      const currentState = loadInitialConversationState(userId)
+      const nextState =
+        typeof updater === 'function' ? updater(currentState) : updater
+      saveConversationState(userId, nextState)
+      setConversationState(nextState)
     },
     [userId]
   )

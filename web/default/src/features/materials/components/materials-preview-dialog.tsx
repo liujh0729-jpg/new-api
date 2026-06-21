@@ -95,8 +95,10 @@ export function MaterialsPreviewDialog() {
                   <audio
                     src={previewUrl}
                     controls
+                    preload='metadata'
                     className='w-full'
                     onLoadedMetadata={handleMediaLoad}
+                    onCanPlay={handleMediaLoad}
                     onError={handleMediaError}
                   />
                 </div>

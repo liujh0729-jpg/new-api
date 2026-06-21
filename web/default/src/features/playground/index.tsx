@@ -195,7 +195,7 @@ export function Playground() {
 
   const handleSendMessage = async (message: PromptInputMessage) => {
     const text = message.text?.trim() || ''
-    let seedanceReferences: SeedanceReference[] = []
+    let messageReferences: SeedanceReference[] = []
     let imageReferences: string[] | undefined
 
     if (config.mode === 'video') {
@@ -233,7 +233,7 @@ export function Playground() {
         setIsUploadingReferences(true)
       }
       try {
-        seedanceReferences =
+        messageReferences =
           await resolveSeedanceReferenceURLs(referenceCandidates)
       } catch (error) {
         const uploadError = normalizePlaygroundError(error, t)
@@ -247,13 +247,14 @@ export function Playground() {
     }
 
     if (config.mode === 'image') {
-      imageReferences = await resolveImageReferences(message.files || [])
+      messageReferences = await resolveImageReferences(message.files || [])
+      imageReferences = messageReferences.map((reference) => reference.url)
       if (imageReferences.length === 0) {
         imageReferences = undefined
       }
     }
 
-    const userMessage = createUserMessage(text, seedanceReferences)
+    const userMessage = createUserMessage(text, messageReferences)
     const assistantMessage = createLoadingAssistantMessage()
 
     const newMessages = [...messages, userMessage, assistantMessage]
@@ -428,21 +429,91 @@ async function resolveSeedanceReferenceURLs(
     references.map(async ({ sourceFile, ...reference }) => {
       if (!sourceFile) return reference
 
-      const uploaded = await uploadReferenceMedia(sourceFile)
-      return {
-        ...reference,
-        url: uploaded.url,
-        filename: uploaded.filename || reference.filename,
-        media_type: uploaded.media_type || reference.media_type,
+      try {
+        const uploaded = await uploadReferenceMedia(sourceFile)
+        return {
+          ...reference,
+          url: uploaded.url,
+          filename: uploaded.filename || reference.filename,
+          media_type: uploaded.media_type || reference.media_type,
+        }
+      } catch (error) {
+        if (
+          shouldInlineLocalReference(error) &&
+          isDataReferenceUrl(reference.url)
+        ) {
+          return reference
+        }
+        throw error
       }
     })
   )
 
-  if (resolvedReferences.some((reference) => !isWebUrl(reference.url))) {
+  if (
+    resolvedReferences.some((reference) => !isValidReferenceUrl(reference.url))
+  ) {
     throw new Error(ERROR_MESSAGES.VIDEO_REFERENCE_UPLOAD_REQUIRED)
   }
 
   return resolvedReferences
+}
+
+function shouldInlineLocalReference(error: unknown): boolean {
+  const code = extractUploadErrorCode(error)
+  if (
+    code === 'aipdd_channel_unavailable' ||
+    code === 'aipdd_channel_key_unavailable' ||
+    code === 'aipdd_channel_key_empty'
+  ) {
+    return true
+  }
+
+  const message = extractUploadErrorMessage(error).toLowerCase()
+  return (
+    message.includes('enabled aipdd channel is not configured') ||
+    message.includes('aipdd channel key unavailable') ||
+    message.includes('aipdd channel key is empty')
+  )
+}
+
+function extractUploadErrorCode(error: unknown): string {
+  if (typeof error !== 'object' || error === null) return ''
+  const response = (error as { response?: { data?: unknown } }).response
+  const data = response?.data
+  if (typeof data !== 'object' || data === null) return ''
+  const nestedError = (data as { error?: unknown }).error
+  if (typeof nestedError === 'object' && nestedError !== null) {
+    const code = (nestedError as { code?: unknown }).code
+    return typeof code === 'string' ? code : ''
+  }
+  const code = (data as { code?: unknown }).code
+  return typeof code === 'string' ? code : ''
+}
+
+function extractUploadErrorMessage(error: unknown): string {
+  if (typeof error !== 'object' || error === null) {
+    return error instanceof Error ? error.message : ''
+  }
+  const response = (error as { response?: { data?: unknown } }).response
+  const data = response?.data
+  if (typeof data === 'object' && data !== null) {
+    const nestedError = (data as { error?: unknown }).error
+    if (typeof nestedError === 'object' && nestedError !== null) {
+      const message = (nestedError as { message?: unknown }).message
+      if (typeof message === 'string') return message
+    }
+    const message = (data as { message?: unknown }).message
+    if (typeof message === 'string') return message
+  }
+  return error instanceof Error ? error.message : ''
+}
+
+function isValidReferenceUrl(url: string): boolean {
+  return isWebUrl(url) || isDataReferenceUrl(url)
+}
+
+function isDataReferenceUrl(url: string): boolean {
+  return /^data:(image|video|audio)\//i.test(url.trim())
 }
 
 function isWebUrl(url: string): boolean {
@@ -607,17 +678,24 @@ function readLocalMediaDuration(
 
 async function resolveImageReferences(
   files: PromptInputSubmittedFile[]
-): Promise<string[]> {
+): Promise<SeedanceReference[]> {
   const images = await Promise.all(
     files.map(async (file) => {
-      if (file.sourceFile) {
-        return readFileAsDataURL(file.sourceFile)
+      const url = file.sourceFile
+        ? await readFileAsDataURL(file.sourceFile)
+        : file.url?.trim() || ''
+      if (!url) return null
+      const reference: SeedanceReference = {
+        kind: 'image',
+        url,
+        filename: file.filename,
+        media_type: file.mediaType,
       }
-      return file.url?.trim() || ''
+      return reference
     })
   )
 
-  return images.filter(Boolean)
+  return images.filter((image): image is SeedanceReference => image !== null)
 }
 
 function readFileAsDataURL(file: File): Promise<string> {

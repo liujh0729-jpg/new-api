@@ -165,6 +165,14 @@ function isWebUrl(url: string): boolean {
   return /^https?:\/\//i.test(url.trim())
 }
 
+function isDataReferenceUrl(url: string): boolean {
+  return /^data:(image|video|audio)\//i.test(url.trim())
+}
+
+function isValidReferenceUrl(url: string): boolean {
+  return isWebUrl(url) || isDataReferenceUrl(url)
+}
+
 function sanitizeSeedanceReferences(message: Message): Message {
   const references = message.seedanceReferences
   if (!references?.length) return message
@@ -174,7 +182,7 @@ function sanitizeSeedanceReferences(message: Message): Message {
       ...reference,
       url: reference.url.trim(),
     }))
-    .filter((reference) => isWebUrl(reference.url))
+    .filter((reference) => isValidReferenceUrl(reference.url))
 
   const unchanged =
     safeReferences.length === references.length &&

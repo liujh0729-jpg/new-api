@@ -100,6 +100,17 @@ function extensionForMime(mimeType: string, fallback: string): string {
   return fallback
 }
 
+function generatedOutputFileName(
+  prefix: string,
+  timestamp: number,
+  index: number,
+  mimeType: string | undefined,
+  fallback: string
+): string | undefined {
+  if (!mimeType) return undefined
+  return `${prefix}-${timestamp}-${index + 1}${extensionForMime(mimeType, fallback)}`
+}
+
 function base64ToFile(
   base64: string,
   mimeType: string,
@@ -191,21 +202,27 @@ export function useChatHandler({
 
       images.forEach((image, index) => {
         try {
-          const mimeType = image.mime_type || 'image/png'
-          const fileName = `generated-image-${now}-${index + 1}${extensionForMime(mimeType, '.png')}`
           if (isPersistableGeneratedUrl(image.url)) {
             jobs.push(
               createGeneratedMaterial({
                 name: image.revised_prompt || t('Generated image'),
                 type: MATERIAL_TYPE.IMAGE,
-                mime_type: mimeType,
-                file_name: fileName,
+                mime_type: image.mime_type,
+                file_name: generatedOutputFileName(
+                  'generated-image',
+                  now,
+                  index,
+                  image.mime_type,
+                  '.png'
+                ),
                 url: image.url,
               })
             )
             return
           }
           if (image.b64_json) {
+            const mimeType = image.mime_type || 'image/png'
+            const fileName = `generated-image-${now}-${index + 1}${extensionForMime(mimeType, '.png')}`
             const file = base64ToFile(image.b64_json, mimeType, fileName)
             jobs.push(uploadMaterial(file, MATERIAL_SOURCE_TYPE.AI_OUTPUT))
           }
@@ -227,12 +244,17 @@ export function useChatHandler({
       const jobs = videos
         .filter((video) => isPersistableGeneratedUrl(video.url))
         .map((video, index) => {
-          const mimeType = video.mime_type || 'video/mp4'
           return createGeneratedMaterial({
             name: video.task_id || t('Generated video'),
             type: MATERIAL_TYPE.VIDEO,
-            mime_type: mimeType,
-            file_name: `generated-video-${now}-${index + 1}${extensionForMime(mimeType, '.mp4')}`,
+            mime_type: video.mime_type,
+            file_name: generatedOutputFileName(
+              'generated-video',
+              now,
+              index,
+              video.mime_type,
+              '.mp4'
+            ),
             url: video.url,
           })
         })
@@ -552,12 +574,18 @@ export function useChatHandler({
 
   const sendImageChat = useCallback(
     async (messages: Message[], imageReferences?: string[]) => {
-      const prompt = [...messages]
+      const userMessage = [...messages]
         .reverse()
         .find((message) => message.from === 'user')
-        ?.versions?.[0]?.content?.trim()
+      const prompt = userMessage?.versions?.[0]?.content?.trim() || ''
+      const references =
+        imageReferences ??
+        userMessage?.seedanceReferences
+          ?.filter((reference) => reference.kind === 'image')
+          .map((reference) => reference.url) ??
+        []
 
-      if (!prompt && (!imageReferences || imageReferences.length === 0)) {
+      if (!prompt && references.length === 0) {
         handleStreamError(ERROR_MESSAGES.API_REQUEST_ERROR)
         return
       }
@@ -568,7 +596,7 @@ export function useChatHandler({
 
       try {
         const response = await sendImageGeneration(
-          buildImageGenerationPayload(prompt || '', config, imageReferences)
+          buildImageGenerationPayload(prompt, config, references)
         )
         if (isTaskAbortRequested('image', abortToken)) return
 

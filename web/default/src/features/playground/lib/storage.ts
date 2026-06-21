@@ -36,6 +36,13 @@ import { sanitizeMessagesOnLoad } from './message-utils'
 
 const CONVERSATION_STATE_VERSION = 1 as const
 const CONVERSATION_TITLE_MAX_LENGTH = 60
+export const PLAYGROUND_CONVERSATION_STATE_EVENT =
+  'playground:conversation-state'
+
+export interface PlaygroundConversationStateEventDetail {
+  storageKey: string
+  state: PlaygroundConversationState
+}
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -331,11 +338,20 @@ export function saveConversationState(
   state: PlaygroundConversationState
 ): void {
   try {
-    localStorage.setItem(
-      getConversationStorageKey(userId),
-      JSON.stringify(state)
-    )
+    const storageKey = getConversationStorageKey(userId)
+    localStorage.setItem(storageKey, JSON.stringify(state))
     localStorage.removeItem(STORAGE_KEYS.MESSAGES)
+    window.dispatchEvent(
+      new CustomEvent<PlaygroundConversationStateEventDetail>(
+        PLAYGROUND_CONVERSATION_STATE_EVENT,
+        {
+          detail: {
+            storageKey,
+            state,
+          },
+        }
+      )
+    )
   } catch (error) {
     // eslint-disable-next-line no-console
     console.error('Failed to save playground conversations:', error)

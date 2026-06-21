@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useCallback } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
   Image,
@@ -66,30 +66,39 @@ export function MaterialSelectorDialog({
   const { t } = useTranslation()
   const attachments = usePromptInputAttachments()
   const [keyword, setKeyword] = useState('')
-  const [typeFilter, setTypeFilter] = useState<string>(
-    mode === 'image' ? 'image' : ''
-  )
+  const [typeFilter, setTypeFilter] = useState<string>('')
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(24)
+  const activeTypeFilter = mode === 'image' ? 'image' : typeFilter
 
-  useEffect(() => {
-    if (!open) {
-      setKeyword('')
-      setPage(1)
-      setTypeFilter(mode === 'image' ? 'image' : '')
-    }
-  }, [open, mode])
+  const handleDialogOpenChange = useCallback(
+    (nextOpen: boolean) => {
+      if (!nextOpen) {
+        setKeyword('')
+        setPage(1)
+        setTypeFilter('')
+      }
+      onOpenChange(nextOpen)
+    },
+    [onOpenChange]
+  )
 
-  useEffect(() => {
+  const handleKeywordChange = useCallback((value: string) => {
+    setKeyword(value)
     setPage(1)
-  }, [keyword, typeFilter])
+  }, [])
+
+  const handleTypeFilterChange = useCallback((value: string) => {
+    setTypeFilter(value)
+    setPage(1)
+  }, [])
 
   const { data, isLoading } = useQuery({
-    queryKey: ['material-selector', keyword, typeFilter, page, pageSize],
+    queryKey: ['material-selector', keyword, activeTypeFilter, page, pageSize],
     queryFn: async () => {
       const result = await searchMaterials({
         keyword: keyword || undefined,
-        type: typeFilter || undefined,
+        type: activeTypeFilter || undefined,
         p: page,
         page_size: pageSize,
       })
@@ -133,40 +142,76 @@ export function MaterialSelectorDialog({
 
   const renderCard = (material: Material) => {
     const isImage = material.type === 'image'
+    const isVideo = material.type === 'video'
+    const isAudio = material.type === 'audio'
     const previewUrl = getMaterialPreviewUrl(material.id)
+    const selectLabel = `${t('Select Material')}: ${material.name}`
 
     return (
-      <button
+      <div
         key={material.id}
-        className='group bg-card hover:border-primary/50 hover:bg-accent/50 focus-visible:ring-ring flex flex-col overflow-hidden rounded-lg border text-left transition-colors focus-visible:ring-2 focus-visible:outline-none'
-        onClick={() => handleSelect(material)}
-        type='button'
+        className='group bg-card hover:border-primary/50 hover:bg-accent/50 flex flex-col overflow-hidden rounded-lg border text-left transition-colors'
       >
-        <div className='bg-muted relative aspect-video overflow-hidden'>
-          {isImage && material.url ? (
-            <img
+        {isVideo ? (
+          <div className='bg-muted relative aspect-video overflow-hidden'>
+            <video
               src={previewUrl}
-              alt={material.name}
-              className='h-full w-full object-cover transition-transform group-hover:scale-105'
-              loading='lazy'
+              controls
+              playsInline
+              preload='metadata'
+              className='size-full bg-black object-contain'
             />
-          ) : (
-            <div className='flex h-full w-full items-center justify-center'>
-              {renderIcon(material.type)}
+            <div className='bg-background/80 absolute top-1.5 right-1.5 rounded px-1.5 py-0.5 text-xs font-medium backdrop-blur-sm'>
+              {material.type}
             </div>
-          )}
-          <div className='bg-background/80 absolute top-1.5 right-1.5 rounded px-1.5 py-0.5 text-xs font-medium backdrop-blur-sm'>
-            {material.type}
           </div>
-        </div>
-        <div className='flex flex-col gap-0.5 p-2.5'>
+        ) : (
+          <button
+            aria-label={selectLabel}
+            className='bg-muted focus-visible:ring-ring relative block aspect-video w-full overflow-hidden text-left focus-visible:ring-2 focus-visible:outline-none'
+            onClick={() => handleSelect(material)}
+            type='button'
+          >
+            {isImage && material.url ? (
+              <img
+                src={previewUrl}
+                alt={material.name}
+                className='h-full w-full object-cover transition-transform group-hover:scale-105'
+                loading='lazy'
+              />
+            ) : (
+              <div className='flex h-full w-full items-center justify-center'>
+                {renderIcon(material.type)}
+              </div>
+            )}
+            <div className='bg-background/80 absolute top-1.5 right-1.5 rounded px-1.5 py-0.5 text-xs font-medium backdrop-blur-sm'>
+              {material.type}
+            </div>
+          </button>
+        )}
+        {isAudio && (
+          <div className='border-border border-t px-2.5 py-2'>
+            <audio
+              src={previewUrl}
+              controls
+              preload='metadata'
+              className='h-8 w-full'
+            />
+          </div>
+        )}
+        <button
+          aria-label={selectLabel}
+          className='focus-visible:ring-ring flex w-full flex-col gap-0.5 p-2.5 text-left focus-visible:ring-2 focus-visible:outline-none'
+          onClick={() => handleSelect(material)}
+          type='button'
+        >
           <div className='truncate text-sm font-medium'>{material.name}</div>
           <div className='text-muted-foreground flex items-center gap-1.5 text-xs'>
             {renderIcon(material.type)}
             <span>{formatFileSize(material.file_size)}</span>
           </div>
-        </div>
-      </button>
+        </button>
+      </div>
     )
   }
 
@@ -181,7 +226,7 @@ export function MaterialSelectorDialog({
       : [{ value: 'image', label: t('Image') }]
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleDialogOpenChange}>
       <DialogContent className='sm:max-w-5xl'>
         <DialogHeader>
           <DialogTitle>{t('Select Material')}</DialogTitle>
@@ -193,7 +238,7 @@ export function MaterialSelectorDialog({
             <Input
               placeholder={t('Search materials...')}
               value={keyword}
-              onChange={(e) => setKeyword(e.target.value)}
+              onChange={(e) => handleKeywordChange(e.target.value)}
               className='pl-9'
             />
             {keyword && (
@@ -201,7 +246,7 @@ export function MaterialSelectorDialog({
                 variant='ghost'
                 size='icon'
                 className='absolute top-1/2 right-1 h-7 w-7 -translate-y-1/2'
-                onClick={() => setKeyword('')}
+                onClick={() => handleKeywordChange('')}
               >
                 <X className='h-4 w-4' />
               </Button>
@@ -213,9 +258,11 @@ export function MaterialSelectorDialog({
               {filterTypes.map((ft) => (
                 <Button
                   key={ft.value}
-                  variant={typeFilter === ft.value ? 'default' : 'outline'}
+                  variant={
+                    activeTypeFilter === ft.value ? 'default' : 'outline'
+                  }
                   size='sm'
-                  onClick={() => setTypeFilter(ft.value)}
+                  onClick={() => handleTypeFilterChange(ft.value)}
                   className='h-9'
                 >
                   {ft.label}

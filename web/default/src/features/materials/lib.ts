@@ -22,8 +22,19 @@ export function getMaterialTypeIcon(type: string): string {
   }
 }
 
+function getPreviewUserId(): string {
+  if (typeof window === 'undefined') return ''
+  try {
+    return window.localStorage.getItem('uid')?.trim() || ''
+  } catch {
+    return ''
+  }
+}
+
 export function getMaterialPreviewUrl(id: number): string {
-  return `/pg/material/file/${encodeURIComponent(id)}`
+  const userId = getPreviewUserId()
+  const query = userId ? `?user_id=${encodeURIComponent(userId)}` : ''
+  return `/pg/material/file/${encodeURIComponent(id)}${query}`
 }
 
 export function getMaterialTimeRange(value?: string): {

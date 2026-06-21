@@ -74,7 +74,14 @@ func SetRelayRouter(router *gin.Engine) {
 		playgroundUtilityRouter.GET("/material/search", controller.SearchMaterials)
 		playgroundUtilityRouter.PUT("/material", controller.UpdateMaterial)
 		playgroundUtilityRouter.DELETE("/material/:id", controller.DeleteMaterial)
-		playgroundUtilityRouter.GET("/material/file/:id", controller.ServeMaterialFile)
+	}
+
+	playgroundMaterialFileRouter := router.Group("/pg")
+	playgroundMaterialFileRouter.Use(middleware.RouteTag("relay"))
+	playgroundMaterialFileRouter.Use(middleware.SystemPerformanceCheck())
+	playgroundMaterialFileRouter.Use(middleware.UserAuthWithQueryUserID())
+	{
+		playgroundMaterialFileRouter.GET("/material/file/:id", controller.ServeMaterialFile)
 	}
 
 	playgroundRouter := router.Group("/pg")
