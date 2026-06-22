@@ -239,6 +239,27 @@ func (m *Material) UpdateName() error {
 	return DB.Model(m).Select("name", "updated_time").Updates(m).Error
 }
 
+func (m *Material) UpdateRemoteMetadata(fileSize int64, mimeType string) error {
+	updates := map[string]interface{}{}
+	if fileSize > 0 {
+		updates["file_size"] = fileSize
+		m.FileSize = fileSize
+	}
+	mimeType = strings.TrimSpace(mimeType)
+	if mimeType != "" {
+		updates["mime_type"] = mimeType
+		m.MimeType = mimeType
+	}
+	if len(updates) == 0 {
+		return nil
+	}
+	updates["updated_time"] = common.GetTimestamp()
+	if updatedAt, ok := updates["updated_time"].(int64); ok {
+		m.UpdatedTime = updatedAt
+	}
+	return DB.Model(m).Updates(updates).Error
+}
+
 func (m *Material) Delete() error {
 	return DB.Delete(m).Error
 }

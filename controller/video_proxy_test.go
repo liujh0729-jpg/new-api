@@ -5,6 +5,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/QuantumNous/new-api/setting/system_setting"
+
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
@@ -59,4 +61,36 @@ func TestCopyVideoProxyRequestHeadersForwardsRange(t *testing.T) {
 
 	require.Equal(t, "bytes=0-1023", req.Header.Get("Range"))
 	require.Equal(t, "etag-123", req.Header.Get("If-Range"))
+}
+
+func TestParseSameOriginVideoProxyTaskIDRelativeURL(t *testing.T) {
+	taskID, ok := parseSameOriginVideoProxyTaskID("/v1/videos/task_123/content")
+
+	require.True(t, ok)
+	require.Equal(t, "task_123", taskID)
+}
+
+func TestParseSameOriginVideoProxyTaskIDConfiguredServerURL(t *testing.T) {
+	previous := system_setting.ServerAddress
+	system_setting.ServerAddress = "https://new-api.example.com"
+	t.Cleanup(func() {
+		system_setting.ServerAddress = previous
+	})
+
+	taskID, ok := parseSameOriginVideoProxyTaskID("https://new-api.example.com/v1/videos/task_abc/content")
+
+	require.True(t, ok)
+	require.Equal(t, "task_abc", taskID)
+}
+
+func TestParseSameOriginVideoProxyTaskIDRejectsExternalURL(t *testing.T) {
+	previous := system_setting.ServerAddress
+	system_setting.ServerAddress = "https://new-api.example.com"
+	t.Cleanup(func() {
+		system_setting.ServerAddress = previous
+	})
+
+	_, ok := parseSameOriginVideoProxyTaskID("https://api.openai.com/v1/videos/task_abc/content")
+
+	require.False(t, ok)
 }

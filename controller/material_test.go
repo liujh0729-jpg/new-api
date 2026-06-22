@@ -102,3 +102,32 @@ func TestRequestGeneratedMaterialRemoteMetadataUsesContentRangeTotal(t *testing.
 	require.EqualValues(t, 98765, metadata.FileSize)
 	require.Equal(t, "image/jpeg", metadata.MimeType)
 }
+
+func TestRequestGeneratedMaterialRemoteMetadataIgnoresPartialContentLengthWithoutTotal(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, http.MethodGet, r.Method)
+		require.Equal(t, "bytes=0-0", r.Header.Get("Range"))
+		w.Header().Set("Content-Type", "video/mp4")
+		w.Header().Set("Content-Length", "1")
+		w.WriteHeader(http.StatusPartialContent)
+		_, _ = w.Write([]byte{1})
+	}))
+	defer server.Close()
+
+	metadata := requestGeneratedMaterialRemoteMetadata(
+		context.Background(),
+		server.Client(),
+		http.MethodGet,
+		server.URL,
+	)
+
+	require.Zero(t, metadata.FileSize)
+	require.Equal(t, "video/mp4", metadata.MimeType)
+}
+
+func TestGeneratedMaterialDataURLMetadata(t *testing.T) {
+	metadata := generatedMaterialDataURLMetadata("data:video/mp4;base64,AAAA")
+
+	require.EqualValues(t, 3, metadata.FileSize)
+	require.Equal(t, "video/mp4", metadata.MimeType)
+}

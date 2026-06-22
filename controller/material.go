@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"mime"
@@ -27,11 +28,12 @@ import (
 )
 
 const (
-	materialUploadMaxBytes       int64 = constant.PlaygroundUploadMaxMB * 1024 * 1024
-	materialNameMaxRunes               = 191
-	materialFileNameMaxRunes           = 255
-	materialURLMaxRunes                = 1024
-	materialMetadataProbeTimeout       = 5 * time.Second
+	materialUploadMaxBytes             int64 = constant.PlaygroundUploadMaxMB * 1024 * 1024
+	materialNameMaxRunes                     = 191
+	materialFileNameMaxRunes                 = 255
+	materialURLMaxRunes                      = 1024
+	materialMetadataProbeTimeout             = 5 * time.Second
+	materialMetadataImageProbeMaxBytes       = 32 * 1024 * 1024
 )
 
 type generatedMaterialRemoteMetadata struct {
@@ -252,7 +254,7 @@ func CreateGeneratedMaterial(c *gin.Context) {
 		materialBadRequest(c, err)
 		return
 	}
-	remoteMetadata := probeGeneratedMaterialRemoteMetadata(c.Request.Context(), materialURL)
+	remoteMetadata := probeGeneratedMaterialRemoteMetadata(c.Request.Context(), materialURL, userId)
 	if strings.TrimSpace(req.MimeType) == "" && remoteMetadata.MimeType != "" {
 		if inferredType := materialTypeFromMime(remoteMetadata.MimeType); inferredType == materialType {
 			mimeType = remoteMetadata.MimeType
@@ -422,6 +424,11 @@ func serveRemoteMaterialFile(c *gin.Context, material *model.Material) {
 		return
 	}
 
+	if taskID, ok := parseSameOriginVideoProxyTaskID(materialURL); ok {
+		serveTaskVideoMaterialFile(c, material, taskID)
+		return
+	}
+
 	if isSameOriginMaterialPath(materialURL) {
 		c.Redirect(http.StatusTemporaryRedirect, materialURL)
 		return
@@ -479,6 +486,7 @@ func serveRemoteMaterialFile(c *gin.Context, material *model.Material) {
 	}
 
 	copyMaterialProxyResponseHeaders(c, resp.Header)
+	updateMaterialRemoteMetadata(material, generatedMaterialMetadataFromResponse(resp))
 	setMaterialContentHeaders(c, material, resp.Header.Get("Content-Type"))
 	c.Writer.Header().Set("Cache-Control", "private, max-age=86400")
 	c.Writer.WriteHeader(resp.StatusCode)
@@ -487,9 +495,71 @@ func serveRemoteMaterialFile(c *gin.Context, material *model.Material) {
 	}
 }
 
-func probeGeneratedMaterialRemoteMetadata(ctx context.Context, materialURL string) generatedMaterialRemoteMetadata {
+func serveTaskVideoMaterialFile(c *gin.Context, material *model.Material, taskID string) {
+	metadata := probeGeneratedTaskVideoMetadata(c.Request.Context(), material.UserId, taskID)
+	updateMaterialRemoteMetadata(material, metadata)
+	if failure := serveTaskVideoContent(c, taskID, material.UserId); failure != nil {
+		c.JSON(failure.status, gin.H{
+			"success": false,
+			"message": failure.message,
+		})
+	}
+}
+
+func generatedMaterialMetadataFromResponse(resp *http.Response) generatedMaterialRemoteMetadata {
+	if resp == nil {
+		return generatedMaterialRemoteMetadata{}
+	}
+	return generatedMaterialRemoteMetadata{
+		FileSize: responseMetadataFileSize(resp),
+		MimeType: normalizeMimeType(resp.Header.Get("Content-Type")),
+	}
+}
+
+func updateMaterialRemoteMetadata(material *model.Material, metadata generatedMaterialRemoteMetadata) {
+	if material == nil {
+		return
+	}
+	fileSize := int64(0)
+	if material.FileSize <= 0 && metadata.FileSize > 0 {
+		fileSize = metadata.FileSize
+	}
+	mimeType := ""
+	if shouldUpdateMaterialMimeType(material, metadata.MimeType) {
+		mimeType = metadata.MimeType
+	}
+	if fileSize == 0 && mimeType == "" {
+		return
+	}
+	if err := material.UpdateRemoteMetadata(fileSize, mimeType); err != nil {
+		common.SysLog(fmt.Sprintf("failed to update material metadata: id=%d, error=%s", material.Id, err.Error()))
+	}
+}
+
+func shouldUpdateMaterialMimeType(material *model.Material, mimeType string) bool {
+	if material == nil {
+		return false
+	}
+	mimeType = normalizeMimeType(mimeType)
+	if mimeType == "" || isGenericMaterialMime(mimeType) {
+		return false
+	}
+	if inferredType := materialTypeFromMime(mimeType); inferredType != "" && inferredType != material.Type {
+		return false
+	}
+	existing := normalizeMimeType(material.MimeType)
+	return existing == "" || isGenericMaterialMime(existing)
+}
+
+func probeGeneratedMaterialRemoteMetadata(ctx context.Context, materialURL string, userId int) generatedMaterialRemoteMetadata {
 	materialURL = strings.TrimSpace(materialURL)
-	if materialURL == "" || isSameOriginMaterialPath(materialURL) {
+	if materialURL == "" {
+		return generatedMaterialRemoteMetadata{}
+	}
+	if taskID, ok := parseSameOriginVideoProxyTaskID(materialURL); ok {
+		return probeGeneratedTaskVideoMetadata(ctx, userId, taskID)
+	}
+	if isSameOriginMaterialPath(materialURL) {
 		return generatedMaterialRemoteMetadata{}
 	}
 
@@ -523,6 +593,10 @@ func probeGeneratedMaterialRemoteMetadata(ctx context.Context, materialURL strin
 }
 
 func requestGeneratedMaterialRemoteMetadata(ctx context.Context, client *http.Client, method string, materialURL string) generatedMaterialRemoteMetadata {
+	return requestGeneratedMaterialRemoteMetadataWithHeaders(ctx, client, method, materialURL, nil)
+}
+
+func requestGeneratedMaterialRemoteMetadataWithHeaders(ctx context.Context, client *http.Client, method string, materialURL string, headers http.Header) generatedMaterialRemoteMetadata {
 	requestCtx, cancel := context.WithTimeout(ctx, materialMetadataProbeTimeout)
 	defer cancel()
 
@@ -530,6 +604,7 @@ func requestGeneratedMaterialRemoteMetadata(ctx context.Context, client *http.Cl
 	if err != nil {
 		return generatedMaterialRemoteMetadata{}
 	}
+	copyHeaderValues(req.Header, headers)
 	if method == http.MethodGet {
 		req.Header.Set("Range", "bytes=0-0")
 	}
@@ -539,27 +614,114 @@ func requestGeneratedMaterialRemoteMetadata(ctx context.Context, client *http.Cl
 		return generatedMaterialRemoteMetadata{}
 	}
 	defer resp.Body.Close()
-	if method == http.MethodGet {
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1024))
-	}
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusBadRequest {
 		return generatedMaterialRemoteMetadata{}
 	}
+	mimeType := normalizeMimeType(resp.Header.Get("Content-Type"))
+	fileSize := responseMetadataFileSize(resp)
+	if method == http.MethodGet && fileSize == 0 {
+		fileSize = readGeneratedMaterialProbeBodySize(resp.Body, resp.StatusCode, mimeType)
+	}
 
 	return generatedMaterialRemoteMetadata{
-		FileSize: firstPositiveInt64(
-			parseContentRangeTotal(resp.Header.Get("Content-Range")),
-			resp.ContentLength,
-		),
-		MimeType: normalizeMimeType(resp.Header.Get("Content-Type")),
+		FileSize: fileSize,
+		MimeType: mimeType,
 	}
 }
 
-func firstPositiveInt64(values ...int64) int64 {
-	for _, value := range values {
-		if value > 0 {
-			return value
-		}
+func probeGeneratedTaskVideoMetadata(ctx context.Context, userId int, taskID string) generatedMaterialRemoteMetadata {
+	task, exists, err := model.GetByTaskId(userId, taskID)
+	if err != nil || !exists || task == nil || task.Status != model.TaskStatusSuccess {
+		return generatedMaterialRemoteMetadata{}
+	}
+	target, failure := resolveTaskVideoContentTarget(ctx, task)
+	if failure != nil || target == nil {
+		return generatedMaterialRemoteMetadata{}
+	}
+	if strings.HasPrefix(target.URL, "data:") {
+		return generatedMaterialDataURLMetadata(target.URL)
+	}
+
+	client, err := service.GetHttpClientWithProxy(target.Proxy)
+	if err != nil || client == nil {
+		client = http.DefaultClient
+	}
+	metadata := requestGeneratedMaterialRemoteMetadataWithHeaders(ctx, client, http.MethodHead, target.URL, target.Headers)
+	if metadata.FileSize > 0 {
+		return metadata
+	}
+	fallbackMetadata := requestGeneratedMaterialRemoteMetadataWithHeaders(ctx, client, http.MethodGet, target.URL, target.Headers)
+	if fallbackMetadata.MimeType == "" {
+		fallbackMetadata.MimeType = metadata.MimeType
+	}
+	return fallbackMetadata
+}
+
+func generatedMaterialDataURLMetadata(dataURL string) generatedMaterialRemoteMetadata {
+	header, payload, ok := strings.Cut(strings.TrimSpace(dataURL), ",")
+	if !ok || !strings.HasPrefix(header, "data:") {
+		return generatedMaterialRemoteMetadata{}
+	}
+	mimeType := strings.TrimPrefix(header, "data:")
+	mimeType = strings.TrimSuffix(mimeType, ";base64")
+	metadata := generatedMaterialRemoteMetadata{MimeType: normalizeMimeType(mimeType)}
+	if strings.Contains(header, ";base64") {
+		metadata.FileSize = decodedBase64Length(payload)
+	}
+	return metadata
+}
+
+func decodedBase64Length(payload string) int64 {
+	payload = strings.TrimSpace(payload)
+	if payload == "" {
+		return 0
+	}
+	padding := 0
+	for i := len(payload) - 1; i >= 0 && payload[i] == '='; i-- {
+		padding++
+	}
+	size := 0
+	if padding > 0 {
+		size = base64.StdEncoding.DecodedLen(len(payload)) - padding
+	} else {
+		size = (len(payload) * 6) / 8
+	}
+	if size < 0 {
+		return 0
+	}
+	return int64(size)
+}
+
+func responseMetadataFileSize(resp *http.Response) int64 {
+	if resp == nil {
+		return 0
+	}
+	if total := parseContentRangeTotal(resp.Header.Get("Content-Range")); total > 0 {
+		return total
+	}
+	if resp.StatusCode == http.StatusPartialContent {
+		return 0
+	}
+	if resp.ContentLength > 0 {
+		return resp.ContentLength
+	}
+	return 0
+}
+
+func readGeneratedMaterialProbeBodySize(body io.Reader, statusCode int, mimeType string) int64 {
+	if body == nil {
+		return 0
+	}
+	limit := int64(1024)
+	if statusCode == http.StatusOK && strings.HasPrefix(normalizeMimeType(mimeType), "image/") {
+		limit = materialMetadataImageProbeMaxBytes + 1
+	}
+	readBytes, _ := io.Copy(io.Discard, io.LimitReader(body, limit))
+	if statusCode == http.StatusOK &&
+		strings.HasPrefix(normalizeMimeType(mimeType), "image/") &&
+		readBytes > 0 &&
+		readBytes <= materialMetadataImageProbeMaxBytes {
+		return readBytes
 	}
 	return 0
 }
