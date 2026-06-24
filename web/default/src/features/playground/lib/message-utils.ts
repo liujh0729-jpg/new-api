@@ -147,7 +147,7 @@ export function formatMessageForAPI(message: Message): ChatCompletionMessage {
 
 /**
  * Check if message is valid for API request
- * Excludes loading/streaming assistant messages and empty content
+ * Excludes non-final assistant messages and empty assistant content
  */
 export function isValidMessage(message: Message): boolean {
   if (!message || !message.from || !message.versions.length) return false
@@ -155,8 +155,16 @@ export function isValidMessage(message: Message): boolean {
   const content = message.versions[0]?.content
   if (content === undefined) return false
 
-  // Exclude empty assistant messages (loading/streaming placeholders)
-  if (message.from === 'assistant' && !content.trim()) return false
+  if (message.from === MESSAGE_ROLES.ASSISTANT) {
+    if (
+      message.status === MESSAGE_STATUS.ERROR ||
+      message.status === MESSAGE_STATUS.LOADING ||
+      message.status === MESSAGE_STATUS.STREAMING
+    ) {
+      return false
+    }
+    if (!content.trim()) return false
+  }
 
   return true
 }

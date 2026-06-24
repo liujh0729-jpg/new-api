@@ -57,6 +57,7 @@ export function useStreamRequest() {
         headers: getCommonHeaders(),
         method: 'POST',
         payload: JSON.stringify(payload),
+        start: false,
       })
 
       activeStreamSource = source
