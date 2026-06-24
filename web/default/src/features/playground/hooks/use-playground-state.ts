@@ -56,12 +56,14 @@ function loadDefaultParameterEnabled(): ParameterEnabled {
 }
 
 function loadInitialConversationState(
-  userId?: number | string | null
+  userId?: number | string | null,
+  sanitizeMessages = true
 ): PlaygroundConversationState {
   return loadConversationState(
     userId,
     loadDefaultConfig(),
-    loadDefaultParameterEnabled()
+    loadDefaultParameterEnabled(),
+    { sanitizeMessages }
   )
 }
 
@@ -133,7 +135,7 @@ export function usePlaygroundState() {
 
   const persistConversationState = useCallback(
     (updater: ConversationStateUpdater) => {
-      const currentState = loadInitialConversationState(userId)
+      const currentState = loadInitialConversationState(userId, false)
       const nextState =
         typeof updater === 'function' ? updater(currentState) : updater
       saveConversationState(userId, nextState)

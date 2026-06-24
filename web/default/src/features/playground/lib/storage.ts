@@ -44,6 +44,10 @@ export interface PlaygroundConversationStateEventDetail {
   state: PlaygroundConversationState
 }
 
+interface LoadConversationStateOptions {
+  sanitizeMessages?: boolean
+}
+
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
@@ -108,7 +112,8 @@ function createDefaultConversationState(
 function normalizeConversation(
   value: unknown,
   configFallback: PlaygroundConfig,
-  parameterFallback: ParameterEnabled
+  parameterFallback: ParameterEnabled,
+  options: LoadConversationStateOptions
 ): PlaygroundConversation | null {
   if (!isObject(value)) return null
 
@@ -127,9 +132,13 @@ function normalizeConversation(
         }
       : parameterFallback
   ) as ParameterEnabled
-  const messages = Array.isArray(value.messages)
-    ? sanitizeMessagesOnLoad(value.messages as Message[])
+  const rawMessages = Array.isArray(value.messages)
+    ? (value.messages as Message[])
     : []
+  const messages =
+    options.sanitizeMessages === false
+      ? rawMessages
+      : sanitizeMessagesOnLoad(rawMessages)
   const createdAt =
     typeof value.createdAt === 'number' && Number.isFinite(value.createdAt)
       ? value.createdAt
@@ -157,13 +166,19 @@ function normalizeConversation(
 function normalizeConversationState(
   value: unknown,
   configFallback: PlaygroundConfig,
-  parameterFallback: ParameterEnabled
+  parameterFallback: ParameterEnabled,
+  options: LoadConversationStateOptions
 ): PlaygroundConversationState | null {
   if (!isObject(value) || !Array.isArray(value.conversations)) return null
 
   const conversations = value.conversations
     .map((conversation) =>
-      normalizeConversation(conversation, configFallback, parameterFallback)
+      normalizeConversation(
+        conversation,
+        configFallback,
+        parameterFallback,
+        options
+      )
     )
     .filter(
       (conversation): conversation is PlaygroundConversation =>
@@ -310,7 +325,8 @@ export function saveMessages(messages: Message[]): void {
 export function loadConversationState(
   userId: number | string | null | undefined,
   configFallback: PlaygroundConfig,
-  parameterFallback: ParameterEnabled
+  parameterFallback: ParameterEnabled,
+  options: LoadConversationStateOptions = {}
 ): PlaygroundConversationState {
   try {
     const saved = localStorage.getItem(getConversationStorageKey(userId))
@@ -318,7 +334,8 @@ export function loadConversationState(
       const normalized = normalizeConversationState(
         JSON.parse(saved),
         configFallback,
-        parameterFallback
+        parameterFallback,
+        options
       )
       if (normalized) return normalized
     }
