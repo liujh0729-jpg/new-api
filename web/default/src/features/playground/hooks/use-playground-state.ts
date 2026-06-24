@@ -46,6 +46,9 @@ type MessagesUpdater = Message[] | ((prev: Message[]) => Message[])
 type ConversationStateUpdater =
   | PlaygroundConversationState
   | ((prev: PlaygroundConversationState) => PlaygroundConversationState)
+interface PersistConversationStateOptions {
+  sanitizeMessages?: boolean
+}
 
 function loadDefaultConfig(): PlaygroundConfig {
   return { ...DEFAULT_CONFIG, ...loadConfig() }
@@ -134,8 +137,14 @@ export function usePlaygroundState() {
   }, [userId])
 
   const persistConversationState = useCallback(
-    (updater: ConversationStateUpdater) => {
-      const currentState = loadInitialConversationState(userId, false)
+    (
+      updater: ConversationStateUpdater,
+      options: PersistConversationStateOptions = {}
+    ) => {
+      const currentState = loadInitialConversationState(
+        userId,
+        options.sanitizeMessages ?? true
+      )
       const nextState =
         typeof updater === 'function' ? updater(currentState) : updater
       saveConversationState(userId, nextState)
@@ -210,7 +219,7 @@ export function usePlaygroundState() {
         }
 
         return replaceConversation(prev, updatedConversation)
-      })
+      }, { sanitizeMessages: false })
     },
     [persistConversationState]
   )
