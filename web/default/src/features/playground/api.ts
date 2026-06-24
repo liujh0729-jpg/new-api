@@ -108,7 +108,7 @@ export async function getVideoGenerationTask(
 }
 
 /**
- * Upload local video reference media to AIPDD OSS and return a web URL.
+ * Upload local reference media and return a web URL.
  */
 export async function uploadReferenceMedia(
   file: File
@@ -124,7 +124,7 @@ export async function uploadReferenceMedia(
   const url =
     typeof responseData?.url === 'string' ? responseData.url.trim() : ''
   if (!url) {
-    throw new Error('AIPDD OSS upload response URL is empty')
+    throw new Error('Reference media upload response URL is empty')
   }
   if (!isWebUrl(url)) {
     throw new Error(ERROR_MESSAGES.VIDEO_REFERENCE_UPLOAD_REQUIRED)

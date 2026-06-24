@@ -3,6 +3,7 @@
 .zed
 .history
 upload
+materials/
 *.exe
 *.db
 build

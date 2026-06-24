@@ -61,6 +61,13 @@ func SetRelayRouter(router *gin.Engine) {
 		})
 	}
 
+	materialStaticRouter := router.Group("/static/materials")
+	materialStaticRouter.Use(middleware.RouteTag("relay"))
+	materialStaticRouter.Use(middleware.DownloadRateLimit())
+	{
+		materialStaticRouter.GET("/:filename", controller.ServeStaticMaterialFile)
+	}
+
 	playgroundUtilityRouter := router.Group("/pg")
 	playgroundUtilityRouter.Use(middleware.RouteTag("relay"))
 	playgroundUtilityRouter.Use(middleware.SystemPerformanceCheck())

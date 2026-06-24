@@ -144,7 +144,7 @@ export function MaterialSelectorDialog({
     const isImage = material.type === 'image'
     const isVideo = material.type === 'video'
     const isAudio = material.type === 'audio'
-    const previewUrl = getMaterialPreviewUrl(material.id)
+    const previewUrl = getMaterialPreviewUrl(material)
     const selectLabel = `${t('Select Material')}: ${material.name}`
 
     return (

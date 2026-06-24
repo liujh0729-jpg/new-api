@@ -50,7 +50,7 @@ export function useMaterialsColumns(): ColumnDef<Material>[] {
         const material = row.original
         const isImage = material.type === 'image'
         const isVideo = material.type === 'video'
-        const previewUrl = getMaterialPreviewUrl(material.id)
+        const previewUrl = getMaterialPreviewUrl(material)
 
         return (
           <div

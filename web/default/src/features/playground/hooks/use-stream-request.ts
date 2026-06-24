@@ -24,6 +24,10 @@ import type { ChatCompletionRequest, ChatCompletionChunk } from '../types'
 
 let activeStreamSource: SSE | null = null
 let activeStreamComplete = false
+const SSE_READY_STATE_CLOSED = 2
+
+type SSEErrorEvent = Event & { data?: string; responseCode?: number }
+type SSEReadyStateEvent = Event & { readyState?: number }
 
 function closeStreamSource(source: SSE): void {
   source.close()
@@ -57,9 +61,18 @@ export function useStreamRequest() {
 
       activeStreamSource = source
       activeStreamComplete = false
+      let hasReceivedStreamMessage = false
 
       const closeSource = () => {
         closeStreamSource(source)
+      }
+
+      const completeStream = () => {
+        if (!activeStreamComplete && activeStreamSource === source) {
+          activeStreamComplete = true
+          closeSource()
+          onComplete()
+        }
       }
 
       const handleError = (errorMessage: string, errorCode?: string) => {
@@ -73,14 +86,23 @@ export function useStreamRequest() {
         if (activeStreamSource !== source) return
 
         if (e.data === '[DONE]') {
-          activeStreamComplete = true
-          closeSource()
-          onComplete()
+          completeStream()
           return
         }
 
         try {
-          const chunk: ChatCompletionChunk = JSON.parse(e.data)
+          const chunk = JSON.parse(e.data) as ChatCompletionChunk & {
+            error?: { message?: string; code?: string }
+          }
+          if (chunk.error) {
+            handleError(
+              chunk.error.message || ERROR_MESSAGES.API_REQUEST_ERROR,
+              chunk.error.code
+            )
+            return
+          }
+
+          hasReceivedStreamMessage = true
           const delta = chunk.choices?.[0]?.delta
 
           if (delta) {
@@ -99,8 +121,25 @@ export function useStreamRequest() {
       })
 
       source.addEventListener(
+        'readystatechange',
+        (e: SSEReadyStateEvent) => {
+          if (activeStreamSource !== source) return
+          if (activeStreamComplete || e.readyState !== SSE_READY_STATE_CLOSED) {
+            return
+          }
+
+          if (hasReceivedStreamMessage) {
+            completeStream()
+            return
+          }
+
+          handleError(ERROR_MESSAGES.CONNECTION_CLOSED)
+        }
+      )
+
+      source.addEventListener(
         'error',
-        (e: Event & { data?: string; responseCode?: number }) => {
+        (e: SSEErrorEvent) => {
           if (activeStreamSource !== source) return
 
           // Only handle errors if stream didn't complete normally

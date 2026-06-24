@@ -1,5 +1,6 @@
 import dayjs from '@/lib/dayjs'
 import { MATERIAL_TIME_FILTER } from './constants'
+import type { Material } from './types'
 
 export function formatFileSize(bytes: number): string {
   if (bytes === 0) return '0 B'
@@ -31,10 +32,22 @@ function getPreviewUserId(): string {
   }
 }
 
-export function getMaterialPreviewUrl(id: number): string {
+function getMaterialProxyUrl(id: number): string {
   const userId = getPreviewUserId()
   const query = userId ? `?user_id=${encodeURIComponent(userId)}` : ''
   return `/pg/material/file/${encodeURIComponent(id)}${query}`
+}
+
+export function getMaterialPreviewUrl(
+  material: Pick<Material, 'id' | 'url' | 'storage_type'> | number
+): string {
+  if (typeof material === 'number') {
+    return getMaterialProxyUrl(material)
+  }
+  if (material.storage_type === 'local' && material.url) {
+    return material.url
+  }
+  return getMaterialProxyUrl(material.id)
 }
 
 export function getMaterialTimeRange(value?: string): {

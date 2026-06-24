@@ -38,7 +38,7 @@ export function MaterialsPreviewDialog() {
   }
 
   if (!previewMaterial) return null
-  const previewUrl = getMaterialPreviewUrl(previewMaterial.id)
+  const previewUrl = getMaterialPreviewUrl(previewMaterial)
 
   return (
     <Dialog open={!!previewMaterial} onOpenChange={handleOpenChange}>

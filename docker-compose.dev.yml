@@ -27,11 +27,12 @@ services:
     volumes:
       - dev_data:/data
     environment:
-      - SQL_DSN=postgresql://root:123456@postgres:5432/new-api
+      - SQL_DSN=postgresql://root:12345678@postgres:5432/new-api
       - REDIS_CONN_STRING=redis://redis
       - AIPDD_API_KEY=${AIPDD_API_KEY:-}
       - TZ=Asia/Shanghai
       - BATCH_UPDATE_ENABLED=true
+      - MATERIAL_PUBLIC_BASE_URL=http://127.0.0.1:3000
     depends_on:
       redis:
         condition: service_started
@@ -53,7 +54,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: root
-      POSTGRES_PASSWORD: 123456
+      POSTGRES_PASSWORD: 12345678
       POSTGRES_DB: new-api
     volumes:
       - dev_pg_data:/var/lib/postgresql/data

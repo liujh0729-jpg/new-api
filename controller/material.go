@@ -20,11 +20,11 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
-	taskaipdd "github.com/QuantumNous/new-api/relay/channel/task/aipdd"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 const (
@@ -34,6 +34,10 @@ const (
 	materialURLMaxRunes                      = 1024
 	materialMetadataProbeTimeout             = 5 * time.Second
 	materialMetadataImageProbeMaxBytes       = 32 * 1024 * 1024
+	materialDefaultStoragePath               = "./materials"
+	materialStoragePathEnv                   = "MATERIAL_STORAGE_PATH"
+	materialPublicBaseURLEnv                 = "MATERIAL_PUBLIC_BASE_URL"
+	materialStaticPathPrefix                 = "/static/materials/"
 )
 
 type generatedMaterialRemoteMetadata struct {
@@ -41,33 +45,457 @@ type generatedMaterialRemoteMetadata struct {
 	MimeType string
 }
 
-func uploadMaterialFile(ctx context.Context, header *multipart.FileHeader) (url string, storageType string, err error) {
-	channel, err := getPlaygroundAIPDDUploadChannel()
+type storedMaterialFile struct {
+	URL      string
+	FilePath string
+	FileSize int64
+	MimeType string
+}
+
+func materialStorageDir() (string, error) {
+	storagePath := strings.TrimSpace(os.Getenv(materialStoragePathEnv))
+	if storagePath == "" {
+		storagePath = materialDefaultStoragePath
+	}
+	return filepath.Abs(storagePath)
+}
+
+func ensureMaterialStorageDir() (string, error) {
+	storageDir, err := materialStorageDir()
 	if err != nil {
-		return "", "", fmt.Errorf("aipdd channel unavailable: %v", err)
+		return "", err
+	}
+	if err = os.MkdirAll(storageDir, 0755); err != nil {
+		return "", err
+	}
+	return storageDir, nil
+}
+
+func materialStaticStorageFilename(materialType string, mimeType string) string {
+	return uuid.NewString() + defaultMaterialExtension(materialType, mimeType)
+}
+
+func saveMaterialReader(c *gin.Context, reader io.Reader, declaredSize int64, mimeType string, materialType string) (storedMaterialFile, error) {
+	if reader == nil {
+		return storedMaterialFile{}, fmt.Errorf("file is required")
+	}
+	if declaredSize > materialUploadMaxBytes {
+		return storedMaterialFile{}, fmt.Errorf("%s", materialUploadTooLargeMessage())
 	}
 
-	apiKey, _, apiErr := channel.GetNextEnabledKey()
-	if apiErr != nil {
-		return "", "", fmt.Errorf("aipdd channel key unavailable: %v", apiErr)
-	}
-	apiKey = strings.TrimSpace(apiKey)
-	if apiKey == "" {
-		return "", "", fmt.Errorf("aipdd channel key is empty")
-	}
-
-	uploadedURL, err := taskaipdd.UploadFileToOSS(
-		ctx,
-		channel.GetBaseURL(),
-		apiKey,
-		channel.GetSetting().Proxy,
-		header,
-	)
+	storageDir, err := ensureMaterialStorageDir()
 	if err != nil {
-		return "", "", fmt.Errorf("oss upload failed: %v", err)
+		return storedMaterialFile{}, fmt.Errorf("failed to create material storage directory: %w", err)
 	}
 
-	return uploadedURL, model.StorageTypeOSS, nil
+	var filePath string
+	var file *os.File
+	var storageFilename string
+	for i := 0; i < 3; i++ {
+		storageFilename = materialStaticStorageFilename(materialType, mimeType)
+		filePath = filepath.Join(storageDir, storageFilename)
+		file, err = os.OpenFile(filePath, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0644)
+		if err == nil {
+			break
+		}
+		if !os.IsExist(err) {
+			return storedMaterialFile{}, fmt.Errorf("failed to create material file: %w", err)
+		}
+	}
+	if file == nil {
+		return storedMaterialFile{}, fmt.Errorf("failed to create unique material file")
+	}
+
+	written, copyErr := io.Copy(file, io.LimitReader(reader, materialUploadMaxBytes+1))
+	closeErr := file.Close()
+	if copyErr != nil {
+		_ = os.Remove(filePath)
+		return storedMaterialFile{}, fmt.Errorf("failed to write material file: %w", copyErr)
+	}
+	if closeErr != nil {
+		_ = os.Remove(filePath)
+		return storedMaterialFile{}, fmt.Errorf("failed to close material file: %w", closeErr)
+	}
+	if written > materialUploadMaxBytes {
+		_ = os.Remove(filePath)
+		return storedMaterialFile{}, fmt.Errorf("%s", materialUploadTooLargeMessage())
+	}
+	if written == 0 {
+		_ = os.Remove(filePath)
+		return storedMaterialFile{}, fmt.Errorf("file is empty")
+	}
+
+	return storedMaterialFile{
+		URL:      buildMaterialStaticURL(c, storageFilename),
+		FilePath: filePath,
+		FileSize: written,
+		MimeType: normalizeMimeType(mimeType),
+	}, nil
+}
+
+func uploadMaterialFile(c *gin.Context, header *multipart.FileHeader, mimeType string, materialType string) (storedMaterialFile, error) {
+	file, err := header.Open()
+	if err != nil {
+		return storedMaterialFile{}, err
+	}
+	defer file.Close()
+
+	return saveMaterialReader(c, file, header.Size, mimeType, materialType)
+}
+
+func storeGeneratedMaterialURL(c *gin.Context, materialURL string, userId int, materialType string, mimeType string) (storedMaterialFile, error) {
+	if taskID, ok := parseSameOriginVideoProxyTaskID(materialURL); ok {
+		return storeGeneratedTaskVideo(c, userId, taskID, materialType, mimeType)
+	}
+	if storedFile, ok, err := storedStaticMaterialFileFromURL(c, materialURL, mimeType); ok || err != nil {
+		return storedFile, err
+	}
+	return downloadMaterialURLToLocal(c, materialURL, nil, "", materialType, mimeType)
+}
+
+func storeGeneratedTaskVideo(c *gin.Context, userId int, taskID string, materialType string, mimeType string) (storedMaterialFile, error) {
+	task, exists, err := model.GetByTaskId(userId, taskID)
+	if err != nil {
+		return storedMaterialFile{}, err
+	}
+	if !exists || task == nil || task.Status != model.TaskStatusSuccess {
+		return storedMaterialFile{}, fmt.Errorf("task video is not available")
+	}
+	target, failure := resolveTaskVideoContentTarget(c.Request.Context(), task)
+	if failure != nil {
+		return storedMaterialFile{}, fmt.Errorf("%s", failure.message)
+	}
+	if target == nil || strings.TrimSpace(target.URL) == "" {
+		return storedMaterialFile{}, fmt.Errorf("task video url is empty")
+	}
+	if strings.HasPrefix(strings.TrimSpace(target.URL), "data:") {
+		return saveMaterialDataURL(c, target.URL, materialType, mimeType)
+	}
+	return downloadMaterialURLToLocal(c, target.URL, target.Headers, target.Proxy, materialType, mimeType)
+}
+
+func downloadMaterialURLToLocal(c *gin.Context, materialURL string, headers http.Header, proxy string, materialType string, expectedMimeType string) (storedMaterialFile, error) {
+	materialURL = strings.TrimSpace(materialURL)
+	if materialURL == "" {
+		return storedMaterialFile{}, fmt.Errorf("material url is required")
+	}
+
+	fetchSetting := system_setting.GetFetchSetting()
+	if err := common.ValidateURLWithFetchSetting(materialURL, fetchSetting.EnableSSRFProtection, fetchSetting.AllowPrivateIp, fetchSetting.DomainFilterMode, fetchSetting.IpFilterMode, fetchSetting.DomainList, fetchSetting.IpList, fetchSetting.AllowedPorts, fetchSetting.ApplyIPFilterForDomain); err != nil {
+		return storedMaterialFile{}, fmt.Errorf("request blocked: %v", err)
+	}
+
+	client, err := service.GetHttpClientWithProxy(proxy)
+	if err != nil {
+		return storedMaterialFile{}, fmt.Errorf("failed to create download client: %w", err)
+	}
+	if client == nil {
+		client = http.DefaultClient
+	}
+
+	requestCtx, cancel := context.WithTimeout(c.Request.Context(), 60*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, materialURL, nil)
+	if err != nil {
+		return storedMaterialFile{}, fmt.Errorf("failed to create download request: %w", err)
+	}
+	copyHeaderValues(req.Header, headers)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return storedMaterialFile{}, fmt.Errorf("failed to download material: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return storedMaterialFile{}, fmt.Errorf("upstream service returned status %d", resp.StatusCode)
+	}
+	if resp.ContentLength > materialUploadMaxBytes {
+		return storedMaterialFile{}, fmt.Errorf("%s", materialUploadTooLargeMessage())
+	}
+
+	mimeType, err := normalizeDownloadedMaterialMime(materialURL, resp.Header.Get("Content-Type"), expectedMimeType, materialType)
+	if err != nil {
+		return storedMaterialFile{}, err
+	}
+	return saveMaterialReader(c, resp.Body, resp.ContentLength, mimeType, materialType)
+}
+
+func normalizeDownloadedMaterialMime(materialURL string, responseContentType string, expectedMimeType string, materialType string) (string, error) {
+	responseMime := normalizeMimeType(responseContentType)
+	if responseMime == "" || isGenericMaterialMime(responseMime) {
+		responseMime = materialMimeFromURL(materialURL)
+	}
+	if responseMime != "" && !isGenericMaterialMime(responseMime) {
+		responseType := materialTypeFromMime(responseMime)
+		if responseType == "" {
+			return "", fmt.Errorf("unsupported material content type: %s", responseMime)
+		}
+		if responseType != materialType {
+			return "", fmt.Errorf("material type does not match downloaded content type")
+		}
+		return responseMime, nil
+	}
+
+	expectedMimeType = normalizeMimeType(expectedMimeType)
+	if expectedMimeType == "" {
+		expectedMimeType = defaultMaterialMimeType(materialType)
+	}
+	if inferredType := materialTypeFromMime(expectedMimeType); inferredType != "" && inferredType != materialType {
+		return "", fmt.Errorf("material type does not match mime type")
+	}
+	return expectedMimeType, nil
+}
+
+func saveMaterialDataURL(c *gin.Context, dataURL string, materialType string, expectedMimeType string) (storedMaterialFile, error) {
+	header, payload, ok := strings.Cut(strings.TrimSpace(dataURL), ",")
+	if !ok || !strings.HasPrefix(header, "data:") || !strings.Contains(header, ";base64") {
+		return storedMaterialFile{}, fmt.Errorf("unsupported data url")
+	}
+	mimeType := strings.TrimPrefix(header, "data:")
+	mimeType = strings.TrimSuffix(mimeType, ";base64")
+	if mimeType == "" {
+		mimeType = expectedMimeType
+	}
+	mimeType, err := normalizeDownloadedMaterialMime("", mimeType, expectedMimeType, materialType)
+	if err != nil {
+		return storedMaterialFile{}, err
+	}
+
+	reader := base64.NewDecoder(base64.StdEncoding, strings.NewReader(payload))
+	return saveMaterialReader(c, reader, decodedBase64Length(payload), mimeType, materialType)
+}
+
+func storedStaticMaterialFileFromURL(c *gin.Context, materialURL string, mimeType string) (storedMaterialFile, bool, error) {
+	filename, ok := staticMaterialFilenameFromURL(c, materialURL)
+	if !ok {
+		return storedMaterialFile{}, false, nil
+	}
+	filePath, err := materialStaticFilePath(filename)
+	if err != nil {
+		return storedMaterialFile{}, true, err
+	}
+	info, err := os.Stat(filePath)
+	if err != nil {
+		return storedMaterialFile{}, true, err
+	}
+	if info.IsDir() {
+		return storedMaterialFile{}, true, fmt.Errorf("material file is a directory")
+	}
+	if mimeType == "" {
+		mimeType = materialMimeFromExtension(filename)
+	}
+	return storedMaterialFile{
+		URL:      buildMaterialStaticURL(c, filename),
+		FilePath: filePath,
+		FileSize: info.Size(),
+		MimeType: normalizeMimeType(mimeType),
+	}, true, nil
+}
+
+func staticMaterialFilenameFromURL(c *gin.Context, rawURL string) (string, bool) {
+	rawURL = strings.TrimSpace(rawURL)
+	if rawURL == "" {
+		return "", false
+	}
+
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed == nil {
+		return "", false
+	}
+	if parsed.IsAbs() {
+		if parsed.Host == "" || !isSameMaterialOrigin(c, parsed) {
+			return "", false
+		}
+	} else if !strings.HasPrefix(rawURL, "/") || strings.HasPrefix(rawURL, "//") {
+		return "", false
+	}
+
+	parsedPath := parsed.EscapedPath()
+	if parsedPath == "" {
+		parsedPath = parsed.Path
+	}
+	staticPrefix := materialStaticPathPrefix
+	if parsed.IsAbs() {
+		if prefix := configuredMaterialPublicBasePathPrefix(parsed); prefix != "" && strings.HasPrefix(parsedPath, prefix) {
+			staticPrefix = prefix
+		}
+	}
+	if !strings.HasPrefix(parsedPath, staticPrefix) {
+		return "", false
+	}
+	filename, err := url.PathUnescape(strings.TrimPrefix(parsedPath, staticPrefix))
+	if err != nil || !isSafeMaterialStorageFilename(filename) {
+		return "", false
+	}
+	return filename, true
+}
+
+func configuredMaterialPublicBasePathPrefix(parsed *url.URL) string {
+	baseURL := strings.TrimSpace(os.Getenv(materialPublicBaseURLEnv))
+	if baseURL == "" {
+		return ""
+	}
+	base, err := url.Parse(baseURL)
+	if err != nil || base == nil || base.Host == "" {
+		return ""
+	}
+	if !strings.EqualFold(parsed.Scheme, base.Scheme) || !strings.EqualFold(parsed.Host, base.Host) {
+		return ""
+	}
+	basePath := strings.TrimRight(base.EscapedPath(), "/")
+	if basePath == "" {
+		return ""
+	}
+	return basePath + materialStaticPathPrefix
+}
+
+func isSameMaterialOrigin(c *gin.Context, parsed *url.URL) bool {
+	if parsed == nil || parsed.Host == "" {
+		return false
+	}
+	if isConfiguredServerOrigin(parsed) {
+		return true
+	}
+	baseURL := strings.TrimSpace(os.Getenv(materialPublicBaseURLEnv))
+	if baseURL != "" {
+		if base, err := url.Parse(baseURL); err == nil && base != nil && base.Host != "" {
+			if strings.EqualFold(parsed.Scheme, base.Scheme) && strings.EqualFold(parsed.Host, base.Host) {
+				return true
+			}
+		}
+	}
+	origin := requestMaterialOrigin(c)
+	if origin == "" {
+		return false
+	}
+	requestURL, err := url.Parse(origin)
+	return err == nil &&
+		requestURL != nil &&
+		strings.EqualFold(parsed.Scheme, requestURL.Scheme) &&
+		strings.EqualFold(parsed.Host, requestURL.Host)
+}
+
+func buildMaterialStaticURL(c *gin.Context, filename string) string {
+	prefix := strings.TrimRight(strings.TrimSpace(os.Getenv(materialPublicBaseURLEnv)), "/")
+	if prefix == "" {
+		requestOrigin := requestMaterialOrigin(c)
+		serverAddress := strings.TrimRight(strings.TrimSpace(system_setting.ServerAddress), "/")
+		if requestOrigin != "" && (isLocalMaterialRequestOrigin(requestOrigin) || isDefaultMaterialServerAddress(serverAddress)) {
+			prefix = requestOrigin
+		} else {
+			prefix = serverAddress
+			if prefix == "" {
+				prefix = requestOrigin
+			}
+		}
+	}
+	escapedFilename := url.PathEscape(filename)
+	if prefix == "" {
+		return materialStaticPathPrefix + escapedFilename
+	}
+	return prefix + materialStaticPathPrefix + escapedFilename
+}
+
+func isLocalMaterialRequestOrigin(origin string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(origin))
+	if err != nil || parsed == nil {
+		return false
+	}
+	host := strings.ToLower(strings.TrimSpace(parsed.Hostname()))
+	return host == "localhost" || host == "::1" || strings.HasPrefix(host, "127.")
+}
+
+func isDefaultMaterialServerAddress(serverAddress string) bool {
+	return strings.EqualFold(strings.TrimRight(strings.TrimSpace(serverAddress), "/"), "https://newapi.jumcp.com")
+}
+
+func requestMaterialOrigin(c *gin.Context) string {
+	if c == nil || c.Request == nil {
+		return ""
+	}
+	host := firstForwardedHeaderValue(c.GetHeader("X-Forwarded-Host"))
+	if host == "" {
+		host = c.Request.Host
+	}
+	if host == "" {
+		return ""
+	}
+	scheme := firstForwardedHeaderValue(c.GetHeader("X-Forwarded-Proto"))
+	if scheme == "" {
+		scheme = firstForwardedHeaderValue(c.GetHeader("X-Forwarded-Protocol"))
+	}
+	if scheme == "" && strings.EqualFold(c.GetHeader("X-Forwarded-Ssl"), "on") {
+		scheme = "https"
+	}
+	if scheme == "" {
+		if c.Request.TLS != nil {
+			scheme = "https"
+		} else {
+			scheme = "http"
+		}
+	}
+	return strings.ToLower(strings.TrimSpace(scheme)) + "://" + host
+}
+
+func firstForwardedHeaderValue(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if index := strings.Index(value, ","); index >= 0 {
+		value = value[:index]
+	}
+	return strings.TrimSpace(value)
+}
+
+func materialStaticFilePath(filename string) (string, error) {
+	if !isSafeMaterialStorageFilename(filename) {
+		return "", fmt.Errorf("invalid material filename")
+	}
+	storageDir, err := materialStorageDir()
+	if err != nil {
+		return "", err
+	}
+	filePath := filepath.Join(storageDir, filename)
+	relativePath, err := filepath.Rel(storageDir, filePath)
+	if err != nil {
+		return "", err
+	}
+	if relativePath == "." || strings.HasPrefix(relativePath, ".."+string(filepath.Separator)) || relativePath == ".." || filepath.IsAbs(relativePath) {
+		return "", fmt.Errorf("invalid material filename")
+	}
+	return filePath, nil
+}
+
+func isSafeMaterialStorageFilename(filename string) bool {
+	filename = strings.TrimSpace(filename)
+	if filename == "" || filename == "." || filename == ".." {
+		return false
+	}
+	if filename != filepath.Base(filename) || strings.ContainsAny(filename, `/\`) {
+		return false
+	}
+	for _, r := range filename {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func removeMaterialLocalFile(material *model.Material) {
+	if material == nil || material.StorageType != model.StorageTypeLocal {
+		return
+	}
+	filePath := strings.TrimSpace(material.FilePath)
+	if filePath == "" {
+		return
+	}
+	if err := os.Remove(filePath); err != nil && !os.IsNotExist(err) {
+		common.SysLog(fmt.Sprintf("failed to remove material file: id=%d, file=%s, error=%s", material.Id, filePath, err.Error()))
+	}
 }
 
 func UploadMaterial(c *gin.Context) {
@@ -138,7 +566,7 @@ func UploadMaterial(c *gin.Context) {
 		return
 	}
 
-	uploadedURL, storageType, err := uploadMaterialFile(c.Request.Context(), fileHeader)
+	storedFile, err := uploadMaterialFile(c, fileHeader, mimeType, materialType)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{
 			"success": false,
@@ -161,9 +589,10 @@ func UploadMaterial(c *gin.Context) {
 		SourceType:  sourceType,
 		MimeType:    mimeType,
 		FileName:    fileName,
-		Url:         uploadedURL,
-		StorageType: storageType,
-		FileSize:    fileHeader.Size,
+		Url:         storedFile.URL,
+		StorageType: model.StorageTypeLocal,
+		FilePath:    storedFile.FilePath,
+		FileSize:    storedFile.FileSize,
 		Status:      1,
 		CreatedTime: now,
 		UpdatedTime: now,
@@ -171,6 +600,7 @@ func UploadMaterial(c *gin.Context) {
 
 	err = material.Insert()
 	if err != nil {
+		removeMaterialLocalFile(&material)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
 			"message": "failed to save material record",
@@ -254,10 +684,23 @@ func CreateGeneratedMaterial(c *gin.Context) {
 		materialBadRequest(c, err)
 		return
 	}
-	remoteMetadata := probeGeneratedMaterialRemoteMetadata(c.Request.Context(), materialURL, userId)
-	if strings.TrimSpace(req.MimeType) == "" && remoteMetadata.MimeType != "" {
-		if inferredType := materialTypeFromMime(remoteMetadata.MimeType); inferredType == materialType {
-			mimeType = remoteMetadata.MimeType
+
+	storedFile, err := storeGeneratedMaterialURL(c, materialURL, userId, materialType, mimeType)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{
+			"success": false,
+			"message": err.Error(),
+			"error": gin.H{
+				"code":    "download_failed",
+				"message": err.Error(),
+				"type":    "invalid_request_error",
+			},
+		})
+		return
+	}
+	if storedFile.MimeType != "" {
+		if inferredType := materialTypeFromMime(storedFile.MimeType); inferredType == materialType {
+			mimeType = storedFile.MimeType
 		}
 	}
 
@@ -268,10 +711,7 @@ func CreateGeneratedMaterial(c *gin.Context) {
 		name = fileName
 	}
 	name = truncateRunes(name, materialNameMaxRunes)
-	fileSize := req.FileSize
-	if fileSize <= 0 && remoteMetadata.FileSize > 0 {
-		fileSize = remoteMetadata.FileSize
-	}
+	fileSize := storedFile.FileSize
 	if fileSize < 0 {
 		fileSize = 0
 	}
@@ -283,8 +723,9 @@ func CreateGeneratedMaterial(c *gin.Context) {
 		SourceType:  model.MaterialSourceTypeAIOutput,
 		MimeType:    mimeType,
 		FileName:    fileName,
-		Url:         materialURL,
-		StorageType: model.StorageTypeOSS,
+		Url:         storedFile.URL,
+		StorageType: model.StorageTypeLocal,
+		FilePath:    storedFile.FilePath,
 		FileSize:    fileSize,
 		Width:       req.Width,
 		Height:      req.Height,
@@ -296,8 +737,12 @@ func CreateGeneratedMaterial(c *gin.Context) {
 
 	savedMaterial, err := model.CreateGeneratedMaterial(material)
 	if err != nil {
+		removeMaterialLocalFile(material)
 		common.ApiError(c, err)
 		return
+	}
+	if savedMaterial.Id != material.Id && material.FilePath != "" && savedMaterial.FilePath != material.FilePath {
+		removeMaterialLocalFile(material)
 	}
 	common.ApiSuccess(c, savedMaterial)
 }
@@ -350,16 +795,53 @@ func DeleteMaterial(c *gin.Context) {
 		return
 	}
 
-	err = model.DeleteMaterialByIdAndUser(id, userId)
+	material, err := model.GetMaterialByIdAndUser(id, userId)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
 
+	err = material.Delete()
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	removeMaterialLocalFile(material)
+
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
 	})
+}
+
+func ServeStaticMaterialFile(c *gin.Context) {
+	filename := strings.TrimSpace(c.Param("filename"))
+	if !isSafeMaterialStorageFilename(filename) {
+		c.JSON(http.StatusNotFound, gin.H{
+			"success": false,
+			"message": "material file not found",
+		})
+		return
+	}
+
+	filePath, err := materialStaticFilePath(filename)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"success": false,
+			"message": "material file not found",
+		})
+		return
+	}
+	if _, err = os.Stat(filePath); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"success": false,
+			"message": "material file not found",
+		})
+		return
+	}
+
+	c.Header("Cache-Control", "public, max-age=31536000, immutable")
+	c.File(filePath)
 }
 
 func ServeMaterialFile(c *gin.Context) {
@@ -970,6 +1452,22 @@ func defaultMaterialMimeType(materialType string) string {
 }
 
 func defaultMaterialExtension(materialType string, mimeType string) string {
+	switch normalizeMimeType(mimeType) {
+	case "image/jpeg":
+		return ".jpg"
+	case "image/png":
+		return ".png"
+	case "image/webp":
+		return ".webp"
+	case "image/gif":
+		return ".gif"
+	case "video/mp4":
+		return ".mp4"
+	case "audio/mpeg":
+		return ".mp3"
+	case "audio/wav", "audio/x-wav":
+		return ".wav"
+	}
 	if extensions, err := mime.ExtensionsByType(mimeType); err == nil && len(extensions) > 0 {
 		return extensions[0]
 	}
