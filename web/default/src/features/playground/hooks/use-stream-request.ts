@@ -30,11 +30,11 @@ type SSEErrorEvent = Event & { data?: string; responseCode?: number }
 type SSEReadyStateEvent = Event & { readyState?: number }
 
 function closeStreamSource(source: SSE): void {
-  source.close()
-
   if (activeStreamSource === source) {
     activeStreamSource = null
   }
+
+  source.close()
 }
 
 /**
@@ -78,6 +78,7 @@ export function useStreamRequest() {
 
       const handleError = (errorMessage: string, errorCode?: string) => {
         if (!activeStreamComplete && activeStreamSource === source) {
+          activeStreamComplete = true
           onError(errorMessage, errorCode)
           closeSource()
         }

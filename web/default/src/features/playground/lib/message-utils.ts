@@ -156,6 +156,9 @@ export function isValidMessage(message: Message): boolean {
   if (content === undefined) return false
 
   if (message.from === MESSAGE_ROLES.ASSISTANT) {
+    if (isInterruptedErrorMessage(message)) {
+      return false
+    }
     if (
       message.status === MESSAGE_STATUS.ERROR ||
       message.status === MESSAGE_STATUS.LOADING ||
@@ -204,6 +207,17 @@ function sanitizeSeedanceReferences(message: Message): Message {
     ...message,
     seedanceReferences: safeReferences.length > 0 ? safeReferences : undefined,
   }
+}
+
+function isInterruptedErrorMessage(message: Message): boolean {
+  if (message.from !== MESSAGE_ROLES.ASSISTANT) {
+    return false
+  }
+
+  return (
+    getCurrentVersion(message).content.trim() ===
+    `${ERROR_MESSAGES.API_REQUEST_ERROR}: ${ERROR_MESSAGES.INTERRUPTED}`
+  )
 }
 
 /**
@@ -364,56 +378,42 @@ export function finalizeMessage(
  * Converts stuck loading/streaming messages to stable state
  */
 export function sanitizeMessagesOnLoad(messages: Message[]): Message[] {
-  let sanitizedMessages = messages
   let changed = false
 
-  const referenceSanitizedMessages = messages.map((message) => {
-    const sanitized = sanitizeSeedanceReferences(message)
+  const sanitizedMessages = messages.flatMap((message) => {
+    let sanitized = sanitizeSeedanceReferences(message)
     if (sanitized !== message) changed = true
-    return sanitized
+
+    if (isInterruptedErrorMessage(sanitized)) {
+      changed = true
+      return []
+    }
+
+    if (
+      sanitized.from !== MESSAGE_ROLES.ASSISTANT ||
+      (sanitized.status !== MESSAGE_STATUS.LOADING &&
+        sanitized.status !== MESSAGE_STATUS.STREAMING) ||
+      sanitized.taskId
+    ) {
+      return [sanitized]
+    }
+
+    const finalized = finalizeMessage(sanitized)
+    const hasContent = finalized.versions?.[0]?.content?.trim()
+    const hasReasoning = finalized.reasoning?.content?.trim()
+    changed = true
+
+    if (!hasContent && !hasReasoning) {
+      return []
+    }
+
+    sanitized = {
+      ...finalized,
+      status: MESSAGE_STATUS.COMPLETE,
+      isReasoningStreaming: false,
+    }
+    return [sanitized]
   })
 
-  if (changed) {
-    sanitizedMessages = referenceSanitizedMessages
-  }
-
-  let targetIndex = -1
-  for (let i = sanitizedMessages.length - 1; i >= 0; i--) {
-    const m = sanitizedMessages[i]
-    if (
-      m?.from === MESSAGE_ROLES.ASSISTANT &&
-      (m?.status === MESSAGE_STATUS.LOADING ||
-        m?.status === MESSAGE_STATUS.STREAMING)
-    ) {
-      if (m.taskId) continue
-      targetIndex = i
-      break
-    }
-  }
-
-  if (targetIndex === -1) return changed ? sanitizedMessages : messages
-
-  const finalized = finalizeMessage(sanitizedMessages[targetIndex])
-  const hasContent = finalized.versions?.[0]?.content?.trim()
-  const hasReasoning = finalized.reasoning?.content?.trim()
-
-  const sanitized: Message =
-    hasContent || hasReasoning
-      ? {
-          ...finalized,
-          status: MESSAGE_STATUS.COMPLETE,
-          isReasoningStreaming: false,
-        }
-      : {
-          ...updateCurrentVersionContent(
-            finalized,
-            `${ERROR_MESSAGES.API_REQUEST_ERROR}: ${ERROR_MESSAGES.INTERRUPTED}`
-          ),
-          status: MESSAGE_STATUS.ERROR,
-          isReasoningStreaming: false,
-        }
-
-  const result = [...sanitizedMessages]
-  result[targetIndex] = sanitized
-  return result
+  return changed ? sanitizedMessages : messages
 }
