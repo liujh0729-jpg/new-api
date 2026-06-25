@@ -65,7 +65,7 @@
 
 本仓库是基于 New API 的 AIPDD 定制版，保留上游 New API 项目身份、许可证和 attribution，并将 AIPDD 作为一个上游供应商接入。
 
-AIPDD 渠道会把任务请求转发到 `https://new.api.aipdd.work`，渠道 Key 会作为 `X-API-Key` 发送给 AIPDD。当前内置 Flux 生图、Wan2.2 图生视频、Wan2.2 主体替换、mimicmotion 动作替换、Latentsync 对口型视频、IndexTTS 声音复刻六个任务模型。模型名和请求示例见 [docs/aipdd-user-guide.zh_CN.md](./docs/aipdd-user-guide.zh_CN.md)。
+AIPDD 渠道会把任务请求转发到 `https://api.aipdd.work`，渠道 Key 会作为 `X-API-Key` 发送给 AIPDD。当前内置 Flux 生图、Wan2.2 图生视频、Wan2.2 主体替换、mimicmotion 动作替换、Latentsync 对口型视频、IndexTTS 声音复刻六个任务模型。模型名和请求示例见 [docs/aipdd-user-guide.zh_CN.md](./docs/aipdd-user-guide.zh_CN.md)。
 
 ---
 
@@ -130,7 +130,7 @@ AIPDD 渠道会把任务请求转发到 `https://new.api.aipdd.work`，渠道 Ke
 
 | 参数 | 何时必须 | 说明 |
 |------|----------|------|
-| `AIPDD_API_KEY` | 使用 AIPDD 内置任务模型时必须 | AIPDD 上游 API Key，请先到 [app.aipdd.work](https://app.aipdd.work) 注册获取。设置后会自动创建或同步名为 `AIPDD` 的渠道，默认地址为 `https://new.api.aipdd.work`，密钥会作为 `X-API-Key` 发送。 |
+| `AIPDD_API_KEY` | 使用 AIPDD 内置任务模型时必须 | AIPDD 上游 API Key，请先到 [app.aipdd.work](https://app.aipdd.work) 注册获取。设置后会自动创建或同步名为 `AIPDD` 的渠道，默认地址为 `https://api.aipdd.work`，密钥会作为 `X-API-Key` 发送。 |
 | `SQL_DSN` | 使用 MySQL/PostgreSQL 时必须 | 数据库连接字符串；使用默认 SQLite 时可不填，但必须挂载 `/data` 保存数据。 |
 | `SESSION_SECRET` | 生产或多机部署必须 | 固定会话密钥，避免重启或多实例下登录状态不一致。 |
 | `CRYPTO_SECRET` | 使用 Redis 或多机部署时必须 | 固定加密密钥，避免共享缓存/跨实例数据无法解密。 |

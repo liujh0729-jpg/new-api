@@ -117,7 +117,7 @@
 
 | Parameter | Required When | Description |
 |------|---------------|-------------|
-| `AIPDD_API_KEY` | Using built-in AIPDD task models | Upstream AIPDD API key. Register at [app.aipdd.work](https://app.aipdd.work) to obtain it. When set, it automatically creates or syncs the `AIPDD` channel with default base URL `https://new.api.aipdd.work`, and sends the key as `X-API-Key`. |
+| `AIPDD_API_KEY` | Using built-in AIPDD task models | Upstream AIPDD API key. Register at [app.aipdd.work](https://app.aipdd.work) to obtain it. When set, it automatically creates or syncs the `AIPDD` channel with default base URL `https://api.aipdd.work`, and sends the key as `X-API-Key`. |
 | `SQL_DSN` | Using MySQL/PostgreSQL | Database connection string; omit it for default SQLite, but mount `/data` to persist data. |
 | `SESSION_SECRET` | Production or multi-instance deployment | Fixed session secret to keep login state stable across restarts and instances. |
 | `CRYPTO_SECRET` | Redis or multi-instance deployment | Fixed encryption secret so shared cache/cross-instance data can be decrypted. |

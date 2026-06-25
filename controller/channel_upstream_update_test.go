@@ -141,16 +141,17 @@ func TestFetchChannelUpstreamModelIDsMergesAIPDDTaskAndOpenAIModels(t *testing.T
 	})
 
 	seenAPIKey := false
+	legacyRequested := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("X-API-Key") == "sk-test-key" {
 			seenAPIKey = true
 		}
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
-		case "/scripts/admin/comfyui_workflow":
+		case "/v1/capabilities":
 			_, _ = w.Write([]byte(`{
-				"code": 200,
-				"message": "ok",
+				"code": 0,
+				"message": "fetched",
 				"data": [
 					{
 						"id": "dynamic-script-id",
@@ -158,6 +159,7 @@ func TestFetchChannelUpstreamModelIDsMergesAIPDDTaskAndOpenAIModels(t *testing.T
 						"name": "Dynamic AIPDD Video",
 						"description": "dynamic model from upstream",
 						"priceAWcoin": 500,
+						"adapterCode": "comfyui",
 						"endpointType": "openai-video",
 						"taskKind": "image_to_video",
 						"inputModalities": ["image", "text"],
@@ -168,19 +170,6 @@ func TestFetchChannelUpstreamModelIDsMergesAIPDDTaskAndOpenAIModels(t *testing.T
 						]
 					}
 				]
-			}`))
-		case "/fee-rules":
-			_, _ = w.Write([]byte(`{
-				"code": 200,
-				"message": "ok",
-				"data": {
-					"total": 1,
-					"page": 1,
-					"pageSize": 100,
-					"list": [
-						{"key": "dynamic-aipdd-video", "name": "Dynamic AIPDD Video", "type": "comfyUI_workflow", "price": 500, "unit": "次"}
-					]
-				}
 			}`))
 		case "/system/awcoin-rate":
 			_, _ = w.Write([]byte(`{
@@ -196,6 +185,9 @@ func TestFetchChannelUpstreamModelIDsMergesAIPDDTaskAndOpenAIModels(t *testing.T
 					{"id": "qwen2.5:0.5b"}
 				]
 			}`))
+		case "/scripts/admin/comfyui_workflow":
+			legacyRequested = true
+			http.NotFound(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -210,6 +202,7 @@ func TestFetchChannelUpstreamModelIDsMergesAIPDDTaskAndOpenAIModels(t *testing.T
 	models, err := fetchChannelUpstreamModelIDs(channel)
 	require.NoError(t, err)
 	require.True(t, seenAPIKey)
+	require.False(t, legacyRequested)
 	require.Equal(t, []string{"dynamic-aipdd-video", "gemma3:1b", "qwen2.5:0.5b"}, models)
 
 	var llmModel model.Model

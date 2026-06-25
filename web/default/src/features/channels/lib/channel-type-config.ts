@@ -138,7 +138,7 @@ export const CHANNEL_TYPE_CONFIGS: Record<number, ChannelTypeConfig> = {
     id: 58,
     name: CHANNEL_TYPES[58],
     icon: 'openai',
-    defaultBaseUrl: 'https://new.api.aipdd.work',
+    defaultBaseUrl: 'https://api.aipdd.work',
     supportedModels: [
       'aipdd-flux-gguf',
       'aipdd-flux-gguf-t2i',

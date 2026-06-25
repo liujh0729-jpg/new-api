@@ -39,6 +39,7 @@ type Script struct {
 	Name             string        `json:"name"`
 	Description      string        `json:"description"`
 	PriceAWCoin      float64       `json:"priceAWcoin"`
+	AdapterCode      string        `json:"adapterCode"`
 	EndpointType     string        `json:"endpointType"`
 	TaskKind         string        `json:"taskKind"`
 	InputModalities  []string      `json:"inputModalities"`
@@ -70,6 +71,12 @@ type FeeRule struct {
 }
 
 type scriptsResponse struct {
+	Code    int      `json:"code"`
+	Message string   `json:"message"`
+	Data    []Script `json:"data"`
+}
+
+type capabilitiesResponse struct {
 	Code    int      `json:"code"`
 	Message string   `json:"message"`
 	Data    []Script `json:"data"`
@@ -121,9 +128,16 @@ func Fetch(ctx context.Context, client *http.Client, baseURL, apiKey string) (Ca
 	}
 	baseURL = normalizeBaseURL(baseURL)
 
+	var capabilitiesErr error
+	if catalog, err := fetchCapabilitiesCatalog(ctx, client, baseURL, apiKey); err == nil {
+		return catalog, nil
+	} else {
+		capabilitiesErr = err
+	}
+
 	scripts, err := fetchScripts(ctx, client, baseURL, apiKey)
 	if err != nil {
-		return Catalog{}, err
+		return Catalog{}, fmt.Errorf("fetch AIPDD capabilities failed: %v; fetch legacy AIPDD scripts failed: %w", capabilitiesErr, err)
 	}
 	feeRules, err := fetchFeeRules(ctx, client, baseURL, apiKey)
 	if err != nil {
@@ -184,6 +198,26 @@ func fetchScripts(ctx context.Context, client *http.Client, baseURL, apiKey stri
 		return nil, err
 	}
 	return response.Data, nil
+}
+
+func fetchCapabilities(ctx context.Context, client *http.Client, baseURL, apiKey string) ([]Script, error) {
+	var response capabilitiesResponse
+	if err := getJSON(ctx, client, baseURL, "/v1/capabilities", nil, apiKey, &response); err != nil {
+		return nil, err
+	}
+	if err := validateAIPDDResponse(response.Code, response.Message, "fetch AIPDD capabilities"); err != nil {
+		return nil, err
+	}
+	return response.Data, nil
+}
+
+func fetchCapabilitiesCatalog(ctx context.Context, client *http.Client, baseURL, apiKey string) (Catalog, error) {
+	capabilities, err := fetchCapabilities(ctx, client, baseURL, apiKey)
+	if err != nil {
+		return Catalog{}, err
+	}
+	awcoinUSDRate, _ := fetchAWCoinUSDRate(ctx, client, baseURL, apiKey)
+	return convertCapabilitiesToCatalog(capabilities, awcoinUSDRate), nil
 }
 
 func fetchFeeRules(ctx context.Context, client *http.Client, baseURL, apiKey string) ([]FeeRule, error) {
@@ -297,6 +331,23 @@ func convertScriptsToCatalog(scripts []Script, feeRules []FeeRule, awcoinUSDRate
 
 	sortCapabilities(capabilities)
 	return Catalog{Capabilities: capabilities, ModelPrices: modelPrices, AWCoinUSDRate: awcoinUSDRate}
+}
+
+func convertCapabilitiesToCatalog(scripts []Script, awcoinUSDRate float64) Catalog {
+	taskScripts := make([]Script, 0, len(scripts))
+	for _, script := range scripts {
+		if isLLMCapability(script) {
+			continue
+		}
+		taskScripts = append(taskScripts, script)
+	}
+	return convertScriptsToCatalog(taskScripts, nil, awcoinUSDRate)
+}
+
+func isLLMCapability(script Script) bool {
+	adapterCode := strings.ToLower(strings.TrimSpace(script.AdapterCode))
+	endpointType := strings.ToLower(strings.TrimSpace(script.EndpointType))
+	return adapterCode == "llm" || endpointType == "llm-chat"
 }
 
 func buildFeeRuleMap(feeRules []FeeRule) map[string]FeeRule {

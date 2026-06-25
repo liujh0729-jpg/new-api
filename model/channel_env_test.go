@@ -208,13 +208,15 @@ func TestEnsureAIPDDDefaultsSyncsDynamicCatalogOnBoot(t *testing.T) {
 		constant.ResetAIPDDOpenAIModels()
 	})
 
+	legacyRequested := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
-		case "/scripts/admin/comfyui_workflow":
+		case "/v1/capabilities":
+			require.Equal(t, "sk-test-env-key", r.Header.Get("X-API-Key"))
 			_, _ = w.Write([]byte(`{
-				"code": 200,
-				"message": "ok",
+				"code": 0,
+				"message": "fetched",
 				"data": [
 					{
 						"id": "dynamic-script-id",
@@ -222,6 +224,7 @@ func TestEnsureAIPDDDefaultsSyncsDynamicCatalogOnBoot(t *testing.T) {
 						"name": "Dynamic AIPDD Video",
 						"description": "dynamic model from upstream",
 						"priceAWcoin": 500,
+						"adapterCode": "comfyui",
 						"endpointType": "openai-video",
 						"taskKind": "image_to_video",
 						"inputModalities": ["image", "text"],
@@ -232,19 +235,6 @@ func TestEnsureAIPDDDefaultsSyncsDynamicCatalogOnBoot(t *testing.T) {
 						]
 					}
 				]
-			}`))
-		case "/fee-rules":
-			_, _ = w.Write([]byte(`{
-				"code": 200,
-				"message": "ok",
-				"data": {
-					"total": 1,
-					"page": 1,
-					"pageSize": 100,
-					"list": [
-						{"key": "dynamic-aipdd-video", "name": "Dynamic AIPDD Video", "type": "comfyUI_workflow", "price": 500, "unit": "次"}
-					]
-				}
 			}`))
 		case "/system/awcoin-rate":
 			_, _ = w.Write([]byte(`{
@@ -261,6 +251,9 @@ func TestEnsureAIPDDDefaultsSyncsDynamicCatalogOnBoot(t *testing.T) {
 					{"id": "qwen2.5:0.5b"}
 				]
 			}`))
+		case "/scripts/admin/comfyui_workflow":
+			legacyRequested = true
+			http.NotFound(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -272,6 +265,7 @@ func TestEnsureAIPDDDefaultsSyncsDynamicCatalogOnBoot(t *testing.T) {
 	t.Setenv("AIPDD_CATALOG_SYNC_ON_BOOT", "true")
 
 	require.NoError(t, EnsureAIPDDDefaults())
+	require.False(t, legacyRequested)
 
 	var channel Channel
 	require.NoError(t, DB.Where("type = ?", constant.ChannelTypeAIPDD).First(&channel).Error)
