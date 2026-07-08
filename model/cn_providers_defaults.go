@@ -26,6 +26,8 @@ type cnModelInfo struct {
 	EndpointTypes []constant.EndpointType
 }
 
+const cnProviderDefaultsOnBootEnvName = "CN_PROVIDER_DEFAULTS_ON_BOOT"
+
 var cnProviders = []cnProviderInfo{
 	{
 		ChannelType: constant.ChannelTypeAli,
@@ -350,6 +352,10 @@ var cnProviders = []cnProviderInfo{
 }
 
 func EnsureCNProviderDefaults() error {
+	if !isCNProviderDefaultsOnBootEnabled() {
+		return nil
+	}
+
 	changed := false
 	for _, provider := range cnProviders {
 		vendorID, vendorChanged, err := ensureCNVendor(provider)
@@ -377,6 +383,10 @@ func EnsureCNProviderDefaults() error {
 		InvalidatePricingCache()
 	}
 	return nil
+}
+
+func isCNProviderDefaultsOnBootEnabled() bool {
+	return common.GetEnvOrDefaultBool(cnProviderDefaultsOnBootEnvName, true)
 }
 
 func ensureCNVendor(info cnProviderInfo) (int, bool, error) {

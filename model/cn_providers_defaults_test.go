@@ -63,6 +63,18 @@ func TestCNProviderDefaultsUseTencentTokenHubOpenAIChannel(t *testing.T) {
 	require.Contains(t, providerModels(provider), "hy3-preview")
 }
 
+func TestCNProviderDefaultsOnBootEnabledByDefault(t *testing.T) {
+	t.Setenv(cnProviderDefaultsOnBootEnvName, "")
+
+	require.True(t, isCNProviderDefaultsOnBootEnabled())
+}
+
+func TestCNProviderDefaultsOnBootCanBeDisabledByEnv(t *testing.T) {
+	t.Setenv(cnProviderDefaultsOnBootEnvName, "false")
+
+	require.False(t, isCNProviderDefaultsOnBootEnabled())
+}
+
 func TestCNProviderDefaultsUseCurrentDoubaoModels(t *testing.T) {
 	doubaoProvider := findCNProviderByChannelType(t, constant.ChannelTypeVolcEngine)
 	models := providerModels(doubaoProvider)
