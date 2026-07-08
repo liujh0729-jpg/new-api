@@ -296,6 +296,8 @@ export function updateAssistantMessageWithError(
   errorCode?: string
 ): Message[] {
   return updateLastAssistantMessage(messages, (message) => {
+    if (message.status === MESSAGE_STATUS.COMPLETE) return message
+
     const updatedMessage = updateCurrentVersionContent(message, errorMessage)
     return {
       ...updatedMessage,

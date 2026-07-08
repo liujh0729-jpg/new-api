@@ -100,6 +100,60 @@ function getLastAssistantTaskId(messages: Message[]): string | undefined {
     ?.taskId
 }
 
+function shouldIgnoreTaskLoadingUpdate(
+  message: Message,
+  taskType: TaskType,
+  taskId?: string
+): boolean {
+  if (
+    message.status === MESSAGE_STATUS.COMPLETE ||
+    message.status === MESSAGE_STATUS.ERROR
+  ) {
+    return true
+  }
+  if (message.taskType && message.taskType !== taskType) {
+    return true
+  }
+  return !!taskId && !!message.taskId && message.taskId !== taskId
+}
+
+function shouldIgnoreTaskCompleteUpdate(
+  message: Message,
+  taskType: TaskType,
+  taskId?: string
+): boolean {
+  if (message.taskType && message.taskType !== taskType) {
+    return true
+  }
+  return !!taskId && !!message.taskId && message.taskId !== taskId
+}
+
+function updateTaskAssistantMessage(
+  messages: Message[],
+  taskType: TaskType,
+  taskId: string | undefined,
+  updater: (message: Message) => Message
+): Message[] {
+  if (!taskId) {
+    return updateLastAssistantMessage(messages, updater)
+  }
+
+  const index = [...messages]
+    .reverse()
+    .findIndex(
+      (message) =>
+        message.from === 'assistant' &&
+        message.taskId === taskId &&
+        (!message.taskType || message.taskType === taskType)
+    )
+  if (index === -1) return messages
+
+  const targetIndex = messages.length - 1 - index
+  const updated = [...messages]
+  updated[targetIndex] = updater(messages[targetIndex]!)
+  return updated
+}
+
 function extensionForMime(mimeType: string, fallback: string): string {
   const normalized = mimeType.toLowerCase()
   if (normalized.includes('jpeg')) return '.jpg'
@@ -311,16 +365,21 @@ export function useChatHandler({
   )
 
   const completeWithImages = useCallback(
-    (images: GeneratedImage[]) => {
+    (images: GeneratedImage[], taskId?: string) => {
       saveGeneratedImagesToMaterials(images)
       onMessageUpdate((prev) =>
-        updateLastAssistantMessage(prev, (message) => ({
-          ...updateCurrentVersionContent(message, t('Generated image')),
-          images,
-          activity: undefined,
-          status: MESSAGE_STATUS.COMPLETE,
-          isReasoningStreaming: false,
-        }))
+        updateTaskAssistantMessage(prev, 'image', taskId, (message) => {
+          if (shouldIgnoreTaskCompleteUpdate(message, 'image', taskId)) {
+            return message
+          }
+          return {
+            ...updateCurrentVersionContent(message, t('Generated image')),
+            images,
+            activity: undefined,
+            status: MESSAGE_STATUS.COMPLETE,
+            isReasoningStreaming: false,
+          }
+        })
       )
     },
     [onMessageUpdate, saveGeneratedImagesToMaterials, t]
@@ -329,31 +388,41 @@ export function useChatHandler({
   const markImageGenerationLoading = useCallback(
     (taskId?: string) => {
       onMessageUpdate((prev) =>
-        updateLastAssistantMessage(prev, (message) => ({
-          ...updateCurrentVersionContent(message, ''),
-          images: undefined,
-          activity: 'image_generation',
-          status: MESSAGE_STATUS.STREAMING,
-          isReasoningStreaming: false,
-          taskId: taskId || message.taskId,
-          taskType: 'image',
-        }))
+        updateTaskAssistantMessage(prev, 'image', taskId, (message) => {
+          if (shouldIgnoreTaskLoadingUpdate(message, 'image', taskId)) {
+            return message
+          }
+          return {
+            ...updateCurrentVersionContent(message, ''),
+            images: undefined,
+            activity: 'image_generation',
+            status: MESSAGE_STATUS.STREAMING,
+            isReasoningStreaming: false,
+            taskId: taskId || message.taskId,
+            taskType: 'image',
+          }
+        })
       )
     },
     [onMessageUpdate]
   )
 
   const completeWithVideos = useCallback(
-    (videos: GeneratedVideo[]) => {
+    (videos: GeneratedVideo[], taskId?: string) => {
       saveGeneratedVideosToMaterials(videos)
       onMessageUpdate((prev) =>
-        updateLastAssistantMessage(prev, (message) => ({
-          ...updateCurrentVersionContent(message, t('Generated video')),
-          videos,
-          activity: undefined,
-          status: MESSAGE_STATUS.COMPLETE,
-          isReasoningStreaming: false,
-        }))
+        updateTaskAssistantMessage(prev, 'video', taskId, (message) => {
+          if (shouldIgnoreTaskCompleteUpdate(message, 'video', taskId)) {
+            return message
+          }
+          return {
+            ...updateCurrentVersionContent(message, t('Generated video')),
+            videos,
+            activity: undefined,
+            status: MESSAGE_STATUS.COMPLETE,
+            isReasoningStreaming: false,
+          }
+        })
       )
     },
     [onMessageUpdate, saveGeneratedVideosToMaterials, t]
@@ -362,15 +431,20 @@ export function useChatHandler({
   const markVideoGenerationLoading = useCallback(
     (taskId?: string) => {
       onMessageUpdate((prev) =>
-        updateLastAssistantMessage(prev, (message) => ({
-          ...updateCurrentVersionContent(message, ''),
-          videos: undefined,
-          activity: 'video_generation',
-          status: MESSAGE_STATUS.STREAMING,
-          isReasoningStreaming: false,
-          taskId: taskId || message.taskId,
-          taskType: 'video',
-        }))
+        updateTaskAssistantMessage(prev, 'video', taskId, (message) => {
+          if (shouldIgnoreTaskLoadingUpdate(message, 'video', taskId)) {
+            return message
+          }
+          return {
+            ...updateCurrentVersionContent(message, ''),
+            videos: undefined,
+            activity: 'video_generation',
+            status: MESSAGE_STATUS.STREAMING,
+            isReasoningStreaming: false,
+            taskId: taskId || message.taskId,
+            taskType: 'video',
+          }
+        })
       )
     },
     [onMessageUpdate]
@@ -550,7 +624,7 @@ export function useChatHandler({
 
           if (status === 'succeeded') {
             if (task.images.length > 0) {
-              completeWithImages(task.images)
+              completeWithImages(task.images, taskId)
               return
             }
             throw new Error(ERROR_MESSAGES.PARSE_ERROR)
@@ -615,7 +689,7 @@ export function useChatHandler({
                     task_id: video.task_id || resolvedTaskId,
                   }))
                 : [{ url: proxyUrl, task_id: resolvedTaskId }]
-            completeWithVideos(videos)
+            completeWithVideos(videos, taskId)
             return
           }
         }
@@ -661,7 +735,7 @@ export function useChatHandler({
 
         const images = extractImageResults(response)
         if (images.length > 0) {
-          completeWithImages(images)
+          completeWithImages(images, requestTaskId)
           return
         }
 
@@ -723,7 +797,7 @@ export function useChatHandler({
 
         const videos = extractVideoResults(response)
         if (videos.length > 0) {
-          completeWithVideos(videos)
+          completeWithVideos(videos, requestTaskId)
           return
         }
 
