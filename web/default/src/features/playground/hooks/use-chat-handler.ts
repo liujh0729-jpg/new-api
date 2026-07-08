@@ -58,6 +58,7 @@ import type {
   Message,
   PlaygroundConfig,
   ParameterEnabled,
+  SeedanceReference,
   TaskFetchResponse,
 } from '../types'
 import { useStreamRequest } from './use-stream-request'
@@ -66,6 +67,12 @@ interface UseChatHandlerOptions {
   config: PlaygroundConfig
   parameterEnabled: ParameterEnabled
   onMessageUpdate: (updater: (prev: Message[]) => Message[]) => void
+}
+
+interface SendChatOptions {
+  imageReferences?: string[]
+  videoReferences?: SeedanceReference[]
+  clientTaskId?: string
 }
 
 const IMAGE_TASK_POLL_INTERVAL_MS = 2000
@@ -86,6 +93,11 @@ function isPersistableGeneratedUrl(url?: string): url is string {
   if (!url) return false
   const value = url.trim().toLowerCase()
   return !!value && !value.startsWith('data:') && !value.startsWith('blob:')
+}
+
+function getLastAssistantTaskId(messages: Message[]): string | undefined {
+  return [...messages].reverse().find((message) => message.from === 'assistant')
+    ?.taskId
 }
 
 function extensionForMime(mimeType: string, fallback: string): string {
@@ -176,10 +188,42 @@ function getHttpStatus(error: unknown): number | undefined {
   return typeof response?.status === 'number' ? response.status : undefined
 }
 
+function getErrorResponseData(error: unknown): unknown {
+  if (typeof error !== 'object' || error === null) return undefined
+  return (error as { response?: { data?: unknown } }).response?.data
+}
+
+function collectErrorText(value: unknown): string {
+  if (typeof value === 'string') return value
+  if (typeof value !== 'object' || value === null) return ''
+  const fields = ['code', 'message', 'reason', 'detail', 'error']
+  return fields
+    .map((field) => collectErrorText((value as Record<string, unknown>)[field]))
+    .filter(Boolean)
+    .join(' ')
+}
+
+function isTaskLookupPendingError(error: unknown): boolean {
+  const status = getHttpStatus(error)
+  if (status !== 400 && status !== 404) return false
+
+  const text = collectErrorText(getErrorResponseData(error)).toLowerCase()
+  return (
+    text.includes('task_not_exist') ||
+    text.includes('task not exist') ||
+    text.includes('task does not exist') ||
+    text.includes('task not found') ||
+    text.includes('not found') ||
+    text.includes('不存在')
+  )
+}
+
 function isTransientPollingError(error: unknown): boolean {
   const status = getHttpStatus(error)
   return (
-    status === 429 || (status !== undefined && status >= 500 && status < 600)
+    isTaskLookupPendingError(error) ||
+    status === 429 ||
+    (status !== undefined && status >= 500 && status < 600)
   )
 }
 
@@ -483,12 +527,22 @@ export function useChatHandler({
           attempt += 1
           if (isTaskAbortRequested('image', abortToken)) return
 
-          const response = await getImageGenerationTask(taskId)
+          let response: TaskFetchResponse
+          try {
+            response = await getImageGenerationTask(taskId)
+          } catch (error: unknown) {
+            if (isTaskAbortRequested('image', abortToken)) return
+            if (isTransientPollingError(error)) {
+              markImageGenerationLoading(taskId)
+              continue
+            }
+            throw error
+          }
           if (isTaskAbortRequested('image', abortToken)) return
 
           const task = parseImageTaskResponse(response)
           const status = task.status || 'processing'
-          markImageGenerationLoading()
+          markImageGenerationLoading(taskId)
 
           if (status === 'failed') {
             throw new Error(task.error || ERROR_MESSAGES.IMAGE_TASK_FAILED)
@@ -535,7 +589,7 @@ export function useChatHandler({
           } catch (error: unknown) {
             if (isTaskAbortRequested('video', abortToken)) return
             if (isTransientPollingError(error)) {
-              markVideoGenerationLoading()
+              markVideoGenerationLoading(taskId)
               continue
             }
             throw error
@@ -544,7 +598,7 @@ export function useChatHandler({
 
           const task = parseVideoTaskResponse(response)
           const status = task.status || 'processing'
-          markVideoGenerationLoading()
+          markVideoGenerationLoading(taskId)
 
           if (status === 'failed') {
             throw new Error(task.error || ERROR_MESSAGES.VIDEO_TASK_FAILED)
@@ -573,7 +627,11 @@ export function useChatHandler({
   )
 
   const sendImageChat = useCallback(
-    async (messages: Message[], imageReferences?: string[]) => {
+    async (
+      messages: Message[],
+      imageReferences?: string[],
+      clientTaskId?: string
+    ) => {
       const userMessage = [...messages]
         .reverse()
         .find((message) => message.from === 'user')
@@ -592,11 +650,12 @@ export function useChatHandler({
 
       const abortToken = getTaskAbortToken('image')
       setIsGenerating(true)
-      markImageGenerationLoading()
+      const requestTaskId = clientTaskId || getLastAssistantTaskId(messages)
+      markImageGenerationLoading(requestTaskId)
 
       try {
         const response = await sendImageGeneration(
-          buildImageGenerationPayload(prompt, config, references)
+          buildImageGenerationPayload(prompt, config, references, requestTaskId)
         )
         if (isTaskAbortRequested('image', abortToken)) return
 
@@ -607,7 +666,7 @@ export function useChatHandler({
         }
 
         if (isImageTaskResponse(response)) {
-          const taskId = response.task_id || response.id
+          const taskId = response.task_id || response.id || requestTaskId
           if (!taskId) {
             throw new Error(ERROR_MESSAGES.PARSE_ERROR)
           }
@@ -634,12 +693,17 @@ export function useChatHandler({
   )
 
   const sendVideoChat = useCallback(
-    async (messages: Message[]) => {
+    async (
+      messages: Message[],
+      videoReferences?: SeedanceReference[],
+      clientTaskId?: string
+    ) => {
       const userMessage = [...messages]
         .reverse()
         .find((message) => message.from === 'user')
       const prompt = userMessage?.versions?.[0]?.content?.trim() || ''
-      const references = userMessage?.seedanceReferences || []
+      const references =
+        videoReferences ?? userMessage?.seedanceReferences ?? []
 
       if (!prompt && references.length === 0) {
         handleStreamError(ERROR_MESSAGES.API_REQUEST_ERROR)
@@ -648,11 +712,12 @@ export function useChatHandler({
 
       const abortToken = getTaskAbortToken('video')
       setIsGenerating(true)
-      markVideoGenerationLoading()
+      const requestTaskId = clientTaskId || getLastAssistantTaskId(messages)
+      markVideoGenerationLoading(requestTaskId)
 
       try {
         const response = await sendVideoGeneration(
-          buildVideoGenerationPayload(prompt, references, config)
+          buildVideoGenerationPayload(prompt, references, config, requestTaskId)
         )
         if (isTaskAbortRequested('video', abortToken)) return
 
@@ -663,7 +728,7 @@ export function useChatHandler({
         }
 
         if (isVideoTaskResponse(response)) {
-          const taskId = response.task_id || response.id
+          const taskId = response.task_id || response.id || requestTaskId
           if (!taskId) {
             throw new Error(ERROR_MESSAGES.PARSE_ERROR)
           }
@@ -691,13 +756,21 @@ export function useChatHandler({
 
   // Send chat request (stream or non-stream based on config)
   const sendChat = useCallback(
-    (messages: Message[], imageReferences?: string[]) => {
+    (messages: Message[], options: SendChatOptions = {}) => {
       if (config.mode === 'image') {
-        void sendImageChat(messages, imageReferences)
+        void sendImageChat(
+          messages,
+          options.imageReferences,
+          options.clientTaskId
+        )
         return
       }
       if (config.mode === 'video') {
-        void sendVideoChat(messages)
+        void sendVideoChat(
+          messages,
+          options.videoReferences,
+          options.clientTaskId
+        )
         return
       }
       if (config.stream) {

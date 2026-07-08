@@ -75,10 +75,16 @@ export function createUserMessage(
   }
 }
 
+export function createClientTaskId(): string {
+  return `task_${nanoid(32)}`
+}
+
 /**
  * Create a loading assistant message
  */
-export function createLoadingAssistantMessage(): Message {
+export function createLoadingAssistantMessage(
+  overrides: Partial<Message> = {}
+): Message {
   return {
     key: nanoid(),
     from: MESSAGE_ROLES.ASSISTANT,
@@ -88,6 +94,7 @@ export function createLoadingAssistantMessage(): Message {
     isContentComplete: false,
     isReasoningStreaming: false,
     status: MESSAGE_STATUS.LOADING,
+    ...overrides,
   }
 }
 

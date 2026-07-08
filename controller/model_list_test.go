@@ -216,9 +216,9 @@ func TestDashboardListModelsMergesTaskAdaptorModelsByChannelType(t *testing.T) {
 	require.Contains(t, payload.Data[constant.ChannelTypeDoubaoVideo], "doubao-seedance-2-0-260128")
 	require.Contains(t, payload.Data[constant.ChannelTypeSora], "sora-2-pro")
 
-	require.Contains(t, payload.Data[constant.ChannelTypeAli], "qwen-plus")
-	require.Contains(t, payload.Data[constant.ChannelTypeAli], "wan2.5-i2v-preview")
-	require.Contains(t, payload.Data[constant.ChannelTypeMiniMax], "MiniMax-M2.7")
+	require.Contains(t, payload.Data[constant.ChannelTypeAli], "qwen3.7-plus")
+	require.Contains(t, payload.Data[constant.ChannelTypeAli], "wan2.7-t2v")
+	require.Contains(t, payload.Data[constant.ChannelTypeMiniMax], "MiniMax-M3")
 	require.Contains(t, payload.Data[constant.ChannelTypeMiniMax], "MiniMax-Hailuo-2.3")
 }
 

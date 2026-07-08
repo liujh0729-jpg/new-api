@@ -225,6 +225,74 @@ func TestWan22WanxDoesNotSendDurationToJavaBackend(t *testing.T) {
 	}
 }
 
+func TestConvertToRequestPayloadAppliesDynamicLTXDefaults(t *testing.T) {
+	original := constant.GetAIPDDCapabilities()
+	t.Cleanup(func() {
+		constant.SetAIPDDCapabilities(original)
+	})
+	modelName := "aipdd_ltx2_3_distilled_fp8_ti2v"
+	constant.SetAIPDDCapabilities([]constant.AIPDDCapability{
+		{
+			ModelName:         modelName,
+			ScriptCode:        modelName,
+			TaskKind:          "image_to_video",
+			InputModalities:   []string{"text", "image"},
+			OutputModalities:  []string{"video"},
+			EndpointType:      constant.EndpointTypeOpenAIVideo,
+			BillingType:       constant.AIPDDBillingTypePerCall,
+			WorkflowParamKeys: []string{"prompt", "image", "negativePrompt", "width", "height", "numFrames", "frameRate"},
+			RequiredWorkflowParams: map[string]bool{
+				"prompt":         true,
+				"image":          false,
+				"negativePrompt": false,
+				"width":          true,
+				"height":         true,
+				"numFrames":      true,
+				"frameRate":      false,
+			},
+			WorkflowDefaults: []constant.AIPDDWorkflowParamDefault{
+				{ParamKey: "prompt", ValueType: constant.AIPDDWorkflowValueTypeString, Sources: []constant.AIPDDWorkflowValueSource{{Type: constant.AIPDDWorkflowSourcePrompt}}},
+				{ParamKey: "image", ValueType: constant.AIPDDWorkflowValueTypeString, Sources: []constant.AIPDDWorkflowValueSource{{Type: constant.AIPDDWorkflowSourceImage}}},
+				{ParamKey: "negativePrompt", ValueType: constant.AIPDDWorkflowValueTypeString, Sources: []constant.AIPDDWorkflowValueSource{{Type: constant.AIPDDWorkflowSourceMetadata, Key: "negative_prompt"}}},
+				{ParamKey: "width", ValueType: constant.AIPDDWorkflowValueTypeInt, Sources: []constant.AIPDDWorkflowValueSource{{Type: constant.AIPDDWorkflowSourceStatic, Key: "1920"}}},
+				{ParamKey: "height", ValueType: constant.AIPDDWorkflowValueTypeInt, Sources: []constant.AIPDDWorkflowValueSource{{Type: constant.AIPDDWorkflowSourceStatic, Key: "1088"}}},
+				{ParamKey: "numFrames", ValueType: constant.AIPDDWorkflowValueTypeInt, Sources: []constant.AIPDDWorkflowValueSource{{Type: constant.AIPDDWorkflowSourceStatic, Key: "121"}}},
+				{ParamKey: "frameRate", ValueType: constant.AIPDDWorkflowValueTypeInt, Sources: []constant.AIPDDWorkflowValueSource{{Type: constant.AIPDDWorkflowSourceMetadata, Key: "fps"}, {Type: constant.AIPDDWorkflowSourceStatic, Key: "24"}}},
+			},
+			UploadTargets: []constant.AIPDDUploadTarget{
+				{ParamKey: "image", Aliases: []string{"file", "input_reference", "reference", "images", "image"}},
+			},
+		},
+	})
+
+	adaptor := &TaskAdaptor{}
+	payload, err := adaptor.convertToRequestPayload(relaycommon.TaskSubmitReq{
+		Model:  modelName,
+		Prompt: "camera push in",
+		Image:  "https://cdn.example.com/input.png",
+		Metadata: map[string]interface{}{
+			"negative_prompt": "low quality",
+			"fps":             "30",
+		},
+	}, relayInfoWithModel(modelName))
+	if err != nil {
+		t.Fatalf("convertToRequestPayload returned error: %v", err)
+	}
+	content := payload.Input
+	if payload.TaskTypeCode != modelName {
+		t.Fatalf("unexpected task type code: %s", payload.TaskTypeCode)
+	}
+	if content["prompt"] != "camera push in" || content["image"] != "https://cdn.example.com/input.png" {
+		t.Fatalf("prompt/image defaults were not applied: %#v", content)
+	}
+	if content["negativePrompt"] != "low quality" {
+		t.Fatalf("negativePrompt should use negative_prompt metadata: %#v", content)
+	}
+	if content["width"] != 1920 || content["height"] != 1088 || content["numFrames"] != 121 || content["frameRate"] != 30 {
+		t.Fatalf("LTX numeric defaults were not applied: %#v", content)
+	}
+}
+
 func TestBuildRequestBodyUploadsMultipartFileToAIPDDOSS(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

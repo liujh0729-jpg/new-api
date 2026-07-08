@@ -1047,6 +1047,8 @@ func resolveWorkflowDefaultString(content map[string]any, req relaycommon.TaskSu
 			if req.Duration > 0 {
 				values = append(values, strconv.Itoa(req.Duration))
 			}
+		case constant.AIPDDWorkflowSourceStatic:
+			values = append(values, source.Key)
 		}
 	}
 	return firstNonEmpty(values...)
@@ -1062,6 +1064,10 @@ func resolveWorkflowDefaultInt(content map[string]any, req relaycommon.TaskSubmi
 		case constant.AIPDDWorkflowSourceDuration:
 			if req.Duration > 0 {
 				return req.Duration, true
+			}
+		case constant.AIPDDWorkflowSourceStatic:
+			if value := parseDurationValue(source.Key); value > 0 {
+				return value, true
 			}
 		default:
 			if value := parseDurationValue(resolveWorkflowDefaultString(content, req, []constant.AIPDDWorkflowValueSource{source})); value > 0 {
@@ -1192,7 +1198,7 @@ func hasContentValue(value any) bool {
 
 func isKnownSubmitField(key string) bool {
 	switch key {
-	case "prompt", "model", "mode", "image", "images", "size", "duration", "seconds", "input_reference", "group":
+	case "prompt", "model", "mode", "client_task_id", "image", "images", "size", "duration", "seconds", "input_reference", "group":
 		return true
 	default:
 		return false

@@ -140,6 +140,7 @@ export interface ImageGenerationRequest {
   model: string
   group?: string
   prompt: string
+  client_task_id?: string
   image?: string
   images?: string[]
   size?: string
@@ -176,6 +177,7 @@ export interface VideoGenerationRequest {
   model: string
   group?: string
   prompt: string
+  client_task_id?: string
   duration?: number
   seconds?: string
   size?: string
@@ -183,6 +185,8 @@ export interface VideoGenerationRequest {
     content?: VideoGenerationContentItem[]
     ratio?: string
     resolution?: string
+    width?: number
+    height?: number
   }
 }
 
@@ -225,6 +229,8 @@ export interface PlaygroundConfig {
   image_count: number
   video_ratio: string
   video_duration: number
+  video_resolution: string
+  video_size: string
 }
 
 export interface ParameterEnabled {

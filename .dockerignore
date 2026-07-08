@@ -19,6 +19,9 @@ docs
 /web/default/node_modules
 /web/classic/node_modules
 .tmp
+.codex-artifacts
+output
+tmp
 logs
 *.db
 !THIRD-PARTY-LICENSES.md

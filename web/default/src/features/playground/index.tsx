@@ -36,14 +36,17 @@ import {
   DEFAULT_GROUP,
   ERROR_MESSAGES,
   SEEDANCE_REFERENCE_LIMITS,
+  normalizeLTXVideoSizeForModel,
   normalizeImageSizeForModel,
   normalizeVideoDurationForModel,
   normalizeVideoRatioForModel,
+  normalizeVideoResolutionForModel,
 } from './constants'
 import { usePlaygroundState, useChatHandler } from './hooks'
 import {
   createUserMessage,
   createLoadingAssistantMessage,
+  createClientTaskId,
   normalizePlaygroundError,
 } from './lib'
 import type {
@@ -155,6 +158,30 @@ export function Playground() {
     }
   }, [config.mode, config.model, config.video_duration, updateConfig])
 
+  useEffect(() => {
+    if (config.mode !== 'video') return
+
+    const normalizedResolution = normalizeVideoResolutionForModel(
+      config.model,
+      config.video_resolution
+    )
+    if (normalizedResolution !== config.video_resolution) {
+      updateConfig('video_resolution', normalizedResolution)
+    }
+  }, [config.mode, config.model, config.video_resolution, updateConfig])
+
+  useEffect(() => {
+    if (config.mode !== 'video') return
+
+    const normalizedSize = normalizeLTXVideoSizeForModel(
+      config.model,
+      config.video_size
+    )
+    if (normalizedSize !== config.video_size) {
+      updateConfig('video_size', normalizedSize)
+    }
+  }, [config.mode, config.model, config.video_size, updateConfig])
+
   // Update groups when data changes
   useEffect(() => {
     if (!groupsData) return
@@ -193,10 +220,31 @@ export function Playground() {
     }
   }, [activeConversationId, messages, resumeTaskPolling])
 
+  const createGenerationLoadingMessage = useCallback(() => {
+    if (config.mode !== 'image' && config.mode !== 'video') {
+      return {
+        assistantMessage: createLoadingAssistantMessage(),
+        clientTaskId: undefined,
+      }
+    }
+
+    const clientTaskId = createClientTaskId()
+    return {
+      assistantMessage: createLoadingAssistantMessage({
+        taskId: clientTaskId,
+        taskType: config.mode,
+        activity:
+          config.mode === 'image' ? 'image_generation' : 'video_generation',
+      }),
+      clientTaskId,
+    }
+  }, [config.mode])
+
   const handleSendMessage = async (message: PromptInputMessage) => {
     const text = message.text?.trim() || ''
     let messageReferences: SeedanceReference[] = []
     let imageReferences: string[] | undefined
+    let videoReferences: SeedanceReference[] | undefined
 
     if (config.mode === 'video') {
       const referenceCandidates = buildSeedanceReferenceCandidates(
@@ -233,8 +281,10 @@ export function Playground() {
         setIsUploadingReferences(true)
       }
       try {
-        messageReferences =
+        const resolvedReferences =
           await resolveSeedanceReferenceURLs(referenceCandidates)
+        messageReferences = resolvedReferences.displayReferences
+        videoReferences = resolvedReferences.requestReferences
       } catch (error) {
         const uploadError = normalizePlaygroundError(error, t)
         toast.error(uploadError.message)
@@ -247,21 +297,44 @@ export function Playground() {
     }
 
     if (config.mode === 'image') {
-      messageReferences = await resolveImageReferences(message.files || [])
-      imageReferences = messageReferences.map((reference) => reference.url)
-      if (imageReferences.length === 0) {
-        imageReferences = undefined
+      const hasLocalReferences = (message.files || []).some(
+        (file) => file.sourceFile
+      )
+      if (hasLocalReferences) {
+        setIsUploadingReferences(true)
+      }
+      try {
+        const resolvedReferences = await resolveImageReferences(
+          message.files || []
+        )
+        messageReferences = resolvedReferences.displayReferences
+        imageReferences = resolvedReferences.requestUrls
+        if (imageReferences.length === 0) {
+          imageReferences = undefined
+        }
+      } catch (error) {
+        const uploadError = normalizePlaygroundError(error, t)
+        toast.error(uploadError.message)
+        throw new Error(uploadError.message, { cause: error })
+      } finally {
+        if (hasLocalReferences) {
+          setIsUploadingReferences(false)
+        }
       }
     }
 
     const userMessage = createUserMessage(text, messageReferences)
-    const assistantMessage = createLoadingAssistantMessage()
+    const { assistantMessage, clientTaskId } = createGenerationLoadingMessage()
 
     const newMessages = [...messages, userMessage, assistantMessage]
     updateMessages(newMessages)
 
     // Send chat request
-    sendChat(newMessages, imageReferences)
+    sendChat(newMessages, {
+      imageReferences,
+      videoReferences,
+      clientTaskId,
+    })
   }
 
   const handleCopyMessage = (message: MessageType) => {
@@ -277,11 +350,11 @@ export function Playground() {
 
     // Remove messages after this one and regenerate
     const messagesUpToHere = messages.slice(0, messageIndex)
-    const loadingMessage = createLoadingAssistantMessage()
-    const newMessages = [...messagesUpToHere, loadingMessage]
+    const { assistantMessage, clientTaskId } = createGenerationLoadingMessage()
+    const newMessages = [...messagesUpToHere, assistantMessage]
 
     updateMessages(newMessages)
-    sendChat(newMessages)
+    sendChat(newMessages, { clientTaskId })
   }
 
   const handleEditMessage = useCallback((message: MessageType) => {
@@ -312,14 +385,19 @@ export function Playground() {
         return
       }
 
-      const toSubmit = [
-        ...updated.slice(0, index + 1),
-        createLoadingAssistantMessage(),
-      ]
+      const { assistantMessage, clientTaskId } =
+        createGenerationLoadingMessage()
+      const toSubmit = [...updated.slice(0, index + 1), assistantMessage]
       updateMessages(toSubmit)
-      sendChat(toSubmit)
+      sendChat(toSubmit, { clientTaskId })
     },
-    [editingMessageKey, messages, updateMessages, sendChat]
+    [
+      editingMessageKey,
+      messages,
+      updateMessages,
+      sendChat,
+      createGenerationLoadingMessage,
+    ]
   )
 
   const handleDeleteMessage = (message: MessageType) => {
@@ -392,8 +470,14 @@ export function Playground() {
               updateConfig('video_duration', value)
             }
             onVideoRatioChange={(value) => updateConfig('video_ratio', value)}
+            onVideoResolutionChange={(value) =>
+              updateConfig('video_resolution', value)
+            }
+            onVideoSizeChange={(value) => updateConfig('video_size', value)}
             videoDuration={config.video_duration}
             videoRatio={config.video_ratio}
+            videoResolution={config.video_resolution}
+            videoSize={config.video_size}
           />
         </div>
       </div>
@@ -402,6 +486,14 @@ export function Playground() {
 }
 
 type SeedanceReferenceCandidate = SeedanceReference & { sourceFile?: File }
+type ResolvedSeedanceReferences = {
+  displayReferences: SeedanceReference[]
+  requestReferences: SeedanceReference[]
+}
+type ResolvedImageReferences = {
+  displayReferences: SeedanceReference[]
+  requestUrls: string[]
+}
 
 function buildSeedanceReferenceCandidates(
   files: PromptInputSubmittedFile[]
@@ -424,25 +516,49 @@ function buildSeedanceReferenceCandidates(
 
 async function resolveSeedanceReferenceURLs(
   references: SeedanceReferenceCandidate[]
-): Promise<SeedanceReference[]> {
+): Promise<ResolvedSeedanceReferences> {
   const resolvedReferences = await Promise.all(
     references.map(async ({ sourceFile, ...reference }) => {
-      if (!sourceFile) return reference
+      if (!sourceFile) {
+        const requestUrl =
+          isValidReferenceUrl(reference.url) &&
+          (isDataReferenceUrl(reference.url) ||
+            isProbablyPublicReferenceUrl(reference.url))
+            ? reference.url
+            : await fetchReferenceURLAsDataURL(reference.url)
+        return {
+          displayReference: reference,
+          requestReference: { ...reference, url: requestUrl },
+        }
+      }
 
       try {
         const uploaded = await uploadReferenceMedia(sourceFile)
-        return {
+        const displayReference = {
           ...reference,
           url: uploaded.url,
           filename: uploaded.filename || reference.filename,
           media_type: uploaded.media_type || reference.media_type,
+        }
+        const requestUrl = isProbablyPublicReferenceUrl(uploaded.url)
+          ? uploaded.url
+          : await resolveInlineReferenceURL(reference.url, sourceFile)
+        return {
+          displayReference,
+          requestReference: {
+            ...displayReference,
+            url: requestUrl,
+          },
         }
       } catch (error) {
         if (
           shouldInlineLocalReference(error) &&
           isDataReferenceUrl(reference.url)
         ) {
-          return reference
+          return {
+            displayReference: reference,
+            requestReference: reference,
+          }
         }
         throw error
       }
@@ -450,12 +566,30 @@ async function resolveSeedanceReferenceURLs(
   )
 
   if (
-    resolvedReferences.some((reference) => !isValidReferenceUrl(reference.url))
+    resolvedReferences.some(
+      (reference) => !isValidReferenceUrl(reference.requestReference.url)
+    )
   ) {
     throw new Error(ERROR_MESSAGES.VIDEO_REFERENCE_UPLOAD_REQUIRED)
   }
 
-  return resolvedReferences
+  return {
+    displayReferences: resolvedReferences.map(
+      (reference) => reference.displayReference
+    ),
+    requestReferences: resolvedReferences.map(
+      (reference) => reference.requestReference
+    ),
+  }
+}
+
+async function resolveInlineReferenceURL(
+  url: string,
+  file?: File
+): Promise<string> {
+  if (isDataReferenceUrl(url)) return url
+  if (file) return readFileAsDataURL(file)
+  return fetchReferenceURLAsDataURL(url)
 }
 
 function shouldInlineLocalReference(error: unknown): boolean {
@@ -518,6 +652,46 @@ function isDataReferenceUrl(url: string): boolean {
 
 function isWebUrl(url: string): boolean {
   return /^https?:\/\//i.test(url.trim())
+}
+
+function isProbablyPublicReferenceUrl(url: string): boolean {
+  const value = url.trim()
+  if (!isWebUrl(value)) return false
+
+  try {
+    const parsed = new URL(value)
+    const hostname = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '')
+    if (
+      hostname === 'localhost' ||
+      hostname === '0.0.0.0' ||
+      hostname === '::1' ||
+      hostname === '::' ||
+      hostname.endsWith('.local') ||
+      hostname.startsWith('127.') ||
+      hostname.startsWith('10.') ||
+      hostname.startsWith('192.168.') ||
+      hostname.startsWith('169.254.') ||
+      hostname.startsWith('fc') ||
+      hostname.startsWith('fd') ||
+      hostname.startsWith('fe80:')
+    ) {
+      return false
+    }
+
+    const parts = hostname.split('.').map((part) => Number(part))
+    if (
+      parts.length === 4 &&
+      parts.every((part) => Number.isInteger(part) && part >= 0 && part <= 255)
+    ) {
+      if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) {
+        return false
+      }
+    }
+
+    return true
+  } catch {
+    return false
+  }
 }
 
 function getSeedanceReferenceKind(
@@ -678,27 +852,79 @@ function readLocalMediaDuration(
 
 async function resolveImageReferences(
   files: PromptInputSubmittedFile[]
-): Promise<SeedanceReference[]> {
+): Promise<ResolvedImageReferences> {
   const images = await Promise.all(
     files.map(async (file) => {
-      const url = file.sourceFile
-        ? await readFileAsDataURL(file.sourceFile)
-        : file.url?.trim() || ''
+      const url = file.url?.trim() || ''
       if (!url) return null
+
+      const inlineUrl = file.sourceFile
+        ? await resolveInlineReferenceURL(url, file.sourceFile)
+        : isDataReferenceUrl(url) || isProbablyPublicReferenceUrl(url)
+          ? url
+          : await fetchReferenceURLAsDataURL(url)
+
+      if (file.sourceFile) {
+        try {
+          const uploaded = await uploadReferenceMedia(file.sourceFile)
+          const displayReference: SeedanceReference = {
+            kind: 'image',
+            url: uploaded.url,
+            filename: uploaded.filename || file.filename,
+            media_type: uploaded.media_type || file.mediaType,
+          }
+          return {
+            displayReference,
+            requestUrl: isProbablyPublicReferenceUrl(uploaded.url)
+              ? uploaded.url
+              : inlineUrl,
+          }
+        } catch (error) {
+          if (!shouldInlineLocalReference(error)) {
+            throw error
+          }
+        }
+      }
+
       const reference: SeedanceReference = {
         kind: 'image',
         url,
         filename: file.filename,
         media_type: file.mediaType,
       }
-      return reference
+      return {
+        displayReference: reference,
+        requestUrl: inlineUrl,
+      }
     })
   )
 
-  return images.filter((image): image is SeedanceReference => image !== null)
+  const references = images.filter(
+    (
+      image
+    ): image is {
+      displayReference: SeedanceReference
+      requestUrl: string
+    } => image !== null
+  )
+
+  return {
+    displayReferences: references.map(
+      (reference) => reference.displayReference
+    ),
+    requestUrls: references.map((reference) => reference.requestUrl),
+  }
 }
 
-function readFileAsDataURL(file: File): Promise<string> {
+async function fetchReferenceURLAsDataURL(url: string): Promise<string> {
+  const response = await fetch(url)
+  if (!response.ok) {
+    throw new Error(ERROR_MESSAGES.VIDEO_REFERENCE_UPLOAD_REQUIRED)
+  }
+  return blobToDataURL(await response.blob())
+}
+
+function blobToDataURL(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
     reader.onload = () => {
@@ -709,6 +935,10 @@ function readFileAsDataURL(file: File): Promise<string> {
       }
     }
     reader.onerror = () => reject(new Error('failed to read file'))
-    reader.readAsDataURL(file)
+    reader.readAsDataURL(blob)
   })
+}
+
+function readFileAsDataURL(file: File): Promise<string> {
+  return blobToDataURL(file)
 }

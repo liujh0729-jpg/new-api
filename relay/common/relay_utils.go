@@ -186,10 +186,12 @@ func isKnownTaskField(field string) bool {
 		"prompt":          true,
 		"model":           true,
 		"mode":            true,
+		"client_task_id":  true,
 		"image":           true,
 		"images":          true,
 		"size":            true,
 		"duration":        true,
+		"seconds":         true,
 		"input_reference": true, // Sora 特有字段
 	}
 	return knownFields[field]

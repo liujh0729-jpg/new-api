@@ -22,7 +22,9 @@ import {
   DEFAULT_PARAMETER_ENABLED,
   DEFAULT_VIDEO_DURATION,
   STORAGE_KEYS,
+  normalizeLTXVideoSizeForModel,
   normalizeVideoDurationForModel,
+  normalizeVideoResolutionForModel,
 } from '../constants'
 import type {
   PlaygroundConfig,
@@ -123,6 +125,14 @@ function normalizeConversation(
       ? { ...DEFAULT_CONFIG, ...configFallback, ...value.config }
       : configFallback
   ) as PlaygroundConfig
+  config.video_resolution = normalizeVideoResolutionForModel(
+    config.model || '',
+    config.video_resolution
+  )
+  config.video_size = normalizeLTXVideoSizeForModel(
+    config.model || '',
+    config.video_size
+  )
   const parameterEnabled = (
     isObject(value.parameterEnabled)
       ? {
@@ -229,6 +239,18 @@ export function loadConfig(): Partial<PlaygroundConfig> {
         config.video_duration = normalizeVideoDurationForModel(
           config.model || '',
           config.video_duration
+        )
+      }
+      if (typeof config.video_resolution === 'string') {
+        config.video_resolution = normalizeVideoResolutionForModel(
+          config.model || '',
+          config.video_resolution
+        )
+      }
+      if (typeof config.video_size === 'string') {
+        config.video_size = normalizeLTXVideoSizeForModel(
+          config.model || '',
+          config.video_size
         )
       }
       return config

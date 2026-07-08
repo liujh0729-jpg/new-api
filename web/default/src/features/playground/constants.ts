@@ -116,6 +116,59 @@ export const SEEDANCE_15_20_VIDEO_DURATION_RANGE: VideoDurationRange = {
 export const DEFAULT_VIDEO_RATIO = '16:9'
 export const DEFAULT_VIDEO_DURATION = 5
 export const DEFAULT_VIDEO_RESOLUTION = '720p'
+export const VIDEO_RESOLUTION_OPTIONS = [
+  '480p',
+  DEFAULT_VIDEO_RESOLUTION,
+  '1080p',
+  '4k',
+] as const
+export const SEEDANCE_20_FAST_VIDEO_RESOLUTION_OPTIONS = [
+  '480p',
+  DEFAULT_VIDEO_RESOLUTION,
+] as const
+export const SEEDANCE_15_PRO_VIDEO_RESOLUTION_OPTIONS = [
+  '480p',
+  DEFAULT_VIDEO_RESOLUTION,
+  '1080p',
+] as const
+export const DEFAULT_LTX_VIDEO_SIZE = '1920x1088'
+export const LTX_VIDEO_SIZE_OPTIONS = [
+  '1280x720',
+  '720x1280',
+  DEFAULT_LTX_VIDEO_SIZE,
+  '1088x1920',
+  '2560x1440',
+  '1440x2560',
+  '3840x2176',
+] as const
+
+const SEEDANCE_VIDEO_RESOLUTION_OPTIONS_BY_MODEL: Record<
+  string,
+  readonly string[]
+> = {
+  'doubao-seedance-2-0-260128': VIDEO_RESOLUTION_OPTIONS,
+  'doubao-seedance-2-0-fast-260128': SEEDANCE_20_FAST_VIDEO_RESOLUTION_OPTIONS,
+  'doubao-seedance-2-0-mini-260615': SEEDANCE_20_FAST_VIDEO_RESOLUTION_OPTIONS,
+  'doubao-seedance-1-5-pro-251215': SEEDANCE_15_PRO_VIDEO_RESOLUTION_OPTIONS,
+}
+
+const SEEDANCE_VIDEO_RESOLUTION_OPTIONS_BY_MODEL_PREFIX: Record<
+  string,
+  readonly string[]
+> = {
+  'doubao-seedance-2-0-fast': SEEDANCE_20_FAST_VIDEO_RESOLUTION_OPTIONS,
+  'doubao-seedance-2-0-mini': SEEDANCE_20_FAST_VIDEO_RESOLUTION_OPTIONS,
+  'doubao-seedance-2-0': VIDEO_RESOLUTION_OPTIONS,
+  'doubao-seedance-1-5-pro': SEEDANCE_15_PRO_VIDEO_RESOLUTION_OPTIONS,
+}
+
+const LTX_VIDEO_SIZE_OPTIONS_BY_MODEL_PREFIX: Record<
+  string,
+  readonly string[]
+> = {
+  'aipdd-ltx': LTX_VIDEO_SIZE_OPTIONS,
+  ltx: LTX_VIDEO_SIZE_OPTIONS,
+}
 export const SEEDANCE_REFERENCE_LIMITS = {
   total: 12,
   image: 9,
@@ -214,6 +267,11 @@ export function isSeedance10Model(model: string): boolean {
   return normalized.includes('seedance-1-0')
 }
 
+export function isLTXVideoModel(model: string): boolean {
+  const normalized = normalizeModelName(model)
+  return normalized.includes('ltx')
+}
+
 export function getImageSizePixels(size: string): number | null {
   const match = size.trim().match(/^(\d+)x(\d+)$/i)
   if (!match) return null
@@ -260,6 +318,32 @@ export function getVideoRatioOptionsForModel(model: string): readonly string[] {
   return VIDEO_RATIO_OPTIONS
 }
 
+export function getVideoResolutionOptionsForModel(
+  model: string
+): readonly string[] {
+  const normalized = normalizeModelName(model)
+  const exactOptions = SEEDANCE_VIDEO_RESOLUTION_OPTIONS_BY_MODEL[normalized]
+  if (exactOptions) return exactOptions
+
+  const prefixOptions = Object.entries(
+    SEEDANCE_VIDEO_RESOLUTION_OPTIONS_BY_MODEL_PREFIX
+  ).find(([prefix]) => normalized.startsWith(prefix))?.[1]
+  if (prefixOptions) return prefixOptions
+
+  return VIDEO_RESOLUTION_OPTIONS
+}
+
+export function getLTXVideoSizeOptionsForModel(
+  model: string
+): readonly string[] {
+  const normalized = normalizeModelName(model)
+  return (
+    Object.entries(LTX_VIDEO_SIZE_OPTIONS_BY_MODEL_PREFIX).find(([prefix]) =>
+      normalized.startsWith(prefix)
+    )?.[1] || []
+  )
+}
+
 export function getVideoDurationRangeForModel(model: string) {
   if (isSeedance20Model(model) || isSeedance15Model(model)) {
     return SEEDANCE_15_20_VIDEO_DURATION_RANGE
@@ -298,6 +382,45 @@ export function normalizeVideoRatioForModel(
   return DEFAULT_VIDEO_RATIO
 }
 
+export function normalizeVideoResolutionForModel(
+  model: string,
+  resolution: string
+): string {
+  const options = getVideoResolutionOptionsForModel(model)
+  if (options.includes(resolution)) return resolution
+  if (options.includes(DEFAULT_VIDEO_RESOLUTION))
+    return DEFAULT_VIDEO_RESOLUTION
+  return options[0] || DEFAULT_VIDEO_RESOLUTION
+}
+
+export function normalizeLTXVideoSizeForModel(
+  model: string,
+  size: string
+): string {
+  const options = getLTXVideoSizeOptionsForModel(model)
+  if (options.length === 0) return size
+  if (options.includes(size)) return size
+  if (options.includes(DEFAULT_LTX_VIDEO_SIZE)) return DEFAULT_LTX_VIDEO_SIZE
+  return options[0] || DEFAULT_LTX_VIDEO_SIZE
+}
+
+export function getLTXVideoDimensions(size: string):
+  | {
+      width: number
+      height: number
+    }
+  | undefined {
+  const match = size.trim().match(/^(\d+)x(\d+)$/i)
+  if (!match) return undefined
+
+  const width = Number(match[1])
+  const height = Number(match[2])
+  if (!Number.isFinite(width) || !Number.isFinite(height)) return undefined
+  if (width <= 0 || height <= 0) return undefined
+
+  return { width, height }
+}
+
 export function normalizeVideoDurationForModel(
   model: string,
   duration: number
@@ -327,6 +450,8 @@ export const DEFAULT_CONFIG: PlaygroundConfig = {
   image_count: 1,
   video_ratio: DEFAULT_VIDEO_RATIO,
   video_duration: DEFAULT_VIDEO_DURATION,
+  video_resolution: DEFAULT_VIDEO_RESOLUTION,
+  video_size: DEFAULT_LTX_VIDEO_SIZE,
 }
 
 export const DEFAULT_PARAMETER_ENABLED: ParameterEnabled = {

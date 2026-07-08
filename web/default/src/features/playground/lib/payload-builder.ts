@@ -17,8 +17,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import {
-  DEFAULT_VIDEO_RESOLUTION,
   ERROR_MESSAGES,
+  getLTXVideoDimensions,
+  isLTXVideoModel,
   normalizeImageSizeForModel,
 } from '../constants'
 import type {
@@ -99,7 +100,8 @@ export function buildChatCompletionPayload(
 export function buildImageGenerationPayload(
   prompt: string,
   config: PlaygroundConfig,
-  images?: string[]
+  images?: string[],
+  clientTaskId?: string
 ): ImageGenerationRequest {
   const payload: ImageGenerationRequest = {
     model: config.model,
@@ -108,6 +110,9 @@ export function buildImageGenerationPayload(
     size: normalizeImageSizeForModel(config.model, config.image_size),
     quality: config.image_quality,
     n: config.image_count,
+  }
+  if (clientTaskId) {
+    payload.client_task_id = clientTaskId
   }
 
   const imageReferences = images?.filter((image) => image.trim()) || []
@@ -127,7 +132,8 @@ export function buildImageGenerationPayload(
 export function buildVideoGenerationPayload(
   prompt: string,
   references: SeedanceReference[],
-  config: PlaygroundConfig
+  config: PlaygroundConfig,
+  clientTaskId?: string
 ): VideoGenerationRequest {
   if (references.some((reference) => !isValidReferenceUrl(reference.url))) {
     throw new Error(ERROR_MESSAGES.VIDEO_REFERENCE_UPLOAD_REQUIRED)
@@ -166,19 +172,32 @@ export function buildVideoGenerationPayload(
     })
     .filter((item): item is VideoGenerationContentItem => item !== null)
 
-  const size = getOpenAIVideoSize(config.video_ratio)
+  const isLTXVideo = isLTXVideoModel(config.model)
+  const size = isLTXVideo ? undefined : getOpenAIVideoSize(config.video_ratio)
+  const ltxDimensions = isLTXVideo
+    ? getLTXVideoDimensions(config.video_size)
+    : undefined
+  const metadata: VideoGenerationRequest['metadata'] = {
+    content,
+    ...(ltxDimensions
+      ? {
+          width: ltxDimensions.width,
+          height: ltxDimensions.height,
+        }
+      : {
+          ratio: config.video_ratio,
+          resolution: config.video_resolution,
+        }),
+  }
 
   return {
     model: config.model,
     group: config.group,
     prompt,
+    ...(clientTaskId ? { client_task_id: clientTaskId } : {}),
     duration: config.video_duration,
     seconds: String(config.video_duration),
     ...(size ? { size } : {}),
-    metadata: {
-      content,
-      ratio: config.video_ratio,
-      resolution: DEFAULT_VIDEO_RESOLUTION,
-    },
+    metadata,
   }
 }

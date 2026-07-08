@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/model"
 
 	"github.com/gin-gonic/gin"
 )
@@ -42,10 +43,35 @@ func PlaygroundUploadReferenceMedia(c *gin.Context) {
 		return
 	}
 
+	now := common.GetTimestamp()
+	fileName := truncateRunes(fileHeader.Filename, materialFileNameMaxRunes)
+	material := model.Material{
+		UserId:      c.GetInt("id"),
+		Name:        truncateRunes(fileName, materialNameMaxRunes),
+		Type:        materialType,
+		SourceType:  model.MaterialSourceTypeUpload,
+		MimeType:    mimeType,
+		FileName:    fileName,
+		Url:         storedFile.URL,
+		StorageType: model.StorageTypeLocal,
+		FilePath:    storedFile.FilePath,
+		FileSize:    storedFile.FileSize,
+		Status:      1,
+		CreatedTime: now,
+		UpdatedTime: now,
+	}
+
+	if err = material.Insert(); err != nil {
+		removeMaterialLocalFile(&material)
+		playgroundReferenceUploadError(c, http.StatusInternalServerError, "database_error", err.Error())
+		return
+	}
+
 	common.ApiSuccess(c, gin.H{
 		"url":        storedFile.URL,
 		"filename":   fileHeader.Filename,
 		"media_type": mimeType,
+		"material":   material,
 	})
 }
 

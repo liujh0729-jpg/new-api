@@ -164,7 +164,13 @@ func TestFetchPrefersUnifiedCapabilitiesCatalog(t *testing.T) {
 						"inputModalities": ["image", "text"],
 						"outputModalities": ["video"],
 						"params": [
-							{"paramKey": "image", "dataType": "string", "isRequired": true, "orderNo": 1, "uiType": "image_url"}
+							{"paramKey": "prompt", "paramName": "视频描述", "dataType": "string", "isRequired": true, "orderNo": 1, "uiType": "textarea", "defaultValue": ""},
+							{"paramKey": "image", "paramName": "参考图片", "dataType": "string", "isRequired": true, "orderNo": 2, "uiType": "image_url"},
+							{"paramKey": "negativePrompt", "paramName": "负向描述", "dataType": "string", "isRequired": false, "orderNo": 3, "uiType": "textarea", "defaultValue": ""},
+							{"paramKey": "width", "paramName": "视频宽度", "dataType": "int", "isRequired": true, "orderNo": 4, "uiType": "number", "defaultValue": 1920},
+							{"paramKey": "height", "paramName": "视频高度", "dataType": "int", "isRequired": true, "orderNo": 5, "uiType": "number", "defaultValue": 1088},
+							{"paramKey": "numFrames", "paramName": "视频帧数", "dataType": "int", "isRequired": true, "orderNo": 6, "uiType": "number", "defaultValue": 121},
+							{"paramKey": "frameRate", "paramName": "帧率", "dataType": "int", "isRequired": false, "orderNo": 7, "uiType": "number", "defaultValue": 24}
 						]
 					}
 				]
@@ -209,6 +215,16 @@ func TestFetchPrefersUnifiedCapabilitiesCatalog(t *testing.T) {
 	require.Equal(t, []string{"image", "text"}, dynamic.InputModalities)
 	require.Equal(t, []string{"video"}, dynamic.OutputModalities)
 	require.True(t, dynamic.RequiredWorkflowParams["image"])
+	require.True(t, dynamic.RequiredWorkflowParams["width"])
+	require.True(t, dynamic.RequiredWorkflowParams["height"])
+	require.True(t, dynamic.RequiredWorkflowParams["numFrames"])
+	requireWorkflowSource(t, dynamic.WorkflowDefaults, "negativePrompt", constant.AIPDDWorkflowSourceMetadata, "negative_prompt")
+	requireNoWorkflowSourceType(t, dynamic.WorkflowDefaults, "negativePrompt", constant.AIPDDWorkflowSourcePrompt)
+	requireWorkflowSource(t, dynamic.WorkflowDefaults, "width", constant.AIPDDWorkflowSourceStatic, "1920")
+	requireWorkflowSource(t, dynamic.WorkflowDefaults, "height", constant.AIPDDWorkflowSourceStatic, "1088")
+	requireWorkflowSource(t, dynamic.WorkflowDefaults, "numFrames", constant.AIPDDWorkflowSourceStatic, "121")
+	requireWorkflowSource(t, dynamic.WorkflowDefaults, "frameRate", constant.AIPDDWorkflowSourceMetadata, "fps")
+	requireWorkflowSource(t, dynamic.WorkflowDefaults, "frameRate", constant.AIPDDWorkflowSourceStatic, "24")
 }
 
 func TestFetchOpenAIModels(t *testing.T) {
@@ -242,6 +258,38 @@ func TestFetchOpenAIModels(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, seenAPIKey)
 	require.Equal(t, []string{"gemma3:1b", "qwen2.5:0.5b"}, models)
+}
+
+func requireWorkflowSource(t *testing.T, defaults []constant.AIPDDWorkflowParamDefault, paramKey string, sourceType constant.AIPDDWorkflowSourceType, key string) {
+	t.Helper()
+	for _, item := range defaults {
+		if item.ParamKey != paramKey {
+			continue
+		}
+		for _, source := range item.Sources {
+			if source.Type == sourceType && source.Key == key {
+				return
+			}
+		}
+		t.Fatalf("missing workflow source %s/%s for %s in %#v", sourceType, key, paramKey, item.Sources)
+	}
+	t.Fatalf("missing workflow default for %s in %#v", paramKey, defaults)
+}
+
+func requireNoWorkflowSourceType(t *testing.T, defaults []constant.AIPDDWorkflowParamDefault, paramKey string, sourceType constant.AIPDDWorkflowSourceType) {
+	t.Helper()
+	for _, item := range defaults {
+		if item.ParamKey != paramKey {
+			continue
+		}
+		for _, source := range item.Sources {
+			if source.Type == sourceType {
+				t.Fatalf("unexpected workflow source type %s for %s in %#v", sourceType, paramKey, item.Sources)
+			}
+		}
+		return
+	}
+	t.Fatalf("missing workflow default for %s in %#v", paramKey, defaults)
 }
 
 func TestFetchFallsBackToScriptPricesWhenFeeRulesUnavailable(t *testing.T) {

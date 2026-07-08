@@ -2,6 +2,7 @@ package aipddcatalog
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"math"
@@ -48,18 +49,18 @@ type Script struct {
 }
 
 type ScriptParam struct {
-	ParamKey          string   `json:"paramKey"`
-	ParamName         string   `json:"paramName"`
-	ParamDesc         string   `json:"paramDesc"`
-	DefaultValue      string   `json:"defaultValue"`
-	DataType          string   `json:"dataType"`
-	IsRequired        bool     `json:"isRequired"`
-	OrderNo           int      `json:"orderNo"`
-	MaxDuration       int      `json:"maxDuration"`
-	MaxFileSize       int      `json:"maxFileSize"`
-	UIType            string   `json:"uiType"`
-	AcceptedMimeTypes []string `json:"acceptedMimeTypes"`
-	Aliases           []string `json:"aliases"`
+	ParamKey          string          `json:"paramKey"`
+	ParamName         string          `json:"paramName"`
+	ParamDesc         string          `json:"paramDesc"`
+	DefaultValue      json.RawMessage `json:"defaultValue"`
+	DataType          string          `json:"dataType"`
+	IsRequired        bool            `json:"isRequired"`
+	OrderNo           int             `json:"orderNo"`
+	MaxDuration       int             `json:"maxDuration"`
+	MaxFileSize       int             `json:"maxFileSize"`
+	UIType            string          `json:"uiType"`
+	AcceptedMimeTypes []string        `json:"acceptedMimeTypes"`
+	Aliases           []string        `json:"aliases"`
 }
 
 type FeeRule struct {
@@ -493,8 +494,14 @@ func inferWorkflowDefault(param ScriptParam) constant.AIPDDWorkflowParamDefault 
 	sources := []constant.AIPDDWorkflowValueSource{metadataSource(param.ParamKey)}
 	normalized := normalizedParamText(param)
 	switch {
+	case isNegativePromptParam(normalized):
+		sources = append(sources, metadataSource("negativePrompt"), metadataSource("negative_prompt"), metadataSource("negative"))
 	case strings.Contains(normalized, "duration") || strings.Contains(normalized, "seconds") || strings.Contains(normalized, "时长"):
-		sources = append(sources, source(constant.AIPDDWorkflowSourceDuration), metadataSource("seconds"))
+		sources = append(sources, metadataSource("durationSeconds"), metadataSource("duration_seconds"), source(constant.AIPDDWorkflowSourceDuration), metadataSource("seconds"))
+	case isFrameRateParam(normalized):
+		sources = append(sources, metadataSource("frameRate"), metadataSource("fps"))
+	case isFrameCountParam(normalized):
+		sources = append(sources, metadataSource("numFrames"), metadataSource("frames"), metadataSource("frame_count"))
 	case strings.Contains(normalized, "prompt") || strings.Contains(normalized, "text") || strings.Contains(normalized, "提示词"):
 		sources = append(sources, metadataSource("prompt"), source(constant.AIPDDWorkflowSourcePrompt))
 	case strings.Contains(normalized, "video") || strings.Contains(normalized, "load_video") || strings.Contains(normalized, "motion"):
@@ -503,6 +510,9 @@ func inferWorkflowDefault(param ScriptParam) constant.AIPDDWorkflowParamDefault 
 		sources = append(sources, metadataSource("audio"), metadataSource("voice"), metadataSource("input_reference"))
 	case strings.Contains(normalized, "image") || strings.Contains(normalized, "img") || strings.Contains(normalized, "图片"):
 		sources = append(sources, metadataSource("image"), source(constant.AIPDDWorkflowSourceImage), source(constant.AIPDDWorkflowSourceFirstImage), source(constant.AIPDDWorkflowSourceInputReference))
+	}
+	if value := defaultValueString(param); value != "" {
+		sources = append(sources, staticSource(value))
 	}
 
 	valueType := constant.AIPDDWorkflowValueTypeString
@@ -514,6 +524,32 @@ func inferWorkflowDefault(param ScriptParam) constant.AIPDDWorkflowParamDefault 
 		ValueType: valueType,
 		Sources:   sources,
 	}
+}
+
+func isNegativePromptParam(value string) bool {
+	return strings.Contains(value, "negativeprompt") ||
+		strings.Contains(value, "negative_prompt") ||
+		strings.Contains(value, "negative prompt") ||
+		strings.Contains(value, "negative") ||
+		strings.Contains(value, "负向") ||
+		strings.Contains(value, "反向")
+}
+
+func isFrameRateParam(value string) bool {
+	return strings.Contains(value, "framerate") ||
+		strings.Contains(value, "frame_rate") ||
+		strings.Contains(value, "frame rate") ||
+		strings.Contains(value, "fps") ||
+		strings.Contains(value, "帧率")
+}
+
+func isFrameCountParam(value string) bool {
+	return strings.Contains(value, "numframes") ||
+		strings.Contains(value, "num_frames") ||
+		strings.Contains(value, "framecount") ||
+		strings.Contains(value, "frame_count") ||
+		strings.Contains(value, "frames") ||
+		strings.Contains(value, "帧数")
 }
 
 func buildUploadTargets(params []ScriptParam, base constant.AIPDDCapability) []constant.AIPDDUploadTarget {
@@ -719,12 +755,15 @@ func normalizedScriptText(script Script, params []ScriptParam) string {
 	parts := []string{script.Code, script.Name, script.Description}
 	for _, param := range params {
 		parts = append(parts, param.ParamKey, param.ParamName, param.ParamDesc, param.DataType)
+		parts = append(parts, param.Aliases...)
 	}
 	return strings.ToLower(strings.Join(parts, " "))
 }
 
 func normalizedParamText(param ScriptParam) string {
-	return strings.ToLower(strings.Join([]string{param.ParamKey, param.ParamName, param.ParamDesc, param.DataType}, " "))
+	parts := []string{param.ParamKey, param.ParamName, param.ParamDesc, param.DataType}
+	parts = append(parts, param.Aliases...)
+	return strings.ToLower(strings.Join(parts, " "))
 }
 
 func isIntegerParam(param ScriptParam) bool {
@@ -736,8 +775,20 @@ func metadataSource(key string) constant.AIPDDWorkflowValueSource {
 	return constant.AIPDDWorkflowValueSource{Type: constant.AIPDDWorkflowSourceMetadata, Key: key}
 }
 
+func staticSource(value string) constant.AIPDDWorkflowValueSource {
+	return constant.AIPDDWorkflowValueSource{Type: constant.AIPDDWorkflowSourceStatic, Key: value}
+}
+
 func source(sourceType constant.AIPDDWorkflowSourceType) constant.AIPDDWorkflowValueSource {
 	return constant.AIPDDWorkflowValueSource{Type: sourceType}
+}
+
+func defaultValueString(param ScriptParam) string {
+	value := strings.TrimSpace(common.JsonRawMessageToString(param.DefaultValue))
+	if value == "" || strings.EqualFold(value, "null") {
+		return ""
+	}
+	return value
 }
 
 func firstNonEmpty(values ...string) string {

@@ -30,6 +30,28 @@ type TaskSubmitResult struct {
 	//PerCallPrice   types.PriceData
 }
 
+func isValidClientPublicTaskID(taskID string) bool {
+	if !strings.HasPrefix(taskID, "task_") || len(taskID) < len("task_")+8 || len(taskID) > 64 {
+		return false
+	}
+	for _, r := range taskID {
+		if r >= 'a' && r <= 'z' {
+			continue
+		}
+		if r >= 'A' && r <= 'Z' {
+			continue
+		}
+		if r >= '0' && r <= '9' {
+			continue
+		}
+		if r == '_' || r == '-' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
 // ResolveOriginTask 处理基于已有任务的提交（remix / continuation）：
 // 查找原始任务、从中提取模型名称、将渠道锁定到原始任务的渠道
 // （通过 info.LockedChannel，重试时复用同一渠道并轮换 key），
@@ -173,7 +195,18 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 
 	// 3. 预生成公开 task ID（仅首次）
 	if info.PublicTaskID == "" {
-		info.PublicTaskID = model.GenerateTaskID()
+		if req, err := relaycommon.GetTaskRequest(c); err == nil && info.IsPlayground {
+			clientTaskID := strings.TrimSpace(req.ClientTaskID)
+			if clientTaskID != "" {
+				if !isValidClientPublicTaskID(clientTaskID) {
+					return nil, service.TaskErrorWrapperLocal(fmt.Errorf("invalid client_task_id"), "invalid_client_task_id", http.StatusBadRequest)
+				}
+				info.PublicTaskID = clientTaskID
+			}
+		}
+		if info.PublicTaskID == "" {
+			info.PublicTaskID = model.GenerateTaskID()
+		}
 	}
 
 	// 4. 价格计算：基础模型价格

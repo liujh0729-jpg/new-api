@@ -40,6 +40,7 @@ const (
 	AIPDDWorkflowSourceFirstImage     AIPDDWorkflowSourceType = "first_image"
 	AIPDDWorkflowSourceInputReference AIPDDWorkflowSourceType = "input_reference"
 	AIPDDWorkflowSourceDuration       AIPDDWorkflowSourceType = "duration"
+	AIPDDWorkflowSourceStatic         AIPDDWorkflowSourceType = "static"
 )
 
 type AIPDDWorkflowValueSource struct {

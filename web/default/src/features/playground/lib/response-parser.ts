@@ -245,6 +245,8 @@ export function parseImageTaskResponse(response: unknown): ImageTaskState {
   )
   const images = extractImages(data)
   const error = firstString(
+    isRecord(data.error) ? data.error.message : undefined,
+    isRecord(root.error) ? root.error.message : undefined,
     data.fail_reason,
     root.fail_reason,
     data.error,
@@ -301,6 +303,7 @@ export function isImageTaskResponse(
   response: ImageGenerationResponse
 ): boolean {
   if (response.task_id) return true
+  if (response.id && extractImageResults(response).length === 0) return true
   if (response.object?.includes('task')) return true
   const status = normalizeTaskStatus(response.status)
   return !!status && status !== 'succeeded'

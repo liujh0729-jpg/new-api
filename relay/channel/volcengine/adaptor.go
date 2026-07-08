@@ -108,6 +108,10 @@ func (a *Adaptor) ConvertAudioRequest(c *gin.Context, info *relaycommon.RelayInf
 }
 
 func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.ImageRequest) (any, error) {
+	if info.RelayMode == constant.RelayModeImagesGenerations || info.RelayMode == constant.RelayModeImagesEdits {
+		setDefaultImageWatermark(&request)
+	}
+
 	switch info.RelayMode {
 	case constant.RelayModeImagesGenerations:
 		if err := validateSeedream50LiteImageSize(
@@ -222,6 +226,14 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 	default:
 		return request, nil
 	}
+}
+
+func setDefaultImageWatermark(request *dto.ImageRequest) {
+	if request.Watermark != nil {
+		return
+	}
+	watermark := false
+	request.Watermark = &watermark
 }
 
 func detectImageMimeType(filename string) string {

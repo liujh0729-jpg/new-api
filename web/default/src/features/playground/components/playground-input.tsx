@@ -32,6 +32,7 @@ import {
   ClockIcon,
   AtSignIcon,
   RectangleHorizontalIcon,
+  MonitorIcon,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -60,8 +61,10 @@ import {
 import { ModelGroupSelector } from '@/components/model-group-selector'
 import {
   getImageSizeOptionsForModel,
+  getLTXVideoSizeOptionsForModel,
   getVideoDurationRangeForModel,
   getVideoRatioOptionsForModel,
+  getVideoResolutionOptionsForModel,
   IMAGE_REFERENCE_ACCEPT,
   IMAGE_REFERENCE_LIMITS,
   normalizeVideoDurationForModel,
@@ -95,6 +98,10 @@ interface PlaygroundInputProps {
   onVideoRatioChange: (value: string) => void
   videoDuration: number
   onVideoDurationChange: (value: number) => void
+  videoResolution: string
+  onVideoResolutionChange: (value: string) => void
+  videoSize: string
+  onVideoSizeChange: (value: string) => void
 }
 
 const imageQualities = ['standard', 'hd', 'auto']
@@ -178,6 +185,10 @@ export function PlaygroundInput({
   onVideoRatioChange,
   videoDuration,
   onVideoDurationChange,
+  videoResolution,
+  onVideoResolutionChange,
+  videoSize,
+  onVideoSizeChange,
 }: PlaygroundInputProps) {
   const { t } = useTranslation()
   const [text, setText] = useState('')
@@ -186,6 +197,9 @@ export function PlaygroundInput({
   const isVideoMode = mode === 'video'
   const imageSizeOptions = getImageSizeOptionsForModel(modelValue)
   const videoDurationRange = getVideoDurationRangeForModel(modelValue)
+  const videoSizeOptions = getLTXVideoSizeOptionsForModel(modelValue)
+  const videoResolutionOptions = getVideoResolutionOptionsForModel(modelValue)
+  const usesVideoSizeOptions = videoSizeOptions.length > 0
   const normalizedVideoDuration = normalizeVideoDurationForModel(
     modelValue,
     videoDuration
@@ -460,38 +474,114 @@ export function PlaygroundInput({
 
             {isVideoMode && (
               <>
-                <DropdownMenu>
-                  <DropdownMenuTrigger
-                    render={
-                      <PromptInputButton
-                        className='border font-medium'
-                        disabled={disabled}
-                        type='button'
-                        variant='outline'
-                      />
-                    }
-                  >
-                    <RectangleHorizontalIcon size={16} />
-                    <span>{videoRatio}</span>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align='start' className='min-w-36'>
-                    <DropdownMenuGroup>
-                      <DropdownMenuLabel>{t('Aspect ratio')}</DropdownMenuLabel>
-                      <DropdownMenuRadioGroup
-                        value={videoRatio}
-                        onValueChange={onVideoRatioChange}
-                      >
-                        {getVideoRatioOptionsForModel(modelValue).map(
-                          (ratio) => (
-                            <DropdownMenuRadioItem key={ratio} value={ratio}>
-                              {ratio}
+                {usesVideoSizeOptions ? (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger
+                      render={
+                        <PromptInputButton
+                          className='border font-medium'
+                          disabled={disabled}
+                          type='button'
+                          variant='outline'
+                        />
+                      }
+                    >
+                      <MonitorIcon size={16} />
+                      <span>{videoSize}</span>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align='start' className='min-w-36'>
+                      <DropdownMenuGroup>
+                        <DropdownMenuLabel>{t('Size')}</DropdownMenuLabel>
+                        <DropdownMenuRadioGroup
+                          value={videoSize}
+                          onValueChange={onVideoSizeChange}
+                        >
+                          {videoSizeOptions.map((size) => (
+                            <DropdownMenuRadioItem key={size} value={size}>
+                              {size}
                             </DropdownMenuRadioItem>
-                          )
-                        )}
-                      </DropdownMenuRadioGroup>
-                    </DropdownMenuGroup>
-                  </DropdownMenuContent>
-                </DropdownMenu>
+                          ))}
+                        </DropdownMenuRadioGroup>
+                      </DropdownMenuGroup>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                ) : (
+                  <>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger
+                        render={
+                          <PromptInputButton
+                            className='border font-medium'
+                            disabled={disabled}
+                            type='button'
+                            variant='outline'
+                          />
+                        }
+                      >
+                        <RectangleHorizontalIcon size={16} />
+                        <span>{videoRatio}</span>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align='start' className='min-w-36'>
+                        <DropdownMenuGroup>
+                          <DropdownMenuLabel>
+                            {t('Aspect ratio')}
+                          </DropdownMenuLabel>
+                          <DropdownMenuRadioGroup
+                            value={videoRatio}
+                            onValueChange={onVideoRatioChange}
+                          >
+                            {getVideoRatioOptionsForModel(modelValue).map(
+                              (ratio) => (
+                                <DropdownMenuRadioItem
+                                  key={ratio}
+                                  value={ratio}
+                                >
+                                  {ratio}
+                                </DropdownMenuRadioItem>
+                              )
+                            )}
+                          </DropdownMenuRadioGroup>
+                        </DropdownMenuGroup>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+
+                    <DropdownMenu>
+                      <DropdownMenuTrigger
+                        render={
+                          <PromptInputButton
+                            className='border font-medium'
+                            disabled={disabled}
+                            type='button'
+                            variant='outline'
+                          />
+                        }
+                      >
+                        <MonitorIcon size={16} />
+                        <span>{videoResolution}</span>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align='start' className='min-w-36'>
+                        <DropdownMenuGroup>
+                          <DropdownMenuLabel>
+                            {t('Resolution')}
+                          </DropdownMenuLabel>
+                          <DropdownMenuRadioGroup
+                            value={videoResolution}
+                            onValueChange={onVideoResolutionChange}
+                          >
+                            {videoResolutionOptions.map((resolution) => (
+                              <DropdownMenuRadioItem
+                                key={resolution}
+                                value={resolution}
+                              >
+                                {resolution}
+                              </DropdownMenuRadioItem>
+                            ))}
+                          </DropdownMenuRadioGroup>
+                        </DropdownMenuGroup>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </>
+                )}
 
                 <DropdownMenu>
                   <DropdownMenuTrigger
