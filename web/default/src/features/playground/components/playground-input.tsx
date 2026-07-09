@@ -215,11 +215,10 @@ export function PlaygroundInput({
   const { t } = useTranslation()
   const [text, setText] = useState('')
   const [isMaterialSelectorOpen, setIsMaterialSelectorOpen] = useState(false)
-  const [isPreparingImageReferences, setIsPreparingImageReferences] =
-    useState(false)
+  const [isPreparingReferences, setIsPreparingReferences] = useState(false)
   const isImageMode = mode === 'image'
   const isVideoMode = mode === 'video'
-  const controlsDisabled = disabled || isPreparingImageReferences
+  const controlsDisabled = disabled || isPreparingReferences
   const imageSizeOptions = getImageSizeOptionsForModel(modelValue)
   const videoDurationRange = getVideoDurationRangeForModel(modelValue)
   const videoSizeOptions = getLTXVideoSizeOptionsForModel(modelValue)
@@ -247,7 +246,7 @@ export function PlaygroundInput({
   const isSubmitDisabled =
     controlsDisabled || isGenerating || isModelLoading || !modelValue
 
-  const prepareImageReferenceFiles = useCallback(
+  const prepareReferenceFiles = useCallback(
     async (files: File[]): Promise<PromptInputPreparedFile[]> => {
       try {
         return await Promise.all(
@@ -257,6 +256,7 @@ export function PlaygroundInput({
               url: uploaded.url,
               mediaType: uploaded.media_type || file.type,
               filename: uploaded.filename || file.name,
+              sourceFile: isVideoMode ? file : undefined,
             }
           })
         )
@@ -265,7 +265,7 @@ export function PlaygroundInput({
         throw new Error(uploadError.message, { cause: error })
       }
     },
-    [t]
+    [isVideoMode, t]
   )
 
   const handleSubmit = (message: PromptInputMessage) => {
@@ -325,8 +325,10 @@ export function PlaygroundInput({
         }
         multiple={isVideoMode || isImageMode}
         onError={(error) => toast.error(error.message)}
-        onFilesPreparingChange={setIsPreparingImageReferences}
-        prepareFiles={isImageMode ? prepareImageReferenceFiles : undefined}
+        onFilesPreparingChange={setIsPreparingReferences}
+        prepareFiles={
+          isImageMode || isVideoMode ? prepareReferenceFiles : undefined
+        }
         onSubmit={handleSubmit}
       >
         {(isVideoMode || isImageMode) && <ReferenceAttachments />}

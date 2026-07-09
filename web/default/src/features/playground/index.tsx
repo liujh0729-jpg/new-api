@@ -274,10 +274,11 @@ export function Playground() {
         )
       }
 
-      const hasLocalReferences = referenceCandidates.some(
-        (reference) => reference.sourceFile
+      const hasReferencesRequiringUpload = referenceCandidates.some(
+        (reference) =>
+          reference.sourceFile && !hasUsableReferenceUrl(reference.url)
       )
-      if (hasLocalReferences) {
+      if (hasReferencesRequiringUpload) {
         setIsUploadingReferences(true)
       }
       try {
@@ -290,7 +291,7 @@ export function Playground() {
         toast.error(uploadError.message)
         throw new Error(uploadError.message, { cause: error })
       } finally {
-        if (hasLocalReferences) {
+        if (hasReferencesRequiringUpload) {
           setIsUploadingReferences(false)
         }
       }
@@ -511,14 +512,19 @@ async function resolveSeedanceReferenceURLs(
     references.map(async ({ sourceFile, ...reference }) => {
       if (!sourceFile) {
         const requestUrl =
-          isValidReferenceUrl(reference.url) &&
-          (isDataReferenceUrl(reference.url) ||
-            isProbablyPublicReferenceUrl(reference.url))
+          hasUsableReferenceUrl(reference.url)
             ? reference.url
             : await fetchReferenceURLAsDataURL(reference.url)
         return {
           displayReference: reference,
           requestReference: { ...reference, url: requestUrl },
+        }
+      }
+
+      if (hasUsableReferenceUrl(reference.url)) {
+        return {
+          displayReference: reference,
+          requestReference: reference,
         }
       }
 
@@ -642,6 +648,13 @@ function isDataReferenceUrl(url: string): boolean {
 
 function isWebUrl(url: string): boolean {
   return /^https?:\/\//i.test(url.trim())
+}
+
+function hasUsableReferenceUrl(url: string): boolean {
+  return (
+    isValidReferenceUrl(url) &&
+    (isDataReferenceUrl(url) || isProbablyPublicReferenceUrl(url))
+  )
 }
 
 function isProbablyPublicReferenceUrl(url: string): boolean {

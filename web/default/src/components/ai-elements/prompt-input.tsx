@@ -874,10 +874,14 @@ export const PromptInput = ({
     Promise.all(
       files.map(async ({ id, sourceFile, ...item }) => {
         if (sourceFile) {
+          const url = item.url?.trim()
           return {
             ...item,
             sourceFile,
-            url: await blobToDataUrl(sourceFile),
+            url:
+              url && !url.startsWith('blob:')
+                ? url
+                : await blobToDataUrl(sourceFile),
           }
         }
         if (item.url?.startsWith('blob:')) {
