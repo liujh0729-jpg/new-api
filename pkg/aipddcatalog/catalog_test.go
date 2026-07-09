@@ -107,8 +107,6 @@ func TestFetchBuildsCatalogFromScriptsAndFeeRules(t *testing.T) {
 	require.Equal(t, []string{"audio", "text"}, dynamic.InputModalities)
 	require.Equal(t, []string{"audio"}, dynamic.OutputModalities)
 	require.True(t, dynamic.RequiredWorkflowParams["audio"])
-	require.Len(t, dynamic.UploadTargets, 1)
-	require.Equal(t, "audio", dynamic.UploadTargets[0].ParamKey)
 }
 
 func TestFetchPrefersUnifiedCapabilitiesCatalog(t *testing.T) {
@@ -225,6 +223,52 @@ func TestFetchPrefersUnifiedCapabilitiesCatalog(t *testing.T) {
 	requireWorkflowSource(t, dynamic.WorkflowDefaults, "numFrames", constant.AIPDDWorkflowSourceStatic, "121")
 	requireWorkflowSource(t, dynamic.WorkflowDefaults, "frameRate", constant.AIPDDWorkflowSourceMetadata, "fps")
 	requireWorkflowSource(t, dynamic.WorkflowDefaults, "frameRate", constant.AIPDDWorkflowSourceStatic, "24")
+}
+
+func TestFetchCatalogMapsImageCountParamsFromOpenAINParam(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/capabilities":
+			_, _ = w.Write([]byte(`{
+				"code": 0,
+				"message": "fetched",
+				"data": [
+					{
+						"id": "script-image-batch",
+						"code": "aipdd_image_batch",
+						"name": "Image Batch",
+						"adapterCode": "comfyui",
+						"endpointType": "image-generation",
+						"taskKind": "text_to_image",
+						"priceAWcoin": 100,
+						"inputModalities": ["text"],
+						"outputModalities": ["image"],
+						"params": [
+							{"paramKey": "prompt", "paramName": "提示词", "dataType": "string", "isRequired": true, "orderNo": 1},
+							{"paramKey": "batch_size", "paramName": "生成数量", "dataType": "int", "isRequired": false, "orderNo": 2, "defaultValue": 1}
+						]
+					}
+				]
+			}`))
+		case "/system/awcoin-rate":
+			_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{"usd":0.0015}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	catalog, err := Fetch(ctx, server.Client(), server.URL, "test-key")
+	require.NoError(t, err)
+	require.Len(t, catalog.Capabilities, 1)
+
+	dynamic := catalog.Capabilities[0]
+	requireWorkflowSource(t, dynamic.WorkflowDefaults, "batch_size", constant.AIPDDWorkflowSourceMetadata, "n")
+	requireWorkflowSource(t, dynamic.WorkflowDefaults, "batch_size", constant.AIPDDWorkflowSourceMetadata, "image_count")
 }
 
 func TestFetchOpenAIModels(t *testing.T) {

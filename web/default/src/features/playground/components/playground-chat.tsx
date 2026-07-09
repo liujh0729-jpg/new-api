@@ -149,7 +149,7 @@ function SeedanceReferencePreview({
     return (
       <div className='bg-muted overflow-hidden rounded-lg border' key={key}>
         <video
-          className='aspect-video w-full bg-black object-contain'
+          className='block aspect-video w-full bg-black object-contain'
           controls
           playsInline
           preload='metadata'
@@ -481,7 +481,7 @@ export function PlaygroundChat({
                                                       key={`${message.key}-video-${videoIndex}`}
                                                     >
                                                       <video
-                                                        className='aspect-video w-full bg-black object-contain'
+                                                        className='block aspect-video w-full bg-black object-contain'
                                                         controls
                                                         playsInline
                                                         preload='metadata'
@@ -563,13 +563,29 @@ export function PlaygroundChat({
           if (!open) setMediaPreview(null)
         }}
       >
-        <DialogContent className='sm:max-w-4xl'>
+        <DialogContent
+          className='max-h-[90vh] overflow-hidden'
+          style={{
+            left: 'max(1rem, calc((100vw - 56rem) / 2))',
+            maxWidth: 'none',
+            top: '5vh',
+            transform: 'none',
+            width: 'min(56rem, calc(100vw - 2rem))',
+          }}
+        >
           <DialogHeader>
             <DialogTitle>
               {mediaPreview?.title || t('Result preview')}
             </DialogTitle>
           </DialogHeader>
-          <div className='bg-muted/50 flex max-h-[75vh] min-h-[240px] items-center justify-center rounded-lg border'>
+          <div
+            className={cn(
+              'bg-muted/50 flex min-h-[240px] items-center justify-center rounded-lg border',
+              mediaPreview?.type === 'video'
+                ? 'h-[min(75vh,calc(100vh-10rem))]'
+                : 'max-h-[75vh]'
+            )}
+          >
             {mediaPreview?.type === 'image' && (
               <img
                 alt={mediaPreview.title}
@@ -579,7 +595,7 @@ export function PlaygroundChat({
             )}
             {mediaPreview?.type === 'video' && (
               <video
-                className='max-h-[75vh] w-full rounded-lg bg-black object-contain'
+                className='block size-full rounded-lg bg-black object-contain'
                 controls
                 playsInline
                 preload='metadata'

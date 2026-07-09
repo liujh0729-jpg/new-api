@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 import {
   PaperclipIcon,
   ChevronDownIcon,
@@ -49,16 +49,17 @@ import {
 } from '@/components/ui/dropdown-menu'
 import {
   PromptInput,
-  PromptInputActionAddAttachments,
   PromptInputAttachment,
   PromptInputButton,
   PromptInputFooter,
   PromptInputTextarea,
   PromptInputTools,
   type PromptInputMessage,
+  type PromptInputPreparedFile,
   usePromptInputAttachments,
 } from '@/components/ai-elements/prompt-input'
 import { ModelGroupSelector } from '@/components/model-group-selector'
+import { uploadReferenceMedia } from '../api'
 import {
   getImageSizeOptionsForModel,
   getLTXVideoSizeOptionsForModel,
@@ -71,6 +72,7 @@ import {
   SEEDANCE_REFERENCE_ACCEPT,
   SEEDANCE_REFERENCE_LIMITS,
 } from '../constants'
+import { normalizePlaygroundError } from '../lib'
 import type { ModelOption, GroupOption, PlaygroundMode } from '../types'
 import { MaterialSelectorDialog } from './material-selector-dialog'
 
@@ -139,6 +141,26 @@ function PlaygroundSubmitButton({
   )
 }
 
+function DirectAttachmentButton({ disabled }: { disabled?: boolean }) {
+  const { t } = useTranslation()
+  const attachments = usePromptInputAttachments()
+
+  return (
+    <PromptInputButton
+      aria-label={t('Attach')}
+      className='border font-medium'
+      disabled={disabled}
+      onClick={attachments.openFileDialog}
+      type='button'
+      variant='outline'
+    >
+      <PaperclipIcon size={16} />
+      <span className='hidden sm:inline'>{t('Attach')}</span>
+      <span className='sr-only sm:hidden'>{t('Attach')}</span>
+    </PromptInputButton>
+  )
+}
+
 function ReferenceAttachments() {
   const { t } = useTranslation()
   const attachments = usePromptInputAttachments()
@@ -193,8 +215,11 @@ export function PlaygroundInput({
   const { t } = useTranslation()
   const [text, setText] = useState('')
   const [isMaterialSelectorOpen, setIsMaterialSelectorOpen] = useState(false)
+  const [isPreparingImageReferences, setIsPreparingImageReferences] =
+    useState(false)
   const isImageMode = mode === 'image'
   const isVideoMode = mode === 'video'
+  const controlsDisabled = disabled || isPreparingImageReferences
   const imageSizeOptions = getImageSizeOptionsForModel(modelValue)
   const videoDurationRange = getVideoDurationRangeForModel(modelValue)
   const videoSizeOptions = getLTXVideoSizeOptionsForModel(modelValue)
@@ -217,10 +242,31 @@ export function PlaygroundInput({
       : MessageSquareIcon
 
   const isModelSelectDisabled =
-    disabled || isModelLoading || models.length === 0
-  const isGroupSelectDisabled = disabled || groups.length === 0
+    controlsDisabled || isModelLoading || models.length === 0
+  const isGroupSelectDisabled = controlsDisabled || groups.length === 0
   const isSubmitDisabled =
-    disabled || isGenerating || isModelLoading || !modelValue
+    controlsDisabled || isGenerating || isModelLoading || !modelValue
+
+  const prepareImageReferenceFiles = useCallback(
+    async (files: File[]): Promise<PromptInputPreparedFile[]> => {
+      try {
+        return await Promise.all(
+          files.map(async (file) => {
+            const uploaded = await uploadReferenceMedia(file)
+            return {
+              url: uploaded.url,
+              mediaType: uploaded.media_type || file.type,
+              filename: uploaded.filename || file.name,
+            }
+          })
+        )
+      } catch (error) {
+        const uploadError = normalizePlaygroundError(error, t)
+        throw new Error(uploadError.message, { cause: error })
+      }
+    },
+    [t]
+  )
 
   const handleSubmit = (message: PromptInputMessage) => {
     const hasText = !!message.text?.trim()
@@ -279,6 +325,8 @@ export function PlaygroundInput({
         }
         multiple={isVideoMode || isImageMode}
         onError={(error) => toast.error(error.message)}
+        onFilesPreparingChange={setIsPreparingImageReferences}
+        prepareFiles={isImageMode ? prepareImageReferenceFiles : undefined}
         onSubmit={handleSubmit}
       >
         {(isVideoMode || isImageMode) && <ReferenceAttachments />}
@@ -289,7 +337,7 @@ export function PlaygroundInput({
           autoCapitalize='off'
           spellCheck={false}
           className='px-5 md:text-base'
-          disabled={disabled}
+          disabled={controlsDisabled}
           onChange={(event) => setText(event.target.value)}
           placeholder={
             isVideoMode
@@ -308,7 +356,7 @@ export function PlaygroundInput({
                 render={
                   <PromptInputButton
                     className='min-w-24 justify-between border font-medium'
-                    disabled={disabled}
+                    disabled={controlsDisabled}
                     type='button'
                     variant='outline'
                   />
@@ -347,59 +395,51 @@ export function PlaygroundInput({
               </DropdownMenuContent>
             </DropdownMenu>
 
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                render={
-                  <PromptInputButton
-                    className='border font-medium'
-                    disabled={disabled}
-                    variant='outline'
-                  />
-                }
-              >
-                <PaperclipIcon size={16} />
-                <span className='hidden sm:inline'>{t('Attach')}</span>
-                <span className='sr-only sm:hidden'>{t('Attach')}</span>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align='start'>
-                {isVideoMode || isImageMode ? (
-                  <PromptInputActionAddAttachments
-                    label={
-                      isVideoMode
-                        ? t('Add reference media')
-                        : t('Add reference images')
-                    }
-                  />
-                ) : (
-                  <>
-                    <DropdownMenuItem
-                      onClick={() => toast.info(t('Feature in development'))}
-                    >
-                      <FileIcon className='mr-2' size={16} />
-                      {t('Upload file')}
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      onClick={() => toast.info(t('Feature in development'))}
-                    >
-                      <ImageIcon className='mr-2' size={16} />
-                      {t('Upload photo')}
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      onClick={() => toast.info(t('Feature in development'))}
-                    >
-                      <ScreenShareIcon className='mr-2' size={16} />
-                      {t('Take screenshot')}
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      onClick={() => toast.info(t('Feature in development'))}
-                    >
-                      <CameraIcon className='mr-2' size={16} />
-                      {t('Take photo')}
-                    </DropdownMenuItem>
-                  </>
-                )}
-              </DropdownMenuContent>
-            </DropdownMenu>
+            {isVideoMode || isImageMode ? (
+              <DirectAttachmentButton disabled={controlsDisabled} />
+            ) : (
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  render={
+                    <PromptInputButton
+                      className='border font-medium'
+                      disabled={controlsDisabled}
+                      variant='outline'
+                    />
+                  }
+                >
+                  <PaperclipIcon size={16} />
+                  <span className='hidden sm:inline'>{t('Attach')}</span>
+                  <span className='sr-only sm:hidden'>{t('Attach')}</span>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align='start'>
+                  <DropdownMenuItem
+                    onClick={() => toast.info(t('Feature in development'))}
+                  >
+                    <FileIcon className='mr-2' size={16} />
+                    {t('Upload file')}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={() => toast.info(t('Feature in development'))}
+                  >
+                    <ImageIcon className='mr-2' size={16} />
+                    {t('Upload photo')}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={() => toast.info(t('Feature in development'))}
+                  >
+                    <ScreenShareIcon className='mr-2' size={16} />
+                    {t('Take screenshot')}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={() => toast.info(t('Feature in development'))}
+                  >
+                    <CameraIcon className='mr-2' size={16} />
+                    {t('Take photo')}
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
 
             {isImageMode && (
               <DropdownMenu>
@@ -407,7 +447,7 @@ export function PlaygroundInput({
                   render={
                     <PromptInputButton
                       className='border font-medium'
-                      disabled={disabled}
+                      disabled={controlsDisabled}
                       type='button'
                       variant='outline'
                     />
@@ -480,7 +520,7 @@ export function PlaygroundInput({
                       render={
                         <PromptInputButton
                           className='border font-medium'
-                          disabled={disabled}
+                          disabled={controlsDisabled}
                           type='button'
                           variant='outline'
                         />
@@ -512,7 +552,7 @@ export function PlaygroundInput({
                         render={
                           <PromptInputButton
                             className='border font-medium'
-                            disabled={disabled}
+                            disabled={controlsDisabled}
                             type='button'
                             variant='outline'
                           />
@@ -550,7 +590,7 @@ export function PlaygroundInput({
                         render={
                           <PromptInputButton
                             className='border font-medium'
-                            disabled={disabled}
+                            disabled={controlsDisabled}
                             type='button'
                             variant='outline'
                           />
@@ -588,7 +628,7 @@ export function PlaygroundInput({
                     render={
                       <PromptInputButton
                         className='border font-medium'
-                        disabled={disabled}
+                        disabled={controlsDisabled}
                         type='button'
                         variant='outline'
                       />
@@ -611,7 +651,7 @@ export function PlaygroundInput({
                         <input
                           aria-label={t('Duration')}
                           className='accent-primary h-2 w-full cursor-pointer rounded-full'
-                          disabled={disabled}
+                          disabled={controlsDisabled}
                           max={videoDurationRange.max}
                           min={videoDurationRange.min}
                           onChange={(event) =>
@@ -638,7 +678,7 @@ export function PlaygroundInput({
             {(isImageMode || isVideoMode) && (
               <PromptInputButton
                 className='border font-medium'
-                disabled={disabled}
+                disabled={controlsDisabled}
                 onClick={handleInsertReferenceMarker}
                 type='button'
                 variant='outline'

@@ -96,6 +96,13 @@ import {
 
 type PromptInputFile = FileUIPart & { id: string; sourceFile?: File }
 
+export type PromptInputPreparedFile = {
+  url: string
+  mediaType?: string
+  filename?: string
+  sourceFile?: File
+}
+
 export type AttachmentsContext = {
   files: PromptInputFile[]
   add: (files: File[] | FileList) => void
@@ -482,9 +489,11 @@ export type PromptInputProps = Omit<
   maxFiles?: number
   maxFileSize?: number // bytes
   onError?: (err: {
-    code: 'max_files' | 'max_file_size' | 'accept'
+    code: 'max_files' | 'max_file_size' | 'accept' | 'prepare'
     message: string
   }) => void
+  prepareFiles?: (files: File[]) => Promise<PromptInputPreparedFile[]>
+  onFilesPreparingChange?: (preparing: boolean) => void
   onSubmit: (
     message: PromptInputMessage,
     event: FormEvent<HTMLFormElement>
@@ -506,6 +515,8 @@ export const PromptInput = ({
   maxFiles,
   maxFileSize,
   onError,
+  prepareFiles,
+  onFilesPreparingChange,
   onSubmit,
   children,
   ...props
@@ -532,6 +543,7 @@ export const PromptInput = ({
   const [items, setItems] = useState<PromptInputFile[]>([])
   const files = usingProvider ? controller.attachments.files : items
   const filesRef = useRef(files)
+  const preparingCountRef = useRef(0)
 
   useEffect(() => {
     filesRef.current = files
@@ -544,6 +556,14 @@ export const PromptInput = ({
   const matchesAccept = useCallback(
     (file: File) => fileMatchesAccept(file, accept),
     [accept]
+  )
+
+  const updateFilesPreparing = useCallback(
+    (delta: number) => {
+      preparingCountRef.current = Math.max(0, preparingCountRef.current + delta)
+      onFilesPreparingChange?.(preparingCountRef.current > 0)
+    },
+    [onFilesPreparingChange]
   )
 
   const addLocal = useCallback(
@@ -568,34 +588,90 @@ export const PromptInput = ({
         return
       }
 
-      setItems((prev) => {
-        const capacity =
-          typeof maxFiles === 'number'
-            ? Math.max(0, maxFiles - prev.length)
-            : undefined
-        const capped =
-          typeof capacity === 'number' ? sized.slice(0, capacity) : sized
-        if (typeof capacity === 'number' && sized.length > capacity) {
-          onError?.({
-            code: 'max_files',
-            message: t('Too many files. Some were not added.'),
+      const currentFiles = filesRef.current
+      const capacity =
+        typeof maxFiles === 'number'
+          ? Math.max(0, maxFiles - currentFiles.length)
+          : undefined
+      const capped =
+        typeof capacity === 'number' ? sized.slice(0, capacity) : sized
+      if (typeof capacity === 'number' && sized.length > capacity) {
+        onError?.({
+          code: 'max_files',
+          message: t('Too many files. Some were not added.'),
+        })
+      }
+      if (capped.length === 0) return
+
+      if (prepareFiles) {
+        updateFilesPreparing(1)
+        void prepareFiles(capped)
+          .then((preparedFiles) => {
+            setItems((prev) => {
+              const remaining =
+                typeof maxFiles === 'number'
+                  ? Math.max(0, maxFiles - prev.length)
+                  : undefined
+              const limited =
+                typeof remaining === 'number'
+                  ? preparedFiles.slice(0, remaining)
+                  : preparedFiles
+              if (
+                typeof remaining === 'number' &&
+                preparedFiles.length > remaining
+              ) {
+                onError?.({
+                  code: 'max_files',
+                  message: t('Too many files. Some were not added.'),
+                })
+              }
+              return prev.concat(
+                limited.map((file) => ({
+                  id: nanoid(),
+                  type: 'file' as const,
+                  url: file.url,
+                  mediaType: file.mediaType || '',
+                  filename: file.filename || '',
+                  sourceFile: file.sourceFile,
+                }))
+              )
+            })
           })
-        }
-        const next: PromptInputFile[] = []
-        for (const file of capped) {
-          next.push({
+          .catch((error) => {
+            onError?.({
+              code: 'prepare',
+              message:
+                error instanceof Error && error.message
+                  ? error.message
+                  : t('Failed to upload material'),
+            })
+          })
+          .finally(() => updateFilesPreparing(-1))
+        return
+      }
+
+      setItems((prev) =>
+        prev.concat(
+          capped.map((file) => ({
             id: nanoid(),
-            type: 'file',
+            type: 'file' as const,
             url: URL.createObjectURL(file),
             mediaType: file.type,
             filename: file.name,
             sourceFile: file,
-          })
-        }
-        return prev.concat(next)
-      })
+          }))
+        )
+      )
     },
-    [matchesAccept, maxFiles, maxFileSize, onError, t]
+    [
+      matchesAccept,
+      maxFiles,
+      maxFileSize,
+      onError,
+      prepareFiles,
+      t,
+      updateFilesPreparing,
+    ]
   )
 
   const add = useMemo(

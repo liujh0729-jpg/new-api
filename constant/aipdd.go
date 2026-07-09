@@ -54,11 +54,6 @@ type AIPDDWorkflowParamDefault struct {
 	Sources   []AIPDDWorkflowValueSource
 }
 
-type AIPDDUploadTarget struct {
-	ParamKey string
-	Aliases  []string
-}
-
 type AIPDDCapability struct {
 	ModelName              string
 	ScriptID               string
@@ -70,7 +65,6 @@ type AIPDDCapability struct {
 	WorkflowParamKeys      []string
 	RequiredWorkflowParams map[string]bool
 	WorkflowDefaults       []AIPDDWorkflowParamDefault
-	UploadTargets          []AIPDDUploadTarget
 	EndpointType           EndpointType
 	BillingType            AIPDDBillingType
 }
@@ -116,9 +110,6 @@ var AIPDDCapabilities = []AIPDDCapability{
 			aipddStringDefault("image", aipddMetadata("image"), aipddSource(AIPDDWorkflowSourceImage), aipddSource(AIPDDWorkflowSourceFirstImage)),
 			aipddStringDefault("positive_prompt", aipddMetadata("positive_prompt"), aipddMetadata("prompt"), aipddSource(AIPDDWorkflowSourcePrompt)),
 		},
-		UploadTargets: []AIPDDUploadTarget{
-			{ParamKey: "image", Aliases: []string{"file", "input_reference", "reference", "images"}},
-		},
 		EndpointType: EndpointTypeImageGeneration,
 		BillingType:  AIPDDBillingTypePerCall,
 	},
@@ -155,9 +146,6 @@ var AIPDDCapabilities = []AIPDDCapability{
 			aipddStringDefault("negative_prompt", aipddMetadata("negative_prompt")),
 			aipddStringDefault("fps", aipddMetadata("fps")),
 		},
-		UploadTargets: []AIPDDUploadTarget{
-			{ParamKey: "image", Aliases: []string{"file", "input_reference", "reference", "images"}},
-		},
 		EndpointType: EndpointTypeOpenAIVideo,
 		BillingType:  AIPDDBillingTypePerCall,
 	},
@@ -184,10 +172,6 @@ var AIPDDCapabilities = []AIPDDCapability{
 			aipddStringDefault("positive_prompt", aipddMetadata("positive_prompt"), aipddMetadata("prompt"), aipddSource(AIPDDWorkflowSourcePrompt)),
 			aipddStringDefault("filename_prefix", aipddMetadata("filename_prefix")),
 		},
-		UploadTargets: []AIPDDUploadTarget{
-			{ParamKey: "video", Aliases: []string{"file", "input_reference", "reference", "load_video"}},
-			{ParamKey: "image", Aliases: []string{"fullpath", "reference_image", "appearance_image"}},
-		},
 		EndpointType: EndpointTypeOpenAIVideo,
 		BillingType:  AIPDDBillingTypePerCall,
 	},
@@ -205,10 +189,6 @@ var AIPDDCapabilities = []AIPDDCapability{
 			aipddStringDefault("motion_video", aipddMetadata("motion_video"), aipddMetadata("video"), aipddMetadata("load_video"), aipddSource(AIPDDWorkflowSourceInputReference), aipddSource(AIPDDWorkflowSourceImage), aipddSource(AIPDDWorkflowSourceFirstImage)),
 			aipddStringDefault("appearance_image", aipddMetadata("appearance_image"), aipddMetadata("image"), aipddSource(AIPDDWorkflowSourceFirstImage), aipddSource(AIPDDWorkflowSourceImage)),
 		},
-		UploadTargets: []AIPDDUploadTarget{
-			{ParamKey: "motion_video", Aliases: []string{"video", "load_video", "input_reference", "motion"}},
-			{ParamKey: "appearance_image", Aliases: []string{"image", "reference_image", "appearance", "person"}},
-		},
 		EndpointType: EndpointTypeOpenAIVideo,
 		BillingType:  AIPDDBillingTypePerCall,
 	},
@@ -225,10 +205,6 @@ var AIPDDCapabilities = []AIPDDCapability{
 		WorkflowDefaults: []AIPDDWorkflowParamDefault{
 			aipddStringDefault("video", aipddMetadata("video"), aipddMetadata("load_video"), aipddSource(AIPDDWorkflowSourceInputReference), aipddSource(AIPDDWorkflowSourceImage), aipddSource(AIPDDWorkflowSourceFirstImage)),
 			aipddStringDefault("LoadAudio", aipddMetadata("LoadAudio"), aipddMetadata("audio")),
-		},
-		UploadTargets: []AIPDDUploadTarget{
-			{ParamKey: "video", Aliases: []string{"file", "input_reference", "reference", "load_video"}},
-			{ParamKey: "LoadAudio", Aliases: []string{"audio", "input_audio", "voice"}},
 		},
 		EndpointType: EndpointTypeOpenAIVideo,
 		BillingType:  AIPDDBillingTypePerCall,
@@ -248,10 +224,6 @@ var AIPDDCapabilities = []AIPDDCapability{
 			aipddStringDefault("audio", aipddMetadata("audio"), aipddMetadata("ref_audio"), aipddMetadata("reference_audio"), aipddMetadata("voice"), aipddSource(AIPDDWorkflowSourceInputReference), aipddSource(AIPDDWorkflowSourceFirstImage), aipddSource(AIPDDWorkflowSourceImage)),
 			aipddStringDefault("emotion_audio", aipddMetadata("emotion_audio")),
 			aipddStringDefault("text", aipddMetadata("text"), aipddMetadata("input"), aipddSource(AIPDDWorkflowSourcePrompt)),
-		},
-		UploadTargets: []AIPDDUploadTarget{
-			{ParamKey: "audio", Aliases: []string{"file", "input_reference", "ref_audio", "reference_audio", "voice"}},
-			{ParamKey: "emotion_audio"},
 		},
 		EndpointType: EndpointTypeAudioSpeech,
 		BillingType:  AIPDDBillingTypePerCall,
@@ -325,14 +297,6 @@ func cloneAIPDDCapability(capability AIPDDCapability) AIPDDCapability {
 			defaults = append(defaults, item)
 		}
 		capability.WorkflowDefaults = defaults
-	}
-	if capability.UploadTargets != nil {
-		targets := make([]AIPDDUploadTarget, 0, len(capability.UploadTargets))
-		for _, target := range capability.UploadTargets {
-			target.Aliases = append([]string(nil), target.Aliases...)
-			targets = append(targets, target)
-		}
-		capability.UploadTargets = targets
 	}
 	return capability
 }

@@ -5,11 +5,8 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"mime/multipart"
 	"net/http"
-	"net/textproto"
 	"net/url"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -82,12 +79,6 @@ type taskDetailResponse struct {
 	Code    int        `json:"code"`
 	Message string     `json:"message"`
 	Data    *aipddTask `json:"data"`
-}
-
-type ossUploadResponse struct {
-	Code    int            `json:"code"`
-	Message string         `json:"message"`
-	Data    map[string]any `json:"data"`
 }
 
 type aipddTask struct {
@@ -178,14 +169,28 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 		return nil
 	}
 	cfg, ok := a.resolveModelConfig(ginRequestContext(c), firstNonEmpty(info.UpstreamModelName, info.OriginModelName, req.Model))
-	if !ok || cfg.BillingType != constant.AIPDDBillingTypeDurationSeconds {
+	if !ok {
 		return nil
 	}
-	duration, err := normalizeDurationSeconds(&req)
-	if err != nil {
+
+	ratios := map[string]float64{}
+	if cfg.BillingType == constant.AIPDDBillingTypeDurationSeconds {
+		duration, err := normalizeDurationSeconds(&req)
+		if err != nil {
+			return nil
+		}
+		ratios["seconds"] = float64(duration)
+	}
+
+	if cfg.EndpointType == constant.EndpointTypeImageGeneration {
+		if count := taskSubmitReqCount(req); count > 1 {
+			ratios["n"] = float64(count)
+		}
+	}
+	if len(ratios) == 0 {
 		return nil
 	}
-	return map[string]float64{"seconds": float64(duration)}
+	return ratios
 }
 
 func (a *TaskAdaptor) BuildRequestURL(_ *relaycommon.RelayInfo) (string, error) {
@@ -205,14 +210,6 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		return nil, err
 	}
 	normalizeTaskSubmitReq(&req)
-
-	cfg, err := a.resolveRequestModelConfig(ginRequestContext(c), req, info)
-	if err != nil {
-		return nil, err
-	}
-	if err := a.applyMultipartUploads(c, info, cfg, &req); err != nil {
-		return nil, err
-	}
 	c.Set("task_request", req)
 
 	payload, err := a.convertToRequestPayload(req, info)
@@ -607,6 +604,7 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, erro
 }
 
 func (a *TaskAdaptor) convertToRequestPayload(req relaycommon.TaskSubmitReq, info *relaycommon.RelayInfo) (*createTaskPayload, error) {
+	normalizeTaskSubmitReq(&req)
 	cfg, err := a.resolveRequestModelConfig(context.Background(), req, info)
 	if err != nil {
 		return nil, err
@@ -718,247 +716,6 @@ func (a *TaskAdaptor) refreshCatalog(ctx context.Context) error {
 		model.InvalidatePricingCache()
 	}
 	return nil
-}
-
-func (a *TaskAdaptor) applyMultipartUploads(c *gin.Context, info *relaycommon.RelayInfo, cfg modelConfig, req *relaycommon.TaskSubmitReq) error {
-	contentType := c.GetHeader("Content-Type")
-	if !strings.Contains(contentType, gin.MIMEMultipartPOSTForm) {
-		return nil
-	}
-
-	form, err := common.ParseMultipartFormReusable(c)
-	if err != nil {
-		return err
-	}
-	defer form.RemoveAll()
-	if len(form.File) == 0 {
-		return nil
-	}
-
-	uploadedTargets := make(map[string]bool)
-	for _, directOnly := range []bool{true, false} {
-		fieldNames := make([]string, 0, len(form.File))
-		for fieldName := range form.File {
-			fieldNames = append(fieldNames, fieldName)
-		}
-		sort.Strings(fieldNames)
-
-		for _, fieldName := range fieldNames {
-			target, direct, ok := resolveAIPDDUploadTarget(cfg, fieldName)
-			if !ok || direct != directOnly || uploadedTargets[target] {
-				continue
-			}
-			fileHeaders := form.File[fieldName]
-			if len(fileHeaders) == 0 {
-				continue
-			}
-			url, err := a.uploadFileToOSS(c, info, target, fileHeaders[0])
-			if err != nil {
-				return err
-			}
-			setUploadedFileURL(req, target, url)
-			uploadedTargets[target] = true
-		}
-	}
-	return nil
-}
-
-func resolveAIPDDUploadTarget(cfg modelConfig, fieldName string) (target string, direct bool, ok bool) {
-	if len(cfg.UploadTargets) == 0 {
-		return "", false, false
-	}
-	normalized := strings.ToLower(strings.TrimSpace(fieldName))
-	if normalized == "" {
-		return "", false, false
-	}
-	for _, uploadTarget := range cfg.UploadTargets {
-		if strings.ToLower(strings.TrimSpace(uploadTarget.ParamKey)) == normalized {
-			return uploadTarget.ParamKey, true, true
-		}
-	}
-	for _, uploadTarget := range cfg.UploadTargets {
-		for _, alias := range uploadTarget.Aliases {
-			if strings.ToLower(strings.TrimSpace(alias)) == normalized {
-				return uploadTarget.ParamKey, false, true
-			}
-		}
-	}
-	return "", false, false
-}
-
-func (a *TaskAdaptor) uploadFileToOSS(c *gin.Context, info *relaycommon.RelayInfo, paramKey string, fileHeader *multipart.FileHeader) (string, error) {
-	if fileHeader == nil {
-		return "", fmt.Errorf("missing upload file for %s", paramKey)
-	}
-
-	proxy := ""
-	if info != nil {
-		proxy = info.ChannelSetting.Proxy
-	}
-	uploadedURL, err := UploadFileToOSS(c.Request.Context(), a.baseURL, a.apiKey, proxy, fileHeader)
-	if err != nil {
-		return "", fmt.Errorf("upload %s to AIPDD OSS failed: %w", paramKey, err)
-	}
-	return uploadedURL, nil
-}
-
-func UploadFileToOSS(ctx context.Context, baseURL, apiKey, proxy string, fileHeader *multipart.FileHeader) (string, error) {
-	if fileHeader == nil {
-		return "", fmt.Errorf("missing upload file")
-	}
-	apiKey = strings.TrimSpace(apiKey)
-	if apiKey == "" {
-		return "", fmt.Errorf("AIPDD API key is empty")
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
-	var requestBody bytes.Buffer
-	contentType, err := writeOSSUploadMultipart(&requestBody, fileHeader)
-	if err != nil {
-		return "", err
-	}
-
-	uri, err := buildOSSUploadURL(baseURL)
-	if err != nil {
-		return "", err
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, uri, &requestBody)
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Content-Type", contentType)
-	req.Header.Set("X-API-Key", apiKey)
-
-	client, err := service.GetHttpClientWithProxy(proxy)
-	if err != nil {
-		return "", fmt.Errorf("new proxy http client failed: %w", err)
-	}
-	if client == nil {
-		client = http.DefaultClient
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("upload to AIPDD OSS failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	responseBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("read AIPDD OSS upload response failed: %w", err)
-	}
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return "", fmt.Errorf("AIPDD OSS upload failed with status %d: %s", resp.StatusCode, strings.TrimSpace(string(responseBody)))
-	}
-
-	var uploadResp ossUploadResponse
-	if err := common.Unmarshal(responseBody, &uploadResp); err != nil {
-		return "", fmt.Errorf("unmarshal AIPDD OSS upload response failed: %w", err)
-	}
-	if uploadResp.Code != 0 && uploadResp.Code != http.StatusOK {
-		return "", fmt.Errorf("AIPDD OSS upload failed: %s", strings.TrimSpace(uploadResp.Message))
-	}
-	if uploadResp.Data == nil {
-		return "", fmt.Errorf("AIPDD OSS upload response data is empty")
-	}
-	uploadedURL := firstNonEmpty(
-		anyToString(uploadResp.Data["url"]),
-		anyToString(uploadResp.Data["public_url"]),
-		anyToString(uploadResp.Data["publicUrl"]),
-		anyToString(uploadResp.Data["file_url"]),
-		anyToString(uploadResp.Data["download_url"]),
-	)
-	if uploadedURL == "" {
-		return "", fmt.Errorf("AIPDD OSS upload response url is empty")
-	}
-	return uploadedURL, nil
-}
-
-func (a *TaskAdaptor) buildOSSUploadURL() (string, error) {
-	return buildOSSUploadURL(a.baseURL)
-}
-
-func buildOSSUploadURL(baseURL string) (string, error) {
-	baseURL = strings.TrimSpace(baseURL)
-	if baseURL == "" {
-		baseURL = constant.ChannelBaseURLs[constant.ChannelTypeAIPDD]
-	}
-	uri, err := url.Parse(strings.TrimRight(baseURL, "/") + "/oss/upload")
-	if err != nil {
-		return "", err
-	}
-	query := uri.Query()
-	query.Set("prefix", "files")
-	uri.RawQuery = query.Encode()
-	return uri.String(), nil
-}
-
-func writeOSSUploadMultipart(buf *bytes.Buffer, fileHeader *multipart.FileHeader) (string, error) {
-	writer := multipart.NewWriter(buf)
-	file, err := fileHeader.Open()
-	if err != nil {
-		return "", err
-	}
-	defer file.Close()
-
-	contentType := strings.TrimSpace(fileHeader.Header.Get("Content-Type"))
-	sniff := make([]byte, 512)
-	n, readErr := io.ReadFull(file, sniff)
-	if readErr != nil && readErr != io.EOF && readErr != io.ErrUnexpectedEOF {
-		return "", readErr
-	}
-	if contentType == "" || contentType == "application/octet-stream" {
-		contentType = http.DetectContentType(sniff[:n])
-	}
-
-	filename := strings.TrimSpace(fileHeader.Filename)
-	if filename == "" {
-		filename = "upload.bin"
-	}
-	header := make(textproto.MIMEHeader)
-	header.Set("Content-Disposition", fmt.Sprintf(`form-data; name="file"; filename="%s"`, escapeMultipartQuotes(filename)))
-	header.Set("Content-Type", contentType)
-	part, err := writer.CreatePart(header)
-	if err != nil {
-		return "", err
-	}
-	if n > 0 {
-		if _, err := part.Write(sniff[:n]); err != nil {
-			return "", err
-		}
-	}
-	if _, err := io.Copy(part, file); err != nil {
-		return "", err
-	}
-	if err := writer.Close(); err != nil {
-		return "", err
-	}
-	return writer.FormDataContentType(), nil
-}
-
-func escapeMultipartQuotes(value string) string {
-	replacer := strings.NewReplacer("\\", "\\\\", `"`, `\"`)
-	return replacer.Replace(value)
-}
-
-func setUploadedFileURL(req *relaycommon.TaskSubmitReq, target, uploadedURL string) {
-	if req.Metadata == nil {
-		req.Metadata = map[string]interface{}{}
-	}
-	req.Metadata[target] = uploadedURL
-
-	switch target {
-	case "image":
-		req.Image = uploadedURL
-		req.Images = []string{uploadedURL}
-	case "load_video", "video", "motion_video", "audio":
-		if req.InputReference == "" {
-			req.InputReference = uploadedURL
-		}
-	}
 }
 
 func endpointTypeFromPath(path string) constant.EndpointType {
@@ -1123,6 +880,82 @@ func normalizeTaskSubmitReq(req *relaycommon.TaskSubmitReq) {
 	if len(req.Images) == 0 && strings.TrimSpace(req.Image) != "" {
 		req.Images = []string{req.Image}
 	}
+	if req.N == nil && req.ImageCount != nil {
+		req.N = req.ImageCount
+	}
+	if count := taskSubmitReqCount(*req); count > 0 {
+		setTaskMetadataIntIfAbsent(req, count, "n", "image_count", "count")
+	}
+}
+
+func taskSubmitReqCount(req relaycommon.TaskSubmitReq) int {
+	if req.N != nil && *req.N > 0 {
+		return *req.N
+	}
+	if req.ImageCount != nil && *req.ImageCount > 0 {
+		return *req.ImageCount
+	}
+	for _, key := range []string{"n", "image_count", "count"} {
+		if value := metadataPositiveInt(req.Metadata, key); value > 0 {
+			return value
+		}
+	}
+	return 0
+}
+
+func setTaskMetadataIntIfAbsent(req *relaycommon.TaskSubmitReq, value int, keys ...string) {
+	if value <= 0 {
+		return
+	}
+	if req.Metadata == nil {
+		req.Metadata = map[string]interface{}{}
+	}
+	for _, key := range keys {
+		if _, exists := req.Metadata[key]; !exists {
+			req.Metadata[key] = value
+		}
+	}
+}
+
+func metadataPositiveInt(metadata map[string]interface{}, key string) int {
+	if metadata == nil {
+		return 0
+	}
+	return positiveIntValue(metadata[key])
+}
+
+func positiveIntValue(value any) int {
+	switch v := value.(type) {
+	case int:
+		if v > 0 {
+			return v
+		}
+	case int64:
+		if v > 0 && int64(int(v)) == v {
+			return int(v)
+		}
+	case uint:
+		if v > 0 && uint(int(v)) == v {
+			return int(v)
+		}
+	case uint64:
+		if v > 0 && uint64(int(v)) == v {
+			return int(v)
+		}
+	case float64:
+		i := int(v)
+		if v > 0 && v == float64(i) {
+			return i
+		}
+	case float32:
+		i := int(v)
+		if v > 0 && v == float32(i) {
+			return i
+		}
+	case string:
+		return parseDurationValue(v)
+	}
+	return 0
 }
 
 func cloneWorkflowMetadata(metadata map[string]interface{}) map[string]any {
@@ -1198,7 +1031,7 @@ func hasContentValue(value any) bool {
 
 func isKnownSubmitField(key string) bool {
 	switch key {
-	case "prompt", "model", "mode", "client_task_id", "image", "images", "size", "duration", "seconds", "input_reference", "group":
+	case "prompt", "model", "mode", "client_task_id", "image", "images", "size", "n", "image_count", "duration", "seconds", "input_reference", "group":
 		return true
 	default:
 		return false

@@ -297,12 +297,6 @@ export function Playground() {
     }
 
     if (config.mode === 'image') {
-      const hasLocalReferences = (message.files || []).some(
-        (file) => file.sourceFile
-      )
-      if (hasLocalReferences) {
-        setIsUploadingReferences(true)
-      }
       try {
         const resolvedReferences = await resolveImageReferences(
           message.files || []
@@ -316,10 +310,6 @@ export function Playground() {
         const uploadError = normalizePlaygroundError(error, t)
         toast.error(uploadError.message)
         throw new Error(uploadError.message, { cause: error })
-      } finally {
-        if (hasLocalReferences) {
-          setIsUploadingReferences(false)
-        }
       }
     }
 
@@ -858,33 +848,10 @@ async function resolveImageReferences(
       const url = file.url?.trim() || ''
       if (!url) return null
 
-      const inlineUrl = file.sourceFile
-        ? await resolveInlineReferenceURL(url, file.sourceFile)
-        : isDataReferenceUrl(url) || isProbablyPublicReferenceUrl(url)
+      const requestUrl =
+        isDataReferenceUrl(url) || isProbablyPublicReferenceUrl(url)
           ? url
-          : await fetchReferenceURLAsDataURL(url)
-
-      if (file.sourceFile) {
-        try {
-          const uploaded = await uploadReferenceMedia(file.sourceFile)
-          const displayReference: SeedanceReference = {
-            kind: 'image',
-            url: uploaded.url,
-            filename: uploaded.filename || file.filename,
-            media_type: uploaded.media_type || file.mediaType,
-          }
-          return {
-            displayReference,
-            requestUrl: isProbablyPublicReferenceUrl(uploaded.url)
-              ? uploaded.url
-              : inlineUrl,
-          }
-        } catch (error) {
-          if (!shouldInlineLocalReference(error)) {
-            throw error
-          }
-        }
-      }
+          : await resolveInlineReferenceURL(url, file.sourceFile)
 
       const reference: SeedanceReference = {
         kind: 'image',
@@ -894,7 +861,7 @@ async function resolveImageReferences(
       }
       return {
         displayReference: reference,
-        requestUrl: inlineUrl,
+        requestUrl,
       }
     })
   )

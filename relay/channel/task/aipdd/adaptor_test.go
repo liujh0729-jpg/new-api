@@ -1,12 +1,9 @@
 package aipdd
 
 import (
-	"bytes"
 	"io"
-	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
-	"net/textproto"
 	"strings"
 	"testing"
 
@@ -225,6 +222,55 @@ func TestWan22WanxDoesNotSendDurationToJavaBackend(t *testing.T) {
 	}
 }
 
+func TestConvertToRequestPayloadMapsOpenAIImageCountToDynamicBatchParam(t *testing.T) {
+	original := constant.GetAIPDDCapabilities()
+	t.Cleanup(func() {
+		constant.SetAIPDDCapabilities(original)
+	})
+
+	modelName := "aipdd-dynamic-image-batch"
+	constant.SetAIPDDCapabilities([]constant.AIPDDCapability{
+		{
+			ModelName:         modelName,
+			ScriptCode:        "dynamic_image_batch",
+			EndpointType:      constant.EndpointTypeImageGeneration,
+			BillingType:       constant.AIPDDBillingTypePerCall,
+			WorkflowParamKeys: []string{"prompt", "batch_size"},
+			RequiredWorkflowParams: map[string]bool{
+				"prompt":     true,
+				"batch_size": false,
+			},
+			WorkflowDefaults: []constant.AIPDDWorkflowParamDefault{
+				{ParamKey: "prompt", ValueType: constant.AIPDDWorkflowValueTypeString, Sources: []constant.AIPDDWorkflowValueSource{{Type: constant.AIPDDWorkflowSourcePrompt}}},
+				{ParamKey: "batch_size", ValueType: constant.AIPDDWorkflowValueTypeInt, Sources: []constant.AIPDDWorkflowValueSource{{Type: constant.AIPDDWorkflowSourceMetadata, Key: "n"}}},
+			},
+		},
+	})
+
+	adaptor := &TaskAdaptor{}
+	count := 4
+	req := relaycommon.TaskSubmitReq{
+		Model:  modelName,
+		Prompt: "a cinematic robot",
+		N:      &count,
+	}
+
+	payload, err := adaptor.convertToRequestPayload(req, relayInfoWithModel(modelName))
+	if err != nil {
+		t.Fatalf("convertToRequestPayload returned error: %v", err)
+	}
+	if payload.Input["batch_size"] != 4 {
+		t.Fatalf("n should map to batch_size: %#v", payload.Input)
+	}
+
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Set("task_request", req)
+	ratios := adaptor.EstimateBilling(ctx, relayInfoWithModel(modelName))
+	if ratios["n"] != 4 {
+		t.Fatalf("image count should be applied to billing ratios: %#v", ratios)
+	}
+}
+
 func TestConvertToRequestPayloadAppliesDynamicLTXDefaults(t *testing.T) {
 	original := constant.GetAIPDDCapabilities()
 	t.Cleanup(func() {
@@ -259,9 +305,6 @@ func TestConvertToRequestPayloadAppliesDynamicLTXDefaults(t *testing.T) {
 				{ParamKey: "numFrames", ValueType: constant.AIPDDWorkflowValueTypeInt, Sources: []constant.AIPDDWorkflowValueSource{{Type: constant.AIPDDWorkflowSourceStatic, Key: "121"}}},
 				{ParamKey: "frameRate", ValueType: constant.AIPDDWorkflowValueTypeInt, Sources: []constant.AIPDDWorkflowValueSource{{Type: constant.AIPDDWorkflowSourceMetadata, Key: "fps"}, {Type: constant.AIPDDWorkflowSourceStatic, Key: "24"}}},
 			},
-			UploadTargets: []constant.AIPDDUploadTarget{
-				{ParamKey: "image", Aliases: []string{"file", "input_reference", "reference", "images", "image"}},
-			},
 		},
 	})
 
@@ -290,263 +333,6 @@ func TestConvertToRequestPayloadAppliesDynamicLTXDefaults(t *testing.T) {
 	}
 	if content["width"] != 1920 || content["height"] != 1088 || content["numFrames"] != 121 || content["frameRate"] != 30 {
 		t.Fatalf("LTX numeric defaults were not applied: %#v", content)
-	}
-}
-
-func TestBuildRequestBodyUploadsMultipartFileToAIPDDOSS(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	var gotAPIKey string
-	var gotParamKey string
-	var gotScriptID string
-	var gotPrefix string
-	uploadServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/oss/upload" {
-			t.Fatalf("unexpected upload path: %s", r.URL.Path)
-		}
-		gotAPIKey = r.Header.Get("X-API-Key")
-		gotParamKey = r.URL.Query().Get("param_key")
-		gotScriptID = r.URL.Query().Get("script_id")
-		gotPrefix = r.URL.Query().Get("prefix")
-		file, fileHeader, err := r.FormFile("file")
-		if err != nil {
-			t.Fatalf("expected uploaded file: %v", err)
-		}
-		defer file.Close()
-		fileBytes, err := io.ReadAll(file)
-		if err != nil {
-			t.Fatalf("read uploaded file: %v", err)
-		}
-		if fileHeader.Filename != "input.png" || string(fileBytes) != "fake image bytes" {
-			t.Fatalf("unexpected uploaded file: filename=%s body=%q", fileHeader.Filename, string(fileBytes))
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"code":200,"message":"上传成功","data":{"file_id":"file-id","url":"https://oss.example.com/files/input.png"}}`))
-	}))
-	defer uploadServer.Close()
-
-	var requestBody bytes.Buffer
-	writer := multipart.NewWriter(&requestBody)
-	_ = writer.WriteField("model", ModelWan22Wanx)
-	_ = writer.WriteField("prompt", "camera push in")
-	_ = writer.WriteField("duration", "5")
-	header := make(textproto.MIMEHeader)
-	header.Set("Content-Disposition", `form-data; name="image"; filename="input.png"`)
-	header.Set("Content-Type", "image/png")
-	part, err := writer.CreatePart(header)
-	if err != nil {
-		t.Fatalf("create multipart part: %v", err)
-	}
-	_, _ = part.Write([]byte("fake image bytes"))
-	if err := writer.Close(); err != nil {
-		t.Fatalf("close multipart writer: %v", err)
-	}
-
-	recorder := httptest.NewRecorder()
-	ctx, _ := gin.CreateTestContext(recorder)
-	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", &requestBody)
-	ctx.Request.Header.Set("Content-Type", writer.FormDataContentType())
-
-	info := relayInfoWithModel(ModelWan22Wanx)
-	info.ChannelBaseUrl = uploadServer.URL
-	info.ApiKey = "aipdd-key"
-	adaptor := &TaskAdaptor{}
-	adaptor.Init(info)
-
-	if taskErr := adaptor.ValidateRequestAndSetAction(ctx, info); taskErr != nil {
-		t.Fatalf("ValidateRequestAndSetAction returned task error: %v", taskErr)
-	}
-	bodyReader, err := adaptor.BuildRequestBody(ctx, info)
-	if err != nil {
-		t.Fatalf("BuildRequestBody returned error: %v", err)
-	}
-	bodyBytes, err := io.ReadAll(bodyReader)
-	if err != nil {
-		t.Fatalf("read built request body: %v", err)
-	}
-
-	var payload createTaskPayload
-	if err := common.Unmarshal(bodyBytes, &payload); err != nil {
-		t.Fatalf("unmarshal payload: %v", err)
-	}
-	if payload.TaskTypeCode != "aipdd_wan2.2_wanx" {
-		t.Fatalf("unexpected task type code: %s", payload.TaskTypeCode)
-	}
-	content := payload.Input
-	if got := anyToString(content["image"]); got != "https://oss.example.com/files/input.png" {
-		t.Fatalf("uploaded image URL was not injected: got %q content=%#v", got, content)
-	}
-	if got := anyToString(content["prompt"]); got != "camera push in" {
-		t.Fatalf("prompt was not preserved: got %q content=%#v", got, content)
-	}
-	if gotAPIKey != "aipdd-key" {
-		t.Fatalf("upload did not use AIPDD API key: %q", gotAPIKey)
-	}
-	if gotPrefix != "files" {
-		t.Fatalf("unexpected upload prefix: %q", gotPrefix)
-	}
-	if gotParamKey != "" || gotScriptID != "" {
-		t.Fatalf("upload should not trigger aipdd-api script validation, got script_id=%q param_key=%q", gotScriptID, gotParamKey)
-	}
-}
-
-func TestBuildRequestBodyDoesNotInjectFilenameForVideoUploads(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	uploadServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		file, fileHeader, err := r.FormFile("file")
-		if err != nil {
-			t.Fatalf("expected uploaded file: %v", err)
-		}
-		defer file.Close()
-
-		uploadedURL := "https://oss.aipdd.work/files/uploaded.bin"
-		switch fileHeader.Filename {
-		case "fullpath.mp4":
-			uploadedURL = "https://oss.aipdd.work/files/ef5220cd-18e7-47be-b99c-e4390e03168f.mp4"
-		case "source.mp4":
-			uploadedURL = "https://oss.aipdd.work/files/source.mp4"
-		case "speech.wav":
-			uploadedURL = "https://oss.aipdd.work/files/speech.wav"
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"code":200,"message":"上传成功","data":{"url":"` + uploadedURL + `"}}`))
-	}))
-	defer uploadServer.Close()
-
-	tests := []struct {
-		name       string
-		model      string
-		endpoint   string
-		fields     map[string]string
-		files      map[string]string
-		wantFields map[string]string
-	}{
-		{
-			name:     "animater fullpath upload",
-			model:    ModelWan22Animater,
-			endpoint: "/v1/videos",
-			fields: map[string]string{
-				"load_video":      "https://oss.aipdd.work/distributed_compute/443/15e6278f-a3ca-4682-89ef-802af9913273/ComfyUI_00006_.mp4",
-				"prompt":          "natural motion, stable subject",
-				"negative_prompt": "low quality, distorted, flicker",
-			},
-			files: map[string]string{
-				"fullpath": "fullpath.mp4",
-			},
-			wantFields: map[string]string{
-				"video":           "https://oss.aipdd.work/distributed_compute/443/15e6278f-a3ca-4682-89ef-802af9913273/ComfyUI_00006_.mp4",
-				"image":           "https://oss.aipdd.work/files/ef5220cd-18e7-47be-b99c-e4390e03168f.mp4",
-				"positive_prompt": "natural motion, stable subject",
-			},
-		},
-		{
-			name:     "latentsync video and audio upload",
-			model:    ModelLatentsync15,
-			endpoint: "/v1/videos",
-			fields:   map[string]string{},
-			files: map[string]string{
-				"video":     "source.mp4",
-				"LoadAudio": "speech.wav",
-			},
-			wantFields: map[string]string{
-				"video":     "https://oss.aipdd.work/files/source.mp4",
-				"LoadAudio": "https://oss.aipdd.work/files/speech.wav",
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var requestBody bytes.Buffer
-			writer := multipart.NewWriter(&requestBody)
-			_ = writer.WriteField("model", tt.model)
-			for key, value := range tt.fields {
-				_ = writer.WriteField(key, value)
-			}
-			for field, filename := range tt.files {
-				header := make(textproto.MIMEHeader)
-				header.Set("Content-Disposition", `form-data; name="`+field+`"; filename="`+filename+`"`)
-				header.Set("Content-Type", "application/octet-stream")
-				part, err := writer.CreatePart(header)
-				if err != nil {
-					t.Fatalf("create multipart part: %v", err)
-				}
-				_, _ = part.Write([]byte("fake file bytes"))
-			}
-			if err := writer.Close(); err != nil {
-				t.Fatalf("close multipart writer: %v", err)
-			}
-
-			recorder := httptest.NewRecorder()
-			ctx, _ := gin.CreateTestContext(recorder)
-			ctx.Request = httptest.NewRequest(http.MethodPost, tt.endpoint, &requestBody)
-			ctx.Request.Header.Set("Content-Type", writer.FormDataContentType())
-
-			info := relayInfoWithModel(tt.model)
-			info.ChannelBaseUrl = uploadServer.URL
-			info.ApiKey = "aipdd-key"
-			adaptor := &TaskAdaptor{}
-			adaptor.Init(info)
-
-			if taskErr := adaptor.ValidateRequestAndSetAction(ctx, info); taskErr != nil {
-				t.Fatalf("ValidateRequestAndSetAction returned task error: %v", taskErr)
-			}
-			bodyReader, err := adaptor.BuildRequestBody(ctx, info)
-			if err != nil {
-				t.Fatalf("BuildRequestBody returned error: %v", err)
-			}
-			bodyBytes, err := io.ReadAll(bodyReader)
-			if err != nil {
-				t.Fatalf("read built request body: %v", err)
-			}
-
-			var payload createTaskPayload
-			if err := common.Unmarshal(bodyBytes, &payload); err != nil {
-				t.Fatalf("unmarshal payload: %v", err)
-			}
-			content := payload.Input
-			t.Logf("input=%#v", payload.Input)
-			for key, want := range tt.wantFields {
-				if got := anyToString(content[key]); got != want {
-					t.Fatalf("unexpected %s: got %q want %q in %#v", key, got, want, content)
-				}
-			}
-			if _, ok := content["filename"]; ok {
-				t.Fatalf("filename should not be injected: %#v", content)
-			}
-		})
-	}
-}
-
-func TestResolveAIPDDUploadTargetAliases(t *testing.T) {
-	flux, _ := resolveModelConfig(ModelFluxGGUF)
-	target, direct, ok := resolveAIPDDUploadTarget(flux, "file")
-	if !ok || direct || target != "image" {
-		t.Fatalf("file alias should resolve to image, got target=%q direct=%v ok=%v", target, direct, ok)
-	}
-
-	latentsync, _ := resolveModelConfig(ModelLatentsync15)
-	target, direct, ok = resolveAIPDDUploadTarget(latentsync, "audio")
-	if !ok || direct || target != "LoadAudio" {
-		t.Fatalf("audio alias should resolve to LoadAudio, got target=%q direct=%v ok=%v", target, direct, ok)
-	}
-
-	target, direct, ok = resolveAIPDDUploadTarget(latentsync, "LoadAudio")
-	if !ok || !direct || target != "LoadAudio" {
-		t.Fatalf("LoadAudio should resolve directly, got target=%q direct=%v ok=%v", target, direct, ok)
-	}
-
-	indexTTS, _ := resolveModelConfig(ModelIndexTTS)
-	target, direct, ok = resolveAIPDDUploadTarget(indexTTS, "ref_audio")
-	if !ok || direct || target != "audio" {
-		t.Fatalf("ref_audio should resolve to audio, got target=%q direct=%v ok=%v", target, direct, ok)
-	}
-
-	mimicMotion, _ := resolveModelConfig(ModelMimicMotion)
-	target, direct, ok = resolveAIPDDUploadTarget(mimicMotion, "image")
-	if !ok || direct || target != "appearance_image" {
-		t.Fatalf("image alias should resolve to appearance_image, got target=%q direct=%v ok=%v", target, direct, ok)
 	}
 }
 

@@ -393,7 +393,6 @@ func buildCapability(script Script, feeRuleByKey map[string]FeeRule) (constant.A
 		WorkflowParamKeys:      paramKeys,
 		RequiredWorkflowParams: requiredParams,
 		WorkflowDefaults:       buildWorkflowDefaults(params, base),
-		UploadTargets:          buildUploadTargets(params, base),
 		EndpointType:           inferEndpointType(script, params, base, hasBase),
 		BillingType:            inferBillingType(script, params, feeRule, hasFeeRule, base, hasBase),
 	}
@@ -502,6 +501,8 @@ func inferWorkflowDefault(param ScriptParam) constant.AIPDDWorkflowParamDefault 
 		sources = append(sources, metadataSource("frameRate"), metadataSource("fps"))
 	case isFrameCountParam(normalized):
 		sources = append(sources, metadataSource("numFrames"), metadataSource("frames"), metadataSource("frame_count"))
+	case isImageCountParam(normalized):
+		sources = append(sources, metadataSource("n"), metadataSource("image_count"), metadataSource("count"), metadataSource("batch_size"), metadataSource("num_outputs"))
 	case strings.Contains(normalized, "prompt") || strings.Contains(normalized, "text") || strings.Contains(normalized, "提示词"):
 		sources = append(sources, metadataSource("prompt"), source(constant.AIPDDWorkflowSourcePrompt))
 	case strings.Contains(normalized, "video") || strings.Contains(normalized, "load_video") || strings.Contains(normalized, "motion"):
@@ -552,73 +553,24 @@ func isFrameCountParam(value string) bool {
 		strings.Contains(value, "帧数")
 }
 
-func buildUploadTargets(params []ScriptParam, base constant.AIPDDCapability) []constant.AIPDDUploadTarget {
-	targets := make([]constant.AIPDDUploadTarget, 0, len(base.UploadTargets)+len(params))
-	seen := make(map[string]bool)
-	for _, target := range base.UploadTargets {
-		target.Aliases = append([]string(nil), target.Aliases...)
-		targets = append(targets, target)
-		seen[target.ParamKey] = true
-	}
-
-	for _, param := range params {
-		if seen[param.ParamKey] {
-			continue
-		}
-		target, ok := inferUploadTarget(param)
-		if !ok {
-			continue
-		}
-		targets = append(targets, target)
-		seen[target.ParamKey] = true
-	}
-	return targets
-}
-
-func inferUploadTarget(param ScriptParam) (constant.AIPDDUploadTarget, bool) {
-	switch strings.TrimSpace(param.UIType) {
-	case "image_url":
-		return constant.AIPDDUploadTarget{
-			ParamKey: param.ParamKey,
-			Aliases:  mergeAliases(param.Aliases, "file", "input_reference", "reference", "images", "image"),
-		}, true
-	case "video_url":
-		return constant.AIPDDUploadTarget{
-			ParamKey: param.ParamKey,
-			Aliases:  mergeAliases(param.Aliases, "file", "input_reference", "reference", "video", "load_video"),
-		}, true
-	case "audio_url":
-		return constant.AIPDDUploadTarget{
-			ParamKey: param.ParamKey,
-			Aliases:  mergeAliases(param.Aliases, "file", "audio", "input_audio", "voice", "ref_audio", "reference_audio"),
-		}, true
-	case "file_url":
-		return constant.AIPDDUploadTarget{
-			ParamKey: param.ParamKey,
-			Aliases:  mergeAliases(param.Aliases, "file", "input_reference", "reference"),
-		}, true
-	}
-
-	normalized := normalizedParamText(param)
-	switch {
-	case strings.Contains(normalized, "video") || strings.Contains(normalized, "load_video") || strings.Contains(normalized, "motion"):
-		return constant.AIPDDUploadTarget{
-			ParamKey: param.ParamKey,
-			Aliases:  []string{"file", "input_reference", "reference", "video", "load_video"},
-		}, true
-	case strings.Contains(normalized, "audio") || strings.Contains(normalized, "voice") || strings.Contains(normalized, "sound"):
-		return constant.AIPDDUploadTarget{
-			ParamKey: param.ParamKey,
-			Aliases:  []string{"file", "audio", "input_audio", "voice", "ref_audio", "reference_audio"},
-		}, true
-	case strings.Contains(normalized, "image") || strings.Contains(normalized, "img") || strings.Contains(normalized, "file") || strings.Contains(normalized, "图片"):
-		return constant.AIPDDUploadTarget{
-			ParamKey: param.ParamKey,
-			Aliases:  []string{"file", "input_reference", "reference", "images", "image"},
-		}, true
-	default:
-		return constant.AIPDDUploadTarget{}, false
-	}
+func isImageCountParam(value string) bool {
+	return strings.Contains(value, "numoutputs") ||
+		strings.Contains(value, "num_outputs") ||
+		strings.Contains(value, "num outputs") ||
+		strings.Contains(value, "outputcount") ||
+		strings.Contains(value, "output_count") ||
+		strings.Contains(value, "output count") ||
+		strings.Contains(value, "batchsize") ||
+		strings.Contains(value, "batch_size") ||
+		strings.Contains(value, "batch size") ||
+		strings.Contains(value, "imagecount") ||
+		strings.Contains(value, "image_count") ||
+		strings.Contains(value, "image count") ||
+		strings.Contains(value, "numberofimages") ||
+		strings.Contains(value, "number of images") ||
+		strings.Contains(value, "生成数量") ||
+		strings.Contains(value, "图片数量") ||
+		strings.Contains(value, "出图数量")
 }
 
 func inferEndpointType(script Script, params []ScriptParam, base constant.AIPDDCapability, hasBase bool) constant.EndpointType {
@@ -738,10 +690,6 @@ func normalizeStringList(values []string) []string {
 		seen[value] = true
 	}
 	return out
-}
-
-func mergeAliases(values []string, defaults ...string) []string {
-	return normalizeStringList(append(append([]string(nil), values...), defaults...))
 }
 
 func roundPrice(value float64) float64 {
