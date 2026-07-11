@@ -73,6 +73,47 @@ func TestEnsureAIPDDChannelDefaultsSyncsExistingChannelFromEnv(t *testing.T) {
 	}
 }
 
+func TestEnsureAIPDDChannelDefaultsOverwritesExistingChannelFromEnv(t *testing.T) {
+	truncateTables(t)
+	t.Setenv("AIPDD_API_KEY", "aipdd-env-key-new")
+	t.Setenv("AIPDD_BASE_URL", "https://aipdd.example.com")
+	t.Setenv("AIPDD_CHANNEL_OVERWRITE_ON_BOOT", "true")
+
+	oldBaseURL := "https://old-aipdd.example.com"
+	channel := Channel{
+		Type:    constant.ChannelTypeAIPDD,
+		Key:     "aipdd-env-key-old",
+		Name:    "legacy-aipdd",
+		Status:  common.ChannelStatusManuallyDisabled,
+		Group:   "vip",
+		BaseURL: &oldBaseURL,
+		Models:  "legacy-model",
+	}
+	require.NoError(t, DB.Create(&channel).Error)
+	require.NoError(t, channel.AddAbilities(nil))
+
+	require.NoError(t, EnsureAIPDDChannelDefaults())
+
+	var stored Channel
+	require.NoError(t, DB.First(&stored, channel.Id).Error)
+	require.Equal(t, "AIPDD", stored.Name)
+	require.Equal(t, "aipdd-env-key-new", stored.Key)
+	require.Equal(t, common.ChannelStatusEnabled, stored.Status)
+	require.Equal(t, "default", stored.Group)
+	require.NotNil(t, stored.BaseURL)
+	require.Equal(t, "https://aipdd.example.com", *stored.BaseURL)
+	require.Equal(t, strings.Join(constant.GetAIPDDModelList(), ","), stored.Models)
+
+	var abilities []Ability
+	require.NoError(t, DB.Where("channel_id = ?", channel.Id).Find(&abilities).Error)
+	require.Len(t, abilities, len(constant.GetAIPDDModelList()))
+	for _, ability := range abilities {
+		require.NotEqual(t, "legacy-model", ability.Model)
+		require.True(t, ability.Enabled)
+		require.Equal(t, "default", ability.Group)
+	}
+}
+
 func TestEnsureAIPDDChannelDefaultsBackfillsMissingCatalogModels(t *testing.T) {
 	truncateTables(t)
 

@@ -54,6 +54,14 @@ type AIPDDWorkflowParamDefault struct {
 	Sources   []AIPDDWorkflowValueSource
 }
 
+type AIPDDWorkflowParamConstraint struct {
+	ParamKey string
+	DataType string
+	Min      *float64
+	Max      *float64
+	Allowed  []any
+}
+
 type AIPDDCapability struct {
 	ModelName              string
 	ScriptID               string
@@ -65,6 +73,7 @@ type AIPDDCapability struct {
 	WorkflowParamKeys      []string
 	RequiredWorkflowParams map[string]bool
 	WorkflowDefaults       []AIPDDWorkflowParamDefault
+	WorkflowConstraints    []AIPDDWorkflowParamConstraint
 	EndpointType           EndpointType
 	BillingType            AIPDDBillingType
 }
@@ -297,6 +306,14 @@ func cloneAIPDDCapability(capability AIPDDCapability) AIPDDCapability {
 			defaults = append(defaults, item)
 		}
 		capability.WorkflowDefaults = defaults
+	}
+	if capability.WorkflowConstraints != nil {
+		constraints := make([]AIPDDWorkflowParamConstraint, 0, len(capability.WorkflowConstraints))
+		for _, item := range capability.WorkflowConstraints {
+			item.Allowed = append([]any(nil), item.Allowed...)
+			constraints = append(constraints, item)
+		}
+		capability.WorkflowConstraints = constraints
 	}
 	return capability
 }

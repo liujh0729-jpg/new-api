@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/stretchr/testify/require"
 )
@@ -165,10 +166,10 @@ func TestFetchPrefersUnifiedCapabilitiesCatalog(t *testing.T) {
 							{"paramKey": "prompt", "paramName": "视频描述", "dataType": "string", "isRequired": true, "orderNo": 1, "uiType": "textarea", "defaultValue": ""},
 							{"paramKey": "image", "paramName": "参考图片", "dataType": "string", "isRequired": true, "orderNo": 2, "uiType": "image_url"},
 							{"paramKey": "negativePrompt", "paramName": "负向描述", "dataType": "string", "isRequired": false, "orderNo": 3, "uiType": "textarea", "defaultValue": ""},
-							{"paramKey": "width", "paramName": "视频宽度", "dataType": "int", "isRequired": true, "orderNo": 4, "uiType": "number", "defaultValue": 1920},
-							{"paramKey": "height", "paramName": "视频高度", "dataType": "int", "isRequired": true, "orderNo": 5, "uiType": "number", "defaultValue": 1088},
-							{"paramKey": "numFrames", "paramName": "视频帧数", "dataType": "int", "isRequired": true, "orderNo": 6, "uiType": "number", "defaultValue": 121},
-							{"paramKey": "frameRate", "paramName": "帧率", "dataType": "int", "isRequired": false, "orderNo": 7, "uiType": "number", "defaultValue": 24}
+								{"paramKey": "width", "paramName": "视频宽度", "dataType": "int", "isRequired": true, "orderNo": 4, "uiType": "number", "defaultValue": 1920, "min": 480, "max": 1280, "allowed": [480, 640, 704, 1280]},
+								{"paramKey": "height", "paramName": "视频高度", "dataType": "int", "isRequired": true, "orderNo": 5, "uiType": "number", "defaultValue": 1088, "min": 480, "max": 1280, "allowed": [480, 640, 704, 1280]},
+								{"paramKey": "numFrames", "paramName": "视频帧数", "dataType": "int", "isRequired": true, "orderNo": 6, "uiType": "number", "defaultValue": 121, "min": 25, "max": 481},
+								{"paramKey": "frameRate", "paramName": "帧率", "dataType": "int", "isRequired": false, "orderNo": 7, "uiType": "number", "defaultValue": 24, "allowed": [24]}
 						]
 					}
 				]
@@ -223,6 +224,73 @@ func TestFetchPrefersUnifiedCapabilitiesCatalog(t *testing.T) {
 	requireWorkflowSource(t, dynamic.WorkflowDefaults, "numFrames", constant.AIPDDWorkflowSourceStatic, "121")
 	requireWorkflowSource(t, dynamic.WorkflowDefaults, "frameRate", constant.AIPDDWorkflowSourceMetadata, "fps")
 	requireWorkflowSource(t, dynamic.WorkflowDefaults, "frameRate", constant.AIPDDWorkflowSourceStatic, "24")
+	require.Len(t, dynamic.WorkflowConstraints, 4)
+	require.Equal(t, float64(480), *dynamic.WorkflowConstraints[0].Min)
+	require.Equal(t, float64(1280), *dynamic.WorkflowConstraints[0].Max)
+	require.Equal(t, []any{float64(480), float64(640), float64(704), float64(1280)}, dynamic.WorkflowConstraints[0].Allowed)
+}
+
+func TestFetchUnifiedCapabilitiesAcceptsEmptyObjectParams(t *testing.T) {
+	legacyRequested := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/capabilities":
+			_, _ = w.Write([]byte(`{
+				"code": 0,
+				"message": "fetched",
+				"data": [
+					{
+						"id": "paramless-task",
+						"code": "aipdd_paramless_task",
+						"name": "Parameterless Task",
+						"adapterCode": "comfyui",
+						"endpointType": "openai-video",
+						"priceAWcoin": 100,
+						"params": {}
+					}
+				]
+			}`))
+		case "/system/awcoin-rate":
+			_, _ = w.Write([]byte(`{
+				"code": 200,
+				"message": "ok",
+				"data": {"usd": 0.0015}
+			}`))
+		case "/scripts/admin/comfyui_workflow":
+			legacyRequested = true
+			http.NotFound(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	catalog, err := Fetch(ctx, server.Client(), server.URL, "test-key")
+	require.NoError(t, err)
+	require.False(t, legacyRequested)
+	require.Equal(t, []string{"aipdd_paramless_task"}, catalog.ModelNames())
+	require.Empty(t, catalog.Capabilities[0].WorkflowParamKeys)
+	require.Equal(t, 0.15, catalog.ModelPrices["aipdd_paramless_task"])
+}
+
+func TestScriptParamsAcceptsObjectMap(t *testing.T) {
+	var script Script
+	err := common.Unmarshal([]byte(`{
+		"code": "object_params",
+		"params": {
+			"prompt": {"dataType": "string", "isRequired": true},
+			"image": {"paramKey": "reference_image", "dataType": "string"}
+		}
+	}`), &script)
+	require.NoError(t, err)
+	require.Len(t, script.Params, 2)
+	require.Equal(t, "reference_image", script.Params[0].ParamKey)
+	require.Equal(t, "prompt", script.Params[1].ParamKey)
+	require.True(t, script.Params[1].IsRequired)
 }
 
 func TestFetchCatalogMapsImageCountParamsFromOpenAINParam(t *testing.T) {

@@ -65,6 +65,7 @@ const (
 	aipddBootstrapRequiredName            = "AIPDD_BOOTSTRAP_REQUIRED"
 	aipddCatalogSyncOnBootEnvName         = "AIPDD_CATALOG_SYNC_ON_BOOT"
 	aipddCatalogSyncTimeoutSecondsEnvName = "AIPDD_CATALOG_SYNC_TIMEOUT_SECONDS"
+	aipddChannelOverwriteOnBootEnvName    = "AIPDD_CHANNEL_OVERWRITE_ON_BOOT"
 	aipddEnvChannelName                   = "AIPDD"
 )
 
@@ -325,6 +326,10 @@ func isAIPDDKeyRequiredFromEnv() bool {
 	return common.GetEnvOrDefaultBool(aipddBootstrapRequiredName, false)
 }
 
+func isAIPDDChannelOverwriteFromEnv() bool {
+	return common.GetEnvOrDefaultBool(aipddChannelOverwriteOnBootEnvName, false)
+}
+
 func validateAIPDDBootstrapKey(key string) error {
 	if strings.TrimSpace(key) == "" && isAIPDDKeyRequiredFromEnv() {
 		return fmt.Errorf("%s is required; set it before starting the container so AIPDD models can be bootstrapped", aipddAPIKeyEnvName)
@@ -393,6 +398,7 @@ func ensureAIPDDChannelFromEnv(channels []Channel, key string) ([]Channel, bool,
 		return channels, false, nil
 	}
 
+	overwriteFromEnv := isAIPDDChannelOverwriteFromEnv()
 	channel := selectAIPDDEnvChannel(channels)
 	if channel == nil {
 		baseURL := getAIPDDBaseURLFromEnv()
@@ -413,15 +419,25 @@ func ensureAIPDDChannelFromEnv(channels []Channel, key string) ([]Channel, bool,
 	}
 
 	updates := map[string]interface{}{}
+	if overwriteFromEnv && strings.TrimSpace(channel.Name) != aipddEnvChannelName {
+		updates["name"] = aipddEnvChannelName
+		channel.Name = aipddEnvChannelName
+	}
 	if channel.Key != key {
 		updates["key"] = key
 		channel.Key = key
 	}
-	if strings.TrimSpace(channel.Models) == "" {
+	if overwriteFromEnv {
+		models := strings.Join(constant.GetAIPDDModelList(), ",")
+		if channel.Models != models {
+			updates["models"] = models
+			channel.Models = models
+		}
+	} else if strings.TrimSpace(channel.Models) == "" {
 		channel.ApplyDefaultModels()
 		updates["models"] = channel.Models
 	}
-	if strings.TrimSpace(channel.Group) == "" {
+	if overwriteFromEnv || strings.TrimSpace(channel.Group) == "" {
 		updates["group"] = "default"
 		channel.Group = "default"
 	}
@@ -429,10 +445,12 @@ func ensureAIPDDChannelFromEnv(channels []Channel, key string) ([]Channel, bool,
 		updates["status"] = common.ChannelStatusEnabled
 		channel.Status = common.ChannelStatusEnabled
 	}
-	if channel.BaseURL == nil || strings.TrimSpace(*channel.BaseURL) == "" {
+	if overwriteFromEnv || channel.BaseURL == nil || strings.TrimSpace(*channel.BaseURL) == "" {
 		baseURL := getAIPDDBaseURLFromEnv()
-		updates["base_url"] = baseURL
-		channel.BaseURL = &baseURL
+		if channel.BaseURL == nil || *channel.BaseURL != baseURL {
+			updates["base_url"] = baseURL
+			channel.BaseURL = &baseURL
+		}
 	}
 	if len(updates) == 0 {
 		return channels, false, nil
@@ -443,7 +461,11 @@ func ensureAIPDDChannelFromEnv(channels []Channel, key string) ([]Channel, bool,
 	if err := channel.UpdateAbilities(nil); err != nil {
 		return channels, false, err
 	}
-	common.SysLog("AIPDD channel synced from AIPDD_API_KEY")
+	if overwriteFromEnv {
+		common.SysLog("AIPDD channel overwritten from AIPDD_API_KEY")
+	} else {
+		common.SysLog("AIPDD channel synced from AIPDD_API_KEY")
+	}
 	return channels, true, nil
 }
 

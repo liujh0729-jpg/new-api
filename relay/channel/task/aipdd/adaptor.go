@@ -151,7 +151,7 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		)
 	}
 	if cfg.BillingType == constant.AIPDDBillingTypeDurationSeconds {
-		duration, err := normalizeDurationSeconds(&req)
+		duration, err := normalizeDurationSeconds(&req, cfg)
 		if err != nil {
 			return service.TaskErrorWrapperLocal(err, "invalid_duration", http.StatusBadRequest)
 		}
@@ -175,7 +175,7 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 
 	ratios := map[string]float64{}
 	if cfg.BillingType == constant.AIPDDBillingTypeDurationSeconds {
-		duration, err := normalizeDurationSeconds(&req)
+		duration, err := normalizeDurationSeconds(&req, cfg)
 		if err != nil {
 			return nil
 		}
@@ -610,7 +610,7 @@ func (a *TaskAdaptor) convertToRequestPayload(req relaycommon.TaskSubmitReq, inf
 		return nil, err
 	}
 	if cfg.BillingType == constant.AIPDDBillingTypeDurationSeconds {
-		duration, err := normalizeDurationSeconds(&req)
+		duration, err := normalizeDurationSeconds(&req, cfg)
 		if err != nil {
 			return nil, err
 		}
@@ -618,7 +618,14 @@ func (a *TaskAdaptor) convertToRequestPayload(req relaycommon.TaskSubmitReq, inf
 	}
 
 	content := cloneWorkflowMetadata(req.Metadata)
+	explicitNumFrames := hasContentValue(content["numFrames"])
+	explicitDurationSeconds := hasContentValue(content["durationSeconds"])
 	applyModelDefaults(content, req, cfg)
+	if isLtx23Config(cfg) {
+		if err := normalizeAndValidateLtx23Content(content, req.Duration, explicitNumFrames, explicitDurationSeconds); err != nil {
+			return nil, err
+		}
+	}
 	if err := validateTaskContent(content, cfg); err != nil {
 		return nil, err
 	}
@@ -731,7 +738,7 @@ func endpointTypeFromPath(path string) constant.EndpointType {
 	}
 }
 
-func normalizeDurationSeconds(req *relaycommon.TaskSubmitReq) (int, error) {
+func normalizeDurationSeconds(req *relaycommon.TaskSubmitReq, cfg modelConfig) (int, error) {
 	duration := req.Duration
 	if duration <= 0 {
 		duration = parseDurationValue(req.Seconds)
@@ -744,6 +751,12 @@ func normalizeDurationSeconds(req *relaycommon.TaskSubmitReq) (int, error) {
 	}
 	if duration <= 0 {
 		duration = 5
+	}
+	if isLtx23Config(cfg) {
+		if duration < 1 || duration > 20 {
+			return 0, fmt.Errorf("LTX 2.3 duration must be an integer between 1 and 20 seconds")
+		}
+		return duration, nil
 	}
 	if duration != 5 && duration != 10 {
 		return 0, fmt.Errorf("duration must be 5 or 10 seconds")
@@ -854,7 +867,85 @@ func validateTaskContent(content map[string]any, cfg modelConfig) error {
 			delete(content, key)
 		}
 	}
+	for _, constraint := range cfg.WorkflowConstraints {
+		value, exists := content[constraint.ParamKey]
+		if !exists || !hasContentValue(value) {
+			continue
+		}
+		if err := validateWorkflowConstraint(value, constraint); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+func validateWorkflowConstraint(value any, constraint constant.AIPDDWorkflowParamConstraint) error {
+	numeric, numericErr := strconv.ParseFloat(anyToString(value), 64)
+	if constraint.Min != nil || constraint.Max != nil {
+		if numericErr != nil {
+			return fmt.Errorf("%s must be numeric", constraint.ParamKey)
+		}
+		if constraint.Min != nil && numeric < *constraint.Min {
+			return fmt.Errorf("%s must be at least %v", constraint.ParamKey, *constraint.Min)
+		}
+		if constraint.Max != nil && numeric > *constraint.Max {
+			return fmt.Errorf("%s must be at most %v", constraint.ParamKey, *constraint.Max)
+		}
+	}
+	if len(constraint.Allowed) > 0 {
+		for _, allowed := range constraint.Allowed {
+			allowedNumeric, allowedErr := strconv.ParseFloat(anyToString(allowed), 64)
+			if numericErr == nil && allowedErr == nil && numeric == allowedNumeric {
+				return nil
+			}
+			if anyToString(value) == anyToString(allowed) {
+				return nil
+			}
+		}
+		return fmt.Errorf("%s is not an allowed value", constraint.ParamKey)
+	}
+	return nil
+}
+
+func isLtx23Config(cfg modelConfig) bool {
+	for _, value := range []string{cfg.ModelName, cfg.ScriptCode} {
+		normalized := strings.NewReplacer("_", "-", ".", "-", " ", "-").Replace(strings.ToLower(strings.TrimSpace(value)))
+		if normalized == "aipdd-ltx-2-3" {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeAndValidateLtx23Content(content map[string]any, duration int, explicitNumFrames bool, explicitDurationSeconds bool) error {
+	const frameRate = 24
+	if duration < 1 || duration > 20 {
+		return fmt.Errorf("LTX 2.3 duration must be an integer between 1 and 20 seconds")
+	}
+	expectedFrames := duration*frameRate + 1
+	if explicitNumFrames && positiveIntValue(content["numFrames"]) != expectedFrames {
+		return fmt.Errorf("LTX 2.3 numFrames must be %d for %d seconds", expectedFrames, duration)
+	}
+	if explicitDurationSeconds && positiveIntValue(content["durationSeconds"]) != duration {
+		return fmt.Errorf("LTX 2.3 durationSeconds must match duration")
+	}
+	content["numFrames"] = expectedFrames
+	content["durationSeconds"] = duration
+
+	if hasContentValue(content["frameRate"]) && positiveIntValue(content["frameRate"]) != frameRate {
+		return fmt.Errorf("LTX 2.3 frameRate must be 24 FPS")
+	}
+	content["frameRate"] = frameRate
+
+	width := positiveIntValue(content["width"])
+	height := positiveIntValue(content["height"])
+	allowedDimensions := [][2]int{{1280, 704}, {704, 1280}, {704, 704}, {640, 480}, {480, 640}, {480, 480}}
+	for _, dimensions := range allowedDimensions {
+		if width == dimensions[0] && height == dimensions[1] {
+			return nil
+		}
+	}
+	return fmt.Errorf("LTX 2.3 resolution %dx%d is not allowed", width, height)
 }
 
 func mergeUnknownFieldsIntoMetadata(c *gin.Context, req *relaycommon.TaskSubmitReq) {

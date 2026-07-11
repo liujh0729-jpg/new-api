@@ -29,6 +29,7 @@ FROM debian:bookworm-slim@sha256:f06537653ac770703bc45b4b113475bd402f451e85223f0
 
 ENV AIPDD_BOOTSTRAP_REQUIRED=true
 ENV AIPDD_CATALOG_SYNC_ON_BOOT=true
+ENV AIPDD_CHANNEL_OVERWRITE_ON_BOOT=true
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates tzdata libasan8 wget \

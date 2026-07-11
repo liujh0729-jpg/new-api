@@ -35,17 +35,60 @@ type Catalog struct {
 }
 
 type Script struct {
-	ID               string        `json:"id"`
-	Code             string        `json:"code"`
-	Name             string        `json:"name"`
-	Description      string        `json:"description"`
-	PriceAWCoin      float64       `json:"priceAWcoin"`
-	AdapterCode      string        `json:"adapterCode"`
-	EndpointType     string        `json:"endpointType"`
-	TaskKind         string        `json:"taskKind"`
-	InputModalities  []string      `json:"inputModalities"`
-	OutputModalities []string      `json:"outputModalities"`
-	Params           []ScriptParam `json:"params"`
+	ID               string       `json:"id"`
+	Code             string       `json:"code"`
+	Name             string       `json:"name"`
+	Description      string       `json:"description"`
+	PriceAWCoin      float64      `json:"priceAWcoin"`
+	AdapterCode      string       `json:"adapterCode"`
+	EndpointType     string       `json:"endpointType"`
+	TaskKind         string       `json:"taskKind"`
+	InputModalities  []string     `json:"inputModalities"`
+	OutputModalities []string     `json:"outputModalities"`
+	Params           ScriptParams `json:"params"`
+}
+
+// ScriptParams accepts both the current array representation and the object
+// representation returned by older or parameterless AIPDD capabilities.
+type ScriptParams []ScriptParam
+
+func (p *ScriptParams) UnmarshalJSON(data []byte) error {
+	switch common.GetJsonType(json.RawMessage(data)) {
+	case "null":
+		*p = nil
+		return nil
+	case "array":
+		var params []ScriptParam
+		if err := common.Unmarshal(data, &params); err != nil {
+			return err
+		}
+		*p = params
+		return nil
+	case "object":
+		var paramsByKey map[string]ScriptParam
+		if err := common.Unmarshal(data, &paramsByKey); err != nil {
+			return err
+		}
+
+		keys := make([]string, 0, len(paramsByKey))
+		for key := range paramsByKey {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+
+		params := make([]ScriptParam, 0, len(keys))
+		for _, key := range keys {
+			param := paramsByKey[key]
+			if strings.TrimSpace(param.ParamKey) == "" {
+				param.ParamKey = key
+			}
+			params = append(params, param)
+		}
+		*p = params
+		return nil
+	default:
+		return fmt.Errorf("AIPDD script params must be an array, object, or null")
+	}
 }
 
 type ScriptParam struct {
@@ -61,6 +104,9 @@ type ScriptParam struct {
 	UIType            string          `json:"uiType"`
 	AcceptedMimeTypes []string        `json:"acceptedMimeTypes"`
 	Aliases           []string        `json:"aliases"`
+	Min               *float64        `json:"min"`
+	Max               *float64        `json:"max"`
+	Allowed           []any           `json:"allowed"`
 }
 
 type FeeRule struct {
@@ -393,10 +439,31 @@ func buildCapability(script Script, feeRuleByKey map[string]FeeRule) (constant.A
 		WorkflowParamKeys:      paramKeys,
 		RequiredWorkflowParams: requiredParams,
 		WorkflowDefaults:       buildWorkflowDefaults(params, base),
+		WorkflowConstraints:    buildWorkflowConstraints(params, base),
 		EndpointType:           inferEndpointType(script, params, base, hasBase),
 		BillingType:            inferBillingType(script, params, feeRule, hasFeeRule, base, hasBase),
 	}
 	return capability, rawPrice, true
+}
+
+func buildWorkflowConstraints(params []ScriptParam, base constant.AIPDDCapability) []constant.AIPDDWorkflowParamConstraint {
+	if len(params) == 0 {
+		return append([]constant.AIPDDWorkflowParamConstraint(nil), base.WorkflowConstraints...)
+	}
+	constraints := make([]constant.AIPDDWorkflowParamConstraint, 0, len(params))
+	for _, param := range params {
+		if param.Min == nil && param.Max == nil && len(param.Allowed) == 0 {
+			continue
+		}
+		constraints = append(constraints, constant.AIPDDWorkflowParamConstraint{
+			ParamKey: param.ParamKey,
+			DataType: param.DataType,
+			Min:      param.Min,
+			Max:      param.Max,
+			Allowed:  append([]any(nil), param.Allowed...),
+		})
+	}
+	return constraints
 }
 
 func defaultCapabilityForScript(script Script) (constant.AIPDDCapability, bool) {

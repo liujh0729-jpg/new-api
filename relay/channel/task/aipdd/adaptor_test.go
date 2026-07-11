@@ -336,6 +336,63 @@ func TestConvertToRequestPayloadAppliesDynamicLTXDefaults(t *testing.T) {
 	}
 }
 
+func TestConvertToRequestPayloadValidatesLTX23Policy(t *testing.T) {
+	original := constant.GetAIPDDCapabilities()
+	t.Cleanup(func() { constant.SetAIPDDCapabilities(original) })
+	modelName := "aipdd_ltx_2.3"
+	constant.SetAIPDDCapabilities([]constant.AIPDDCapability{{
+		ModelName:              modelName,
+		ScriptCode:             modelName,
+		EndpointType:           constant.EndpointTypeOpenAIVideo,
+		BillingType:            constant.AIPDDBillingTypeDurationSeconds,
+		WorkflowParamKeys:      []string{"prompt", "image", "width", "height", "durationSeconds", "numFrames", "frameRate"},
+		RequiredWorkflowParams: map[string]bool{"prompt": true, "image": true, "width": true, "height": true, "numFrames": true, "frameRate": true},
+		WorkflowDefaults: []constant.AIPDDWorkflowParamDefault{
+			{ParamKey: "prompt", ValueType: constant.AIPDDWorkflowValueTypeString, Sources: []constant.AIPDDWorkflowValueSource{{Type: constant.AIPDDWorkflowSourcePrompt}}},
+			{ParamKey: "image", ValueType: constant.AIPDDWorkflowValueTypeString, Sources: []constant.AIPDDWorkflowValueSource{{Type: constant.AIPDDWorkflowSourceImage}}},
+			{ParamKey: "width", ValueType: constant.AIPDDWorkflowValueTypeInt, Sources: []constant.AIPDDWorkflowValueSource{{Type: constant.AIPDDWorkflowSourceStatic, Key: "1280"}}},
+			{ParamKey: "height", ValueType: constant.AIPDDWorkflowValueTypeInt, Sources: []constant.AIPDDWorkflowValueSource{{Type: constant.AIPDDWorkflowSourceStatic, Key: "704"}}},
+			{ParamKey: "durationSeconds", ValueType: constant.AIPDDWorkflowValueTypeInt, Sources: []constant.AIPDDWorkflowValueSource{{Type: constant.AIPDDWorkflowSourceDuration}}},
+			{ParamKey: "numFrames", ValueType: constant.AIPDDWorkflowValueTypeInt, Sources: []constant.AIPDDWorkflowValueSource{{Type: constant.AIPDDWorkflowSourceStatic, Key: "121"}}},
+			{ParamKey: "frameRate", ValueType: constant.AIPDDWorkflowValueTypeInt, Sources: []constant.AIPDDWorkflowValueSource{{Type: constant.AIPDDWorkflowSourceStatic, Key: "24"}}},
+		},
+	}})
+
+	adaptor := &TaskAdaptor{}
+	valid, err := adaptor.convertToRequestPayload(relaycommon.TaskSubmitReq{
+		Model: modelName, Prompt: "camera push in", Image: "https://cdn.example.com/input.png", Duration: 20,
+		Metadata: map[string]interface{}{"width": 704, "height": 1280},
+	}, relayInfoWithModel(modelName))
+	if err != nil {
+		t.Fatalf("valid LTX request failed: %v", err)
+	}
+	if valid.Input["numFrames"] != 481 || valid.Input["frameRate"] != 24 || valid.Input["durationSeconds"] != 20 {
+		t.Fatalf("unexpected LTX timing: %#v", valid.Input)
+	}
+
+	cases := []struct {
+		name     string
+		duration int
+		metadata map[string]interface{}
+	}{
+		{name: "duration", duration: 21, metadata: map[string]interface{}{"width": 1280, "height": 704}},
+		{name: "resolution", duration: 5, metadata: map[string]interface{}{"width": 1280, "height": 720}},
+		{name: "fps", duration: 5, metadata: map[string]interface{}{"width": 1280, "height": 704, "frameRate": 25}},
+		{name: "explicit zero fps", duration: 5, metadata: map[string]interface{}{"width": 1280, "height": 704, "frameRate": 0}},
+		{name: "frames", duration: 5, metadata: map[string]interface{}{"width": 1280, "height": 704, "numFrames": 113}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := adaptor.convertToRequestPayload(relaycommon.TaskSubmitReq{
+				Model: modelName, Prompt: "camera push in", Image: "https://cdn.example.com/input.png", Duration: tc.duration, Metadata: tc.metadata,
+			}, relayInfoWithModel(modelName))
+			if err == nil {
+				t.Fatal("expected invalid LTX request to fail")
+			}
+		})
+	}
+}
+
 func TestWan22WanxIgnoresUnsupportedDurationForJavaBackend(t *testing.T) {
 	adaptor := &TaskAdaptor{}
 	payload, err := adaptor.convertToRequestPayload(relaycommon.TaskSubmitReq{
