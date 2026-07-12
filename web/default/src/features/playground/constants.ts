@@ -113,6 +113,11 @@ export const SEEDANCE_15_20_VIDEO_DURATION_RANGE: VideoDurationRange = {
   max: 15,
   step: 1,
 }
+export const LTX_23_VIDEO_DURATION_RANGE: VideoDurationRange = {
+  min: 1,
+  max: 20,
+  step: 1,
+}
 export const DEFAULT_VIDEO_RATIO = '16:9'
 export const DEFAULT_VIDEO_DURATION = 5
 export const DEFAULT_VIDEO_RESOLUTION = '720p'
@@ -140,6 +145,15 @@ export const LTX_VIDEO_SIZE_OPTIONS = [
   '2560x1440',
   '1440x2560',
   '3840x2176',
+] as const
+export const DEFAULT_LTX_23_VIDEO_SIZE = '1280x704'
+export const LTX_23_VIDEO_SIZE_OPTIONS = [
+  DEFAULT_LTX_23_VIDEO_SIZE,
+  '704x1280',
+  '704x704',
+  '640x480',
+  '480x640',
+  '480x480',
 ] as const
 
 const SEEDANCE_VIDEO_RESOLUTION_OPTIONS_BY_MODEL: Record<
@@ -272,6 +286,10 @@ export function isLTXVideoModel(model: string): boolean {
   return normalized.includes('ltx')
 }
 
+export function isLTX23PolicyModel(model: string): boolean {
+  return normalizeModelName(model) === 'aipdd-ltx-2-3'
+}
+
 export function getImageSizePixels(size: string): number | null {
   const match = size.trim().match(/^(\d+)x(\d+)$/i)
   if (!match) return null
@@ -336,6 +354,8 @@ export function getVideoResolutionOptionsForModel(
 export function getLTXVideoSizeOptionsForModel(
   model: string
 ): readonly string[] {
+  if (isLTX23PolicyModel(model)) return LTX_23_VIDEO_SIZE_OPTIONS
+
   const normalized = normalizeModelName(model)
   return (
     Object.entries(LTX_VIDEO_SIZE_OPTIONS_BY_MODEL_PREFIX).find(([prefix]) =>
@@ -345,6 +365,7 @@ export function getLTXVideoSizeOptionsForModel(
 }
 
 export function getVideoDurationRangeForModel(model: string) {
+  if (isLTX23PolicyModel(model)) return LTX_23_VIDEO_DURATION_RANGE
   if (isSeedance20Model(model) || isSeedance15Model(model)) {
     return SEEDANCE_15_20_VIDEO_DURATION_RANGE
   }
@@ -400,6 +421,9 @@ export function normalizeLTXVideoSizeForModel(
   const options = getLTXVideoSizeOptionsForModel(model)
   if (options.length === 0) return size
   if (options.includes(size)) return size
+  if (options.includes(DEFAULT_LTX_23_VIDEO_SIZE)) {
+    return DEFAULT_LTX_23_VIDEO_SIZE
+  }
   if (options.includes(DEFAULT_LTX_VIDEO_SIZE)) return DEFAULT_LTX_VIDEO_SIZE
   return options[0] || DEFAULT_LTX_VIDEO_SIZE
 }

@@ -177,6 +177,11 @@ export function buildVideoGenerationPayload(
   const ltxDimensions = isLTXVideo
     ? getLTXVideoDimensions(config.video_size)
     : undefined
+  const ltxImageReferences = isLTXVideo
+    ? references
+        .filter((reference) => reference.kind === 'image')
+        .map((reference) => reference.url)
+    : []
   const metadata: VideoGenerationRequest['metadata'] = {
     content,
     ...(ltxDimensions
@@ -195,6 +200,12 @@ export function buildVideoGenerationPayload(
     group: config.group,
     prompt,
     ...(clientTaskId ? { client_task_id: clientTaskId } : {}),
+    ...(ltxImageReferences.length > 0
+      ? {
+          image: ltxImageReferences[0],
+          images: ltxImageReferences,
+        }
+      : {}),
     duration: config.video_duration,
     seconds: String(config.video_duration),
     ...(size ? { size } : {}),

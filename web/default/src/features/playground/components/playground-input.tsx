@@ -47,6 +47,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { Slider } from '@/components/ui/slider'
 import {
   PromptInput,
   PromptInputAttachment,
@@ -68,6 +69,8 @@ import {
   getVideoResolutionOptionsForModel,
   IMAGE_REFERENCE_ACCEPT,
   IMAGE_REFERENCE_LIMITS,
+  isLTX23PolicyModel,
+  isLTXVideoModel,
   normalizeVideoDurationForModel,
   SEEDANCE_REFERENCE_ACCEPT,
   SEEDANCE_REFERENCE_LIMITS,
@@ -218,6 +221,8 @@ export function PlaygroundInput({
   const [isPreparingReferences, setIsPreparingReferences] = useState(false)
   const isImageMode = mode === 'image'
   const isVideoMode = mode === 'video'
+  const isLTXVideo = isVideoMode && isLTXVideoModel(modelValue)
+  const isLTX23Policy = isVideoMode && isLTX23PolicyModel(modelValue)
   const controlsDisabled = disabled || isPreparingReferences
   const imageSizeOptions = getImageSizeOptionsForModel(modelValue)
   const videoDurationRange = getVideoDurationRangeForModel(modelValue)
@@ -228,12 +233,6 @@ export function PlaygroundInput({
     modelValue,
     videoDuration
   )
-  const videoDurationPercent =
-    videoDurationRange.max === videoDurationRange.min
-      ? 100
-      : ((normalizedVideoDuration - videoDurationRange.min) /
-          (videoDurationRange.max - videoDurationRange.min)) *
-        100
   const ModeIcon = isVideoMode
     ? VideoIcon
     : isImageMode
@@ -292,10 +291,8 @@ export function PlaygroundInput({
     setIsMaterialSelectorOpen(true)
   }
 
-  const handleVideoDurationChange = (value: string) => {
-    onVideoDurationChange(
-      normalizeVideoDurationForModel(modelValue, Number.parseInt(value, 10))
-    )
+  const handleVideoDurationChange = (value: number) => {
+    onVideoDurationChange(normalizeVideoDurationForModel(modelValue, value))
   }
 
   return (
@@ -303,7 +300,9 @@ export function PlaygroundInput({
       <PromptInput
         accept={
           isVideoMode
-            ? SEEDANCE_REFERENCE_ACCEPT
+            ? isLTXVideo
+              ? IMAGE_REFERENCE_ACCEPT
+              : SEEDANCE_REFERENCE_ACCEPT
             : isImageMode
               ? IMAGE_REFERENCE_ACCEPT
               : undefined
@@ -318,12 +317,14 @@ export function PlaygroundInput({
         }
         maxFiles={
           isVideoMode
-            ? SEEDANCE_REFERENCE_LIMITS.total
+            ? isLTXVideo
+              ? 1
+              : SEEDANCE_REFERENCE_LIMITS.total
             : isImageMode
               ? IMAGE_REFERENCE_LIMITS.maxFiles
               : undefined
         }
-        multiple={isVideoMode || isImageMode}
+        multiple={(isVideoMode && !isLTXVideo) || isImageMode}
         onError={(error) => toast.error(error.message)}
         onFilesPreparingChange={setIsPreparingReferences}
         prepareFiles={
@@ -343,7 +344,9 @@ export function PlaygroundInput({
           onChange={(event) => setText(event.target.value)}
           placeholder={
             isVideoMode
-              ? t('Upload references or describe the video')
+              ? isLTXVideo
+                ? t('Upload a reference image or describe the video')
+                : t('Upload references or describe the video')
               : isImageMode
                 ? t('Describe the image to generate')
                 : t('Ask anything')
@@ -533,7 +536,16 @@ export function PlaygroundInput({
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align='start' className='min-w-36'>
                       <DropdownMenuGroup>
-                        <DropdownMenuLabel>{t('Size')}</DropdownMenuLabel>
+                        <div className='flex items-start justify-between gap-4 px-2 py-1.5'>
+                          <DropdownMenuLabel className='p-0'>
+                            {t('LTX output settings')}
+                          </DropdownMenuLabel>
+                          {isLTX23Policy && (
+                            <span className='text-muted-foreground text-xs whitespace-nowrap'>
+                              {t('Fixed at {{fps}} FPS', { fps: 24 })}
+                            </span>
+                          )}
+                        </div>
                         <DropdownMenuRadioGroup
                           value={videoSize}
                           onValueChange={onVideoSizeChange}
@@ -649,21 +661,18 @@ export function PlaygroundInput({
                           {normalizedVideoDuration}s
                         </span>
                       </div>
-                      <div className='space-y-2 px-2 pb-2'>
-                        <input
+                      <div className='flex flex-col gap-2 px-2 pb-2'>
+                        <Slider
                           aria-label={t('Duration')}
-                          className='accent-primary h-2 w-full cursor-pointer rounded-full'
                           disabled={controlsDisabled}
                           max={videoDurationRange.max}
                           min={videoDurationRange.min}
-                          onChange={(event) =>
-                            handleVideoDurationChange(event.target.value)
+                          onValueChange={(value) =>
+                            handleVideoDurationChange(
+                              Array.isArray(value) ? value[0] : value
+                            )
                           }
                           step={videoDurationRange.step}
-                          style={{
-                            background: `linear-gradient(to right, hsl(var(--primary)) ${videoDurationPercent}%, hsl(var(--muted)) ${videoDurationPercent}%)`,
-                          }}
-                          type='range'
                           value={normalizedVideoDuration}
                         />
                         <div className='text-muted-foreground flex items-center justify-between text-xs'>

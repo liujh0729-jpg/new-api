@@ -38,6 +38,7 @@ const (
 	AIPDDWorkflowSourcePrompt         AIPDDWorkflowSourceType = "prompt"
 	AIPDDWorkflowSourceImage          AIPDDWorkflowSourceType = "image"
 	AIPDDWorkflowSourceFirstImage     AIPDDWorkflowSourceType = "first_image"
+	AIPDDWorkflowSourceLastImage      AIPDDWorkflowSourceType = "last_image"
 	AIPDDWorkflowSourceInputReference AIPDDWorkflowSourceType = "input_reference"
 	AIPDDWorkflowSourceDuration       AIPDDWorkflowSourceType = "duration"
 	AIPDDWorkflowSourceStatic         AIPDDWorkflowSourceType = "static"

@@ -4659,6 +4659,12 @@
     "Zero retention": "Без хранения данных",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "Fixed at {{fps}} FPS": "Фиксированная частота: {{fps}} FPS",
+    "LTX 2.3 requires a reference image": "Для LTX 2.3 требуется референсное изображение",
+    "LTX output settings": "Настройки вывода LTX",
+    "LTX supports image references only": "LTX поддерживает только изображения в качестве референсов",
+    "LTX supports one reference image": "LTX поддерживает одно референсное изображение",
+    "Upload a reference image or describe the video": "Загрузите референсное изображение или опишите видео"
   }
 }

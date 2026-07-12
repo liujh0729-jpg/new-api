@@ -86,12 +86,15 @@ func validateMultipartTaskRequest(c *gin.Context, info *RelayInfo, action string
 
 	formData := c.Request.PostForm
 	req = TaskSubmitReq{
-		Prompt:   formData.Get("prompt"),
-		Model:    formData.Get("model"),
-		Mode:     formData.Get("mode"),
-		Image:    formData.Get("image"),
-		Size:     formData.Get("size"),
-		Metadata: make(map[string]interface{}),
+		Prompt:     formData.Get("prompt"),
+		Model:      formData.Get("model"),
+		Mode:       formData.Get("mode"),
+		Image:      formData.Get("image"),
+		ImageTail:  formData.Get("image_tail"),
+		FirstFrame: formData.Get("first_frame"),
+		LastFrame:  formData.Get("last_frame"),
+		Size:       formData.Get("size"),
+		Metadata:   make(map[string]interface{}),
 	}
 
 	if durationStr := formData.Get("seconds"); durationStr != "" {
@@ -188,6 +191,9 @@ func isKnownTaskField(field string) bool {
 		"mode":            true,
 		"client_task_id":  true,
 		"image":           true,
+		"image_tail":      true,
+		"first_frame":     true,
+		"last_frame":      true,
 		"images":          true,
 		"size":            true,
 		"duration":        true,

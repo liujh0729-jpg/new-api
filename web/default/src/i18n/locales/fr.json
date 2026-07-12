@@ -4659,6 +4659,12 @@
     "Zero retention": "Aucune rétention",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "Fixed at {{fps}} FPS": "Cadence fixe de {{fps}} i/s",
+    "LTX 2.3 requires a reference image": "LTX 2.3 nécessite une image de référence",
+    "LTX output settings": "Paramètres de sortie LTX",
+    "LTX supports image references only": "LTX prend uniquement en charge les images de référence",
+    "LTX supports one reference image": "LTX prend en charge une seule image de référence",
+    "Upload a reference image or describe the video": "Importez une image de référence ou décrivez la vidéo"
   }
 }

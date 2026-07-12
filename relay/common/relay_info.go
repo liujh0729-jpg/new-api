@@ -679,6 +679,9 @@ type TaskSubmitReq struct {
 	Mode           string                 `json:"mode,omitempty"`
 	ClientTaskID   string                 `json:"client_task_id,omitempty"`
 	Image          string                 `json:"image,omitempty"`
+	ImageTail      string                 `json:"image_tail,omitempty"`
+	FirstFrame     string                 `json:"first_frame,omitempty"`
+	LastFrame      string                 `json:"last_frame,omitempty"`
 	Images         []string               `json:"images,omitempty"`
 	Size           string                 `json:"size,omitempty"`
 	N              *int                   `json:"n,omitempty"`

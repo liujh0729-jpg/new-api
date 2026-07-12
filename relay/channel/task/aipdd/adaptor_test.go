@@ -393,6 +393,57 @@ func TestConvertToRequestPayloadValidatesLTX23Policy(t *testing.T) {
 	}
 }
 
+func TestConvertToRequestPayloadMapsLTX23FirstAndLastFramesSeparately(t *testing.T) {
+	original := constant.GetAIPDDCapabilities()
+	t.Cleanup(func() { constant.SetAIPDDCapabilities(original) })
+	modelName := "aipdd_ltx_2.3 (首尾帧)"
+	constant.SetAIPDDCapabilities([]constant.AIPDDCapability{{
+		ModelName:              modelName,
+		ScriptCode:             modelName,
+		EndpointType:           constant.EndpointTypeOpenAIVideo,
+		BillingType:            constant.AIPDDBillingTypeDurationSeconds,
+		WorkflowParamKeys:      []string{"first_frame_image", "last_frame_image", "global_prompt", "width", "height", "durationSeconds", "numFrames", "frameRate"},
+		RequiredWorkflowParams: map[string]bool{"first_frame_image": true, "last_frame_image": true, "global_prompt": true, "width": true, "height": true, "numFrames": true, "frameRate": true},
+		WorkflowDefaults: []constant.AIPDDWorkflowParamDefault{
+			{ParamKey: "first_frame_image", ValueType: constant.AIPDDWorkflowValueTypeString, Sources: []constant.AIPDDWorkflowValueSource{{Type: constant.AIPDDWorkflowSourceFirstImage}}},
+			{ParamKey: "last_frame_image", ValueType: constant.AIPDDWorkflowValueTypeString, Sources: []constant.AIPDDWorkflowValueSource{{Type: constant.AIPDDWorkflowSourceLastImage}}},
+			{ParamKey: "global_prompt", ValueType: constant.AIPDDWorkflowValueTypeString, Sources: []constant.AIPDDWorkflowValueSource{{Type: constant.AIPDDWorkflowSourcePrompt}}},
+			{ParamKey: "width", ValueType: constant.AIPDDWorkflowValueTypeInt, Sources: []constant.AIPDDWorkflowValueSource{{Type: constant.AIPDDWorkflowSourceStatic, Key: "1280"}}},
+			{ParamKey: "height", ValueType: constant.AIPDDWorkflowValueTypeInt, Sources: []constant.AIPDDWorkflowValueSource{{Type: constant.AIPDDWorkflowSourceStatic, Key: "704"}}},
+			{ParamKey: "durationSeconds", ValueType: constant.AIPDDWorkflowValueTypeInt, Sources: []constant.AIPDDWorkflowValueSource{{Type: constant.AIPDDWorkflowSourceDuration}}},
+			{ParamKey: "numFrames", ValueType: constant.AIPDDWorkflowValueTypeInt, Sources: []constant.AIPDDWorkflowValueSource{{Type: constant.AIPDDWorkflowSourceStatic, Key: "121"}}},
+			{ParamKey: "frameRate", ValueType: constant.AIPDDWorkflowValueTypeInt, Sources: []constant.AIPDDWorkflowValueSource{{Type: constant.AIPDDWorkflowSourceStatic, Key: "24"}}},
+		},
+	}})
+
+	adaptor := &TaskAdaptor{}
+	payload, err := adaptor.convertToRequestPayload(relaycommon.TaskSubmitReq{
+		Model: modelName, Prompt: "camera push in", Duration: 20,
+		FirstFrame: "https://cdn.example.com/first.png",
+		LastFrame:  "https://cdn.example.com/last.png",
+	}, relayInfoWithModel(modelName))
+	if err != nil {
+		t.Fatalf("valid first/last LTX request failed: %v", err)
+	}
+	if payload.Input["first_frame_image"] != "https://cdn.example.com/first.png" {
+		t.Fatalf("first frame mapped incorrectly: %#v", payload.Input)
+	}
+	if payload.Input["last_frame_image"] != "https://cdn.example.com/last.png" {
+		t.Fatalf("last frame mapped incorrectly: %#v", payload.Input)
+	}
+	if payload.Input["numFrames"] != 481 || payload.Input["frameRate"] != 24 || payload.Input["durationSeconds"] != 20 {
+		t.Fatalf("unexpected first/last LTX timing: %#v", payload.Input)
+	}
+
+	_, err = adaptor.convertToRequestPayload(relaycommon.TaskSubmitReq{
+		Model: modelName, Prompt: "camera push in", Duration: 5,
+		FirstFrame: "https://cdn.example.com/first.png",
+	}, relayInfoWithModel(modelName))
+	if err == nil {
+		t.Fatal("expected missing last frame validation error")
+	}
+}
+
 func TestWan22WanxIgnoresUnsupportedDurationForJavaBackend(t *testing.T) {
 	adaptor := &TaskAdaptor{}
 	payload, err := adaptor.convertToRequestPayload(relaycommon.TaskSubmitReq{

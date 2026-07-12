@@ -4659,6 +4659,12 @@
     "Zero retention": "Không lưu dữ liệu",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "Fixed at {{fps}} FPS": "Cố định ở {{fps}} FPS",
+    "LTX 2.3 requires a reference image": "LTX 2.3 yêu cầu một hình ảnh tham chiếu",
+    "LTX output settings": "Cài đặt đầu ra LTX",
+    "LTX supports image references only": "LTX chỉ hỗ trợ hình ảnh tham chiếu",
+    "LTX supports one reference image": "LTX hỗ trợ một hình ảnh tham chiếu",
+    "Upload a reference image or describe the video": "Tải lên hình ảnh tham chiếu hoặc mô tả video"
   }
 }

@@ -811,6 +811,8 @@ func resolveWorkflowDefaultString(content map[string]any, req relaycommon.TaskSu
 			values = append(values, req.Image)
 		case constant.AIPDDWorkflowSourceFirstImage:
 			values = append(values, firstString(req.Images))
+		case constant.AIPDDWorkflowSourceLastImage:
+			values = append(values, req.LastFrame, req.ImageTail)
 		case constant.AIPDDWorkflowSourceInputReference:
 			values = append(values, req.InputReference)
 		case constant.AIPDDWorkflowSourceDuration:
@@ -909,6 +911,9 @@ func validateWorkflowConstraint(value any, constraint constant.AIPDDWorkflowPara
 
 func isLtx23Config(cfg modelConfig) bool {
 	for _, value := range []string{cfg.ModelName, cfg.ScriptCode} {
+		if strings.EqualFold(strings.TrimSpace(value), "aipdd_ltx_2.3 (首尾帧)") {
+			return true
+		}
 		normalized := strings.NewReplacer("_", "-", ".", "-", " ", "-").Replace(strings.ToLower(strings.TrimSpace(value)))
 		if normalized == "aipdd-ltx-2-3" {
 			return true
@@ -968,6 +973,24 @@ func mergeUnknownFieldsIntoMetadata(c *gin.Context, req *relaycommon.TaskSubmitR
 }
 
 func normalizeTaskSubmitReq(req *relaycommon.TaskSubmitReq) {
+	req.FirstFrame = firstNonEmpty(
+		req.FirstFrame,
+		metadataString(req.Metadata, "first_frame_image"),
+		metadataString(req.Metadata, "first_frame"),
+		req.Image,
+		firstString(req.Images),
+		req.InputReference,
+	)
+	req.LastFrame = firstNonEmpty(
+		req.LastFrame,
+		metadataString(req.Metadata, "last_frame_image"),
+		metadataString(req.Metadata, "last_frame"),
+		req.ImageTail,
+		metadataString(req.Metadata, "image_tail"),
+	)
+	if strings.TrimSpace(req.Image) == "" {
+		req.Image = req.FirstFrame
+	}
 	if len(req.Images) == 0 && strings.TrimSpace(req.Image) != "" {
 		req.Images = []string{req.Image}
 	}
@@ -1122,7 +1145,7 @@ func hasContentValue(value any) bool {
 
 func isKnownSubmitField(key string) bool {
 	switch key {
-	case "prompt", "model", "mode", "client_task_id", "image", "images", "size", "n", "image_count", "duration", "seconds", "input_reference", "group":
+	case "prompt", "model", "mode", "client_task_id", "image", "image_tail", "first_frame", "last_frame", "images", "size", "n", "image_count", "duration", "seconds", "input_reference", "group":
 		return true
 	default:
 		return false

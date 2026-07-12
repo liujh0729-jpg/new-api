@@ -277,6 +277,26 @@ func TestFetchUnifiedCapabilitiesAcceptsEmptyObjectParams(t *testing.T) {
 	require.Equal(t, 0.15, catalog.ModelPrices["aipdd_paramless_task"])
 }
 
+func TestInferFirstAndLastFrameDefaultsUseDistinctSources(t *testing.T) {
+	first := inferWorkflowDefault(ScriptParam{
+		ParamKey:  "first_frame_image",
+		ParamName: "首帧图片",
+		DataType:  "string",
+		Aliases:   []string{"first_frame", "image"},
+	})
+	last := inferWorkflowDefault(ScriptParam{
+		ParamKey:  "last_frame_image",
+		ParamName: "尾帧图片",
+		DataType:  "string",
+		Aliases:   []string{"last_frame", "image_tail"},
+	})
+
+	requireWorkflowSource(t, []constant.AIPDDWorkflowParamDefault{first}, "first_frame_image", constant.AIPDDWorkflowSourceFirstImage, "")
+	requireNoWorkflowSourceType(t, []constant.AIPDDWorkflowParamDefault{first}, "first_frame_image", constant.AIPDDWorkflowSourceLastImage)
+	requireWorkflowSource(t, []constant.AIPDDWorkflowParamDefault{last}, "last_frame_image", constant.AIPDDWorkflowSourceLastImage, "")
+	requireNoWorkflowSourceType(t, []constant.AIPDDWorkflowParamDefault{last}, "last_frame_image", constant.AIPDDWorkflowSourceFirstImage)
+}
+
 func TestScriptParamsAcceptsObjectMap(t *testing.T) {
 	var script Script
 	err := common.Unmarshal([]byte(`{

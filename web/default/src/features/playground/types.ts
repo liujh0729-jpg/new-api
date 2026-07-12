@@ -178,6 +178,8 @@ export interface VideoGenerationRequest {
   group?: string
   prompt: string
   client_task_id?: string
+  image?: string
+  images?: string[]
   duration?: number
   seconds?: string
   size?: string

@@ -4659,6 +4659,12 @@
     "Zero retention": "零数据保留",
     "Zhipu": "智谱",
     "Zhipu V4": "智谱 V4",
-    "Zoom": "缩放"
+    "Zoom": "缩放",
+    "Fixed at {{fps}} FPS": "固定为 {{fps}} FPS",
+    "LTX 2.3 requires a reference image": "LTX 2.3 需要一张参考图片",
+    "LTX output settings": "LTX 输出设置",
+    "LTX supports image references only": "LTX 仅支持图片参考",
+    "LTX supports one reference image": "LTX 仅支持一张参考图片",
+    "Upload a reference image or describe the video": "上传参考图片或描述视频"
   }
 }

@@ -36,6 +36,8 @@ import {
   DEFAULT_GROUP,
   ERROR_MESSAGES,
   SEEDANCE_REFERENCE_LIMITS,
+  isLTX23PolicyModel,
+  isLTXVideoModel,
   normalizeLTXVideoSizeForModel,
   normalizeImageSizeForModel,
   normalizeVideoDurationForModel,
@@ -254,6 +256,7 @@ export function Playground() {
         text,
         referenceCandidates,
         message.files?.length || 0,
+        config.model,
         t
       )
       if (validationError) {
@@ -511,10 +514,9 @@ async function resolveSeedanceReferenceURLs(
   const resolvedReferences = await Promise.all(
     references.map(async ({ sourceFile, ...reference }) => {
       if (!sourceFile) {
-        const requestUrl =
-          hasUsableReferenceUrl(reference.url)
-            ? reference.url
-            : await fetchReferenceURLAsDataURL(reference.url)
+        const requestUrl = hasUsableReferenceUrl(reference.url)
+          ? reference.url
+          : await fetchReferenceURLAsDataURL(reference.url)
         return {
           displayReference: reference,
           requestReference: { ...reference, url: requestUrl },
@@ -727,6 +729,7 @@ function validateVideoInput(
   text: string,
   references: SeedanceReference[],
   rawFileCount: number,
+  model: string,
   t: (key: string) => string
 ): string | null {
   if (!text && references.length === 0) {
@@ -739,6 +742,19 @@ function validateVideoInput(
   const imageCount = references.filter((item) => item.kind === 'image').length
   const videoCount = references.filter((item) => item.kind === 'video').length
   const audioCount = references.filter((item) => item.kind === 'audio').length
+
+  if (isLTXVideoModel(model)) {
+    if (videoCount > 0 || audioCount > 0) {
+      return t('LTX supports image references only')
+    }
+    if (imageCount > 1) {
+      return t('LTX supports one reference image')
+    }
+    if (isLTX23PolicyModel(model) && imageCount === 0) {
+      return t('LTX 2.3 requires a reference image')
+    }
+    return null
+  }
 
   if (references.length > SEEDANCE_REFERENCE_LIMITS.total) {
     return t('Seedance supports up to 12 reference media items')

@@ -562,6 +562,19 @@ func inferWorkflowDefault(param ScriptParam) constant.AIPDDWorkflowParamDefault 
 	switch {
 	case isNegativePromptParam(normalized):
 		sources = append(sources, metadataSource("negativePrompt"), metadataSource("negative_prompt"), metadataSource("negative"))
+	case isLastFrameParam(normalized):
+		sources = append(sources,
+			metadataSource("last_frame_image"),
+			metadataSource("last_frame"),
+			metadataSource("image_tail"),
+			source(constant.AIPDDWorkflowSourceLastImage))
+	case isFirstFrameParam(normalized):
+		sources = append(sources,
+			metadataSource("first_frame_image"),
+			metadataSource("first_frame"),
+			metadataSource("image"),
+			source(constant.AIPDDWorkflowSourceFirstImage),
+			source(constant.AIPDDWorkflowSourceImage))
 	case strings.Contains(normalized, "duration") || strings.Contains(normalized, "seconds") || strings.Contains(normalized, "时长"):
 		sources = append(sources, metadataSource("durationSeconds"), metadataSource("duration_seconds"), source(constant.AIPDDWorkflowSourceDuration), metadataSource("seconds"))
 	case isFrameRateParam(normalized):
@@ -601,6 +614,16 @@ func isNegativePromptParam(value string) bool {
 		strings.Contains(value, "negative") ||
 		strings.Contains(value, "负向") ||
 		strings.Contains(value, "反向")
+}
+
+func isFirstFrameParam(value string) bool {
+	return (strings.Contains(value, "first") && strings.Contains(value, "frame")) ||
+		strings.Contains(value, "首帧") || strings.Contains(value, "起始帧")
+}
+
+func isLastFrameParam(value string) bool {
+	return (strings.Contains(value, "last") && strings.Contains(value, "frame")) ||
+		strings.Contains(value, "image_tail") || strings.Contains(value, "尾帧") || strings.Contains(value, "结束帧")
 }
 
 func isFrameRateParam(value string) bool {
