@@ -292,7 +292,7 @@ func (channel *Channel) BackfillAIPDDDefaultModels() bool {
 	changed := false
 	for _, modelName := range strings.Split(strings.Trim(channel.Models, ","), ",") {
 		modelName = strings.TrimSpace(modelName)
-		if modelName == "" || constant.IsAIPDDFunASRModel(modelName) || seen[modelName] {
+		if modelName == "" || constant.IsAIPDDExcludedModel(modelName) || seen[modelName] {
 			changed = true
 			continue
 		}

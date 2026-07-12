@@ -7,19 +7,23 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestAIPDDChannelHidesFunASRModels(t *testing.T) {
+func TestAIPDDChannelHidesExcludedModels(t *testing.T) {
 	channel := Channel{
 		Type:   constant.ChannelTypeAIPDD,
-		Models: "aipdd-index-tts,aipdd-funasr,fun-asr-nano",
+		Models: "aipdd-index-tts,aipdd-funasr,fun-asr-nano,aipdd_lightx2v,seedvr2-upscale",
 	}
 
 	require.Equal(t, []string{"aipdd-index-tts"}, channel.GetModels())
 }
 
-func TestFunASRModelsAreExcludedFromAbilitySelection(t *testing.T) {
-	require.Equal(t, []string{"safe-model"}, filterDisabledFunASRModels([]string{"funasr", "safe-model", "fun-asr-nano"}))
+func TestExcludedAIPDDModelsAreExcludedFromAbilitySelection(t *testing.T) {
+	require.Equal(t, []string{"safe-model"}, filterDisabledAIPDDModels([]string{"funasr", "safe-model", "fun-asr-nano", "lightx2v", "seedvr2"}))
 
 	channel, err := GetChannel("default", "aipdd-funasr", 0)
+	require.NoError(t, err)
+	require.Nil(t, channel)
+
+	channel, err = GetChannel("default", "aipdd_lightx2v", 0)
 	require.NoError(t, err)
 	require.Nil(t, channel)
 }

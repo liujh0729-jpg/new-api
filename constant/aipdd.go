@@ -278,7 +278,7 @@ func buildAIPDDTaskModelList(capabilities []AIPDDCapability) []string {
 	seen := make(map[string]bool, len(capabilities))
 	for _, capability := range capabilities {
 		modelName := strings.TrimSpace(capability.ModelName)
-		if modelName == "" || IsAIPDDFunASRModel(modelName) || seen[modelName] {
+		if modelName == "" || IsAIPDDExcludedModel(modelName) || seen[modelName] {
 			continue
 		}
 		models = append(models, modelName)
@@ -351,9 +351,9 @@ func cloneAIPDDCapability(capability AIPDDCapability) AIPDDCapability {
 func SetAIPDDCapabilities(capabilities []AIPDDCapability) {
 	filtered := make([]AIPDDCapability, 0, len(capabilities))
 	for _, capability := range capabilities {
-		if IsAIPDDFunASRModel(capability.ModelName) ||
-			IsAIPDDFunASRModel(capability.ScriptCode) ||
-			IsAIPDDFunASRModel(capability.TaskKind) {
+		if IsAIPDDExcludedModel(capability.ModelName) ||
+			IsAIPDDExcludedModel(capability.ScriptCode) ||
+			IsAIPDDExcludedModel(capability.TaskKind) {
 			continue
 		}
 		filtered = append(filtered, capability)
@@ -467,7 +467,7 @@ func normalizeAIPDDModelList(models []string) []string {
 	seen := make(map[string]bool, len(models))
 	for _, modelName := range models {
 		modelName = strings.TrimSpace(modelName)
-		if modelName == "" || IsAIPDDFunASRModel(modelName) || seen[modelName] {
+		if modelName == "" || IsAIPDDExcludedModel(modelName) || seen[modelName] {
 			continue
 		}
 		normalized = append(normalized, modelName)
@@ -482,6 +482,16 @@ func IsAIPDDFunASRModel(modelName string) bool {
 	normalized := strings.ToLower(strings.TrimSpace(modelName))
 	normalized = strings.NewReplacer("-", "", "_", "", ".", "", " ", "").Replace(normalized)
 	return strings.Contains(normalized, "funasr")
+}
+
+// IsAIPDDExcludedModel reports whether an AIPDD identifier belongs to a
+// capability family intentionally hidden from new-api.
+func IsAIPDDExcludedModel(modelName string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(modelName))
+	normalized = strings.NewReplacer("-", "", "_", "", ".", "", " ", "").Replace(normalized)
+	return strings.Contains(normalized, "funasr") ||
+		strings.Contains(normalized, "lightx2v") ||
+		strings.Contains(normalized, "seedvr2")
 }
 
 // FilterAIPDDModelNames removes capabilities that new-api intentionally does

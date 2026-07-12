@@ -121,6 +121,9 @@ func applyAIPDDCatalog(catalog aipddcatalog.AtomicCatalog, baseURL, apiKey strin
 		err = replaceManagedAIPDDAbilitiesTx(tx, channel)
 	}
 	if err == nil {
+		err = cleanupExcludedAIPDDDataTx(tx, channel, vendorID)
+	}
+	if err == nil {
 		err = removeStaleAIPDDModelsTx(tx, previousSet, currentSet, vendorID)
 	}
 	if err == nil {
@@ -279,6 +282,43 @@ func replaceManagedAIPDDAbilitiesTx(tx *gorm.DB, channel *Channel) error {
 	return channel.AddAbilities(tx)
 }
 
+func cleanupExcludedAIPDDDataTx(tx *gorm.DB, managedChannel *Channel, vendorID int) error {
+	if managedChannel != nil {
+		var abilities []Ability
+		if err := tx.Where("channel_id = ?", managedChannel.Id).Find(&abilities).Error; err != nil {
+			return err
+		}
+		for _, ability := range abilities {
+			if !constant.IsAIPDDExcludedModel(ability.Model) {
+				continue
+			}
+			if err := tx.Delete(&ability).Error; err != nil {
+				return err
+			}
+		}
+	}
+
+	var models []Model
+	if err := tx.Unscoped().Where("vendor_id = ?", vendorID).Find(&models).Error; err != nil {
+		return err
+	}
+	for _, item := range models {
+		if !constant.IsAIPDDExcludedModel(item.ModelName) {
+			continue
+		}
+		var abilityCount int64
+		if err := tx.Model(&Ability{}).Where("model = ?", item.ModelName).Count(&abilityCount).Error; err != nil {
+			return err
+		}
+		if abilityCount == 0 {
+			if err := tx.Unscoped().Delete(&item).Error; err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func removeStaleAIPDDModelsTx(tx *gorm.DB, previous, current map[string]bool, vendorID int) error {
 	stale := make([]string, 0)
 	for modelName := range previous {
@@ -361,6 +401,10 @@ func syncAIPDDPricingOptionsTx(tx *gorm.DB, catalog aipddcatalog.AtomicCatalog, 
 	if err != nil {
 		return nil, 0, err
 	}
+	removeExcludedAIPDDOptionKeys(prices)
+	removeExcludedAIPDDOptionKeys(ratios)
+	removeExcludedAIPDDOptionKeys(modes)
+	removeExcludedAIPDDOptionKeys(exprs)
 	for modelName := range previous {
 		delete(prices, modelName)
 		delete(ratios, modelName)
@@ -408,6 +452,14 @@ func syncAIPDDPricingOptionsTx(tx *gorm.DB, catalog aipddcatalog.AtomicCatalog, 
 		}
 	}
 	return values, updated, nil
+}
+
+func removeExcludedAIPDDOptionKeys[T any](values map[string]T) {
+	for modelName := range values {
+		if constant.IsAIPDDExcludedModel(modelName) {
+			delete(values, modelName)
+		}
+	}
 }
 
 func loadFloatOptionMapTx(tx *gorm.DB, key string, fallback map[string]float64) (map[string]float64, error) {

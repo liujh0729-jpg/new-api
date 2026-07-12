@@ -4,13 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
 	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/pkg/aipddcatalog"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"gorm.io/gorm"
 )
@@ -32,88 +30,12 @@ func EnsureAIPDDDefaults() error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSeconds)*time.Second)
 	defer cancel()
-	result, err := SyncAIPDDCatalog(ctx, http.DefaultClient, getAIPDDBaseURLFromEnv(), key)
+	result, err := SyncAIPDDCatalog(ctx, nil, getAIPDDBaseURLFromEnv(), key)
 	if err != nil {
-		common.SysLog("AIPDD atomic catalog sync failed, falling back to legacy and built-in defaults: " + err.Error())
-		syncAIPDDCatalogFromEnv(key)
-		return ensureAIPDDBuiltInDefaults(syncAIPDDOpenAIModelsFromEnv(key))
+		return fmt.Errorf("AIPDD atomic catalog sync failed: %w", err)
 	}
 	common.SysLog(fmt.Sprintf("AIPDD atomic catalog ready: revision=%s, added=%d, removed=%d, snapshot=%t", result.Revision, result.AddedModels, result.RemovedModels, result.UsedSnapshot))
 	return nil
-}
-
-func ensureAIPDDBuiltInDefaults(openAIModels []string) error {
-	changed, err := ensureAIPDDModelCatalogDefaults()
-	if err != nil {
-		return err
-	}
-	if err := syncAIPDDOpenAIModelRatios(openAIModels); err != nil {
-		common.SysLog("AIPDD OpenAI model ratio sync on boot failed: " + err.Error())
-	}
-	if err := EnsureAIPDDChannelDefaults(); err != nil {
-		return err
-	}
-	if changed {
-		InvalidatePricingCache()
-	}
-	return nil
-}
-
-func syncAIPDDCatalogFromEnv(key string) {
-	key = strings.TrimSpace(key)
-	if key == "" || !isAIPDDCatalogSyncOnBootEnabled(key) {
-		return
-	}
-
-	timeoutSeconds := common.GetEnvOrDefault(aipddCatalogSyncTimeoutSecondsEnvName, 10)
-	if timeoutSeconds <= 0 {
-		timeoutSeconds = 10
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSeconds)*time.Second)
-	defer cancel()
-
-	catalog, err := aipddcatalog.Fetch(ctx, http.DefaultClient, getAIPDDBaseURLFromEnv(), key)
-	if err != nil {
-		common.SysLog("AIPDD catalog sync on boot failed, fallback to built-in defaults: " + err.Error())
-		return
-	}
-	if len(catalog.Capabilities) == 0 {
-		common.SysLog("AIPDD catalog sync on boot returned no models, fallback to built-in defaults")
-		return
-	}
-	constant.SetAIPDDCapabilities(catalog.Capabilities)
-	if err := syncAIPDDModelPrices(catalog.ModelPrices); err != nil {
-		common.SysLog("AIPDD model price sync on boot failed: " + err.Error())
-	}
-	common.SysLog("AIPDD catalog synced on boot: models=" + strings.Join(catalog.ModelNames(), ","))
-}
-
-func syncAIPDDOpenAIModelsFromEnv(key string) []string {
-	key = strings.TrimSpace(key)
-	if key == "" || !isAIPDDCatalogSyncOnBootEnabled(key) {
-		return nil
-	}
-
-	timeoutSeconds := common.GetEnvOrDefault(aipddCatalogSyncTimeoutSecondsEnvName, 10)
-	if timeoutSeconds <= 0 {
-		timeoutSeconds = 10
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSeconds)*time.Second)
-	defer cancel()
-
-	models, err := aipddcatalog.FetchOpenAIModels(ctx, http.DefaultClient, getAIPDDBaseURLFromEnv(), key)
-	if err != nil {
-		common.SysLog("AIPDD OpenAI model sync on boot failed: " + err.Error())
-		return nil
-	}
-	if len(models) == 0 {
-		common.SysLog("AIPDD OpenAI model sync on boot returned no models")
-		constant.ResetAIPDDOpenAIModels()
-		return nil
-	}
-	constant.SetAIPDDOpenAIModels(models)
-	common.SysLog("AIPDD OpenAI models synced on boot: models=" + strings.Join(models, ","))
-	return models
 }
 
 func EnsureAIPDDOpenAIModelDefaults(modelNames []string) error {
@@ -134,44 +56,6 @@ func EnsureAIPDDOpenAIModelDefaults(modelNames []string) error {
 		InvalidatePricingCache()
 	}
 	return nil
-}
-
-func syncAIPDDModelPrices(modelPrices map[string]float64) error {
-	if len(modelPrices) == 0 {
-		return nil
-	}
-
-	prices := ratio_setting.GetModelPriceCopy()
-	var option Option
-	err := DB.Where(&Option{Key: "ModelPrice"}).First(&option).Error
-	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-		return err
-	}
-	if err == nil && strings.TrimSpace(option.Value) != "" {
-		if unmarshalErr := common.Unmarshal([]byte(option.Value), &prices); unmarshalErr != nil {
-			return unmarshalErr
-		}
-	}
-
-	for modelName, price := range modelPrices {
-		modelName = strings.TrimSpace(modelName)
-		if modelName == "" {
-			continue
-		}
-		prices[modelName] = price
-	}
-
-	bytes, err := common.Marshal(prices)
-	if err != nil {
-		return err
-	}
-	if err := ratio_setting.UpdateModelPriceByJSONString(string(bytes)); err != nil {
-		return err
-	}
-
-	option.Key = "ModelPrice"
-	option.Value = string(bytes)
-	return DB.Save(&option).Error
 }
 
 func syncAIPDDOpenAIModelRatios(modelNames []string) error {

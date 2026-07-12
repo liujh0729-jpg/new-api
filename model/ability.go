@@ -41,7 +41,7 @@ func GetAllEnableAbilityWithChannels() ([]AbilityWithChannel, error) {
 	}
 	filtered := abilities[:0]
 	for _, ability := range abilities {
-		if ability.ChannelType == constant.ChannelTypeAIPDD && constant.IsAIPDDFunASRModel(ability.Model) {
+		if ability.ChannelType == constant.ChannelTypeAIPDD && constant.IsAIPDDExcludedModel(ability.Model) {
 			continue
 		}
 		filtered = append(filtered, ability)
@@ -53,14 +53,14 @@ func GetGroupEnabledModels(group string) []string {
 	var models []string
 	// Find distinct models
 	DB.Table("abilities").Where(commonGroupCol+" = ? and enabled = ?", group, true).Distinct("model").Pluck("model", &models)
-	return filterDisabledFunASRModels(models)
+	return filterDisabledAIPDDModels(models)
 }
 
 func GetEnabledModels() []string {
 	var models []string
 	// Find distinct models
 	DB.Table("abilities").Where("enabled = ?", true).Distinct("model").Pluck("model", &models)
-	return filterDisabledFunASRModels(models)
+	return filterDisabledAIPDDModels(models)
 }
 
 func GetAllEnableAbilities() []Ability {
@@ -68,7 +68,7 @@ func GetAllEnableAbilities() []Ability {
 	DB.Find(&abilities, "enabled = ?", true)
 	filtered := abilities[:0]
 	for _, ability := range abilities {
-		if constant.IsAIPDDFunASRModel(ability.Model) {
+		if constant.IsAIPDDExcludedModel(ability.Model) {
 			continue
 		}
 		filtered = append(filtered, ability)
@@ -76,10 +76,10 @@ func GetAllEnableAbilities() []Ability {
 	return filtered
 }
 
-func filterDisabledFunASRModels(models []string) []string {
+func filterDisabledAIPDDModels(models []string) []string {
 	filtered := make([]string, 0, len(models))
 	for _, modelName := range models {
-		if constant.IsAIPDDFunASRModel(modelName) {
+		if constant.IsAIPDDExcludedModel(modelName) {
 			continue
 		}
 		filtered = append(filtered, modelName)
@@ -133,7 +133,7 @@ func getChannelQuery(group string, model string, retry int) (*gorm.DB, error) {
 }
 
 func GetChannel(group string, model string, retry int) (*Channel, error) {
-	if constant.IsAIPDDFunASRModel(model) {
+	if constant.IsAIPDDExcludedModel(model) {
 		return nil, nil
 	}
 

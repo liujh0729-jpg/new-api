@@ -321,7 +321,7 @@ func TestEnsureAIPDDDefaultsSyncsDynamicCatalogOnBoot(t *testing.T) {
 	require.Contains(t, modeOption.Value, `"gemma3:1b":"tiered_expr"`)
 }
 
-func TestEnsureAIPDDDefaultsFallsBackWhenAtomicCatalogUnavailable(t *testing.T) {
+func TestEnsureAIPDDDefaultsFailsWhenAtomicCatalogUnavailable(t *testing.T) {
 	truncateTables(t)
 	server := httptest.NewServer(http.NotFoundHandler())
 	defer server.Close()
@@ -330,12 +330,15 @@ func TestEnsureAIPDDDefaultsFallsBackWhenAtomicCatalogUnavailable(t *testing.T) 
 	t.Setenv("AIPDD_BASE_URL", server.URL)
 	t.Setenv("AIPDD_CATALOG_SYNC_ON_BOOT", "true")
 
-	require.NoError(t, EnsureAIPDDDefaults())
+	err := EnsureAIPDDDefaults()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "AIPDD atomic catalog sync failed")
 
-	var channel Channel
-	require.NoError(t, DB.Where("type = ? AND name = ?", constant.ChannelTypeAIPDD, "AIPDD").First(&channel).Error)
-	require.Equal(t, server.URL, channel.GetBaseURL())
-	require.NotEmpty(t, channel.Models)
+	var channelCount, vendorCount int64
+	require.NoError(t, DB.Model(&Channel{}).Where("type = ?", constant.ChannelTypeAIPDD).Count(&channelCount).Error)
+	require.NoError(t, DB.Model(&Vendor{}).Where("name = ?", "AIPDD").Count(&vendorCount).Error)
+	require.Zero(t, channelCount)
+	require.Zero(t, vendorCount)
 }
 
 func TestEnsureAIPDDDefaultsRequiresEnvBeforeCatalogSync(t *testing.T) {
