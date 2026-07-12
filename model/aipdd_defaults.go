@@ -34,9 +34,28 @@ func EnsureAIPDDDefaults() error {
 	defer cancel()
 	result, err := SyncAIPDDCatalog(ctx, http.DefaultClient, getAIPDDBaseURLFromEnv(), key)
 	if err != nil {
-		return err
+		common.SysLog("AIPDD atomic catalog sync failed, falling back to legacy and built-in defaults: " + err.Error())
+		syncAIPDDCatalogFromEnv(key)
+		return ensureAIPDDBuiltInDefaults(syncAIPDDOpenAIModelsFromEnv(key))
 	}
 	common.SysLog(fmt.Sprintf("AIPDD atomic catalog ready: revision=%s, added=%d, removed=%d, snapshot=%t", result.Revision, result.AddedModels, result.RemovedModels, result.UsedSnapshot))
+	return nil
+}
+
+func ensureAIPDDBuiltInDefaults(openAIModels []string) error {
+	changed, err := ensureAIPDDModelCatalogDefaults()
+	if err != nil {
+		return err
+	}
+	if err := syncAIPDDOpenAIModelRatios(openAIModels); err != nil {
+		common.SysLog("AIPDD OpenAI model ratio sync on boot failed: " + err.Error())
+	}
+	if err := EnsureAIPDDChannelDefaults(); err != nil {
+		return err
+	}
+	if changed {
+		InvalidatePricingCache()
+	}
 	return nil
 }
 

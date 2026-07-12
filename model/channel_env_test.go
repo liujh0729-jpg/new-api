@@ -321,6 +321,23 @@ func TestEnsureAIPDDDefaultsSyncsDynamicCatalogOnBoot(t *testing.T) {
 	require.Contains(t, modeOption.Value, `"gemma3:1b":"tiered_expr"`)
 }
 
+func TestEnsureAIPDDDefaultsFallsBackWhenAtomicCatalogUnavailable(t *testing.T) {
+	truncateTables(t)
+	server := httptest.NewServer(http.NotFoundHandler())
+	defer server.Close()
+
+	t.Setenv("AIPDD_API_KEY", "sk-test-env-key")
+	t.Setenv("AIPDD_BASE_URL", server.URL)
+	t.Setenv("AIPDD_CATALOG_SYNC_ON_BOOT", "true")
+
+	require.NoError(t, EnsureAIPDDDefaults())
+
+	var channel Channel
+	require.NoError(t, DB.Where("type = ? AND name = ?", constant.ChannelTypeAIPDD, "AIPDD").First(&channel).Error)
+	require.Equal(t, server.URL, channel.GetBaseURL())
+	require.NotEmpty(t, channel.Models)
+}
+
 func TestEnsureAIPDDDefaultsRequiresEnvBeforeCatalogSync(t *testing.T) {
 	truncateTables(t)
 	t.Setenv("AIPDD_API_KEY", "")
