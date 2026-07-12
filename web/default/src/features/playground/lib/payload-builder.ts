@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import {
   ERROR_MESSAGES,
   getLTXVideoDimensions,
+  isLTX23StartEndModel,
   isLTXVideoModel,
   normalizeImageSizeForModel,
 } from '../constants'
@@ -173,15 +174,28 @@ export function buildVideoGenerationPayload(
     .filter((item): item is VideoGenerationContentItem => item !== null)
 
   const isLTXVideo = isLTXVideoModel(config.model)
+  const isLTXStartEnd = isLTX23StartEndModel(config.model)
   const size = isLTXVideo ? undefined : getOpenAIVideoSize(config.video_ratio)
-  const ltxDimensions = isLTXVideo
-    ? getLTXVideoDimensions(config.video_size)
-    : undefined
+  const ltxDimensions =
+    isLTXVideo && !isLTXStartEnd
+      ? getLTXVideoDimensions(config.video_size)
+      : undefined
   const ltxImageReferences = isLTXVideo
     ? references
         .filter((reference) => reference.kind === 'image')
         .map((reference) => reference.url)
     : []
+  const ltxAudioReference = isLTXStartEnd
+    ? references.find((reference) => reference.kind === 'audio')?.url
+    : undefined
+  let timelineData: unknown
+  if (isLTXStartEnd && config.ltx_timeline_data.trim()) {
+    try {
+      timelineData = JSON.parse(config.ltx_timeline_data)
+    } catch {
+      throw new Error(ERROR_MESSAGES.TIMELINE_JSON_INVALID)
+    }
+  }
   const metadata: VideoGenerationRequest['metadata'] = {
     content,
     ...(ltxDimensions
@@ -189,10 +203,14 @@ export function buildVideoGenerationPayload(
           width: ltxDimensions.width,
           height: ltxDimensions.height,
         }
-      : {
-          ratio: config.video_ratio,
-          resolution: config.video_resolution,
-        }),
+      : isLTXStartEnd
+        ? {}
+        : {
+            ratio: config.video_ratio,
+            resolution: config.video_resolution,
+          }),
+    ...(ltxAudioReference ? { audio: ltxAudioReference } : {}),
+    ...(timelineData !== undefined ? { timeline_data: timelineData } : {}),
   }
 
   return {
@@ -206,6 +224,16 @@ export function buildVideoGenerationPayload(
           images: ltxImageReferences,
         }
       : {}),
+    ...(isLTXStartEnd && ltxImageReferences.length > 0
+      ? {
+          first_frame: ltxImageReferences[0],
+          ...(ltxImageReferences[1]
+            ? { last_frame: ltxImageReferences[1] }
+            : {}),
+        }
+      : {}),
+    ...(ltxAudioReference ? { audio: ltxAudioReference } : {}),
+    ...(timelineData !== undefined ? { timeline_data: timelineData } : {}),
     duration: config.video_duration,
     seconds: String(config.video_duration),
     ...(size ? { size } : {}),

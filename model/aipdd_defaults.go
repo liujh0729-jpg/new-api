@@ -3,6 +3,7 @@ package model
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -22,22 +23,20 @@ func EnsureAIPDDDefaults() error {
 	if err := validateAIPDDBootstrapKey(key); err != nil {
 		return err
 	}
-	syncAIPDDCatalogFromEnv(key)
-	openAIModels := syncAIPDDOpenAIModelsFromEnv(key)
-
-	changed, err := ensureAIPDDModelCatalogDefaults()
+	if strings.TrimSpace(key) == "" || !isAIPDDCatalogSyncOnBootEnabled(key) {
+		return nil
+	}
+	timeoutSeconds := common.GetEnvOrDefault(aipddCatalogSyncTimeoutSecondsEnvName, 10)
+	if timeoutSeconds <= 0 {
+		timeoutSeconds = 10
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSeconds)*time.Second)
+	defer cancel()
+	result, err := SyncAIPDDCatalog(ctx, http.DefaultClient, getAIPDDBaseURLFromEnv(), key)
 	if err != nil {
 		return err
 	}
-	if err := syncAIPDDOpenAIModelRatios(openAIModels); err != nil {
-		common.SysLog("AIPDD OpenAI model ratio sync on boot failed: " + err.Error())
-	}
-	if err := EnsureAIPDDChannelDefaults(); err != nil {
-		return err
-	}
-	if changed {
-		InvalidatePricingCache()
-	}
+	common.SysLog(fmt.Sprintf("AIPDD atomic catalog ready: revision=%s, added=%d, removed=%d, snapshot=%t", result.Revision, result.AddedModels, result.RemovedModels, result.UsedSnapshot))
 	return nil
 }
 

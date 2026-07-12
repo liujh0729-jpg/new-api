@@ -4,13 +4,16 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/aipddcatalog"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/gin-gonic/gin"
 )
 
 func getAIPDDBaseURLForChannel(channel *model.Channel) string {
@@ -35,51 +38,24 @@ func getAIPDDHTTPClientForChannel(channel *model.Channel) (*http.Client, error) 
 	return client, nil
 }
 
-func refreshAIPDDCatalogForChannel(ctx context.Context, channel *model.Channel) (aipddcatalog.Catalog, error) {
+func refreshAIPDDCatalogForChannel(ctx context.Context, channel *model.Channel) (aipddcatalog.AtomicCatalog, error) {
 	if channel == nil {
-		return aipddcatalog.Catalog{}, fmt.Errorf("channel is nil")
+		return aipddcatalog.AtomicCatalog{}, fmt.Errorf("channel is nil")
 	}
 	client, err := getAIPDDHTTPClientForChannel(channel)
 	if err != nil {
-		return aipddcatalog.Catalog{}, err
+		return aipddcatalog.AtomicCatalog{}, err
 	}
 
-	catalog, err := aipddcatalog.Fetch(ctx, client, getAIPDDBaseURLForChannel(channel), getAIPDDChannelCatalogKey(channel))
-	if err != nil {
-		return aipddcatalog.Catalog{}, err
-	}
-	if len(catalog.Capabilities) > 0 {
-		constant.SetAIPDDCapabilities(catalog.Capabilities)
-		model.InvalidatePricingCache()
-	}
-	return catalog, nil
+	return aipddcatalog.FetchAtomic(ctx, client, getAIPDDBaseURLForChannel(channel), getAIPDDChannelCatalogKey(channel))
 }
 
 func fetchAIPDDModelIDs(ctx context.Context, client *http.Client, baseURL, key string) ([]string, error) {
-	catalog, catalogErr := aipddcatalog.Fetch(ctx, client, baseURL, key)
-	if catalogErr == nil && len(catalog.Capabilities) > 0 {
-		constant.SetAIPDDCapabilities(catalog.Capabilities)
-		model.InvalidatePricingCache()
+	catalog, err := aipddcatalog.FetchAtomic(ctx, client, baseURL, key)
+	if err != nil {
+		return nil, err
 	}
-
-	openAIModels, openAIErr := aipddcatalog.FetchOpenAIModels(ctx, client, baseURL, key)
-	if openAIErr == nil {
-		if err := model.EnsureAIPDDOpenAIModelDefaults(openAIModels); err != nil {
-			return nil, err
-		}
-	}
-
-	if catalogErr != nil && openAIErr != nil {
-		return nil, fmt.Errorf("fetch AIPDD task catalog failed: %v; fetch AIPDD OpenAI models failed: %w", catalogErr, openAIErr)
-	}
-	if catalogErr != nil {
-		common.SysLog("AIPDD task catalog fetch failed while syncing channel models: " + catalogErr.Error())
-	}
-	if openAIErr != nil {
-		common.SysLog("AIPDD OpenAI model fetch failed while syncing channel models: " + openAIErr.Error())
-	}
-
-	return normalizeModelNames(mergeModelNames(catalog.ModelNames(), openAIModels)), nil
+	return catalog.ModelNames(), nil
 }
 
 func fetchAIPDDModelIDsForChannel(ctx context.Context, channel *model.Channel) ([]string, error) {
@@ -99,4 +75,41 @@ func getAIPDDChannelCatalogKey(channel *model.Channel) string {
 		return strings.TrimSpace(key)
 	}
 	return strings.TrimSpace(strings.Split(channel.Key, "\n")[0])
+}
+
+// SyncAIPDDChannelCatalog atomically replaces the managed AIPDD channel's
+// models and all upstream-authoritative pricing data.
+func SyncAIPDDChannelCatalog(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	channel, err := model.GetChannelById(id, true)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if channel.Type != constant.ChannelTypeAIPDD || channel.Name != "AIPDD" {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "仅系统管理的 AIPDD 渠道支持目录同步"})
+		return
+	}
+	client, err := getAIPDDHTTPClientForChannel(channel)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
+	defer cancel()
+	result, err := model.SyncAIPDDCatalog(
+		ctx,
+		client,
+		getAIPDDBaseURLForChannel(channel),
+		getAIPDDChannelCatalogKey(channel),
+	)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"success": false, "message": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "", "data": result})
 }

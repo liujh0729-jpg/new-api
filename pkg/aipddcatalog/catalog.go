@@ -177,6 +177,11 @@ func Fetch(ctx context.Context, client *http.Client, baseURL, apiKey string) (Ca
 
 	var capabilitiesErr error
 	if catalog, err := fetchCapabilitiesCatalog(ctx, client, baseURL, apiKey); err == nil {
+		if catalogNeedsWorkflowEnrichment(catalog) {
+			if scripts, legacyErr := fetchScripts(ctx, client, baseURL, apiKey); legacyErr == nil {
+				catalog = enrichCatalogWorkflowParams(catalog, scripts)
+			}
+		}
 		return catalog, nil
 	} else {
 		capabilitiesErr = err
@@ -192,6 +197,154 @@ func Fetch(ctx context.Context, client *http.Client, baseURL, apiKey string) (Ca
 	}
 	awcoinUSDRate, _ := fetchAWCoinUSDRate(ctx, client, baseURL, apiKey)
 	return convertScriptsToCatalog(scripts, feeRules, awcoinUSDRate), nil
+}
+
+// catalogNeedsWorkflowEnrichment reports whether the unified capabilities
+// response omitted or incompletely described workflow parameters for at least
+// one task capability. LLM capabilities are already filtered from Catalog.
+func catalogNeedsWorkflowEnrichment(catalog Catalog) bool {
+	for _, capability := range catalog.Capabilities {
+		if capabilityNeedsWorkflowEnrichment(capability) {
+			return true
+		}
+	}
+	return false
+}
+
+func capabilityNeedsWorkflowEnrichment(capability constant.AIPDDCapability) bool {
+	return len(capability.WorkflowParamKeys) == 0 || ltxWorkflowParamsIncomplete(capability)
+}
+
+func ltxWorkflowParamsIncomplete(capability constant.AIPDDCapability) bool {
+	values := []string{capability.ModelName, capability.ScriptCode}
+	for _, value := range values {
+		normalized := strings.NewReplacer("_", "-", ".", "-", " ", "-").Replace(strings.ToLower(strings.TrimSpace(value)))
+		if strings.Contains(value, "首尾帧") ||
+			(strings.Contains(normalized, "ltx") && strings.Contains(normalized, "first") && strings.Contains(normalized, "last")) {
+			return !workflowParamsContainAll(capability.WorkflowParamKeys,
+				"first_frame_image", "last_frame_image", "audio", "local_prompts", "timeline_data", "length", "global_prompt")
+		}
+		if normalized == "aipdd-ltx-2-3" {
+			return !workflowParamsContainAll(capability.WorkflowParamKeys,
+				"prompt", "image", "negativePrompt", "width", "height", "numFrames", "frameRate", "seed")
+		}
+	}
+	return false
+}
+
+func workflowParamsContainAll(actual []string, expected ...string) bool {
+	keys := make(map[string]bool, len(actual))
+	for _, key := range actual {
+		keys[key] = true
+	}
+	for _, key := range expected {
+		if !keys[key] {
+			return false
+		}
+	}
+	return true
+}
+
+// enrichCatalogWorkflowParams supplements the unified catalog with workflow
+// details from the legacy catalog. Unified metadata remains authoritative;
+// legacy data only fills missing parameter definitions and constraints.
+func enrichCatalogWorkflowParams(catalog Catalog, scripts []Script) Catalog {
+	legacyByCode := make(map[string]constant.AIPDDCapability, len(scripts))
+	for _, script := range scripts {
+		if isFunASRScript(script) {
+			continue
+		}
+		capability, _, ok := buildCapability(script, nil)
+		if !ok {
+			continue
+		}
+		legacyByCode[strings.ToLower(strings.TrimSpace(script.Code))] = capability
+	}
+
+	for i := range catalog.Capabilities {
+		capability := &catalog.Capabilities[i]
+		if !capabilityNeedsWorkflowEnrichment(*capability) {
+			continue
+		}
+		legacy, ok := legacyCapabilityFor(*capability, legacyByCode)
+		if !ok {
+			continue
+		}
+		mergeWorkflowDetails(capability, legacy)
+	}
+	return catalog
+}
+
+func legacyCapabilityFor(capability constant.AIPDDCapability, legacyByCode map[string]constant.AIPDDCapability) (constant.AIPDDCapability, bool) {
+	for _, value := range []string{capability.ScriptCode, capability.ModelName} {
+		if legacy, ok := legacyByCode[strings.ToLower(strings.TrimSpace(value))]; ok {
+			return legacy, true
+		}
+	}
+	return constant.AIPDDCapability{}, false
+}
+
+func mergeWorkflowDetails(target *constant.AIPDDCapability, legacy constant.AIPDDCapability) {
+	if target == nil {
+		return
+	}
+
+	keys := append([]string(nil), target.WorkflowParamKeys...)
+	seenKeys := make(map[string]bool, len(keys))
+	for _, key := range keys {
+		seenKeys[key] = true
+	}
+	for _, key := range legacy.WorkflowParamKeys {
+		if !seenKeys[key] {
+			keys = append(keys, key)
+			seenKeys[key] = true
+		}
+	}
+	if len(keys) > 0 {
+		target.WorkflowParamKeys = keys
+	}
+
+	if target.RequiredWorkflowParams == nil {
+		target.RequiredWorkflowParams = make(map[string]bool)
+	}
+	for key, required := range legacy.RequiredWorkflowParams {
+		if _, exists := target.RequiredWorkflowParams[key]; !exists {
+			target.RequiredWorkflowParams[key] = required
+		}
+	}
+
+	target.WorkflowDefaults = mergeWorkflowDefaults(target.WorkflowDefaults, legacy.WorkflowDefaults)
+	target.WorkflowConstraints = mergeWorkflowConstraints(target.WorkflowConstraints, legacy.WorkflowConstraints)
+}
+
+func mergeWorkflowDefaults(primary, supplement []constant.AIPDDWorkflowParamDefault) []constant.AIPDDWorkflowParamDefault {
+	merged := append([]constant.AIPDDWorkflowParamDefault(nil), primary...)
+	seen := make(map[string]bool, len(merged))
+	for _, item := range merged {
+		seen[item.ParamKey] = true
+	}
+	for _, item := range supplement {
+		if !seen[item.ParamKey] {
+			merged = append(merged, item)
+			seen[item.ParamKey] = true
+		}
+	}
+	return merged
+}
+
+func mergeWorkflowConstraints(primary, supplement []constant.AIPDDWorkflowParamConstraint) []constant.AIPDDWorkflowParamConstraint {
+	merged := append([]constant.AIPDDWorkflowParamConstraint(nil), primary...)
+	seen := make(map[string]bool, len(merged))
+	for _, item := range merged {
+		seen[item.ParamKey] = true
+	}
+	for _, item := range supplement {
+		if !seen[item.ParamKey] {
+			merged = append(merged, item)
+			seen[item.ParamKey] = true
+		}
+	}
+	return merged
 }
 
 func FetchOpenAIModels(ctx context.Context, client *http.Client, baseURL, apiKey string) ([]string, error) {
@@ -211,7 +364,7 @@ func FetchOpenAIModels(ctx context.Context, client *http.Client, baseURL, apiKey
 	for _, item := range response.Data {
 		models = append(models, item.ID)
 	}
-	return normalizeStringList(models), nil
+	return constant.FilterAIPDDModelNames(models), nil
 }
 
 func (c Catalog) ModelNames() []string {
@@ -219,7 +372,7 @@ func (c Catalog) ModelNames() []string {
 	seen := make(map[string]bool, len(c.Capabilities))
 	for _, capability := range c.Capabilities {
 		modelName := strings.TrimSpace(capability.ModelName)
-		if modelName == "" || seen[modelName] {
+		if modelName == "" || constant.IsAIPDDFunASRModel(modelName) || seen[modelName] {
 			continue
 		}
 		models = append(models, modelName)
@@ -368,6 +521,9 @@ func convertScriptsToCatalog(scripts []Script, feeRules []FeeRule, awcoinUSDRate
 	modelPrices := make(map[string]float64)
 
 	for _, script := range scripts {
+		if isFunASRScript(script) {
+			continue
+		}
 		capability, rawPrice, ok := buildCapability(script, feeRuleByKey)
 		if !ok {
 			continue
@@ -378,6 +534,30 @@ func convertScriptsToCatalog(scripts []Script, feeRules []FeeRule, awcoinUSDRate
 
 	sortCapabilities(capabilities)
 	return Catalog{Capabilities: capabilities, ModelPrices: modelPrices, AWCoinUSDRate: awcoinUSDRate}
+}
+
+func isFunASRScript(script Script) bool {
+	for _, value := range []string{
+		script.ID,
+		script.Code,
+		script.Name,
+		script.Description,
+		script.AdapterCode,
+		script.EndpointType,
+		script.TaskKind,
+	} {
+		if constant.IsAIPDDFunASRModel(value) {
+			return true
+		}
+	}
+	for _, param := range script.Params {
+		for _, value := range []string{param.ParamKey, param.ParamName, param.ParamDesc} {
+			if constant.IsAIPDDFunASRModel(value) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func convertCapabilitiesToCatalog(scripts []Script, awcoinUSDRate float64) Catalog {
@@ -572,15 +752,23 @@ func inferWorkflowDefault(param ScriptParam) constant.AIPDDWorkflowParamDefault 
 		sources = append(sources,
 			metadataSource("first_frame_image"),
 			metadataSource("first_frame"),
-			metadataSource("image"),
 			source(constant.AIPDDWorkflowSourceFirstImage),
+			metadataSource("image"),
 			source(constant.AIPDDWorkflowSourceImage))
 	case strings.Contains(normalized, "duration") || strings.Contains(normalized, "seconds") || strings.Contains(normalized, "时长"):
 		sources = append(sources, metadataSource("durationSeconds"), metadataSource("duration_seconds"), source(constant.AIPDDWorkflowSourceDuration), metadataSource("seconds"))
 	case isFrameRateParam(normalized):
 		sources = append(sources, metadataSource("frameRate"), metadataSource("fps"))
 	case isFrameCountParam(normalized):
-		sources = append(sources, metadataSource("numFrames"), metadataSource("frames"), metadataSource("frame_count"))
+		sources = append(sources,
+			metadataSource("length"),
+			metadataSource("numFrames"),
+			metadataSource("frames"),
+			metadataSource("frame_count"),
+			source(constant.AIPDDWorkflowSourceDuration),
+			metadataSource("duration"),
+			metadataSource("durationSeconds"),
+		)
 	case isImageCountParam(normalized):
 		sources = append(sources, metadataSource("n"), metadataSource("image_count"), metadataSource("count"), metadataSource("batch_size"), metadataSource("num_outputs"))
 	case strings.Contains(normalized, "prompt") || strings.Contains(normalized, "text") || strings.Contains(normalized, "提示词"):
@@ -588,7 +776,14 @@ func inferWorkflowDefault(param ScriptParam) constant.AIPDDWorkflowParamDefault 
 	case strings.Contains(normalized, "video") || strings.Contains(normalized, "load_video") || strings.Contains(normalized, "motion"):
 		sources = append(sources, metadataSource("video"), metadataSource("input_reference"), source(constant.AIPDDWorkflowSourceInputReference), source(constant.AIPDDWorkflowSourceFirstImage), source(constant.AIPDDWorkflowSourceImage))
 	case strings.Contains(normalized, "audio") || strings.Contains(normalized, "voice") || strings.Contains(normalized, "sound"):
-		sources = append(sources, metadataSource("audio"), metadataSource("voice"), metadataSource("input_reference"))
+		sources = append(sources,
+			metadataSource("audio"),
+			metadataSource("audio_url"),
+			metadataSource("ref_audio"),
+			metadataSource("reference_audio"),
+			metadataSource("voice"),
+			metadataSource("input_reference"),
+		)
 	case strings.Contains(normalized, "image") || strings.Contains(normalized, "img") || strings.Contains(normalized, "图片"):
 		sources = append(sources, metadataSource("image"), source(constant.AIPDDWorkflowSourceImage), source(constant.AIPDDWorkflowSourceFirstImage), source(constant.AIPDDWorkflowSourceInputReference))
 	}
@@ -640,6 +835,7 @@ func isFrameCountParam(value string) bool {
 		strings.Contains(value, "framecount") ||
 		strings.Contains(value, "frame_count") ||
 		strings.Contains(value, "frames") ||
+		strings.Contains(value, "length") ||
 		strings.Contains(value, "帧数")
 }
 
@@ -806,7 +1002,8 @@ func normalizedParamText(param ScriptParam) string {
 
 func isIntegerParam(param ScriptParam) bool {
 	dataType := strings.ToLower(strings.TrimSpace(param.DataType))
-	return dataType == "int" || dataType == "integer"
+	return dataType == "int" || dataType == "integer" ||
+		(dataType == "number" && isFrameCountParam(normalizedParamText(param)))
 }
 
 func metadataSource(key string) constant.AIPDDWorkflowValueSource {

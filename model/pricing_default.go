@@ -302,21 +302,6 @@ func appendDefaultCatalogAbilities(abilities []AbilityWithChannel) []AbilityWith
 		}
 	}
 
-	for _, catalog := range defaultCatalogModels {
-		if enabledModels[catalog.ModelName] {
-			continue
-		}
-		abilities = append(abilities, AbilityWithChannel{
-			Ability: Ability{
-				Group:   "default",
-				Model:   catalog.ModelName,
-				Enabled: true,
-			},
-			ChannelType: catalog.ChannelType,
-		})
-		enabledModels[catalog.ModelName] = true
-	}
-
 	for _, catalog := range aipddCurrentCatalogModels() {
 		if enabledModels[catalog.ModelName] {
 			continue

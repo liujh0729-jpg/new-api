@@ -36,6 +36,7 @@ import {
   DEFAULT_GROUP,
   ERROR_MESSAGES,
   SEEDANCE_REFERENCE_LIMITS,
+  isLTX23StartEndModel,
   isLTX23PolicyModel,
   isLTXVideoModel,
   normalizeLTXVideoSizeForModel,
@@ -257,6 +258,7 @@ export function Playground() {
         referenceCandidates,
         message.files?.length || 0,
         config.model,
+        config.ltx_timeline_data,
         t
       )
       if (validationError) {
@@ -468,6 +470,10 @@ export function Playground() {
               updateConfig('video_resolution', value)
             }
             onVideoSizeChange={(value) => updateConfig('video_size', value)}
+            ltxTimelineData={config.ltx_timeline_data}
+            onLtxTimelineDataChange={(value) =>
+              updateConfig('ltx_timeline_data', value)
+            }
             videoDuration={config.video_duration}
             videoRatio={config.video_ratio}
             videoResolution={config.video_resolution}
@@ -730,6 +736,7 @@ function validateVideoInput(
   references: SeedanceReference[],
   rawFileCount: number,
   model: string,
+  ltxTimelineData: string,
   t: (key: string) => string
 ): string | null {
   if (!text && references.length === 0) {
@@ -742,6 +749,27 @@ function validateVideoInput(
   const imageCount = references.filter((item) => item.kind === 'image').length
   const videoCount = references.filter((item) => item.kind === 'video').length
   const audioCount = references.filter((item) => item.kind === 'audio').length
+
+  if (isLTX23StartEndModel(model)) {
+    if (videoCount > 0) {
+      return t('LTX start-end supports image and audio references only')
+    }
+    if (imageCount !== 2) {
+      return t('LTX start-end requires two reference images')
+    }
+    if (audioCount > 1) {
+      return t('LTX start-end supports at most one audio reference')
+    }
+    if (!ltxTimelineData.trim()) {
+      return t('LTX start-end requires timeline JSON')
+    }
+    try {
+      JSON.parse(ltxTimelineData)
+    } catch {
+      return t('Timeline JSON is invalid')
+    }
+    return null
+  }
 
   if (isLTXVideoModel(model)) {
     if (videoCount > 0 || audioCount > 0) {

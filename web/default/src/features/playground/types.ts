@@ -180,6 +180,10 @@ export interface VideoGenerationRequest {
   client_task_id?: string
   image?: string
   images?: string[]
+  first_frame?: string
+  last_frame?: string
+  audio?: string
+  timeline_data?: unknown
   duration?: number
   seconds?: string
   size?: string
@@ -189,6 +193,8 @@ export interface VideoGenerationRequest {
     resolution?: string
     width?: number
     height?: number
+    audio?: string
+    timeline_data?: unknown
   }
 }
 
@@ -233,6 +239,7 @@ export interface PlaygroundConfig {
   video_duration: number
   video_resolution: string
   video_size: string
+  ltx_timeline_data: string
 }
 
 export interface ParameterEnabled {

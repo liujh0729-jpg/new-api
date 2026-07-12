@@ -12,6 +12,33 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestConvertScriptsToCatalogFiltersFunASR(t *testing.T) {
+	catalog := convertScriptsToCatalog([]Script{
+		{Code: "fun-asr-nano", Name: "FunASR Nano"},
+		{Code: "safe-audio-model", Name: "Safe Audio Model"},
+	}, nil, 0)
+
+	require.Equal(t, []string{"safe-audio-model"}, catalog.ModelNames())
+}
+
+func TestFetchOpenAIModelsFiltersFunASR(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/v1/models", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"data": [
+				{"id": "funasr-nano"},
+				{"id": "qwen3:8b"}
+			]
+		}`))
+	}))
+	defer server.Close()
+
+	models, err := FetchOpenAIModels(context.Background(), server.Client(), server.URL, "test-key")
+	require.NoError(t, err)
+	require.Equal(t, []string{"qwen3:8b"}, models)
+}
+
 func TestFetchBuildsCatalogFromScriptsAndFeeRules(t *testing.T) {
 	seenAPIKey := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -271,10 +298,83 @@ func TestFetchUnifiedCapabilitiesAcceptsEmptyObjectParams(t *testing.T) {
 
 	catalog, err := Fetch(ctx, server.Client(), server.URL, "test-key")
 	require.NoError(t, err)
-	require.False(t, legacyRequested)
+	require.True(t, legacyRequested)
 	require.Equal(t, []string{"aipdd_paramless_task"}, catalog.ModelNames())
 	require.Empty(t, catalog.Capabilities[0].WorkflowParamKeys)
 	require.Equal(t, 0.15, catalog.ModelPrices["aipdd_paramless_task"])
+}
+
+func TestFetchUnifiedCapabilitiesEnrichesEmptyLTXParamsFromLegacyCatalog(t *testing.T) {
+	legacyRequested := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/capabilities":
+			_, _ = w.Write([]byte(`{
+				"code": 0,
+				"message": "fetched",
+				"data": [{
+					"id": "ltx-script",
+					"code": "aipdd_ltx_2.3",
+					"name": "LTX 2.3",
+					"adapterCode": "comfyui",
+					"endpointType": "openai-video",
+					"taskKind": "image_to_video",
+					"priceAWcoin": 400,
+					"params": {}
+				}]
+			}`))
+		case "/scripts/admin/comfyui_workflow":
+			legacyRequested = true
+			_, _ = w.Write([]byte(`{
+				"code": 200,
+				"message": "ok",
+				"data": [{
+					"id": "ltx-script",
+					"code": "aipdd_ltx_2.3",
+					"name": "LTX 2.3",
+					"endpointType": "openai-video",
+					"params": [
+						{"paramKey": "prompt", "dataType": "string", "isRequired": true, "orderNo": 1},
+						{"paramKey": "image", "dataType": "string", "isRequired": true, "orderNo": 2},
+						{"paramKey": "numFrames", "dataType": "int", "isRequired": true, "orderNo": 3, "defaultValue": 49}
+					]
+				}]
+			}`))
+		case "/system/awcoin-rate":
+			_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{"usd":0.0015}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	catalog, err := Fetch(ctx, server.Client(), server.URL, "test-key")
+	require.NoError(t, err)
+	require.True(t, legacyRequested)
+	require.Equal(t, []string{"prompt", "image", "numFrames"}, catalog.Capabilities[0].WorkflowParamKeys)
+	require.True(t, catalog.Capabilities[0].RequiredWorkflowParams["prompt"])
+	require.True(t, catalog.Capabilities[0].RequiredWorkflowParams["image"])
+	requireWorkflowSource(t, catalog.Capabilities[0].WorkflowDefaults, "numFrames", constant.AIPDDWorkflowSourceStatic, "49")
+}
+
+func TestCatalogNeedsWorkflowEnrichmentForPartialLTXParams(t *testing.T) {
+	partial := Catalog{Capabilities: []constant.AIPDDCapability{{
+		ModelName:         "aipdd_ltx_2.3",
+		WorkflowParamKeys: []string{"prompt", "image", "numFrames"},
+	}}}
+	require.True(t, catalogNeedsWorkflowEnrichment(partial))
+
+	complete := Catalog{Capabilities: []constant.AIPDDCapability{{
+		ModelName: "aipdd_ltx_2.3 (首尾帧)",
+		WorkflowParamKeys: []string{
+			"first_frame_image", "last_frame_image", "audio", "local_prompts", "timeline_data", "length", "global_prompt",
+		},
+	}}}
+	require.False(t, catalogNeedsWorkflowEnrichment(complete))
 }
 
 func TestInferFirstAndLastFrameDefaultsUseDistinctSources(t *testing.T) {
@@ -295,6 +395,26 @@ func TestInferFirstAndLastFrameDefaultsUseDistinctSources(t *testing.T) {
 	requireNoWorkflowSourceType(t, []constant.AIPDDWorkflowParamDefault{first}, "first_frame_image", constant.AIPDDWorkflowSourceLastImage)
 	requireWorkflowSource(t, []constant.AIPDDWorkflowParamDefault{last}, "last_frame_image", constant.AIPDDWorkflowSourceLastImage, "")
 	requireNoWorkflowSourceType(t, []constant.AIPDDWorkflowParamDefault{last}, "last_frame_image", constant.AIPDDWorkflowSourceFirstImage)
+}
+
+func TestInferLTXStartEndAudioAliasesAndLengthDefaults(t *testing.T) {
+	audio := inferWorkflowDefault(ScriptParam{
+		ParamKey: "audio",
+		DataType: "string",
+	})
+	for _, alias := range []string{"audio", "audio_url", "ref_audio", "reference_audio", "voice"} {
+		requireWorkflowSource(t, []constant.AIPDDWorkflowParamDefault{audio}, "audio", constant.AIPDDWorkflowSourceMetadata, alias)
+	}
+
+	length := inferWorkflowDefault(ScriptParam{
+		ParamKey: "length",
+		DataType: "number",
+	})
+	require.Equal(t, constant.AIPDDWorkflowValueTypeInt, length.ValueType)
+	for _, alias := range []string{"length", "numFrames", "frames", "frame_count", "duration"} {
+		requireWorkflowSource(t, []constant.AIPDDWorkflowParamDefault{length}, "length", constant.AIPDDWorkflowSourceMetadata, alias)
+	}
+	requireWorkflowSource(t, []constant.AIPDDWorkflowParamDefault{length}, "length", constant.AIPDDWorkflowSourceDuration, "")
 }
 
 func TestScriptParamsAcceptsObjectMap(t *testing.T) {

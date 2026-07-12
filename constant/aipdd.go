@@ -77,6 +77,27 @@ type AIPDDCapability struct {
 	WorkflowConstraints    []AIPDDWorkflowParamConstraint
 	EndpointType           EndpointType
 	BillingType            AIPDDBillingType
+	CatalogRevision        string
+	ExecutionProtocol      string
+	ExecutionPath          string
+	AWCoinUSDPerCoin       float64
+	SeedancePricing        *AIPDDSeedancePricing
+}
+
+type AIPDDSeedancePriceVariant struct {
+	HasReferenceVideo bool    `json:"hasReferenceVideo"`
+	AWCoinPerSecond   float64 `json:"amountAwcoinPerSecond"`
+	MinimumAWCoin     float64 `json:"minimumAwcoin"`
+}
+
+type AIPDDSeedanceResolutionPricing struct {
+	DefaultDurationSeconds float64                     `json:"defaultDurationSeconds"`
+	DefaultFramesPerSecond float64                     `json:"defaultFramesPerSecond"`
+	PriceVariants          []AIPDDSeedancePriceVariant `json:"priceVariants"`
+}
+
+type AIPDDSeedancePricing struct {
+	ByResolution map[string]AIPDDSeedanceResolutionPricing `json:"byResolution"`
 }
 
 const AIPDDWan22WanxRMBPerSecond = 0.02
@@ -257,7 +278,7 @@ func buildAIPDDTaskModelList(capabilities []AIPDDCapability) []string {
 	seen := make(map[string]bool, len(capabilities))
 	for _, capability := range capabilities {
 		modelName := strings.TrimSpace(capability.ModelName)
-		if modelName == "" || seen[modelName] {
+		if modelName == "" || IsAIPDDFunASRModel(modelName) || seen[modelName] {
 			continue
 		}
 		models = append(models, modelName)
@@ -316,14 +337,28 @@ func cloneAIPDDCapability(capability AIPDDCapability) AIPDDCapability {
 		}
 		capability.WorkflowConstraints = constraints
 	}
+	if capability.SeedancePricing != nil {
+		pricing := &AIPDDSeedancePricing{ByResolution: make(map[string]AIPDDSeedanceResolutionPricing, len(capability.SeedancePricing.ByResolution))}
+		for resolution, item := range capability.SeedancePricing.ByResolution {
+			item.PriceVariants = append([]AIPDDSeedancePriceVariant(nil), item.PriceVariants...)
+			pricing.ByResolution[resolution] = item
+		}
+		capability.SeedancePricing = pricing
+	}
 	return capability
 }
 
 func SetAIPDDCapabilities(capabilities []AIPDDCapability) {
-	if len(capabilities) == 0 {
-		return
+	filtered := make([]AIPDDCapability, 0, len(capabilities))
+	for _, capability := range capabilities {
+		if IsAIPDDFunASRModel(capability.ModelName) ||
+			IsAIPDDFunASRModel(capability.ScriptCode) ||
+			IsAIPDDFunASRModel(capability.TaskKind) {
+			continue
+		}
+		filtered = append(filtered, capability)
 	}
-	cloned := cloneAIPDDCapabilities(capabilities)
+	cloned := cloneAIPDDCapabilities(filtered)
 	aipddCapabilitiesLock.Lock()
 	defer aipddCapabilitiesLock.Unlock()
 	AIPDDCapabilities = cloned
@@ -407,6 +442,11 @@ func IsAIPDDPerCallBillingModel(modelName string) bool {
 	return ok && capability.BillingType == AIPDDBillingTypePerCall
 }
 
+func IsAIPDDExactBillingModel(modelName string) bool {
+	capability, ok := GetAIPDDCapability(modelName)
+	return ok && capability.SeedancePricing != nil
+}
+
 func GetAIPDDEndpointTypes(modelName string) []EndpointType {
 	capability, ok := GetAIPDDCapability(modelName)
 	if !ok {
@@ -427,13 +467,27 @@ func normalizeAIPDDModelList(models []string) []string {
 	seen := make(map[string]bool, len(models))
 	for _, modelName := range models {
 		modelName = strings.TrimSpace(modelName)
-		if modelName == "" || seen[modelName] {
+		if modelName == "" || IsAIPDDFunASRModel(modelName) || seen[modelName] {
 			continue
 		}
 		normalized = append(normalized, modelName)
 		seen[modelName] = true
 	}
 	return normalized
+}
+
+// IsAIPDDFunASRModel reports whether an AIPDD model identifier belongs to the
+// FunASR capability, which is intentionally hidden from new-api.
+func IsAIPDDFunASRModel(modelName string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(modelName))
+	normalized = strings.NewReplacer("-", "", "_", "", ".", "", " ", "").Replace(normalized)
+	return strings.Contains(normalized, "funasr")
+}
+
+// FilterAIPDDModelNames removes capabilities that new-api intentionally does
+// not expose and also normalizes duplicate or blank model names.
+func FilterAIPDDModelNames(models []string) []string {
+	return normalizeAIPDDModelList(models)
 }
 
 func mergeAIPDDModelLists(lists ...[]string) []string {

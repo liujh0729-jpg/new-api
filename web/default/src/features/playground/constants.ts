@@ -234,6 +234,27 @@ export const IMAGE_REFERENCE_ACCEPT = [
   '.gif',
   '.bmp',
 ].join(',')
+
+export const LTX_START_END_REFERENCE_ACCEPT = [
+  'image/*',
+  'audio/*',
+  '.png',
+  '.jpg',
+  '.jpeg',
+  '.webp',
+  '.gif',
+  '.bmp',
+  '.heic',
+  '.heif',
+  '.mp3',
+  '.wav',
+  '.m4a',
+  '.aac',
+  '.ogg',
+  '.oga',
+  '.flac',
+  '.opus',
+].join(',')
 export const IMAGE_REFERENCE_LIMITS = {
   maxFiles: 10,
   maxFileSize: 300 * 1024 * 1024,
@@ -284,6 +305,15 @@ export function isSeedance10Model(model: string): boolean {
 export function isLTXVideoModel(model: string): boolean {
   const normalized = normalizeModelName(model)
   return normalized.includes('ltx')
+}
+
+export function isLTX23StartEndModel(model: string): boolean {
+  const normalized = normalizeModelName(model)
+  if (!normalized.includes('aipdd-ltx-2-3')) return false
+  return (
+    normalized.includes('首尾帧') ||
+    (normalized.includes('first') && normalized.includes('last'))
+  )
 }
 
 export function isLTX23PolicyModel(model: string): boolean {
@@ -354,6 +384,7 @@ export function getVideoResolutionOptionsForModel(
 export function getLTXVideoSizeOptionsForModel(
   model: string
 ): readonly string[] {
+  if (isLTX23StartEndModel(model)) return []
   if (isLTX23PolicyModel(model)) return LTX_23_VIDEO_SIZE_OPTIONS
 
   const normalized = normalizeModelName(model)
@@ -365,7 +396,9 @@ export function getLTXVideoSizeOptionsForModel(
 }
 
 export function getVideoDurationRangeForModel(model: string) {
-  if (isLTX23PolicyModel(model)) return LTX_23_VIDEO_DURATION_RANGE
+  if (isLTX23PolicyModel(model) || isLTX23StartEndModel(model)) {
+    return LTX_23_VIDEO_DURATION_RANGE
+  }
   if (isSeedance20Model(model) || isSeedance15Model(model)) {
     return SEEDANCE_15_20_VIDEO_DURATION_RANGE
   }
@@ -476,6 +509,7 @@ export const DEFAULT_CONFIG: PlaygroundConfig = {
   video_duration: DEFAULT_VIDEO_DURATION,
   video_resolution: DEFAULT_VIDEO_RESOLUTION,
   video_size: DEFAULT_LTX_VIDEO_SIZE,
+  ltx_timeline_data: '',
 }
 
 export const DEFAULT_PARAMETER_ENABLED: ParameterEnabled = {
@@ -509,6 +543,7 @@ export const ERROR_MESSAGES = {
   IMAGE_TASK_FAILED: 'Image task failed',
   VIDEO_TASK_TIMEOUT: 'Video task timed out',
   VIDEO_TASK_FAILED: 'Video task failed',
+  TIMELINE_JSON_INVALID: 'Timeline JSON is invalid',
   VIDEO_REFERENCE_UPLOAD_REQUIRED:
     'Reference media must be uploaded before video generation. Please reselect the files and try again.',
   VIDEO_REFERENCE_DURATION_READ_FAILED:

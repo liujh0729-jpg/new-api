@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -15,7 +16,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
-	"github.com/QuantumNous/new-api/pkg/aipddcatalog"
+	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -47,6 +48,18 @@ type TaskAdaptor struct {
 	apiKey  string
 	baseURL string
 	proxy   string
+	quote   *seedanceBillingQuote
+}
+
+type seedanceBillingQuote struct {
+	CatalogRevision   string
+	Protocol          string
+	Endpoint          string
+	USDPerAWCoin      float64
+	EstimatedAWCoin   float64
+	Seconds           float64
+	Resolution        string
+	HasReferenceVideo bool
 }
 
 type createTaskPayload struct {
@@ -150,12 +163,20 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 			http.StatusBadRequest,
 		)
 	}
-	if cfg.BillingType == constant.AIPDDBillingTypeDurationSeconds {
+	if cfg.BillingType == constant.AIPDDBillingTypeDurationSeconds && cfg.SeedancePricing == nil {
 		duration, err := normalizeDurationSeconds(&req, cfg)
 		if err != nil {
 			return service.TaskErrorWrapperLocal(err, "invalid_duration", http.StatusBadRequest)
 		}
 		req.Duration = duration
+	}
+	if err := normalizeLtxRequestDuration(&req, cfg); err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_duration", http.StatusBadRequest)
+	}
+	if isLtx23Config(cfg) {
+		if _, err := buildWorkflowContent(req, cfg); err != nil {
+			return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+		}
 	}
 
 	info.Action = constant.TaskActionGenerate
@@ -170,6 +191,9 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 	}
 	cfg, ok := a.resolveModelConfig(ginRequestContext(c), firstNonEmpty(info.UpstreamModelName, info.OriginModelName, req.Model))
 	if !ok {
+		return nil
+	}
+	if cfg.SeedancePricing != nil {
 		return nil
 	}
 
@@ -193,14 +217,82 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 	return ratios
 }
 
-func (a *TaskAdaptor) BuildRequestURL(_ *relaycommon.RelayInfo) (string, error) {
-	return fmt.Sprintf("%s/shared-tasks/tasks", a.baseURL), nil
+func (a *TaskAdaptor) EstimateExactQuota(c *gin.Context, info *relaycommon.RelayInfo) (int, map[string]float64, error) {
+	req, err := relaycommon.GetTaskRequest(c)
+	if err != nil {
+		return 0, nil, err
+	}
+	cfg, ok := a.resolveModelConfig(ginRequestContext(c), firstNonEmpty(info.UpstreamModelName, info.OriginModelName, req.Model))
+	if !ok || cfg.SeedancePricing == nil {
+		return 0, nil, nil
+	}
+	var raw map[string]any
+	if err := common.UnmarshalBodyReusable(c, &raw); err != nil {
+		return 0, nil, err
+	}
+	resolution := strings.ToLower(strings.TrimSpace(anyToString(raw["resolution"])))
+	pricing, ok := cfg.SeedancePricing.ByResolution[resolution]
+	if !ok {
+		return 0, nil, fmt.Errorf("Seedance resolution %q has no synchronized price", resolution)
+	}
+	hasReferenceVideo := seedanceHasReferenceVideo(raw["content"])
+	variant, ok := seedancePriceVariant(pricing.PriceVariants, hasReferenceVideo)
+	if !ok || (variant.AWCoinPerSecond <= 0 && variant.MinimumAWCoin <= 0) {
+		return 0, nil, fmt.Errorf("Seedance price variant is not configured for resolution %s", resolution)
+	}
+	seconds := seedanceBillingSeconds(raw, pricing)
+	estimated := math.Max(math.Ceil(variant.MinimumAWCoin), math.Ceil(variant.AWCoinPerSecond*seconds))
+	if cfg.AWCoinUSDPerCoin <= 0 {
+		return 0, nil, fmt.Errorf("AIPDD AWCoin exchange rate is unavailable")
+	}
+	quota := billingexpr.QuotaRound(estimated * cfg.AWCoinUSDPerCoin * common.QuotaPerUnit * info.PriceData.GroupRatioInfo.GroupRatio)
+	if quota <= 0 && estimated > 0 && info.PriceData.GroupRatioInfo.GroupRatio > 0 {
+		quota = 1
+	}
+	a.quote = &seedanceBillingQuote{
+		CatalogRevision: cfg.CatalogRevision, Protocol: cfg.ExecutionProtocol,
+		Endpoint: cfg.ExecutionPath, USDPerAWCoin: cfg.AWCoinUSDPerCoin,
+		EstimatedAWCoin: estimated, Seconds: seconds, Resolution: resolution,
+		HasReferenceVideo: hasReferenceVideo,
+	}
+	return quota, map[string]float64{
+		"aipdd_awcoin": estimated, "seconds": seconds,
+		"has_reference_video": boolFloat(hasReferenceVideo),
+	}, nil
+}
+
+func (a *TaskAdaptor) AIPDDTaskSnapshot(info *relaycommon.RelayInfo) *model.AIPDDTaskExecutionSnapshot {
+	if a.quote == nil {
+		cfg, ok := constant.GetAIPDDCapability(firstNonEmpty(info.UpstreamModelName, info.OriginModelName))
+		if !ok {
+			return nil
+		}
+		return &model.AIPDDTaskExecutionSnapshot{
+			CatalogRevision: cfg.CatalogRevision, Protocol: cfg.ExecutionProtocol,
+			Endpoint: cfg.ExecutionPath, BaseURL: a.baseURL, USDPerAWCoin: cfg.AWCoinUSDPerCoin,
+		}
+	}
+	return &model.AIPDDTaskExecutionSnapshot{
+		CatalogRevision: a.quote.CatalogRevision, Protocol: a.quote.Protocol,
+		Endpoint: a.quote.Endpoint, BaseURL: a.baseURL, USDPerAWCoin: a.quote.USDPerAWCoin,
+		EstimatedAWCoin: a.quote.EstimatedAWCoin, BillingSeconds: a.quote.Seconds,
+		Resolution: a.quote.Resolution, HasReferenceVideo: a.quote.HasReferenceVideo,
+	}
+}
+
+func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, error) {
+	cfg, ok := constant.GetAIPDDCapability(firstNonEmpty(info.UpstreamModelName, info.OriginModelName))
+	if !ok || strings.TrimSpace(cfg.ExecutionPath) == "" {
+		return "", fmt.Errorf("AIPDD execution endpoint is unavailable for %s", info.OriginModelName)
+	}
+	return a.baseURL + normalizeExecutionPath(cfg.ExecutionPath), nil
 }
 
 func (a *TaskAdaptor) BuildRequestHeader(_ *gin.Context, req *http.Request, _ *relaycommon.RelayInfo) error {
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-API-Key", a.apiKey)
+	req.Header.Set("Authorization", "Bearer "+a.apiKey)
 	return nil
 }
 
@@ -211,6 +303,29 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	}
 	normalizeTaskSubmitReq(&req)
 	c.Set("task_request", req)
+	cfg, ok := constant.GetAIPDDCapability(firstNonEmpty(info.UpstreamModelName, info.OriginModelName, req.Model))
+	if ok && cfg.ExecutionProtocol == "seedance_official" {
+		storage, err := common.GetBodyStorage(c)
+		if err != nil {
+			return nil, err
+		}
+		data, err := storage.Bytes()
+		if err != nil {
+			return nil, err
+		}
+		if info.IsModelMapped {
+			var raw map[string]any
+			if err := common.Unmarshal(data, &raw); err != nil {
+				return nil, err
+			}
+			raw["model"] = info.UpstreamModelName
+			data, err = common.Marshal(raw)
+			if err != nil {
+				return nil, err
+			}
+		}
+		return bytes.NewReader(data), nil
+	}
 
 	payload, err := a.convertToRequestPayload(req, info)
 	if err != nil {
@@ -234,6 +349,21 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	}
 	_ = resp.Body.Close()
 
+	cfg, _ := constant.GetAIPDDCapability(firstNonEmpty(info.UpstreamModelName, info.OriginModelName))
+	if cfg.ExecutionProtocol == "seedance_official" {
+		var official struct {
+			ID string `json:"id"`
+		}
+		if err := common.Unmarshal(responseBody, &official); err != nil {
+			return "", nil, service.TaskErrorWrapper(errors.Wrapf(err, "body: %s", responseBody), "unmarshal_response_body_failed", http.StatusInternalServerError)
+		}
+		if strings.TrimSpace(official.ID) == "" {
+			return "", nil, service.TaskErrorWrapper(fmt.Errorf("task_id is empty"), "invalid_response", http.StatusInternalServerError)
+		}
+		writeCreateTaskResponse(c, info, cfg)
+		return official.ID, responseBody, nil
+	}
+
 	var aipddResp createTaskResponse
 	if err := common.Unmarshal(responseBody, &aipddResp); err != nil {
 		return "", nil, service.TaskErrorWrapper(errors.Wrapf(err, "body: %s", responseBody), "unmarshal_response_body_failed", http.StatusInternalServerError)
@@ -246,7 +376,6 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 		return "", nil, service.TaskErrorWrapper(fmt.Errorf("task_id is empty"), "invalid_response", http.StatusInternalServerError)
 	}
 
-	cfg, _ := a.resolveModelConfig(ginRequestContext(c), firstNonEmpty(info.UpstreamModelName, info.OriginModelName))
 	writeCreateTaskResponse(c, info, cfg)
 
 	return upstreamTaskID, responseBody, nil
@@ -298,6 +427,15 @@ func (a *TaskAdaptor) FetchTask(baseURL, key string, body map[string]any, proxy 
 		client = http.DefaultClient
 	}
 
+	protocol, _ := body["execution_protocol"].(string)
+	endpoint, _ := body["execution_endpoint"].(string)
+	if protocol == "seedance_official" {
+		if strings.TrimSpace(endpoint) == "" {
+			endpoint = "/api/v3/contents/generations/tasks"
+		}
+		uri := strings.TrimRight(baseURL, "/") + normalizeExecutionPath(endpoint) + "/" + url.PathEscape(taskID)
+		return aipddOfficialGet(client, uri, key)
+	}
 	detailURI := fmt.Sprintf("%s/shared-tasks/tasks/%s/detail", strings.TrimRight(baseURL, "/"), url.PathEscape(taskID))
 	detailResp, detailBody, err := aipddGet(client, detailURI, key)
 	if err != nil {
@@ -324,6 +462,17 @@ func (a *TaskAdaptor) FetchTask(baseURL, key string, body map[string]any, proxy 
 		return responseWithBody(resultResp, resultBody), nil
 	}
 	return responseWithBody(detailResp, mergeAIPDDResultBody(detailBody, resultBody)), nil
+}
+
+func aipddOfficialGet(client *http.Client, uri, key string) (*http.Response, error) {
+	req, err := http.NewRequest(http.MethodGet, uri, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("X-API-Key", key)
+	req.Header.Set("Authorization", "Bearer "+key)
+	return client.Do(req)
 }
 
 func aipddGet(client *http.Client, uri, key string) (*http.Response, []byte, error) {
@@ -425,6 +574,33 @@ func mapValue(value any) (map[string]any, bool) {
 }
 
 func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error) {
+	var official struct {
+		ID      string `json:"id"`
+		Status  string `json:"status"`
+		Content struct {
+			VideoURL string `json:"video_url"`
+		} `json:"content"`
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := common.Unmarshal(respBody, &official); err == nil && strings.TrimSpace(official.Status) != "" {
+		info := &relaycommon.TaskInfo{Code: 0, TaskID: official.ID}
+		switch strings.ToLower(strings.TrimSpace(official.Status)) {
+		case "pending", "queued":
+			info.Status, info.Progress = model.TaskStatusQueued, taskcommon.ProgressQueued
+		case "processing", "running":
+			info.Status, info.Progress = model.TaskStatusInProgress, taskcommon.ProgressInProgress
+		case "succeeded", "completed":
+			info.Status, info.Progress, info.Url = model.TaskStatusSuccess, taskcommon.ProgressComplete, official.Content.VideoURL
+		case "failed", "cancelled", "canceled":
+			info.Status, info.Progress, info.Reason = model.TaskStatusFailure, taskcommon.ProgressComplete, official.Error.Message
+		default:
+			info.Status, info.Progress = model.TaskStatusInProgress, taskcommon.ProgressInProgress
+		}
+		return info, nil
+	}
 	var aipddResp taskDetailResponse
 	if err := common.Unmarshal(respBody, &aipddResp); err != nil {
 		return nil, errors.Wrap(err, "unmarshal aipdd task result failed")
@@ -616,17 +792,12 @@ func (a *TaskAdaptor) convertToRequestPayload(req relaycommon.TaskSubmitReq, inf
 		}
 		req.Duration = duration
 	}
-
-	content := cloneWorkflowMetadata(req.Metadata)
-	explicitNumFrames := hasContentValue(content["numFrames"])
-	explicitDurationSeconds := hasContentValue(content["durationSeconds"])
-	applyModelDefaults(content, req, cfg)
-	if isLtx23Config(cfg) {
-		if err := normalizeAndValidateLtx23Content(content, req.Duration, explicitNumFrames, explicitDurationSeconds); err != nil {
-			return nil, err
-		}
+	if err := normalizeLtxRequestDuration(&req, cfg); err != nil {
+		return nil, err
 	}
-	if err := validateTaskContent(content, cfg); err != nil {
+
+	content, err := buildWorkflowContent(req, cfg)
+	if err != nil {
 		return nil, err
 	}
 
@@ -648,6 +819,30 @@ func (a *TaskAdaptor) convertToRequestPayload(req relaycommon.TaskSubmitReq, inf
 		TaskTypeCode: cfg.ScriptCode,
 		Input:        content,
 	}, nil
+}
+
+func buildWorkflowContent(req relaycommon.TaskSubmitReq, cfg modelConfig) (map[string]any, error) {
+	content := cloneWorkflowMetadata(req.Metadata)
+	explicitNumFrames := hasContentValue(content["numFrames"])
+	explicitDurationSeconds := hasContentValue(content["durationSeconds"])
+	explicitLength := hasContentValue(content["length"])
+	applyModelDefaults(content, req, cfg)
+	if isLtx23StartEndConfig(cfg) {
+		if err := normalizeLtxStartEndContent(content, req, explicitLength, explicitNumFrames); err != nil {
+			return nil, err
+		}
+	} else if isLtx23StandardConfig(cfg) {
+		if err := normalizeAndValidateLtx23Content(content, req.Duration, explicitNumFrames, explicitDurationSeconds); err != nil {
+			return nil, err
+		}
+	}
+	if err := normalizeWorkflowTimelineData(content, cfg); err != nil {
+		return nil, err
+	}
+	if err := validateTaskContent(content, cfg); err != nil {
+		return nil, err
+	}
+	return content, nil
 }
 
 func resolveRequestModelConfig(req relaycommon.TaskSubmitReq, info *relaycommon.RelayInfo) (modelConfig, error) {
@@ -691,36 +886,123 @@ func ginRequestContext(c *gin.Context) context.Context {
 	return context.Background()
 }
 
-func (a *TaskAdaptor) resolveModelConfig(ctx context.Context, modelName string) (modelConfig, bool) {
-	cfg, ok := resolveModelConfig(modelName)
-	if ok {
-		return cfg, true
-	}
-	if err := a.refreshCatalog(ctx); err != nil {
-		return modelConfig{}, false
-	}
+func (a *TaskAdaptor) resolveModelConfig(_ context.Context, modelName string) (modelConfig, bool) {
 	return resolveModelConfig(modelName)
 }
 
-func (a *TaskAdaptor) refreshCatalog(ctx context.Context) error {
-	if ctx == nil {
-		ctx = context.Background()
+func normalizeExecutionPath(path string) string {
+	path = strings.TrimSpace(path)
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
 	}
-	client, err := service.GetHttpClientWithProxy(a.proxy)
-	if err != nil {
-		return fmt.Errorf("new proxy http client failed: %w", err)
+	return strings.TrimRight(path, "/")
+}
+
+func seedancePriceVariant(
+	variants []constant.AIPDDSeedancePriceVariant,
+	hasReferenceVideo bool,
+) (constant.AIPDDSeedancePriceVariant, bool) {
+	for _, variant := range variants {
+		if variant.HasReferenceVideo == hasReferenceVideo {
+			return variant, true
+		}
 	}
-	if client == nil {
-		client = http.DefaultClient
+	return constant.AIPDDSeedancePriceVariant{}, false
+}
+
+func seedanceHasReferenceVideo(content any) bool {
+	items, ok := content.([]any)
+	if !ok {
+		return false
 	}
-	catalog, err := aipddcatalog.Fetch(ctx, client, a.baseURL, a.apiKey)
-	if err != nil {
-		return err
+	for _, value := range items {
+		item, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		typeName := anyToString(item["type"])
+		role := anyToString(item["role"])
+		if typeName == "video_url" || typeName == "video" || strings.EqualFold(role, "reference_video") {
+			return true
+		}
+		if videoURL, exists := item["video_url"]; exists && videoURL != nil {
+			return true
+		}
 	}
-	if len(catalog.Capabilities) > 0 {
-		constant.SetAIPDDCapabilities(catalog.Capabilities)
-		ModelList = constant.GetAIPDDTaskModelList()
-		model.InvalidatePricingCache()
+	return false
+}
+
+func seedanceBillingSeconds(raw map[string]any, pricing constant.AIPDDSeedanceResolutionPricing) float64 {
+	if duration := positiveFloat(raw["duration"]); duration > 0 {
+		return duration
+	}
+	if frames := positiveFloat(raw["frames"]); frames > 0 {
+		fps := positiveFloat(raw["framespersecond"])
+		if fps <= 0 {
+			fps = positiveFloat(raw["frames_per_second"])
+		}
+		if fps <= 0 {
+			fps = pricing.DefaultFramesPerSecond
+		}
+		if fps <= 0 {
+			fps = 24
+		}
+		return math.Ceil((frames/fps)*10000) / 10000
+	}
+	if pricing.DefaultDurationSeconds > 0 {
+		return pricing.DefaultDurationSeconds
+	}
+	return 5
+}
+
+func positiveFloat(value any) float64 {
+	switch typed := value.(type) {
+	case float64:
+		if typed > 0 {
+			return typed
+		}
+	case float32:
+		if typed > 0 {
+			return float64(typed)
+		}
+	case int:
+		if typed > 0 {
+			return float64(typed)
+		}
+	case int64:
+		if typed > 0 {
+			return float64(typed)
+		}
+	case string:
+		if parsed, err := strconv.ParseFloat(strings.TrimSpace(typed), 64); err == nil && parsed > 0 {
+			return parsed
+		}
+	}
+	return 0
+}
+
+func boolFloat(value bool) float64 {
+	if value {
+		return 1
+	}
+	return 0
+}
+
+func normalizeLtxRequestDuration(req *relaycommon.TaskSubmitReq, cfg modelConfig) error {
+	if req == nil || !isLtx23Config(cfg) {
+		return nil
+	}
+	if req.Duration <= 0 {
+		req.Duration = parseDurationValue(req.Seconds)
+	}
+	if req.Duration <= 0 {
+		req.Duration = parseDurationValue(metadataString(req.Metadata, "duration"))
+	}
+	if req.Duration <= 0 {
+		req.Duration = parseDurationValue(metadataString(req.Metadata, "seconds"))
+	}
+	if req.Duration > 0 && (req.Duration < 1 || req.Duration > 20) {
+		return fmt.Errorf("LTX 2.3 duration must be an integer between 1 and 20 seconds")
 	}
 	return nil
 }
@@ -810,9 +1092,9 @@ func resolveWorkflowDefaultString(content map[string]any, req relaycommon.TaskSu
 		case constant.AIPDDWorkflowSourceImage:
 			values = append(values, req.Image)
 		case constant.AIPDDWorkflowSourceFirstImage:
-			values = append(values, firstString(req.Images))
+			values = append(values, req.FirstFrame, firstString(req.Images))
 		case constant.AIPDDWorkflowSourceLastImage:
-			values = append(values, req.LastFrame, req.ImageTail)
+			values = append(values, req.LastFrame, req.ImageTail, secondString(req.Images))
 		case constant.AIPDDWorkflowSourceInputReference:
 			values = append(values, req.InputReference)
 		case constant.AIPDDWorkflowSourceDuration:
@@ -910,12 +1192,72 @@ func validateWorkflowConstraint(value any, constraint constant.AIPDDWorkflowPara
 }
 
 func isLtx23Config(cfg modelConfig) bool {
+	return isLtx23StandardConfig(cfg) || isLtx23StartEndConfig(cfg)
+}
+
+func isLtx23StandardConfig(cfg modelConfig) bool {
 	for _, value := range []string{cfg.ModelName, cfg.ScriptCode} {
-		if strings.EqualFold(strings.TrimSpace(value), "aipdd_ltx_2.3 (首尾帧)") {
+		normalized := strings.NewReplacer("_", "-", ".", "-", " ", "-").Replace(strings.ToLower(strings.TrimSpace(value)))
+		if normalized == "aipdd-ltx-2-3" && !isLtx23StartEndValue(value) {
 			return true
 		}
-		normalized := strings.NewReplacer("_", "-", ".", "-", " ", "-").Replace(strings.ToLower(strings.TrimSpace(value)))
-		if normalized == "aipdd-ltx-2-3" {
+	}
+	return false
+}
+
+func isLtx23StartEndConfig(cfg modelConfig) bool {
+	return isLtx23StartEndValue(cfg.ModelName) || isLtx23StartEndValue(cfg.ScriptCode)
+}
+
+func isLtx23StartEndValue(value string) bool {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if strings.Contains(value, "首尾帧") {
+		return true
+	}
+	return strings.Contains(value, "first") && strings.Contains(value, "last") && strings.Contains(value, "ltx")
+}
+
+func normalizeLtxStartEndContent(content map[string]any, req relaycommon.TaskSubmitReq, explicitLength, explicitNumFrames bool) error {
+	if !explicitLength && explicitNumFrames {
+		numFrames := positiveIntValue(req.Metadata["numFrames"])
+		if numFrames <= 0 {
+			return fmt.Errorf("numFrames must be a positive integer")
+		}
+		content["length"] = numFrames
+	} else if !explicitLength && req.Duration > 0 {
+		content["length"] = req.Duration*24 + 1
+	}
+	if value, ok := content["length"]; ok && hasContentValue(value) {
+		length := positiveIntValue(value)
+		if length <= 0 {
+			return fmt.Errorf("length must be a positive integer")
+		}
+		content["length"] = length
+	}
+	return nil
+}
+
+func normalizeWorkflowTimelineData(content map[string]any, cfg modelConfig) error {
+	if !workflowParamAllowed(cfg, "timeline_data") {
+		return nil
+	}
+	value, exists := content["timeline_data"]
+	if !exists || !hasContentValue(value) {
+		return nil
+	}
+	if raw, ok := value.(string); ok {
+		var parsed any
+		if err := common.Unmarshal([]byte(strings.TrimSpace(raw)), &parsed); err != nil {
+			return fmt.Errorf("timeline_data must be valid JSON: %w", err)
+		}
+		content["timeline_data"] = parsed
+	}
+	return nil
+}
+
+func workflowParamAllowed(cfg modelConfig, key string) bool {
+	for _, paramKey := range cfg.WorkflowParamKeys {
+		if paramKey == key {
 			return true
 		}
 	}
@@ -924,18 +1266,25 @@ func isLtx23Config(cfg modelConfig) bool {
 
 func normalizeAndValidateLtx23Content(content map[string]any, duration int, explicitNumFrames bool, explicitDurationSeconds bool) error {
 	const frameRate = 24
-	if duration < 1 || duration > 20 {
+	if duration <= 0 && explicitDurationSeconds {
+		duration = positiveIntValue(content["durationSeconds"])
+	}
+	if duration > 20 {
 		return fmt.Errorf("LTX 2.3 duration must be an integer between 1 and 20 seconds")
 	}
-	expectedFrames := duration*frameRate + 1
-	if explicitNumFrames && positiveIntValue(content["numFrames"]) != expectedFrames {
-		return fmt.Errorf("LTX 2.3 numFrames must be %d for %d seconds", expectedFrames, duration)
+	if duration > 0 {
+		expectedFrames := duration*frameRate + 1
+		if explicitNumFrames && positiveIntValue(content["numFrames"]) != expectedFrames {
+			return fmt.Errorf("LTX 2.3 numFrames must be %d for %d seconds", expectedFrames, duration)
+		}
+		if explicitDurationSeconds && positiveIntValue(content["durationSeconds"]) != duration {
+			return fmt.Errorf("LTX 2.3 durationSeconds must match duration")
+		}
+		content["numFrames"] = expectedFrames
+		content["durationSeconds"] = duration
+	} else if positiveIntValue(content["numFrames"]) <= 0 {
+		return fmt.Errorf("LTX 2.3 numFrames must be a positive integer")
 	}
-	if explicitDurationSeconds && positiveIntValue(content["durationSeconds"]) != duration {
-		return fmt.Errorf("LTX 2.3 durationSeconds must match duration")
-	}
-	content["numFrames"] = expectedFrames
-	content["durationSeconds"] = duration
 
 	if hasContentValue(content["frameRate"]) && positiveIntValue(content["frameRate"]) != frameRate {
 		return fmt.Errorf("LTX 2.3 frameRate must be 24 FPS")
@@ -944,7 +1293,7 @@ func normalizeAndValidateLtx23Content(content map[string]any, duration int, expl
 
 	width := positiveIntValue(content["width"])
 	height := positiveIntValue(content["height"])
-	allowedDimensions := [][2]int{{1280, 704}, {704, 1280}, {704, 704}, {640, 480}, {480, 640}, {480, 480}}
+	allowedDimensions := [][2]int{{1280, 704}, {704, 1280}, {704, 704}, {640, 640}, {640, 480}, {480, 640}, {480, 480}}
 	for _, dimensions := range allowedDimensions {
 		if width == dimensions[0] && height == dimensions[1] {
 			return nil
@@ -987,6 +1336,7 @@ func normalizeTaskSubmitReq(req *relaycommon.TaskSubmitReq) {
 		metadataString(req.Metadata, "last_frame"),
 		req.ImageTail,
 		metadataString(req.Metadata, "image_tail"),
+		secondString(req.Images),
 	)
 	if strings.TrimSpace(req.Image) == "" {
 		req.Image = req.FirstFrame
@@ -1115,6 +1465,13 @@ func firstString(values []string) string {
 		}
 	}
 	return ""
+}
+
+func secondString(values []string) string {
+	if len(values) < 2 {
+		return ""
+	}
+	return firstString(values[1:])
 }
 
 func firstNonEmpty(values ...string) string {

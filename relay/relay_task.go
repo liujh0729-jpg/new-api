@@ -27,6 +27,7 @@ type TaskSubmitResult struct {
 	TaskData       []byte
 	Platform       constant.TaskPlatform
 	Quota          int
+	AIPDDExecution *model.AIPDDTaskExecutionSnapshot
 	//PerCallPrice   types.PriceData
 }
 
@@ -226,8 +227,20 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		}
 	}
 
-	// 6. 将 OtherRatios 应用到基础额度
-	if !common.StringsContains(constant.TaskPricePatches, modelName) {
+	// 6. 将 OtherRatios 应用到基础额度，或使用适配器给出的不可分解精确额度。
+	exactQuota := false
+	if estimator, ok := adaptor.(channel.ExactTaskBillingEstimator); ok {
+		quota, details, exactErr := estimator.EstimateExactQuota(c, info)
+		if exactErr != nil {
+			return nil, service.TaskErrorWrapperLocal(exactErr, "model_price_error", http.StatusBadRequest)
+		}
+		if quota > 0 {
+			info.PriceData.Quota = quota
+			info.PriceData.OtherRatios = details
+			exactQuota = true
+		}
+	}
+	if !exactQuota && !common.StringsContains(constant.TaskPricePatches, modelName) {
 		for _, ra := range info.PriceData.OtherRatios {
 			if ra != 1.0 {
 				info.PriceData.Quota = int(float64(info.PriceData.Quota) * ra)
@@ -282,12 +295,16 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		info.PriceData.Quota = finalQuota
 	}
 
-	return &TaskSubmitResult{
+	result := &TaskSubmitResult{
 		UpstreamTaskID: upstreamTaskID,
 		TaskData:       taskData,
 		Platform:       platform,
 		Quota:          finalQuota,
-	}, nil
+	}
+	if provider, ok := adaptor.(channel.AIPDDTaskSnapshotProvider); ok {
+		result.AIPDDExecution = provider.AIPDDTaskSnapshot(info)
+	}
+	return result, nil
 }
 
 // recalcQuotaFromRatios 根据 adjustedRatios 重新计算 quota。
@@ -472,10 +489,16 @@ func tryRealtimeFetch(task *model.Task, isOpenAIVideoAPI bool) []byte {
 		return nil
 	}
 
-	resp, err := adaptor.FetchTask(baseURL, channelModel.Key, map[string]any{
-		"task_id": task.GetUpstreamTaskID(),
-		"action":  task.Action,
-	}, proxy)
+	fetchBody := map[string]any{"task_id": task.GetUpstreamTaskID(), "action": task.Action}
+	if snapshot := task.PrivateData.AIPDDExecution; snapshot != nil {
+		if strings.TrimSpace(snapshot.BaseURL) != "" {
+			baseURL = snapshot.BaseURL
+		}
+		fetchBody["execution_protocol"] = snapshot.Protocol
+		fetchBody["execution_endpoint"] = snapshot.Endpoint
+		fetchBody["catalog_revision"] = snapshot.CatalogRevision
+	}
+	resp, err := adaptor.FetchTask(baseURL, channelModel.Key, fetchBody, proxy)
 	if err != nil || resp == nil {
 		return nil
 	}

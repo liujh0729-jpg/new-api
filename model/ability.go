@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 
 	"github.com/samber/lo"
 	"gorm.io/gorm"
@@ -35,27 +36,55 @@ func GetAllEnableAbilityWithChannels() ([]AbilityWithChannel, error) {
 		Joins("left join channels on abilities.channel_id = channels.id").
 		Where("abilities.enabled = ?", true).
 		Scan(&abilities).Error
-	return abilities, err
+	if err != nil {
+		return nil, err
+	}
+	filtered := abilities[:0]
+	for _, ability := range abilities {
+		if ability.ChannelType == constant.ChannelTypeAIPDD && constant.IsAIPDDFunASRModel(ability.Model) {
+			continue
+		}
+		filtered = append(filtered, ability)
+	}
+	return filtered, nil
 }
 
 func GetGroupEnabledModels(group string) []string {
 	var models []string
 	// Find distinct models
 	DB.Table("abilities").Where(commonGroupCol+" = ? and enabled = ?", group, true).Distinct("model").Pluck("model", &models)
-	return models
+	return filterDisabledFunASRModels(models)
 }
 
 func GetEnabledModels() []string {
 	var models []string
 	// Find distinct models
 	DB.Table("abilities").Where("enabled = ?", true).Distinct("model").Pluck("model", &models)
-	return models
+	return filterDisabledFunASRModels(models)
 }
 
 func GetAllEnableAbilities() []Ability {
 	var abilities []Ability
 	DB.Find(&abilities, "enabled = ?", true)
-	return abilities
+	filtered := abilities[:0]
+	for _, ability := range abilities {
+		if constant.IsAIPDDFunASRModel(ability.Model) {
+			continue
+		}
+		filtered = append(filtered, ability)
+	}
+	return filtered
+}
+
+func filterDisabledFunASRModels(models []string) []string {
+	filtered := make([]string, 0, len(models))
+	for _, modelName := range models {
+		if constant.IsAIPDDFunASRModel(modelName) {
+			continue
+		}
+		filtered = append(filtered, modelName)
+	}
+	return filtered
 }
 
 func getPriority(group string, model string, retry int) (int, error) {
@@ -104,6 +133,10 @@ func getChannelQuery(group string, model string, retry int) (*gorm.DB, error) {
 }
 
 func GetChannel(group string, model string, retry int) (*Channel, error) {
+	if constant.IsAIPDDFunASRModel(model) {
+		return nil, nil
+	}
+
 	var abilities []Ability
 
 	var err error = nil

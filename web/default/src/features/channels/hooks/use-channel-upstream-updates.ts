@@ -203,6 +203,30 @@ export function useChannelUpstreamUpdates(refresh: () => Promise<void>) {
       if (detectRef.current || !ch?.id) return
       detectRef.current = true
       try {
+        if (Number(ch.type) === 58) {
+          const syncRes = await api.post(
+            `/api/channel/${ch.id}/aipdd/sync`,
+            {},
+            { skipErrorHandler: true } as Record<string, unknown>
+          )
+          const { success, message, data } = syncRes.data || {}
+          if (!success) {
+            toast.error(message || t('Detection failed'))
+            return
+          }
+          toast.success(
+            t(
+              'AIPDD catalog synchronized: {{added}} added, {{removed}} removed, {{prices}} prices updated',
+              {
+                added: data?.added_models || 0,
+                removed: data?.removed_models || 0,
+                prices: data?.updated_prices || 0,
+              }
+            )
+          )
+          await refresh()
+          return
+        }
         const res = await api.post(
           '/api/channel/upstream_updates/detect',
           { id: ch.id },

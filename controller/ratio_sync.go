@@ -106,10 +106,30 @@ func valueMap(value any) map[string]any {
 	}
 }
 
-func aipddCatalogRatioData(catalog aipddcatalog.Catalog) map[string]any {
+func aipddCatalogRatioData(catalog aipddcatalog.AtomicCatalog) map[string]any {
+	prices := make(map[string]float64)
+	modes := make(map[string]string)
+	exprs := make(map[string]string)
+	for _, capability := range catalog.Capabilities {
+		if awcoin := aipddcatalog.TaskAWCoinPrice(capability.Pricing); awcoin > 0 {
+			prices[capability.ID] = awcoin * catalog.AWCoinRate.USDPerAWCoin
+		}
+	}
+	for _, modelItem := range catalog.Models {
+		promptUSD := modelItem.Pricing.PromptPerMillion * catalog.AWCoinRate.USDPerAWCoin
+		completionUSD := modelItem.Pricing.CompletionPerMillion * catalog.AWCoinRate.USDPerAWCoin
+		modes[modelItem.ID] = billing_setting.BillingModeTieredExpr
+		exprs[modelItem.ID] = fmt.Sprintf("tier(\"aipdd\", p * %s + c * %s)",
+			strconv.FormatFloat(promptUSD, 'f', -1, 64),
+			strconv.FormatFloat(completionUSD, 'f', -1, 64))
+	}
 	data := make(map[string]any)
-	if len(catalog.ModelPrices) > 0 {
-		data["model_price"] = valueMap(catalog.ModelPrices)
+	if len(prices) > 0 {
+		data["model_price"] = valueMap(prices)
+	}
+	if len(modes) > 0 {
+		data[billing_setting.BillingModeField] = modes
+		data[billing_setting.BillingExprField] = exprs
 	}
 	return data
 }
@@ -276,14 +296,10 @@ func FetchUpstreamRatios(c *gin.Context) {
 			}
 
 			if isAIPDDCatalog {
-				catalog, err := aipddcatalog.Fetch(ctx, client, chItem.BaseURL, "")
+				catalog, err := aipddcatalog.FetchAtomic(ctx, client, chItem.BaseURL, "")
 				if err != nil {
 					ch <- upstreamResult{Name: uniqueName, Err: err.Error()}
 					return
-				}
-				if len(catalog.Capabilities) > 0 {
-					constant.SetAIPDDCapabilities(catalog.Capabilities)
-					model.InvalidatePricingCache()
 				}
 				ch <- upstreamResult{Name: uniqueName, Data: aipddCatalogRatioData(catalog)}
 				return

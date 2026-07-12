@@ -269,7 +269,11 @@ func (channel *Channel) GetModels() []string {
 	if channel.Models == "" {
 		return []string{}
 	}
-	return strings.Split(strings.Trim(channel.Models, ","), ",")
+	models := strings.Split(strings.Trim(channel.Models, ","), ",")
+	if channel.Type == constant.ChannelTypeAIPDD {
+		return constant.FilterAIPDDModelNames(models)
+	}
+	return models
 }
 
 func (channel *Channel) ApplyDefaultModels() {
@@ -286,9 +290,9 @@ func (channel *Channel) BackfillAIPDDDefaultModels() bool {
 	models := make([]string, 0, len(defaultModels))
 	seen := make(map[string]bool, len(defaultModels))
 	changed := false
-	for _, modelName := range channel.GetModels() {
+	for _, modelName := range strings.Split(strings.Trim(channel.Models, ","), ",") {
 		modelName = strings.TrimSpace(modelName)
-		if modelName == "" || seen[modelName] {
+		if modelName == "" || constant.IsAIPDDFunASRModel(modelName) || seen[modelName] {
 			changed = true
 			continue
 		}

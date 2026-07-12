@@ -589,6 +589,7 @@ func RelayTask(c *gin.Context) {
 			OriginModelName: relayInfo.OriginModelName,
 			PerCallBilling:  isTaskPerCallBilling(relayInfo),
 		}
+		task.PrivateData.AIPDDExecution = result.AIPDDExecution
 		task.Quota = result.Quota
 		task.Data = result.TaskData
 		task.Action = relayInfo.Action
@@ -607,7 +608,8 @@ func isTaskPerCallBilling(relayInfo *relaycommon.RelayInfo) bool {
 		return false
 	}
 	if constant.IsAIPDDTaskModel(relayInfo.OriginModelName) {
-		return constant.IsAIPDDPerCallBillingModel(relayInfo.OriginModelName)
+		return constant.IsAIPDDPerCallBillingModel(relayInfo.OriginModelName) ||
+			constant.IsAIPDDExactBillingModel(relayInfo.OriginModelName)
 	}
 	return common.StringsContains(constant.TaskPricePatches, relayInfo.OriginModelName) || relayInfo.PriceData.UsePrice
 }

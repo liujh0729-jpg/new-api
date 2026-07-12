@@ -242,7 +242,10 @@ export function normalizePlaygroundError(
     }
   }
 
-  if (message === ERROR_MESSAGES.VIDEO_REFERENCE_UPLOAD_REQUIRED) {
+  if (
+    message === ERROR_MESSAGES.VIDEO_REFERENCE_UPLOAD_REQUIRED ||
+    message === ERROR_MESSAGES.TIMELINE_JSON_INVALID
+  ) {
     return {
       message: t(message),
       code,

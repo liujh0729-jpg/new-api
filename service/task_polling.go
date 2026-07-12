@@ -354,15 +354,21 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 		return fmt.Errorf("task %s not found", taskId)
 	}
 	key := ch.Key
+	requestBody := map[string]any{"task_id": task.GetUpstreamTaskID(), "action": task.Action}
 
 	privateData := task.PrivateData
 	if privateData.Key != "" {
 		key = privateData.Key
 	}
-	resp, err := adaptor.FetchTask(baseURL, key, map[string]any{
-		"task_id": task.GetUpstreamTaskID(),
-		"action":  task.Action,
-	}, proxy)
+	if snapshot := privateData.AIPDDExecution; snapshot != nil {
+		if strings.TrimSpace(snapshot.BaseURL) != "" {
+			baseURL = snapshot.BaseURL
+		}
+		requestBody["execution_protocol"] = snapshot.Protocol
+		requestBody["execution_endpoint"] = snapshot.Endpoint
+		requestBody["catalog_revision"] = snapshot.CatalogRevision
+	}
+	resp, err := adaptor.FetchTask(baseURL, key, requestBody, proxy)
 	if err != nil {
 		return fmt.Errorf("fetchTask failed for task %s: %w", taskId, err)
 	}

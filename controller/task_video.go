@@ -80,10 +80,16 @@ func updateVideoSingleTask(ctx context.Context, adaptor channel.TaskAdaptor, cha
 	if privateData.Key != "" {
 		key = privateData.Key
 	}
-	resp, err := adaptor.FetchTask(baseURL, key, map[string]any{
-		"task_id": taskId,
-		"action":  task.Action,
-	}, proxy)
+	fetchBody := map[string]any{"task_id": taskId, "action": task.Action}
+	if snapshot := privateData.AIPDDExecution; snapshot != nil {
+		if snapshot.BaseURL != "" {
+			baseURL = snapshot.BaseURL
+		}
+		fetchBody["execution_protocol"] = snapshot.Protocol
+		fetchBody["execution_endpoint"] = snapshot.Endpoint
+		fetchBody["catalog_revision"] = snapshot.CatalogRevision
+	}
+	resp, err := adaptor.FetchTask(baseURL, key, fetchBody, proxy)
 	if err != nil {
 		return fmt.Errorf("fetchTask failed for task %s: %w", taskId, err)
 	}

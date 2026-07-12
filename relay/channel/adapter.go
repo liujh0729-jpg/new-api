@@ -81,3 +81,13 @@ type TaskAdaptor interface {
 type OpenAIVideoConverter interface {
 	ConvertToOpenAIVideo(originTask *model.Task) ([]byte, error)
 }
+
+// ExactTaskBillingEstimator is implemented by task adaptors whose pricing
+// cannot be represented as multiplicative ratios (for example minimum charges).
+type ExactTaskBillingEstimator interface {
+	EstimateExactQuota(c *gin.Context, info *relaycommon.RelayInfo) (quota int, details map[string]float64, err error)
+}
+
+type AIPDDTaskSnapshotProvider interface {
+	AIPDDTaskSnapshot(info *relaycommon.RelayInfo) *model.AIPDDTaskExecutionSnapshot
+}

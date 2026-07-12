@@ -480,6 +480,7 @@ export const STATIC_I18N_KEYS = [
   'AIPDD MimicMotion motion transfer',
   'AIPDD Latentsync lip sync',
   'AIPDD IndexTTS voice cloning',
+  'AIPDD catalog synchronized: {{added}} added, {{removed}} removed, {{prices}} prices updated',
   'Do not use /v1/responses here. This test uses Chat Completions for the minimal relay path.',
   'Text-to-image returns synchronously. Seedream 4.5 requires at least 3,686,400 pixels; response_format is usually omitted.',
   'Text-to-image returns synchronously. Seedream 5.0 lite supports 2K/3K/4K presets or matching pixel sizes.',

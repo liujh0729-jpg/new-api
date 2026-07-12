@@ -344,17 +344,18 @@ func TestConvertToRequestPayloadValidatesLTX23Policy(t *testing.T) {
 		ModelName:              modelName,
 		ScriptCode:             modelName,
 		EndpointType:           constant.EndpointTypeOpenAIVideo,
-		BillingType:            constant.AIPDDBillingTypeDurationSeconds,
-		WorkflowParamKeys:      []string{"prompt", "image", "width", "height", "durationSeconds", "numFrames", "frameRate"},
-		RequiredWorkflowParams: map[string]bool{"prompt": true, "image": true, "width": true, "height": true, "numFrames": true, "frameRate": true},
+		BillingType:            constant.AIPDDBillingTypePerCall,
+		WorkflowParamKeys:      []string{"prompt", "image", "negativePrompt", "width", "height", "numFrames", "frameRate", "seed"},
+		RequiredWorkflowParams: map[string]bool{"prompt": true, "image": true, "negativePrompt": false, "width": false, "height": false, "numFrames": true, "frameRate": false, "seed": false},
 		WorkflowDefaults: []constant.AIPDDWorkflowParamDefault{
 			{ParamKey: "prompt", ValueType: constant.AIPDDWorkflowValueTypeString, Sources: []constant.AIPDDWorkflowValueSource{{Type: constant.AIPDDWorkflowSourcePrompt}}},
 			{ParamKey: "image", ValueType: constant.AIPDDWorkflowValueTypeString, Sources: []constant.AIPDDWorkflowValueSource{{Type: constant.AIPDDWorkflowSourceImage}}},
-			{ParamKey: "width", ValueType: constant.AIPDDWorkflowValueTypeInt, Sources: []constant.AIPDDWorkflowValueSource{{Type: constant.AIPDDWorkflowSourceStatic, Key: "1280"}}},
-			{ParamKey: "height", ValueType: constant.AIPDDWorkflowValueTypeInt, Sources: []constant.AIPDDWorkflowValueSource{{Type: constant.AIPDDWorkflowSourceStatic, Key: "704"}}},
-			{ParamKey: "durationSeconds", ValueType: constant.AIPDDWorkflowValueTypeInt, Sources: []constant.AIPDDWorkflowValueSource{{Type: constant.AIPDDWorkflowSourceDuration}}},
-			{ParamKey: "numFrames", ValueType: constant.AIPDDWorkflowValueTypeInt, Sources: []constant.AIPDDWorkflowValueSource{{Type: constant.AIPDDWorkflowSourceStatic, Key: "121"}}},
+			{ParamKey: "negativePrompt", ValueType: constant.AIPDDWorkflowValueTypeString, Sources: []constant.AIPDDWorkflowValueSource{{Type: constant.AIPDDWorkflowSourceMetadata, Key: "negative_prompt"}}},
+			{ParamKey: "width", ValueType: constant.AIPDDWorkflowValueTypeInt, Sources: []constant.AIPDDWorkflowValueSource{{Type: constant.AIPDDWorkflowSourceStatic, Key: "640"}}},
+			{ParamKey: "height", ValueType: constant.AIPDDWorkflowValueTypeInt, Sources: []constant.AIPDDWorkflowValueSource{{Type: constant.AIPDDWorkflowSourceStatic, Key: "640"}}},
+			{ParamKey: "numFrames", ValueType: constant.AIPDDWorkflowValueTypeInt, Sources: []constant.AIPDDWorkflowValueSource{{Type: constant.AIPDDWorkflowSourceStatic, Key: "49"}}},
 			{ParamKey: "frameRate", ValueType: constant.AIPDDWorkflowValueTypeInt, Sources: []constant.AIPDDWorkflowValueSource{{Type: constant.AIPDDWorkflowSourceStatic, Key: "24"}}},
+			{ParamKey: "seed", ValueType: constant.AIPDDWorkflowValueTypeInt, Sources: []constant.AIPDDWorkflowValueSource{{Type: constant.AIPDDWorkflowSourceMetadata, Key: "seed"}}},
 		},
 	}})
 
@@ -366,8 +367,27 @@ func TestConvertToRequestPayloadValidatesLTX23Policy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("valid LTX request failed: %v", err)
 	}
-	if valid.Input["numFrames"] != 481 || valid.Input["frameRate"] != 24 || valid.Input["durationSeconds"] != 20 {
+	if valid.Input["numFrames"] != 481 || valid.Input["frameRate"] != 24 {
 		t.Fatalf("unexpected LTX timing: %#v", valid.Input)
+	}
+	if _, ok := valid.Input["durationSeconds"]; ok {
+		t.Fatalf("durationSeconds is not part of the upstream schema: %#v", valid.Input)
+	}
+
+	withDefaults, err := adaptor.convertToRequestPayload(relaycommon.TaskSubmitReq{
+		Model: modelName, Prompt: "camera push in", Image: "https://cdn.example.com/input.png",
+	}, relayInfoWithModel(modelName))
+	if err != nil {
+		t.Fatalf("default LTX request failed: %v", err)
+	}
+	if withDefaults.Input["width"] != 640 || withDefaults.Input["height"] != 640 || withDefaults.Input["numFrames"] != 49 || withDefaults.Input["frameRate"] != 24 {
+		t.Fatalf("unexpected default LTX input: %#v", withDefaults.Input)
+	}
+
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Set("task_request", relaycommon.TaskSubmitReq{Model: modelName, Duration: 20})
+	if ratios := adaptor.EstimateBilling(ctx, relayInfoWithModel(modelName)); ratios != nil {
+		t.Fatalf("per-call LTX must not add seconds billing: %#v", ratios)
 	}
 
 	cases := []struct {
@@ -401,18 +421,17 @@ func TestConvertToRequestPayloadMapsLTX23FirstAndLastFramesSeparately(t *testing
 		ModelName:              modelName,
 		ScriptCode:             modelName,
 		EndpointType:           constant.EndpointTypeOpenAIVideo,
-		BillingType:            constant.AIPDDBillingTypeDurationSeconds,
-		WorkflowParamKeys:      []string{"first_frame_image", "last_frame_image", "global_prompt", "width", "height", "durationSeconds", "numFrames", "frameRate"},
-		RequiredWorkflowParams: map[string]bool{"first_frame_image": true, "last_frame_image": true, "global_prompt": true, "width": true, "height": true, "numFrames": true, "frameRate": true},
+		BillingType:            constant.AIPDDBillingTypePerCall,
+		WorkflowParamKeys:      []string{"first_frame_image", "last_frame_image", "audio", "local_prompts", "timeline_data", "length", "global_prompt"},
+		RequiredWorkflowParams: map[string]bool{"first_frame_image": true, "last_frame_image": true, "audio": false, "local_prompts": true, "timeline_data": true, "length": true, "global_prompt": true},
 		WorkflowDefaults: []constant.AIPDDWorkflowParamDefault{
 			{ParamKey: "first_frame_image", ValueType: constant.AIPDDWorkflowValueTypeString, Sources: []constant.AIPDDWorkflowValueSource{{Type: constant.AIPDDWorkflowSourceFirstImage}}},
 			{ParamKey: "last_frame_image", ValueType: constant.AIPDDWorkflowValueTypeString, Sources: []constant.AIPDDWorkflowValueSource{{Type: constant.AIPDDWorkflowSourceLastImage}}},
+			{ParamKey: "audio", ValueType: constant.AIPDDWorkflowValueTypeString, Sources: []constant.AIPDDWorkflowValueSource{{Type: constant.AIPDDWorkflowSourceMetadata, Key: "audio"}, {Type: constant.AIPDDWorkflowSourceMetadata, Key: "audio_url"}}},
+			{ParamKey: "local_prompts", ValueType: constant.AIPDDWorkflowValueTypeString, Sources: []constant.AIPDDWorkflowValueSource{{Type: constant.AIPDDWorkflowSourcePrompt}}},
+			{ParamKey: "timeline_data", ValueType: constant.AIPDDWorkflowValueTypeString, Sources: []constant.AIPDDWorkflowValueSource{{Type: constant.AIPDDWorkflowSourceMetadata, Key: "timeline_data"}}},
+			{ParamKey: "length", ValueType: constant.AIPDDWorkflowValueTypeInt, Sources: []constant.AIPDDWorkflowValueSource{{Type: constant.AIPDDWorkflowSourceMetadata, Key: "length"}, {Type: constant.AIPDDWorkflowSourceMetadata, Key: "numFrames"}, {Type: constant.AIPDDWorkflowSourceDuration}}},
 			{ParamKey: "global_prompt", ValueType: constant.AIPDDWorkflowValueTypeString, Sources: []constant.AIPDDWorkflowValueSource{{Type: constant.AIPDDWorkflowSourcePrompt}}},
-			{ParamKey: "width", ValueType: constant.AIPDDWorkflowValueTypeInt, Sources: []constant.AIPDDWorkflowValueSource{{Type: constant.AIPDDWorkflowSourceStatic, Key: "1280"}}},
-			{ParamKey: "height", ValueType: constant.AIPDDWorkflowValueTypeInt, Sources: []constant.AIPDDWorkflowValueSource{{Type: constant.AIPDDWorkflowSourceStatic, Key: "704"}}},
-			{ParamKey: "durationSeconds", ValueType: constant.AIPDDWorkflowValueTypeInt, Sources: []constant.AIPDDWorkflowValueSource{{Type: constant.AIPDDWorkflowSourceDuration}}},
-			{ParamKey: "numFrames", ValueType: constant.AIPDDWorkflowValueTypeInt, Sources: []constant.AIPDDWorkflowValueSource{{Type: constant.AIPDDWorkflowSourceStatic, Key: "121"}}},
-			{ParamKey: "frameRate", ValueType: constant.AIPDDWorkflowValueTypeInt, Sources: []constant.AIPDDWorkflowValueSource{{Type: constant.AIPDDWorkflowSourceStatic, Key: "24"}}},
 		},
 	}})
 
@@ -420,7 +439,11 @@ func TestConvertToRequestPayloadMapsLTX23FirstAndLastFramesSeparately(t *testing
 	payload, err := adaptor.convertToRequestPayload(relaycommon.TaskSubmitReq{
 		Model: modelName, Prompt: "camera push in", Duration: 20,
 		FirstFrame: "https://cdn.example.com/first.png",
-		LastFrame:  "https://cdn.example.com/last.png",
+		Images:     []string{"https://cdn.example.com/fallback-first.png", "https://cdn.example.com/last.png"},
+		Metadata: map[string]interface{}{
+			"audio_url":     "https://cdn.example.com/reference.wav",
+			"timeline_data": `{"segments":[]}`,
+		},
 	}, relayInfoWithModel(modelName))
 	if err != nil {
 		t.Fatalf("valid first/last LTX request failed: %v", err)
@@ -431,16 +454,109 @@ func TestConvertToRequestPayloadMapsLTX23FirstAndLastFramesSeparately(t *testing
 	if payload.Input["last_frame_image"] != "https://cdn.example.com/last.png" {
 		t.Fatalf("last frame mapped incorrectly: %#v", payload.Input)
 	}
-	if payload.Input["numFrames"] != 481 || payload.Input["frameRate"] != 24 || payload.Input["durationSeconds"] != 20 {
-		t.Fatalf("unexpected first/last LTX timing: %#v", payload.Input)
+	if payload.Input["audio"] != "https://cdn.example.com/reference.wav" || payload.Input["local_prompts"] != "camera push in" || payload.Input["global_prompt"] != "camera push in" {
+		t.Fatalf("unexpected first/last LTX references: %#v", payload.Input)
+	}
+	if payload.Input["length"] != 481 {
+		t.Fatalf("unexpected first/last LTX length: %#v", payload.Input)
+	}
+	if timeline, ok := payload.Input["timeline_data"].(map[string]interface{}); !ok || len(timeline) != 1 {
+		t.Fatalf("timeline_data should be decoded JSON: %#v", payload.Input)
+	}
+	for _, unsupported := range []string{"width", "height", "durationSeconds", "numFrames", "frameRate"} {
+		if _, ok := payload.Input[unsupported]; ok {
+			t.Fatalf("unsupported %s should not be sent: %#v", unsupported, payload.Input)
+		}
+	}
+
+	lengthCases := []struct {
+		name     string
+		metadata map[string]interface{}
+		want     int
+	}{
+		{name: "explicit length and object timeline", metadata: map[string]interface{}{"audio": "https://cdn.example.com/reference.wav", "timeline_data": map[string]interface{}{"segments": []interface{}{}}, "length": 321}, want: 321},
+		{name: "numFrames and array timeline", metadata: map[string]interface{}{"audio": "https://cdn.example.com/reference.wav", "timeline_data": []interface{}{}, "numFrames": 241}, want: 241},
+	}
+	for _, tc := range lengthCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := adaptor.convertToRequestPayload(relaycommon.TaskSubmitReq{
+				Model: modelName, Prompt: "camera push in", Duration: 20,
+				Images:   []string{"https://cdn.example.com/first.png", "https://cdn.example.com/last.png"},
+				Metadata: tc.metadata,
+			}, relayInfoWithModel(modelName))
+			if err != nil {
+				t.Fatalf("valid length precedence request failed: %v", err)
+			}
+			if result.Input["length"] != tc.want {
+				t.Fatalf("unexpected length: got %#v want %d", result.Input["length"], tc.want)
+			}
+		})
 	}
 
 	_, err = adaptor.convertToRequestPayload(relaycommon.TaskSubmitReq{
 		Model: modelName, Prompt: "camera push in", Duration: 5,
 		FirstFrame: "https://cdn.example.com/first.png",
+		Metadata: map[string]interface{}{
+			"audio":         "https://cdn.example.com/reference.wav",
+			"timeline_data": `{"segments":[]}`,
+		},
 	}, relayInfoWithModel(modelName))
 	if err == nil {
 		t.Fatal("expected missing last frame validation error")
+	}
+
+	payloadWithoutAudio, err := adaptor.convertToRequestPayload(relaycommon.TaskSubmitReq{
+		Model: modelName, Prompt: "camera push in", Duration: 5,
+		Images: []string{"https://cdn.example.com/first.png", "https://cdn.example.com/last.png"},
+		Metadata: map[string]interface{}{
+			"timeline_data": `{"segments":[]}`,
+		},
+	}, relayInfoWithModel(modelName))
+	if err != nil {
+		t.Fatalf("audio should be optional for first/last LTX requests: %v", err)
+	}
+	if _, ok := payloadWithoutAudio.Input["audio"]; ok {
+		t.Fatalf("missing optional audio should not be sent: %#v", payloadWithoutAudio.Input)
+	}
+
+	_, err = adaptor.convertToRequestPayload(relaycommon.TaskSubmitReq{
+		Model: modelName, Prompt: "camera push in", Duration: 5,
+		Images: []string{"https://cdn.example.com/first.png", "https://cdn.example.com/last.png"},
+		Metadata: map[string]interface{}{
+			"audio": "https://cdn.example.com/reference.wav",
+		},
+	}, relayInfoWithModel(modelName))
+	if err == nil || !strings.Contains(err.Error(), "timeline_data") {
+		t.Fatalf("expected missing timeline_data validation error, got %v", err)
+	}
+
+	_, err = adaptor.convertToRequestPayload(relaycommon.TaskSubmitReq{
+		Model: modelName, Prompt: "camera push in", Duration: 5,
+		Images: []string{"https://cdn.example.com/first.png", "https://cdn.example.com/last.png"},
+		Metadata: map[string]interface{}{
+			"audio":         "https://cdn.example.com/reference.wav",
+			"timeline_data": "not-json",
+		},
+	}, relayInfoWithModel(modelName))
+	if err == nil || !strings.Contains(err.Error(), "timeline_data must be valid JSON") {
+		t.Fatalf("expected invalid timeline_data error, got %v", err)
+	}
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/pg/video/generations", strings.NewReader(`{
+		"model":"aipdd_ltx_2.3 (首尾帧)",
+		"prompt":"camera push in",
+		"first_frame":"https://cdn.example.com/first.png",
+		"last_frame":"https://cdn.example.com/last.png",
+		"audio":"https://cdn.example.com/reference.wav",
+		"timeline_data":"not-json",
+		"duration":5
+	}`))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	taskErr := adaptor.ValidateRequestAndSetAction(ctx, relayInfoWithModel(modelName))
+	if taskErr == nil || !taskErr.LocalError || taskErr.StatusCode != http.StatusBadRequest || !strings.Contains(taskErr.Message, "timeline_data must be valid JSON") {
+		t.Fatalf("expected local 400 timeline_data error, got %#v", taskErr)
 	}
 }
 
