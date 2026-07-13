@@ -1167,7 +1167,7 @@
       "post": {
         "summary": "创建视频生成任务",
         "deprecated": false,
-        "description": "提交视频生成任务，支持文生视频和图生视频。\n\n返回任务 ID，可通过 GET 接口查询任务状态。\n",
+        "description": "提交视频生成任务，支持文生视频和图生视频。Seedance 模型既可使用 prompt、width、height 通用字段，也可直接传入 content、resolution、ratio 等官方字段。Seedance 字段优先级为根级字段、metadata、通用字段推导。\n\n返回任务 ID，可通过 GET 接口查询任务状态。\n",
         "operationId": "createVideoGeneration",
         "tags": [
           "视频生成"
@@ -1180,11 +1180,13 @@
                 "$ref": "#/components/schemas/VideoRequest"
               },
               "example": {
-                "model": "kling-v1",
-                "prompt": "宇航员在月球上漫步",
+                "model": "AP Seedance-2.0 标准版",
+                "prompt": "电影感城市夜景",
                 "duration": 5,
                 "width": 1280,
-                "height": 720
+                "height": 720,
+                "fps": 24,
+                "generate_audio": false
               }
             }
           },
@@ -1203,7 +1205,7 @@
             "headers": {}
           },
           "400": {
-            "description": "请求参数错误",
+            "description": "请求参数错误，例如缺少 content、无法推导分辨率、画幅不受支持或同步价格目录不支持该分辨率",
             "content": {
               "application/json": {
                 "schema": {
@@ -4208,6 +4210,102 @@
             "type": "integer",
             "description": "随机种子",
             "example": 20231234
+          },
+          "resolution": {
+            "type": "string",
+            "description": "Seedance 分辨率档位。优先使用根级值，其次 metadata.resolution，最后由 width/height 推导",
+            "enum": [
+              "720p",
+              "1080p",
+              "4k"
+            ],
+            "example": "720p"
+          },
+          "ratio": {
+            "type": "string",
+            "description": "Seedance 画幅比例。未显式传入时可由 width/height 推导",
+            "enum": [
+              "16:9",
+              "9:16",
+              "1:1",
+              "4:3",
+              "3:4"
+            ],
+            "example": "16:9"
+          },
+          "content": {
+            "type": "array",
+            "description": "Seedance 官方多模态内容。非空时原样优先；缺失或为空时由 prompt 生成 text 项",
+            "items": {
+              "type": "object",
+              "additionalProperties": true,
+              "required": [
+                "type"
+              ],
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "example": "text"
+                },
+                "role": {
+                  "type": "string",
+                  "example": "reference_image"
+                },
+                "text": {
+                  "type": "string",
+                  "example": "电影感城市夜景"
+                },
+                "image_url": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "properties": {
+                    "url": {
+                      "type": "string",
+                      "format": "uri"
+                    }
+                  }
+                },
+                "video_url": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "properties": {
+                    "url": {
+                      "type": "string",
+                      "format": "uri"
+                    }
+                  }
+                },
+                "audio_url": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "properties": {
+                    "url": {
+                      "type": "string",
+                      "format": "uri"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "generate_audio": {
+            "type": "boolean",
+            "description": "是否生成同步音频",
+            "example": false
+          },
+          "service_tier": {
+            "type": "string",
+            "description": "Seedance 服务档位"
+          },
+          "priority": {
+            "type": "integer",
+            "description": "Seedance 任务优先级；显式 0 会被保留",
+            "example": 0
+          },
+          "callback_url": {
+            "type": "string",
+            "format": "uri",
+            "description": "Seedance 任务完成回调地址"
           },
           "n": {
             "type": "integer",

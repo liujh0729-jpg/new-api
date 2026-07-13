@@ -527,12 +527,9 @@ func GetUserModels(c *gin.Context) {
 	}
 	groups := service.GetUserUsableGroups(user.Group)
 	var models []string
-	pricingByName := map[string]model.Pricing{}
 	endpointType := constant.EndpointType(strings.TrimSpace(c.Query("endpoint_type")))
 	if endpointType != "" {
-		for _, pricing := range model.GetPricing() {
-			pricingByName[pricing.ModelName] = pricing
-		}
+		model.GetPricing()
 	}
 	for group := range groups {
 		for _, g := range model.GetGroupEnabledModels(group) {
@@ -540,9 +537,6 @@ func GetUserModels(c *gin.Context) {
 				continue
 			}
 			if endpointType != "" && !modelSupportsEndpoint(g, endpointType) {
-				continue
-			}
-			if endpointType == constant.EndpointTypeImageGeneration && !modelSupportsPlaygroundTextToImage(g, pricingByName[g]) {
 				continue
 			}
 			if !common.StringsContains(models, g) {
@@ -561,34 +555,6 @@ func GetUserModels(c *gin.Context) {
 func modelSupportsEndpoint(modelName string, endpointType constant.EndpointType) bool {
 	for _, supportedEndpointType := range model.GetModelSupportEndpointTypes(modelName) {
 		if supportedEndpointType == endpointType {
-			return true
-		}
-	}
-	return false
-}
-
-func modelSupportsPlaygroundTextToImage(modelName string, pricing model.Pricing) bool {
-	if capability, ok := constant.GetAIPDDCapability(modelName); ok && capability.EndpointType == constant.EndpointTypeImageGeneration {
-		_, hasImageParam := capability.RequiredWorkflowParams["image"]
-		return !hasImageParam
-	}
-
-	tags := strings.ToLower(strings.TrimSpace(pricing.Tags))
-	if tags == "" {
-		return true
-	}
-	if containsAnyText(tags, []string{"图生图", "image-to-image", "image to image", "image2image", "img2img", "img-to-img", "i2i"}) {
-		return false
-	}
-	if containsAnyText(tags, []string{"文生图", "text-to-image", "text to image", "text2image", "txt2img", "txt-to-img", "t2i"}) {
-		return true
-	}
-	return true
-}
-
-func containsAnyText(value string, targets []string) bool {
-	for _, target := range targets {
-		if strings.Contains(value, target) {
 			return true
 		}
 	}

@@ -27,7 +27,8 @@ import (
 )
 
 const (
-	ChannelName = "aipdd"
+	ChannelName                       = "aipdd"
+	seedanceOfficialPayloadContextKey = "aipdd_seedance_official_payload"
 
 	ModelFluxGGUF         = constant.AIPDDModelFluxGGUF
 	ModelFluxGGUFT2I      = constant.AIPDDModelFluxGGUFT2I
@@ -163,6 +164,17 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 			http.StatusBadRequest,
 		)
 	}
+	if cfg.ExecutionProtocol == "seedance_official" {
+		var raw map[string]any
+		if err := common.UnmarshalBodyReusable(c, &raw); err != nil {
+			return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+		}
+		payload, errorCode, err := normalizeAndValidateSeedanceOfficialPayload(raw, cfg)
+		if err != nil {
+			return service.TaskErrorWrapperLocal(err, errorCode, http.StatusBadRequest)
+		}
+		c.Set(seedanceOfficialPayloadContextKey, payload)
+	}
 	if cfg.BillingType == constant.AIPDDBillingTypeDurationSeconds && cfg.SeedancePricing == nil {
 		duration, err := normalizeDurationSeconds(&req, cfg)
 		if err != nil {
@@ -226,12 +238,12 @@ func (a *TaskAdaptor) EstimateExactQuota(c *gin.Context, info *relaycommon.Relay
 	if !ok || cfg.SeedancePricing == nil {
 		return 0, nil, nil
 	}
-	var raw map[string]any
-	if err := common.UnmarshalBodyReusable(c, &raw); err != nil {
+	raw, err := getSeedanceOfficialPayload(c)
+	if err != nil {
 		return 0, nil, err
 	}
-	resolution := strings.ToLower(strings.TrimSpace(anyToString(raw["resolution"])))
-	pricing, ok := cfg.SeedancePricing.ByResolution[resolution]
+	resolution := canonicalSeedanceResolution(raw["resolution"])
+	pricing, ok := seedanceResolutionPricing(cfg, resolution)
 	if !ok {
 		return 0, nil, fmt.Errorf("Seedance resolution %q has no synchronized price", resolution)
 	}
@@ -305,24 +317,17 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	c.Set("task_request", req)
 	cfg, ok := constant.GetAIPDDCapability(firstNonEmpty(info.UpstreamModelName, info.OriginModelName, req.Model))
 	if ok && cfg.ExecutionProtocol == "seedance_official" {
-		storage, err := common.GetBodyStorage(c)
+		canonical, err := getSeedanceOfficialPayload(c)
 		if err != nil {
 			return nil, err
 		}
-		data, err := storage.Bytes()
-		if err != nil {
-			return nil, err
-		}
+		raw := cloneAnyMap(canonical)
 		if info.IsModelMapped {
-			var raw map[string]any
-			if err := common.Unmarshal(data, &raw); err != nil {
-				return nil, err
-			}
 			raw["model"] = info.UpstreamModelName
-			data, err = common.Marshal(raw)
-			if err != nil {
-				return nil, err
-			}
+		}
+		data, err := common.Marshal(raw)
+		if err != nil {
+			return nil, err
 		}
 		return bytes.NewReader(data), nil
 	}
@@ -352,13 +357,28 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	cfg, _ := constant.GetAIPDDCapability(firstNonEmpty(info.UpstreamModelName, info.OriginModelName))
 	if cfg.ExecutionProtocol == "seedance_official" {
 		var official struct {
-			ID string `json:"id"`
+			ID      string `json:"id"`
+			Code    any    `json:"code"`
+			Message string `json:"message"`
+			Error   struct {
+				Code    any    `json:"code"`
+				Message string `json:"message"`
+			} `json:"error"`
 		}
 		if err := common.Unmarshal(responseBody, &official); err != nil {
 			return "", nil, service.TaskErrorWrapper(errors.Wrapf(err, "body: %s", responseBody), "unmarshal_response_body_failed", http.StatusInternalServerError)
 		}
 		if strings.TrimSpace(official.ID) == "" {
-			return "", nil, service.TaskErrorWrapper(fmt.Errorf("task_id is empty"), "invalid_response", http.StatusInternalServerError)
+			message := firstNonEmpty(official.Message, official.Error.Message, "Seedance task creation failed")
+			statusCode := http.StatusBadGateway
+			businessCode := positiveIntValue(official.Code)
+			if businessCode == 0 {
+				businessCode = positiveIntValue(official.Error.Code)
+			}
+			if businessCode >= http.StatusBadRequest && businessCode < http.StatusInternalServerError {
+				statusCode = businessCode
+			}
+			return "", nil, service.TaskErrorWrapper(fmt.Errorf("%s", message), "seedance_task_create_failed", statusCode)
 		}
 		writeCreateTaskResponse(c, info, cfg)
 		return official.ID, responseBody, nil
@@ -930,6 +950,196 @@ func seedanceHasReferenceVideo(content any) bool {
 		}
 	}
 	return false
+}
+
+func normalizeAndValidateSeedanceOfficialPayload(raw map[string]any, cfg modelConfig) (map[string]any, string, error) {
+	if raw == nil {
+		return nil, "invalid_request", fmt.Errorf("request body is required")
+	}
+	payload := cloneAnyMap(raw)
+	metadata, _ := payload["metadata"].(map[string]any)
+	for _, key := range []string{
+		"content", "resolution", "ratio", "duration", "frames", "framespersecond",
+		"frames_per_second", "seed", "callback_url", "return_last_frame", "service_tier",
+		"generate_audio", "priority",
+	} {
+		if seedanceRequestValuePresent(payload[key]) {
+			continue
+		}
+		if value := metadata[key]; seedanceRequestValuePresent(value) {
+			payload[key] = value
+		}
+	}
+
+	content, contentPresent := payload["content"].([]any)
+	if !contentPresent || len(content) == 0 {
+		if seedanceRequestValuePresent(payload["content"]) && !contentPresent {
+			return nil, "invalid_content", fmt.Errorf("content must be a non-empty array")
+		}
+		prompt := strings.TrimSpace(anyToString(payload["prompt"]))
+		if prompt == "" {
+			return nil, "missing_content", fmt.Errorf("content is required when prompt is empty")
+		}
+		content = []any{map[string]any{"type": "text", "text": prompt}}
+		payload["content"] = content
+	}
+	for index, value := range content {
+		item, ok := value.(map[string]any)
+		if !ok || strings.TrimSpace(anyToString(item["type"])) == "" {
+			return nil, "invalid_content", fmt.Errorf("content[%d] must be an object with a non-empty type", index)
+		}
+	}
+
+	resolution := canonicalSeedanceResolution(payload["resolution"])
+	ratio := strings.TrimSpace(anyToString(payload["ratio"]))
+	if resolution == "" || ratio == "" {
+		width, height, found, err := seedanceRequestDimensions(payload, metadata)
+		if err != nil {
+			return nil, "invalid_dimensions", err
+		}
+		if found {
+			if resolution == "" {
+				resolution, err = inferSeedanceResolution(width, height)
+				if err != nil {
+					return nil, "invalid_dimensions", err
+				}
+			}
+			if ratio == "" {
+				ratio, err = inferSeedanceRatio(width, height)
+				if err != nil {
+					return nil, "invalid_dimensions", err
+				}
+			}
+		}
+	}
+	if resolution == "" {
+		return nil, "missing_resolution", fmt.Errorf("resolution is required when width and height are absent")
+	}
+	if ratio != "" && !isSupportedSeedanceRatio(ratio) {
+		return nil, "unsupported_ratio", fmt.Errorf("Seedance ratio %q is not supported", ratio)
+	}
+	if _, ok := seedanceResolutionPricing(cfg, resolution); !ok {
+		return nil, "unsupported_resolution", fmt.Errorf("Seedance resolution %q has no synchronized price", resolution)
+	}
+	payload["resolution"] = resolution
+	if ratio != "" {
+		payload["ratio"] = ratio
+	}
+	return payload, "", nil
+}
+
+func getSeedanceOfficialPayload(c *gin.Context) (map[string]any, error) {
+	value, exists := c.Get(seedanceOfficialPayloadContextKey)
+	if !exists {
+		return nil, fmt.Errorf("normalized Seedance request not found in context")
+	}
+	payload, ok := value.(map[string]any)
+	if !ok || payload == nil {
+		return nil, fmt.Errorf("invalid normalized Seedance request")
+	}
+	return payload, nil
+}
+
+func cloneAnyMap(source map[string]any) map[string]any {
+	cloned := make(map[string]any, len(source))
+	for key, value := range source {
+		cloned[key] = value
+	}
+	return cloned
+}
+
+func canonicalSeedanceResolution(value any) string {
+	return strings.ToLower(strings.TrimSpace(anyToString(value)))
+}
+
+func seedanceResolutionPricing(cfg modelConfig, resolution string) (constant.AIPDDSeedanceResolutionPricing, bool) {
+	if cfg.SeedancePricing == nil {
+		return constant.AIPDDSeedanceResolutionPricing{}, false
+	}
+	if pricing, ok := cfg.SeedancePricing.ByResolution[resolution]; ok {
+		return pricing, true
+	}
+	for key, pricing := range cfg.SeedancePricing.ByResolution {
+		if strings.EqualFold(strings.TrimSpace(key), resolution) {
+			return pricing, true
+		}
+	}
+	return constant.AIPDDSeedanceResolutionPricing{}, false
+}
+
+func seedanceRequestDimensions(payload, metadata map[string]any) (int, int, bool, error) {
+	for _, source := range []map[string]any{payload, metadata} {
+		if source == nil {
+			continue
+		}
+		widthPresent := seedanceRequestValuePresent(source["width"])
+		heightPresent := seedanceRequestValuePresent(source["height"])
+		if !widthPresent && !heightPresent {
+			continue
+		}
+		if !widthPresent || !heightPresent {
+			return 0, 0, false, fmt.Errorf("width and height must be provided together")
+		}
+		width := positiveIntValue(source["width"])
+		height := positiveIntValue(source["height"])
+		if width <= 0 || height <= 0 {
+			return 0, 0, false, fmt.Errorf("width and height must be positive integers")
+		}
+		return width, height, true, nil
+	}
+	return 0, 0, false, nil
+}
+
+func inferSeedanceResolution(width, height int) (string, error) {
+	shortEdge := min(width, height)
+	switch shortEdge {
+	case 720:
+		return "720p", nil
+	case 1080:
+		return "1080p", nil
+	case 2160:
+		return "4k", nil
+	default:
+		return "", fmt.Errorf("Seedance dimensions %dx%d do not map to 720p, 1080p, or 4k", width, height)
+	}
+}
+
+func inferSeedanceRatio(width, height int) (string, error) {
+	divisor := greatestCommonDivisor(width, height)
+	ratio := fmt.Sprintf("%d:%d", width/divisor, height/divisor)
+	if !isSupportedSeedanceRatio(ratio) {
+		return "", fmt.Errorf("Seedance dimensions %dx%d do not map to a supported ratio", width, height)
+	}
+	return ratio, nil
+}
+
+func greatestCommonDivisor(a, b int) int {
+	for b != 0 {
+		a, b = b, a%b
+	}
+	return a
+}
+
+func isSupportedSeedanceRatio(ratio string) bool {
+	switch ratio {
+	case "16:9", "9:16", "1:1", "4:3", "3:4":
+		return true
+	default:
+		return false
+	}
+}
+
+func seedanceRequestValuePresent(value any) bool {
+	switch typed := value.(type) {
+	case nil:
+		return false
+	case string:
+		return strings.TrimSpace(typed) != ""
+	case []any:
+		return len(typed) > 0
+	default:
+		return true
+	}
 }
 
 func seedanceBillingSeconds(raw map[string]any, pricing constant.AIPDDSeedanceResolutionPricing) float64 {

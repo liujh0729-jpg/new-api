@@ -21,6 +21,7 @@ import {
   getLTXVideoDimensions,
   isLTX23StartEndModel,
   isLTXVideoModel,
+  isSeedanceModel,
   normalizeImageSizeForModel,
 } from '../constants'
 import type {
@@ -146,7 +147,7 @@ export function buildVideoGenerationPayload(
     ...references.filter((reference) => reference.kind === 'audio'),
   ]
 
-  const content = sortedReferences
+  const referenceContent = sortedReferences
     .map<VideoGenerationContentItem | null>((reference) => {
       if (reference.kind === 'image') {
         return {
@@ -173,8 +174,14 @@ export function buildVideoGenerationPayload(
     })
     .filter((item): item is VideoGenerationContentItem => item !== null)
 
+  const content: VideoGenerationContentItem[] = [
+    ...(prompt ? [{ type: 'text' as const, text: prompt }] : []),
+    ...referenceContent,
+  ]
+
   const isLTXVideo = isLTXVideoModel(config.model)
   const isLTXStartEnd = isLTX23StartEndModel(config.model)
+  const isSeedanceVideo = isSeedanceModel(config.model)
   const size = isLTXVideo ? undefined : getOpenAIVideoSize(config.video_ratio)
   const ltxDimensions =
     isLTXVideo && !isLTXStartEnd
@@ -237,6 +244,13 @@ export function buildVideoGenerationPayload(
     duration: config.video_duration,
     seconds: String(config.video_duration),
     ...(size ? { size } : {}),
+    ...(isSeedanceVideo
+      ? {
+          content,
+          ratio: config.video_ratio,
+          resolution: config.video_resolution,
+        }
+      : {}),
     metadata,
   }
 }

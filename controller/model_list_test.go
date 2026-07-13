@@ -405,7 +405,7 @@ func TestGetUserModelsExcludesAIPDDTaskModelsFromPlayground(t *testing.T) {
 	}
 }
 
-func TestGetUserModelsFiltersImageEndpointForPlayground(t *testing.T) {
+func TestGetUserModelsIncludesImageToImageModelsForPlayground(t *testing.T) {
 	db := setupModelListControllerTestDB(t)
 	model.InvalidatePricingCache()
 
@@ -468,9 +468,9 @@ func TestGetUserModelsFiltersImageEndpointForPlayground(t *testing.T) {
 	require.True(t, payload.Success)
 	require.Contains(t, payload.Data, "gpt-image-1")
 	require.Contains(t, payload.Data, "custom-t2i")
+	require.Contains(t, payload.Data, "custom-img2img")
 	require.Contains(t, payload.Data, constant.AIPDDModelFluxGGUFT2I)
-	require.NotContains(t, payload.Data, "custom-img2img")
-	require.NotContains(t, payload.Data, constant.AIPDDModelFluxGGUF)
+	require.Contains(t, payload.Data, constant.AIPDDModelFluxGGUF)
 	require.NotContains(t, payload.Data, "gpt-4o")
 	require.NotContains(t, payload.Data, constant.AIPDDModelIndexTTS)
 }

@@ -268,6 +268,11 @@ export function isSeedreamModel(model: string): boolean {
   return normalizeModelName(model).includes('seedream')
 }
 
+export function isAIPDDFluxImageToImageModel(model: string): boolean {
+  const normalized = normalizeModelName(model)
+  return normalized === 'aipdd-flux-gguf' || normalized === 'flux-gguf-v2'
+}
+
 export function isSeedream40xModel(model: string): boolean {
   const normalized = normalizeModelName(model)
   return (

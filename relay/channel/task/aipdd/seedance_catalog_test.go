@@ -1,6 +1,7 @@
 package aipdd
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
@@ -33,6 +35,7 @@ func TestSeedanceCatalogExactBillingMatrix(t *testing.T) {
 		{name: "minimum and decimal duration", body: `{"model":"AP Seedance","resolution":"1080p","duration":2.2,"content":[{"type":"text","text":"hello"}]}`, quota: 101000, awcoin: 101},
 		{name: "frames divided by explicit fps", body: `{"model":"AP Seedance","resolution":"1080p","frames":49,"frames_per_second":24,"content":[{"type":"text","text":"hello"}]}`, quota: 101000, awcoin: 101},
 		{name: "reference video variant", body: `{"model":"AP Seedance","resolution":"1080p","duration":5,"content":[{"type":"video","role":"reference_video"}]}`, quota: 150000, awcoin: 150},
+		{name: "playground metadata compatibility", body: `{"model":"AP Seedance","prompt":"hello","duration":5,"metadata":{"resolution":"1080p","content":[{"type":"video_url","role":"reference_video","video_url":{"url":"https://cdn.example.com/reference.mp4"}}]}}`, quota: 150000, awcoin: 150},
 		{name: "model default duration", body: `{"model":"AP Seedance","resolution":"1080p","content":[{"type":"text","text":"hello"}]}`, quota: 201000, awcoin: 201},
 	}
 
@@ -44,6 +47,225 @@ func TestSeedanceCatalogExactBillingMatrix(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, test.quota, quota)
 			require.Equal(t, test.awcoin, details["aipdd_awcoin"])
+		})
+	}
+}
+
+func TestSeedanceCatalogNormalizesPlaygroundPayloadForOfficialEndpoint(t *testing.T) {
+	constant.SetAIPDDCapabilities([]constant.AIPDDCapability{seedanceTestCapability()})
+	t.Cleanup(constant.ResetAIPDDCapabilities)
+
+	body := `{"model":"AP Seedance","prompt":"hello","duration":5,"metadata":{"resolution":"1080p","ratio":"16:9","content":[{"type":"image_url","role":"reference_image","image_url":{"url":"https://cdn.example.com/reference.png"}}]}}`
+	ctx, info, adaptor := seedanceRequestContext(t, body)
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(ctx, info))
+
+	requestBody, err := adaptor.BuildRequestBody(ctx, info)
+	require.NoError(t, err)
+	data, err := io.ReadAll(requestBody)
+	require.NoError(t, err)
+
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(data, &payload))
+	require.Equal(t, "1080p", payload["resolution"])
+	require.Equal(t, "16:9", payload["ratio"])
+	content, ok := payload["content"].([]any)
+	require.True(t, ok)
+	require.Len(t, content, 1)
+	require.Equal(t, "image_url", content[0].(map[string]any)["type"])
+}
+
+func TestSeedanceCatalogNormalizesStandardVideoRequest(t *testing.T) {
+	constant.SetAIPDDCapabilities([]constant.AIPDDCapability{seedanceTestCapability()})
+	t.Cleanup(constant.ResetAIPDDCapabilities)
+
+	body := `{"model":"AP Seedance","prompt":"cinematic city","width":1280,"height":720,"generate_audio":false,"seed":0,"priority":0}`
+	ctx, info, adaptor := seedanceRequestContext(t, body)
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(ctx, info))
+
+	requestBody, err := adaptor.BuildRequestBody(ctx, info)
+	require.NoError(t, err)
+	data, err := io.ReadAll(requestBody)
+	require.NoError(t, err)
+
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(data, &payload))
+	require.Equal(t, "720p", payload["resolution"])
+	require.Equal(t, "16:9", payload["ratio"])
+	require.Equal(t, false, payload["generate_audio"])
+	require.Equal(t, float64(0), payload["seed"])
+	require.Equal(t, float64(0), payload["priority"])
+	content := payload["content"].([]any)
+	require.Len(t, content, 1)
+	require.Equal(t, map[string]any{"type": "text", "text": "cinematic city"}, content[0])
+}
+
+func TestSeedanceCatalogKeepsExplicitContentAndRootFields(t *testing.T) {
+	constant.SetAIPDDCapabilities([]constant.AIPDDCapability{seedanceTestCapability()})
+	t.Cleanup(constant.ResetAIPDDCapabilities)
+
+	body := `{
+		"model":"AP Seedance",
+		"prompt":"must not be injected",
+		"resolution":"4K",
+		"ratio":"9:16",
+		"width":1280,
+		"height":720,
+		"content":[{"type":"video_url","role":"reference_video","video_url":{"url":"https://cdn.example.com/reference.mp4"},"vendor_extension":{"keep":true}}],
+		"generate_audio":false,
+		"priority":0,
+		"metadata":{"resolution":"720p","ratio":"16:9","content":[{"type":"text","text":"metadata"}],"generate_audio":true,"priority":8}
+	}`
+	ctx, info, adaptor := seedanceRequestContext(t, body)
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(ctx, info))
+	payload, err := getSeedanceOfficialPayload(ctx)
+	require.NoError(t, err)
+	require.Equal(t, "4k", payload["resolution"])
+	require.Equal(t, "9:16", payload["ratio"])
+	require.Equal(t, false, payload["generate_audio"])
+	require.Equal(t, float64(0), payload["priority"])
+	content := payload["content"].([]any)
+	require.Len(t, content, 1)
+	require.Equal(t, "video_url", content[0].(map[string]any)["type"])
+	require.Equal(t, map[string]any{"keep": true}, content[0].(map[string]any)["vendor_extension"])
+}
+
+func TestSeedanceCatalogInfersResolutionAndRatioFromDimensions(t *testing.T) {
+	constant.SetAIPDDCapabilities([]constant.AIPDDCapability{seedanceTestCapability()})
+	t.Cleanup(constant.ResetAIPDDCapabilities)
+
+	tests := []struct {
+		width, height int
+		resolution    string
+		ratio         string
+	}{
+		{1280, 720, "720p", "16:9"},
+		{720, 1280, "720p", "9:16"},
+		{720, 720, "720p", "1:1"},
+		{960, 720, "720p", "4:3"},
+		{720, 960, "720p", "3:4"},
+		{1920, 1080, "1080p", "16:9"},
+		{1080, 1920, "1080p", "9:16"},
+		{3840, 2160, "4k", "16:9"},
+		{2160, 3840, "4k", "9:16"},
+	}
+	for _, test := range tests {
+		t.Run(fmt.Sprintf("%dx%d", test.width, test.height), func(t *testing.T) {
+			body := fmt.Sprintf(`{"model":"AP Seedance","prompt":"hello","width":%d,"height":%d}`, test.width, test.height)
+			ctx, info, adaptor := seedanceRequestContext(t, body)
+			require.Nil(t, adaptor.ValidateRequestAndSetAction(ctx, info))
+			payload, err := getSeedanceOfficialPayload(ctx)
+			require.NoError(t, err)
+			require.Equal(t, test.resolution, payload["resolution"])
+			require.Equal(t, test.ratio, payload["ratio"])
+		})
+	}
+}
+
+func TestSeedanceCatalogValidationErrorsAreHTTP400(t *testing.T) {
+	constant.SetAIPDDCapabilities([]constant.AIPDDCapability{seedanceTestCapability()})
+	t.Cleanup(constant.ResetAIPDDCapabilities)
+
+	tests := []struct {
+		name string
+		body string
+		code string
+	}{
+		{"missing content", `{"model":"AP Seedance","resolution":"720p"}`, "missing_content"},
+		{"invalid content", `{"model":"AP Seedance","resolution":"720p","content":"hello"}`, "invalid_content"},
+		{"missing resolution", `{"model":"AP Seedance","prompt":"hello"}`, "missing_resolution"},
+		{"incomplete dimensions", `{"model":"AP Seedance","prompt":"hello","width":1280}`, "invalid_dimensions"},
+		{"invalid dimensions", `{"model":"AP Seedance","prompt":"hello","width":1000,"height":720}`, "invalid_dimensions"},
+		{"unsupported ratio", `{"model":"AP Seedance","prompt":"hello","resolution":"720p","ratio":"2:1"}`, "unsupported_ratio"},
+		{"unsupported resolution", `{"model":"AP Seedance","prompt":"hello","resolution":"8k"}`, "unsupported_resolution"},
+		{"unsupported model", `{"model":"AP Missing Seedance","prompt":"hello","resolution":"720p"}`, "unsupported_model"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, info, adaptor := seedanceRequestContext(t, test.body)
+			taskErr := adaptor.ValidateRequestAndSetAction(ctx, info)
+			require.NotNil(t, taskErr)
+			require.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
+			require.Equal(t, test.code, taskErr.Code)
+		})
+	}
+}
+
+func TestSeedanceCatalogFourModelResolutionBillingMatrix(t *testing.T) {
+	models := []string{
+		"AP Seedance-2.0 VIP",
+		"AP Seedance-2.0 标准版",
+		"AP Seedance-2.0 轻量版",
+		"AP Seedance-2.0 高性价比版",
+	}
+	capabilities := make([]constant.AIPDDCapability, 0, len(models))
+	for _, modelName := range models {
+		capabilities = append(capabilities, seedanceTestCapabilityForModel(modelName))
+	}
+	constant.SetAIPDDCapabilities(capabilities)
+	t.Cleanup(constant.ResetAIPDDCapabilities)
+
+	resolutions := map[string]float64{"720p": 50, "1080p": 201, "4k": 350}
+	for _, modelName := range models {
+		for resolution, expectedAWCoin := range resolutions {
+			t.Run(modelName+"/"+resolution, func(t *testing.T) {
+				body := fmt.Sprintf(`{"model":%q,"resolution":%q,"duration":5,"content":[{"type":"text","text":"hello"}]}`, modelName, resolution)
+				ctx, info, adaptor := seedanceRequestContextForModel(t, modelName, body)
+				require.Nil(t, adaptor.ValidateRequestAndSetAction(ctx, info))
+				quota, details, err := adaptor.EstimateExactQuota(ctx, info)
+				require.NoError(t, err)
+				require.Positive(t, quota)
+				require.Equal(t, expectedAWCoin, details["aipdd_awcoin"])
+			})
+		}
+	}
+}
+
+func TestSeedanceOfficialBusinessErrorsUseHTTPStatus(t *testing.T) {
+	constant.SetAIPDDCapabilities([]constant.AIPDDCapability{seedanceTestCapability()})
+	t.Cleanup(constant.ResetAIPDDCapabilities)
+
+	tests := []struct {
+		name       string
+		body       string
+		statusCode int
+	}{
+		{"client error", `{"code":400,"message":"invalid resolution"}`, http.StatusBadRequest},
+		{"server error", `{"code":500,"message":"internal error"}`, http.StatusBadGateway},
+		{"nested client error", `{"error":{"code":422,"message":"invalid content"}}`, http.StatusUnprocessableEntity},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, info, adaptor := seedanceRequestContext(t, `{"model":"AP Seedance","prompt":"hello","resolution":"720p"}`)
+			resp := &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(test.body))}
+			_, _, taskErr := adaptor.DoResponse(ctx, resp, info)
+			require.NotNil(t, taskErr)
+			require.Equal(t, test.statusCode, taskErr.StatusCode)
+			require.Equal(t, "seedance_task_create_failed", taskErr.Code)
+		})
+	}
+}
+
+func TestSeedanceOfficialTaskStatusParsing(t *testing.T) {
+	tests := []struct {
+		name   string
+		body   string
+		status model.TaskStatus
+		url    string
+		reason string
+	}{
+		{"queued", `{"id":"task-1","status":"pending"}`, model.TaskStatusQueued, "", ""},
+		{"processing", `{"id":"task-1","status":"processing"}`, model.TaskStatusInProgress, "", ""},
+		{"succeeded", `{"id":"task-1","status":"succeeded","content":{"video_url":"https://cdn.example.com/result.mp4"}}`, model.TaskStatusSuccess, "https://cdn.example.com/result.mp4", ""},
+		{"failed", `{"id":"task-1","status":"failed","error":{"message":"generation failed"}}`, model.TaskStatusFailure, "", "generation failed"},
+	}
+	adaptor := &TaskAdaptor{}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result, err := adaptor.ParseTaskResult([]byte(test.body))
+			require.NoError(t, err)
+			require.Equal(t, test.status, model.TaskStatus(result.Status))
+			require.Equal(t, test.url, result.Url)
+			require.Equal(t, test.reason, result.Reason)
 		})
 	}
 }
@@ -78,16 +300,20 @@ func TestSeedanceCatalogRoutesCreateAndFetchToOfficialEndpoint(t *testing.T) {
 }
 
 func seedanceRequestContext(t *testing.T, body string) (*gin.Context, *relaycommon.RelayInfo, *TaskAdaptor) {
+	return seedanceRequestContextForModel(t, "AP Seedance", body)
+}
+
+func seedanceRequestContextForModel(t *testing.T, modelName, body string) (*gin.Context, *relaycommon.RelayInfo, *TaskAdaptor) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
 	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(body))
 	ctx.Request.Header.Set("Content-Type", "application/json")
 	info := &relaycommon.RelayInfo{
-		OriginModelName: "AP Seedance",
+		OriginModelName: modelName,
 		PriceData:       types.PriceData{GroupRatioInfo: types.GroupRatioInfo{GroupRatio: 2}},
 	}
-	info.ChannelMeta = &relaycommon.ChannelMeta{ChannelBaseUrl: "https://aipdd.example", ApiKey: "sk-test", UpstreamModelName: "AP Seedance"}
+	info.ChannelMeta = &relaycommon.ChannelMeta{ChannelBaseUrl: "https://aipdd.example", ApiKey: "sk-test", UpstreamModelName: modelName}
 	info.TaskRelayInfo = &relaycommon.TaskRelayInfo{}
 	adaptor := &TaskAdaptor{}
 	adaptor.Init(info)
@@ -95,18 +321,36 @@ func seedanceRequestContext(t *testing.T, body string) (*gin.Context, *relaycomm
 }
 
 func seedanceTestCapability() constant.AIPDDCapability {
+	return seedanceTestCapabilityForModel("AP Seedance")
+}
+
+func seedanceTestCapabilityForModel(modelName string) constant.AIPDDCapability {
 	return constant.AIPDDCapability{
-		ModelName: "AP Seedance", TaskKind: "video_generation",
+		ModelName: modelName, TaskKind: "video_generation",
 		EndpointType:    constant.EndpointTypeOpenAIVideo,
 		BillingType:     constant.AIPDDBillingTypeDurationSeconds,
 		CatalogRevision: "revision-1", ExecutionProtocol: "seedance_official",
 		ExecutionPath: "/api/v3/contents/generations/tasks", AWCoinUSDPerCoin: 0.001,
 		SeedancePricing: &constant.AIPDDSeedancePricing{ByResolution: map[string]constant.AIPDDSeedanceResolutionPricing{
+			"720p": {
+				DefaultDurationSeconds: 5, DefaultFramesPerSecond: 24,
+				PriceVariants: []constant.AIPDDSeedancePriceVariant{
+					{HasReferenceVideo: false, AWCoinPerSecond: 10, MinimumAWCoin: 50},
+					{HasReferenceVideo: true, AWCoinPerSecond: 12, MinimumAWCoin: 60},
+				},
+			},
 			"1080p": {
 				DefaultDurationSeconds: 5, DefaultFramesPerSecond: 24,
 				PriceVariants: []constant.AIPDDSeedancePriceVariant{
 					{HasReferenceVideo: false, AWCoinPerSecond: 40.1, MinimumAWCoin: 100.2},
 					{HasReferenceVideo: true, AWCoinPerSecond: 30, MinimumAWCoin: 120.1},
+				},
+			},
+			"4k": {
+				DefaultDurationSeconds: 5, DefaultFramesPerSecond: 24,
+				PriceVariants: []constant.AIPDDSeedancePriceVariant{
+					{HasReferenceVideo: false, AWCoinPerSecond: 70, MinimumAWCoin: 300},
+					{HasReferenceVideo: true, AWCoinPerSecond: 80, MinimumAWCoin: 320},
 				},
 			},
 		}},

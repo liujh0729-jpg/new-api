@@ -36,6 +36,7 @@ import {
   DEFAULT_GROUP,
   ERROR_MESSAGES,
   SEEDANCE_REFERENCE_LIMITS,
+  isAIPDDFluxImageToImageModel,
   isLTX23StartEndModel,
   isLTX23PolicyModel,
   isLTXVideoModel,
@@ -316,6 +317,14 @@ export function Playground() {
         const uploadError = normalizePlaygroundError(error, t)
         toast.error(uploadError.message)
         throw new Error(uploadError.message, { cause: error })
+      }
+
+      if (isAIPDDFluxImageToImageModel(config.model) && !imageReferences) {
+        const validationError = t(
+          'An image URL or uploaded image is required. Sending only prompt will fail.'
+        )
+        toast.error(validationError)
+        throw new Error(validationError)
       }
     }
 

@@ -8,6 +8,7 @@ import (
 
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/pkg/aipddcatalog"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/stretchr/testify/require"
 )
 
@@ -100,6 +101,45 @@ func TestApplyAIPDDCatalogReplacesModelsAndCleansOnlySeededCNChannels(t *testing
 	var managed Channel
 	require.NoError(t, DB.Where("type = ? AND name = ?", constant.ChannelTypeAIPDD, "AIPDD").First(&managed).Error)
 	require.Equal(t, "llm-new,task-new", managed.Models)
+}
+
+func TestApplyAIPDDCatalogConfiguresSeedanceBasePrice(t *testing.T) {
+	truncateTables(t)
+	t.Cleanup(func() {
+		constant.ResetAIPDDCapabilities()
+		constant.ResetAIPDDOpenAIModels()
+	})
+
+	catalog := aipddTestCatalog("seedance-price-revision", "task-model", "llm-model")
+	catalog.Capabilities = []aipddcatalog.AtomicCapability{{
+		ID: "AP Seedance", Code: "seedance", Name: "AP Seedance", AdapterCode: "seedance",
+		EndpointType: "openai-video", TaskKind: "video_generation",
+		Execution: aipddcatalog.AtomicExecution{Protocol: "seedance_official", Path: "/api/v3/contents/generations/tasks"},
+		Pricing: aipddcatalog.AtomicPricing{
+			PricingModel: "per_second", Currency: "awcoin", Enabled: true,
+			ByResolution: map[string]constant.AIPDDSeedanceResolutionPricing{
+				"1080p": {
+					DefaultDurationSeconds: 5, DefaultFramesPerSecond: 24,
+					PriceVariants: []constant.AIPDDSeedancePriceVariant{
+						{HasReferenceVideo: false, AWCoinPerSecond: 40.1, MinimumAWCoin: 100.2},
+						{HasReferenceVideo: true, AWCoinPerSecond: 30, MinimumAWCoin: 120.1},
+					},
+				},
+			},
+		},
+	}}
+
+	_, err := applyAIPDDCatalog(catalog, "https://aipdd.example", "sk-test")
+	require.NoError(t, err)
+
+	price, ok := ratio_setting.GetModelPrice("AP Seedance", false)
+	require.True(t, ok)
+	require.InDelta(t, 0.225, price, 0.0000001)
+
+	capability, ok := constant.GetAIPDDCapability("AP Seedance")
+	require.True(t, ok)
+	require.NotNil(t, capability.SeedancePricing)
+	require.Contains(t, capability.SeedancePricing.ByResolution, "1080p")
 }
 
 func aipddTestCatalog(revision, taskModel, llmModel string) aipddcatalog.AtomicCatalog {

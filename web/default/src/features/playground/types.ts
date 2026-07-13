@@ -160,8 +160,10 @@ export interface ImageGenerationResponse {
 }
 
 export interface VideoGenerationContentItem {
-  type: 'image_url' | 'video_url' | 'audio_url'
+  [key: string]: unknown
+  type: 'text' | 'image_url' | 'video_url' | 'audio_url'
   role?: 'reference_image' | 'reference_video' | 'reference_audio'
+  text?: string
   image_url?: {
     url: string
   }
@@ -187,6 +189,14 @@ export interface VideoGenerationRequest {
   duration?: number
   seconds?: string
   size?: string
+  content?: VideoGenerationContentItem[]
+  ratio?: string
+  resolution?: string
+  generate_audio?: boolean
+  seed?: number
+  service_tier?: string
+  priority?: number
+  callback_url?: string
   metadata?: {
     content?: VideoGenerationContentItem[]
     ratio?: string

@@ -57,7 +57,7 @@ export NEW_API_TOKEN="sk-xxxx"
 
 素材 URL 必须能被 NewAPI 服务端和上游供应商访问，推荐使用公网 HTTPS URL。AIPDD 模型支持 `multipart/form-data` 上传本地文件，NewAPI 会先把文件上传到 AIPDD OSS，再把 OSS URL 写入任务参数。Doubao Seedance 和 Seedream 建议直接传 URL。
 
-视频模型统一推荐使用标准路径 `/v1/videos`。历史兼容路径 `/v1/video/generations` 即使可用，也不建议新接入方继续使用。
+视频模型可使用 OpenAI 风格路径 `/v1/videos`，也可使用 NewAPI 通用路径 `/v1/video/generations`。两条路径共用任务创建与查询链路；Seedance 的通用参数转换和官方字段透传在两条路径上保持一致。
 
 ## 异步任务通用请求格式
 
@@ -195,20 +195,24 @@ curl "$BASE_URL/v1/images/generations" \
 }
 ```
 
-### Doubao Seedance 视频生成
+### Seedance 视频生成（Doubao 与 AP）
 
 模型：
 
 - `doubao-seedance-2.0`
 - `doubao-seedance-1.5`
+- `AP Seedance-2.0 VIP`
+- `AP Seedance-2.0 标准版`
+- `AP Seedance-2.0 轻量版`
+- `AP Seedance-2.0 高性价比版`
 
-接口：`POST /v1/videos`
+接口：`POST /v1/videos` 或 `POST /v1/video/generations`
 
 必填参数：
 
 | 参数 | 说明 |
 | --- | --- |
-| `prompt` | 视频提示词。 |
+| `prompt` 或 `content` | 视频内容。未传非空 `content` 时，系统会把 `prompt` 转换为一个 `text` 内容项。 |
 
 常用可选参数：
 
@@ -216,10 +220,23 @@ curl "$BASE_URL/v1/images/generations" \
 | --- | --- |
 | `image` | 首帧或参考图 URL。传入后按图生视频处理。 |
 | `duration` 或 `seconds` | 视频时长。不传时默认按 5 秒计费和提交。 |
-| `metadata.ratio` | 画幅比例，例如 `16:9`、`9:16`、`1:1`。 |
-| `metadata.resolution` | 分辨率档位，按上游支持值透传。 |
-| `metadata.seed` | 随机种子。 |
+| `resolution` | Seedance 分辨率档位，例如 `720p`、`1080p`、`4k`。根级值优先于 `metadata.resolution`。 |
+| `ratio` | 画幅比例，例如 `16:9`、`9:16`、`1:1`、`4:3`、`3:4`。根级值优先于 `metadata.ratio`。 |
+| `width`、`height` | 通用视频尺寸。未传 `resolution` 时按短边 720、1080、2160 推导对应档位；未传 `ratio` 时同时推导画幅。 |
+| `content` | Seedance 官方多模态数组，支持 `text`、`image_url`、`video_url`、`audio_url` 及上游扩展字段。非空时原样优先。 |
+| `generate_audio` | 是否生成同步音频。显式 `false` 会保留。 |
+| `seed`、`service_tier`、`priority`、`callback_url` | Seedance 官方参数，支持根级直传；metadata 仅在根级缺失时补充。 |
 | `metadata.watermark` | 是否加水印，布尔值。 |
+
+Seedance 参数归一化优先级如下：
+
+```text
+content:    根级非空 content > metadata.content > prompt 转换
+resolution: 根级 resolution > metadata.resolution > width/height 推导
+ratio:      根级 ratio > metadata.ratio > width/height 推导
+```
+
+同步价格目录是分辨率能力的最终依据。尺寸能够推导为 `4k` 不代表每个模型都支持 `4k`；目录缺少对应档位时接口返回 HTTP 400，不会自动降级。
 
 文生视频示例：
 
@@ -228,14 +245,39 @@ curl "$BASE_URL/v1/videos" \
   -H "Authorization: Bearer $NEW_API_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "doubao-seedance-2.0",
+    "model": "AP Seedance-2.0 标准版",
     "prompt": "a cinematic slow push-in shot of a futuristic city at sunset",
     "duration": 5,
-    "metadata": {
-      "ratio": "16:9",
-      "watermark": false
-    }
+    "width": 1280,
+    "height": 720,
+    "fps": 24,
+    "generate_audio": false
   }'
+```
+
+以上请求会为 AP Seedance 自动生成根级 `content`、`resolution: "720p"` 和 `ratio: "16:9"`。调用方也可以直接使用官方结构：
+
+```json
+{
+  "model": "AP Seedance-2.0 标准版",
+  "resolution": "720p",
+  "ratio": "16:9",
+  "duration": 5,
+  "content": [
+    {
+      "type": "text",
+      "text": "保持主体动作连续"
+    },
+    {
+      "type": "image_url",
+      "role": "reference_image",
+      "image_url": {
+        "url": "https://example.com/reference.png"
+      }
+    }
+  ],
+  "generate_audio": false
+}
 ```
 
 图生视频示例：
