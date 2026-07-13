@@ -1,6 +1,6 @@
 # New API Docker 部署文档
 
-> 本文面向使用 Docker 或 Docker Compose 部署 New API 的管理员，覆盖 DockerHub 镜像部署、源码构建、SQLite 单容器部署、PostgreSQL + Redis 生产部署、升级、备份和故障排查。
+> 本文面向使用 Docker 或 Docker Compose 部署 New API 的管理员，覆盖阿里云 ACR 镜像部署、源码构建、SQLite 单容器部署、PostgreSQL + Redis 生产部署、升级、备份和故障排查。
 >
 > 当前仓库的 Compose 模板默认使用 PostgreSQL、Redis 和 AIPDD 自动引导。生产环境请先替换所有示例密码、会话密钥和上游 API Key。
 
@@ -50,13 +50,17 @@ openssl rand -hex 32
 
 如果使用 AIPDD 内置任务模型，还需要准备 AIPDD_API_KEY。容器启动后会根据该 Key 自动创建或同步名为 AIPDD 的渠道和模型目录。
 
-## 3. DockerHub 镜像部署（推荐）
+## 3. 阿里云 ACR 镜像部署（推荐）
 
-当前镜像：
+当前使用的三个 ACR 公网镜像地址：
 
 ~~~text
-1317b90/new-api-aipdd:latest
+crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest
+crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/postgres:15
+crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/redis:latest
 ~~~
+
+生产部署和版本升级统一使用 ACR。ACR 中的 `new-api-aipdd:latest` 是当前应用发布源；不要再将应用发布到旧外部镜像仓库，也不要让生产服务器从外部镜像仓库拉取这三个运行时镜像。
 
 ### 3.1 创建部署目录
 
@@ -88,7 +92,7 @@ CRYPTO_SECRET=请替换为固定随机字符串
 ~~~yaml
 services:
   new-api:
-    image: 1317b90/new-api-aipdd:latest
+    image: crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest
     container_name: new-api
     restart: unless-stopped
     command: --log-dir /app/logs
@@ -123,7 +127,7 @@ services:
       retries: 3
 
   postgres:
-    image: postgres:15
+    image: crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/postgres:15
     container_name: new-api-postgres
     restart: unless-stopped
     environment:
@@ -141,7 +145,7 @@ services:
       retries: 10
 
   redis:
-    image: redis:7-alpine
+    image: crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/redis:latest
     container_name: new-api-redis
     restart: unless-stopped
     command: ["redis-server", "--requirepass", "${REDIS_PASSWORD}"]
@@ -158,10 +162,10 @@ networks:
 
 ### 3.4 校验并启动
 
-先确认 Compose 能读取 .env。下面的命令会展开配置，输出可能包含密码，请不要把完整输出公开：
+如果 ACR 仓库需要认证，先在部署服务器登录 ACR。然后执行以下命令；不要把展开后的 Compose 配置输出公开，因为其中可能包含密码：
 
 ~~~bash
-docker compose config
+docker login crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com
 docker compose pull
 docker compose up -d
 ~~~
@@ -181,9 +185,9 @@ curl http://127.0.0.1:3000/api/status
 
 看到成功响应后，用浏览器访问 http://服务器IP:3000。首次访问会进入初始化向导，按页面提示创建管理员账号。
 
-## 4. 使用仓库 Compose 文件进行源码构建
+## 4. 使用仓库源码构建并更新 ACR 镜像
 
-如果需要使用当前仓库代码，而不是直接拉取 DockerHub 镜像：
+如果需要使用当前仓库代码发布新版本，先在开发机或 CI 构建并推送到 ACR，再让部署服务器从 ACR 拉取。不要在部署服务器上构建或使用 `docker compose up -d --build`：
 
 ~~~bash
 git clone https://github.com/QuantumNous/new-api.git
@@ -191,7 +195,7 @@ cd new-api
 mkdir -p data logs
 ~~~
 
-仓库自带的 docker-compose.yml 会使用本地 Dockerfile 构建镜像，并默认连接 Compose 内的 PostgreSQL 和 Redis。启动前在当前目录准备环境变量：
+启动前在当前目录准备环境变量：
 
 ~~~bash
 export POSTGRES_PASSWORD='请替换为强密码'
@@ -203,17 +207,20 @@ export CRYPTO_SECRET='请替换为固定随机字符串'
 
 也可以把这些变量写入项目根目录的 .env，但不要提交该文件。
 
-构建并启动：
+构建并推送应用镜像：
 
 ~~~bash
-docker compose up -d --build
+docker login crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com
+docker build --platform linux/amd64 \
+  -t crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest .
+docker push crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest
 ~~~
 
-只重新构建应用服务：
+然后在部署服务器更新：
 
 ~~~bash
-docker compose build new-api
-docker compose up -d new-api
+docker compose pull
+docker compose up -d
 ~~~
 
 源码构建会使用 Bun 构建 web/default 前端，再使用 Go 编译后端，并把前端静态文件复制到最终镜像。
@@ -225,7 +232,8 @@ docker compose up -d new-api
 ~~~bash
 mkdir -p /opt/new-api/data /opt/new-api/logs
 cd /opt/new-api
-docker pull 1317b90/new-api-aipdd:latest
+docker login crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com
+docker pull crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest
 
 docker run -d \
   --name new-api \
@@ -237,7 +245,7 @@ docker run -d \
   -e SESSION_SECRET='请替换为固定随机字符串' \
   -e CRYPTO_SECRET='请替换为固定随机字符串' \
   -e AIPDD_API_KEY='请替换为AIPDD上游Key' \
-  1317b90/new-api-aipdd:latest
+  crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest
 ~~~
 
 SQLite 数据库和本地素材会保存在 /opt/new-api/data。/data 挂载是必须的，否则删除容器后数据可能丢失。
@@ -342,22 +350,26 @@ docker compose down
 
 不要在排查问题时直接使用 docker compose down -v，该命令会删除 Compose 管理的数据库卷。
 
-### 8.1 更新 DockerHub 镜像
+### 8.1 更新 ACR 镜像
 
 ~~~bash
 cd /opt/new-api
+docker login crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com
 docker compose pull
 docker compose up -d
 docker image prune -f
 ~~~
 
-更新前建议先备份数据库。生产环境不要盲目使用 latest；如果 DockerHub 提供固定版本标签，建议使用固定标签。
+更新前建议先备份数据库。应用版本更新必须先在开发机或 CI 构建并推送 ACR，再在服务器执行上述命令；不要回写或更新旧外部镜像仓库。
 
-### 8.2 更新源码构建版本
+### 8.2 从源码发布新版本到 ACR
 
 ~~~bash
 git pull
-docker compose up -d --build
+docker login crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com
+docker build --platform linux/amd64 \
+  -t crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest .
+docker push crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest
 ~~~
 
 如果需要回滚，切换到上一个 Git 提交或镜像标签，再重新启动。
@@ -466,4 +478,4 @@ docker compose config --volumes
 - [docker-compose.dev.yml](../docker-compose.dev.yml)：前端开发和后端本地构建环境。
 - [环境变量示例](../.env.example)：项目环境变量参考。
 - [管理员用户手册](user-guide/admin-user-manual.zh_CN.md)：后台渠道、模型和价格配置。
-- [AIPDD 部署补充说明](dockerhub-aipdd-deploy.zh_CN.md)：DockerHub 镜像和 AIPDD 自动同步细节。
+- [AIPDD 部署补充说明](dockerhub-aipdd-deploy.zh_CN.md)：ACR 镜像和 AIPDD 自动同步细节。

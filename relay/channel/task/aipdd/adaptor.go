@@ -95,6 +95,21 @@ type taskDetailResponse struct {
 	Data    *aipddTask `json:"data"`
 }
 
+// seedanceOfficialTaskResponse is the response shape used by the official
+// Seedance task endpoint.  It is intentionally separate from taskDetailResponse:
+// the official endpoint returns the task directly at the top level, while the
+// legacy AIPDD endpoint wraps it in data.
+type seedanceOfficialTaskResponse struct {
+	ID      string `json:"id"`
+	Status  string `json:"status"`
+	Code    any    `json:"code"`
+	Message string `json:"message"`
+	Content struct {
+		VideoURL string `json:"video_url"`
+	} `json:"content"`
+	Error any `json:"error"`
+}
+
 type aipddTask struct {
 	ID             string  `json:"id"`
 	TaskID         string  `json:"taskId"`
@@ -356,24 +371,18 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 
 	cfg, _ := constant.GetAIPDDCapability(firstNonEmpty(info.UpstreamModelName, info.OriginModelName))
 	if cfg.ExecutionProtocol == "seedance_official" {
-		var official struct {
-			ID      string `json:"id"`
-			Code    any    `json:"code"`
-			Message string `json:"message"`
-			Error   struct {
-				Code    any    `json:"code"`
-				Message string `json:"message"`
-			} `json:"error"`
-		}
+		var official seedanceOfficialTaskResponse
 		if err := common.Unmarshal(responseBody, &official); err != nil {
 			return "", nil, service.TaskErrorWrapper(errors.Wrapf(err, "body: %s", responseBody), "unmarshal_response_body_failed", http.StatusInternalServerError)
 		}
 		if strings.TrimSpace(official.ID) == "" {
-			message := firstNonEmpty(official.Message, official.Error.Message, "Seedance task creation failed")
+			message, _ := seedanceOfficialErrorDetails(official)
+			message = firstNonEmpty(message, "Seedance task creation failed")
 			statusCode := http.StatusBadGateway
 			businessCode := positiveIntValue(official.Code)
 			if businessCode == 0 {
-				businessCode = positiveIntValue(official.Error.Code)
+				_, errorCode := seedanceOfficialErrorDetails(official)
+				businessCode = positiveIntValue(errorCode)
 			}
 			if businessCode >= http.StatusBadRequest && businessCode < http.StatusInternalServerError {
 				statusCode = businessCode
@@ -594,17 +603,7 @@ func mapValue(value any) (map[string]any, bool) {
 }
 
 func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error) {
-	var official struct {
-		ID      string `json:"id"`
-		Status  string `json:"status"`
-		Content struct {
-			VideoURL string `json:"video_url"`
-		} `json:"content"`
-		Error struct {
-			Code    string `json:"code"`
-			Message string `json:"message"`
-		} `json:"error"`
-	}
+	var official seedanceOfficialTaskResponse
 	if err := common.Unmarshal(respBody, &official); err == nil && strings.TrimSpace(official.Status) != "" {
 		info := &relaycommon.TaskInfo{Code: 0, TaskID: official.ID}
 		switch strings.ToLower(strings.TrimSpace(official.Status)) {
@@ -615,7 +614,9 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		case "succeeded", "completed":
 			info.Status, info.Progress, info.Url = model.TaskStatusSuccess, taskcommon.ProgressComplete, official.Content.VideoURL
 		case "failed", "cancelled", "canceled":
-			info.Status, info.Progress, info.Reason = model.TaskStatusFailure, taskcommon.ProgressComplete, official.Error.Message
+			message, code := seedanceOfficialErrorDetails(official)
+			info.Status, info.Progress, info.Reason = model.TaskStatusFailure, taskcommon.ProgressComplete, firstNonEmpty(message, "Seedance task failed")
+			info.Code = positiveIntValue(code)
 		default:
 			info.Status, info.Progress = model.TaskStatusInProgress, taskcommon.ProgressInProgress
 		}
@@ -782,6 +783,25 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, erro
 	openAIVideo := originTask.ToOpenAIVideo()
 	openAIVideo.TaskID = originTask.TaskID
 
+	// Official Seedance responses are not wrapped in data.  The realtime
+	// fetcher stores the latest response in originTask.Data, so parse this shape
+	// before falling back to the legacy AIPDD response format.  Without this,
+	// upstream error.message is discarded and clients only see a generic failure.
+	var official seedanceOfficialTaskResponse
+	if err := common.Unmarshal(originTask.Data, &official); err == nil && strings.TrimSpace(official.Status) != "" {
+		if strings.TrimSpace(official.Content.VideoURL) != "" {
+			openAIVideo.SetMetadata("url", official.Content.VideoURL)
+		}
+		if isSeedanceOfficialFailure(official.Status) || originTask.Status == model.TaskStatusFailure {
+			message, code := seedanceOfficialErrorDetails(official)
+			openAIVideo.Error = &dto.OpenAIVideoError{
+				Message: firstNonEmpty(message, originTask.FailReason, "Seedance task failed"),
+				Code:    firstNonEmpty(code, "seedance_task_failed"),
+			}
+		}
+		return common.Marshal(openAIVideo)
+	}
+
 	var detail taskDetailResponse
 	if err := common.Unmarshal(originTask.Data, &detail); err == nil && detail.Data != nil {
 		urls := extractResultURLs(aipddResultPayload(detail.Data))
@@ -790,13 +810,68 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, erro
 		}
 		if originTask.Status == model.TaskStatusFailure {
 			openAIVideo.Error = &dto.OpenAIVideoError{
-				Message: firstNonEmpty(taskResultText(aipddResultPayload(detail.Data)), detail.Data.Message),
+				Message: firstNonEmpty(taskResultText(aipddResultPayload(detail.Data)), detail.Data.Message, originTask.FailReason, "AIPDD task failed"),
 				Code:    "aipdd_task_failed",
 			}
+		}
+	} else if originTask.Status == model.TaskStatusFailure {
+		openAIVideo.Error = &dto.OpenAIVideoError{
+			Message: firstNonEmpty(originTask.FailReason, "AIPDD task failed"),
+			Code:    "aipdd_task_failed",
 		}
 	}
 
 	return common.Marshal(openAIVideo)
+}
+
+func isSeedanceOfficialFailure(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "failed", "cancelled", "canceled":
+		return true
+	default:
+		return false
+	}
+}
+
+func seedanceOfficialErrorDetails(response seedanceOfficialTaskResponse) (string, string) {
+	code, message := seedanceOfficialErrorValue(response.Error)
+	if strings.TrimSpace(message) == "" {
+		message = strings.TrimSpace(response.Message)
+	}
+	if strings.TrimSpace(code) == "" {
+		code = anyToString(response.Code)
+	}
+	return strings.TrimSpace(message), strings.TrimSpace(code)
+}
+
+func seedanceOfficialErrorValue(value any) (string, string) {
+	switch typed := value.(type) {
+	case string:
+		text := strings.TrimSpace(typed)
+		if text == "" {
+			return "", ""
+		}
+		var parsed any
+		if err := common.Unmarshal([]byte(text), &parsed); err == nil {
+			if _, ok := parsed.(map[string]any); ok {
+				return seedanceOfficialErrorValue(parsed)
+			}
+		}
+		return "", text
+	case map[string]any:
+		code := firstNonEmpty(anyToString(typed["code"]), anyToString(typed["error_code"]))
+		message := firstNonEmpty(anyToString(typed["message"]), anyToString(typed["reason"]), anyToString(typed["detail"]))
+		if message == "" {
+			if nested, ok := typed["error"]; ok {
+				nestedCode, nestedMessage := seedanceOfficialErrorValue(nested)
+				code = firstNonEmpty(code, nestedCode)
+				message = nestedMessage
+			}
+		}
+		return code, message
+	default:
+		return "", ""
+	}
 }
 
 func (a *TaskAdaptor) convertToRequestPayload(req relaycommon.TaskSubmitReq, info *relaycommon.RelayInfo) (*createTaskPayload, error) {
@@ -847,6 +922,16 @@ func buildWorkflowContent(req relaycommon.TaskSubmitReq, cfg modelConfig) (map[s
 	explicitDurationSeconds := hasContentValue(content["durationSeconds"])
 	explicitLength := hasContentValue(content["length"])
 	applyModelDefaults(content, req, cfg)
+	// The catalog normally describes this mapping in WorkflowDefaults. Keep a
+	// direct fallback for prompt because it is the primary user input and older
+	// or partially refreshed catalogs may omit the prompt parameter entirely.
+	// AIPDD workflows can still require this field even when the catalog does
+	// not advertise it, so do not gate this fallback on workflowParamAllowed.
+	if !hasContentValue(content["prompt"]) {
+		if prompt := strings.TrimSpace(req.Prompt); prompt != "" {
+			content["prompt"] = prompt
+		}
+	}
 	if isLtx23StartEndConfig(cfg) {
 		if err := normalizeLtxStartEndContent(content, req, explicitLength, explicitNumFrames); err != nil {
 			return nil, err
@@ -1443,6 +1528,9 @@ func normalizeLtxStartEndContent(content map[string]any, req relaycommon.TaskSub
 			return fmt.Errorf("length must be a positive integer")
 		}
 		content["length"] = length
+		// The upstream first/last-frame workflow validates numFrames as a
+		// separate required input even though length is its timeline alias.
+		content["numFrames"] = length
 	}
 	return nil
 }

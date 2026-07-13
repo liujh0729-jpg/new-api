@@ -526,6 +526,12 @@ func tryRealtimeFetch(task *model.Task, isOpenAIVideoAPI bool) []byte {
 	if ti.Progress != "" {
 		task.Progress = ti.Progress
 	}
+	if task.Status == model.TaskStatusFailure && strings.TrimSpace(ti.Reason) != "" {
+		// Keep the upstream failure reason on the task itself.  The playground
+		// endpoint returns a compact task envelope and otherwise used to replace
+		// every Seedance failure with a generic "task failed" message.
+		task.FailReason = strings.TrimSpace(ti.Reason)
+	}
 	if strings.HasPrefix(ti.Url, "data:") {
 		// data: URI — kept in Data, not ResultURL
 	} else if ti.Url != "" {
@@ -547,8 +553,18 @@ func tryRealtimeFetch(task *model.Task, isOpenAIVideoAPI bool) []byte {
 	// 非 OpenAI Video API: 构建自定义格式响应
 	format := detectVideoFormat(body)
 	output := extractTaskOutputURLs(task)
+	var taskError any
+	if task.Status == model.TaskStatusFailure {
+		taskError = strings.TrimSpace(task.FailReason)
+		if taskError == "" {
+			taskError = strings.TrimSpace(ti.Reason)
+		}
+		if taskError == "" {
+			taskError = "AIPDD task failed"
+		}
+	}
 	out := map[string]any{
-		"error":    nil,
+		"error":    taskError,
 		"format":   format,
 		"metadata": map[string]any{"urls": output},
 		"output":   output,

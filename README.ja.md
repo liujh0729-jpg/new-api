@@ -21,8 +21,8 @@
   --><a href="https://github.com/Calcium-Ion/new-api/releases/latest">
     <img src="https://img.shields.io/github/v/release/Calcium-Ion/new-api?color=brightgreen&include_prereleases" alt="release">
   </a><!--
-  --><a href="https://hub.docker.com/r/1317b90/new-api-aipdd">
-    <img src="https://img.shields.io/badge/docker-dockerHub-blue" alt="docker">
+  --><a href="https://crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd">
+    <img src="https://img.shields.io/badge/docker-Alibaba%20ACR-blue" alt="docker">
   </a><!--
   --><a href="https://goreportcard.com/report/github.com/Calcium-Ion/new-api">
     <img src="https://goreportcard.com/badge/github.com/Calcium-Ion/new-api" alt="GoReportCard">
@@ -107,8 +107,10 @@
 ## 🚀 クイックスタート
 
 > [!TIP]
-> **最新のDockerイメージ:** `1317b90/new-api-aipdd:latest`
-> **Docker Hub プル:** `docker pull 1317b90/new-api-aipdd:latest`
+> **最新の ACR イメージ:** `crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest`
+> **PostgreSQL イメージ:** `crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/postgres:15`
+> **Redis イメージ:** `crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/redis:latest`
+> **ACR プル:** `docker pull crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest`
 
 ### デプロイ準備
 
@@ -149,8 +151,9 @@ docker-compose up -d
 <summary><strong>Dockerコマンドを使用</strong></summary>
 
 ```bash
-# 最新の AIPDD イメージをプル
-docker pull 1317b90/new-api-aipdd:latest
+# ACR にログインして最新の AIPDD イメージをプル
+docker login crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com
+docker pull crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest
 
 # AIPDD イメージを起動し、AIPDD チャンネルを自動設定
 # AIPDD_API_KEY は https://app.aipdd.work で登録して取得してください
@@ -159,14 +162,14 @@ docker run --name new-api -d --restart always \
   -e TZ=Asia/Shanghai \
   -e AIPDD_API_KEY="your-aipdd-api-key" \
   -v ./data:/data \
-  1317b90/new-api-aipdd:latest
+  crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest
 
 # SQLiteを使用（デフォルト）
 docker run --name new-api -d --restart always \
   -p 3000:3000 \
   -e TZ=Asia/Shanghai \
   -v ./data:/data \
-  1317b90/new-api-aipdd:latest
+  crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest
 
 # MySQLを使用
 docker run --name new-api -d --restart always \
@@ -174,7 +177,7 @@ docker run --name new-api -d --restart always \
   -e SQL_DSN="root:123456@tcp(localhost:3306)/oneapi" \
   -e TZ=Asia/Shanghai \
   -v ./data:/data \
-  1317b90/new-api-aipdd:latest
+  crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest
 ```
 
 > **💡 ヒント:** `-v ./data:/data` は現在のディレクトリの `data` フォルダにデータを保存します。絶対パスに変更することもできます：`-v /your/custom/path:/data`

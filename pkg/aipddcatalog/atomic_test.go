@@ -19,7 +19,8 @@ func TestFetchAtomicFiltersExcludedFamiliesOnReceiver(t *testing.T) {
 				"awcoinRate":{"rmbPerAwcoin":0.01,"usdPerAwcoin":0.0015,"updatedAt":"2026-07-12T09:00:00"},
 				"capabilities":[
 					{"id":"keep-comfy","code":"keep-comfy","adapterCode":"comfyui","execution":{"protocol":"shared_task","path":"/shared-tasks/tasks"},"pricing":{"enabled":true,"chargeConfig":{"amountAwcoin":10}}},
-					{"id":"seedvr2-upscale","code":"seedvr2-upscale","adapterCode":"comfyui","execution":{"protocol":"shared_task","path":"/shared-tasks/tasks"},"pricing":{"enabled":true,"chargeConfig":{"amountAwcoin":10}}}
+					{"id":"seedvr2-upscale","code":"seedvr2-upscale","adapterCode":"comfyui","execution":{"protocol":"shared_task","path":"/shared-tasks/tasks"},"pricing":{"enabled":true,"chargeConfig":{"amountAwcoin":10}}},
+					{"id":"aipdd_lightx2v_ltx23_distilled_fp8_i2av","code":"aipdd_lightx2v_ltx23_distilled_fp8_i2av","adapterCode":"lightx2v_python","execution":{"protocol":"shared_task","path":"/shared-tasks/tasks"},"pricing":{"enabled":true,"chargeConfig":{"amountAwcoin":10}}}
 				],
 				"models":[
 					{"id":"qwen3:8b","execution":{"protocol":"openai","path":"/v1/chat/completions"},"pricing":{"enabled":true,"promptPerMillion":10,"completionPerMillion":20}},
@@ -33,6 +34,9 @@ func TestFetchAtomicFiltersExcludedFamiliesOnReceiver(t *testing.T) {
 	catalog, err := FetchAtomic(context.Background(), server.Client(), server.URL, "sk-test")
 	require.NoError(t, err)
 	require.Equal(t, []string{"keep-comfy", "qwen3:8b"}, catalog.ModelNames())
+	runtimeCapabilities := catalog.RuntimeCapabilities()
+	require.Len(t, runtimeCapabilities, 1)
+	require.Equal(t, "keep-comfy", runtimeCapabilities[0].ModelName)
 }
 
 func TestTaskAWCoinPriceUsesMinimumDeterministicSeedanceEstimate(t *testing.T) {

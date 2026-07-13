@@ -21,8 +21,8 @@
   --><a href="https://github.com/Calcium-Ion/new-api/releases/latest">
     <img src="https://img.shields.io/github/v/release/Calcium-Ion/new-api?color=brightgreen&include_prereleases" alt="release">
   </a><!--
-  --><a href="https://hub.docker.com/r/1317b90/new-api-aipdd">
-    <img src="https://img.shields.io/badge/docker-dockerHub-blue" alt="docker">
+  --><a href="https://crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd">
+    <img src="https://img.shields.io/badge/docker-Alibaba%20ACR-blue" alt="docker">
   </a><!--
   --><a href="https://goreportcard.com/report/github.com/Calcium-Ion/new-api">
     <img src="https://goreportcard.com/badge/github.com/Calcium-Ion/new-api" alt="GoReportCard">
@@ -115,8 +115,10 @@ AIPDD 渠道会把任务请求转发到 `https://api.aipdd.work`，渠道 Key �
 ## 🚀 快速开始
 
 > [!TIP]
-> **最新版 Docker 镜像：** `1317b90/new-api-aipdd:latest`
-> **Docker Hub 拉取：** `docker pull 1317b90/new-api-aipdd:latest`
+> **最新版 ACR 镜像：** `crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest`
+> **PostgreSQL 镜像：** `crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/postgres:15`
+> **Redis 镜像：** `crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/redis:latest`
+> **ACR 拉取：** `docker pull crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest`
 
 ### 部署准备
 
@@ -149,16 +151,19 @@ cd new-api
 # 编辑 docker-compose.yml 配置
 nano docker-compose.yml
 
-# 启动服务
-docker-compose up -d
+# 登录 ACR 并启动服务
+docker login crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com
+docker compose pull
+docker compose up -d
 ```
 
 <details>
 <summary><strong>使用 Docker 命令</strong></summary>
 
 ```bash
-# 拉取最新 AIPDD 镜像
-docker pull 1317b90/new-api-aipdd:latest
+# 登录并拉取最新 AIPDD 镜像
+docker login crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com
+docker pull crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest
 
 # 使用 AIPDD 镜像并自动配置 AIPDD 渠道
 # AIPDD_API_KEY 请先到 https://app.aipdd.work 注册获取
@@ -167,14 +172,14 @@ docker run --name new-api -d --restart always \
   -e TZ=Asia/Shanghai \
   -e AIPDD_API_KEY="your-aipdd-api-key" \
   -v ./data:/data \
-  1317b90/new-api-aipdd:latest
+  crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest
 
 # 使用 SQLite（默认）
 docker run --name new-api -d --restart always \
   -p 3000:3000 \
   -e TZ=Asia/Shanghai \
   -v ./data:/data \
-  1317b90/new-api-aipdd:latest
+  crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest
 
 # 使用 MySQL
 docker run --name new-api -d --restart always \
@@ -182,7 +187,7 @@ docker run --name new-api -d --restart always \
   -e SQL_DSN="root:123456@tcp(localhost:3306)/oneapi" \
   -e TZ=Asia/Shanghai \
   -v ./data:/data \
-  1317b90/new-api-aipdd:latest
+  crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest
 ```
 
 > **💡 提示：** `-v ./data:/data` 会将数据保存在当前目录的 `data` 文件夹中，你也可以改为绝对路径如 `-v /your/custom/path:/data`

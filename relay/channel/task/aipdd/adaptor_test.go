@@ -1,6 +1,7 @@
 package aipdd
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -9,10 +10,46 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/gin-gonic/gin"
 )
+
+func TestConvertToOpenAIVideoPreservesSeedanceOfficialFailure(t *testing.T) {
+	task := &model.Task{
+		TaskID:   "task_seedance_failure",
+		Status:   model.TaskStatusFailure,
+		Progress: "100%",
+		Properties: model.Properties{
+			OriginModelName: "AP Seedance-2.0 标准版",
+		},
+		Data: json.RawMessage(`{
+			"id":"upstream-seedance-task",
+			"status":"failed",
+			"error":{"code":"content_policy_violation","message":"The reference media violates the content policy."}
+		}`),
+	}
+
+	data, err := (&TaskAdaptor{}).ConvertToOpenAIVideo(task)
+	if err != nil {
+		t.Fatalf("ConvertToOpenAIVideo returned error: %v", err)
+	}
+
+	var response dto.OpenAIVideo
+	if err := common.Unmarshal(data, &response); err != nil {
+		t.Fatalf("decode converted response: %v", err)
+	}
+	if response.Error == nil {
+		t.Fatal("expected official Seedance error to be present")
+	}
+	if response.Error.Code != "content_policy_violation" {
+		t.Fatalf("unexpected error code: %q", response.Error.Code)
+	}
+	if response.Error.Message != "The reference media violates the content policy." {
+		t.Fatalf("unexpected error message: %q", response.Error.Message)
+	}
+}
 
 func TestConvertToRequestPayloadBuildsIndexTTSContent(t *testing.T) {
 	adaptor := &TaskAdaptor{}
@@ -268,6 +305,31 @@ func TestConvertToRequestPayloadMapsOpenAIImageCountToDynamicBatchParam(t *testi
 	ratios := adaptor.EstimateBilling(ctx, relayInfoWithModel(modelName))
 	if ratios["n"] != 4 {
 		t.Fatalf("image count should be applied to billing ratios: %#v", ratios)
+	}
+}
+
+func TestConvertToRequestPayloadPreservesPromptWhenCatalogDefaultIsMissing(t *testing.T) {
+	original := constant.GetAIPDDCapabilities()
+	t.Cleanup(func() { constant.SetAIPDDCapabilities(original) })
+	modelName := "aipdd-ltx-2-3-stale-catalog"
+	constant.SetAIPDDCapabilities([]constant.AIPDDCapability{{
+		ModelName:              modelName,
+		ScriptCode:             modelName,
+		EndpointType:           constant.EndpointTypeOpenAIVideo,
+		BillingType:            constant.AIPDDBillingTypePerCall,
+		WorkflowParamKeys:      []string{"prompt", "image"},
+		RequiredWorkflowParams: map[string]bool{"prompt": true, "image": false},
+	}})
+
+	payload, err := (&TaskAdaptor{}).convertToRequestPayload(relaycommon.TaskSubmitReq{
+		Model:  modelName,
+		Prompt: "下雪",
+	}, relayInfoWithModel(modelName))
+	if err != nil {
+		t.Fatalf("convertToRequestPayload returned error: %v", err)
+	}
+	if got := anyToString(payload.Input["prompt"]); got != "下雪" {
+		t.Fatalf("prompt was not preserved in upstream input: %#v", payload.Input)
 	}
 }
 

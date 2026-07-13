@@ -23,8 +23,8 @@
   <a href="https://github.com/users/Calcium-Ion/packages/container/package/new-api">
     <img src="https://img.shields.io/badge/docker-ghcr.io-blue" alt="docker">
   </a>
-  <a href="https://hub.docker.com/r/1317b90/new-api-aipdd">
-    <img src="https://img.shields.io/badge/docker-dockerHub-blue" alt="docker">
+  <a href="https://crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd">
+    <img src="https://img.shields.io/badge/docker-Alibaba%20ACR-blue" alt="docker">
   </a>
   <a href="https://goreportcard.com/report/github.com/Calcium-Ion/new-api">
     <img src="https://goreportcard.com/badge/github.com/Calcium-Ion/new-api" alt="GoReportCard">
@@ -102,8 +102,10 @@
 ## 🚀 Quick Start
 
 > [!TIP]
-> **Latest Docker image:** `1317b90/new-api-aipdd:latest`
-> **Docker Hub pull:** `docker pull 1317b90/new-api-aipdd:latest`
+> **Latest ACR image:** `crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest`
+> **PostgreSQL image:** `crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/postgres:15`
+> **Redis image:** `crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/redis:latest`
+> **ACR pull:** `docker pull crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest`
 
 ### Deployment Prerequisites
 
@@ -144,8 +146,9 @@ docker-compose up -d
 <summary><strong>Using Docker Commands</strong></summary>
 
 ```bash
-# Pull the latest AIPDD image
-docker pull 1317b90/new-api-aipdd:latest
+# Login and pull the latest AIPDD image from ACR
+docker login crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com
+docker pull crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest
 
 # Run the AIPDD image and auto-configure the AIPDD channel
 # Register at https://app.aipdd.work to obtain AIPDD_API_KEY first
@@ -154,14 +157,14 @@ docker run --name new-api -d --restart always \
   -e TZ=Asia/Shanghai \
   -e AIPDD_API_KEY="your-aipdd-api-key" \
   -v ./data:/data \
-  1317b90/new-api-aipdd:latest
+  crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest
 
 # Using SQLite (default)
 docker run --name new-api -d --restart always \
   -p 3000:3000 \
   -e TZ=Asia/Shanghai \
   -v ./data:/data \
-  1317b90/new-api-aipdd:latest
+  crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest
 
 # Using MySQL
 docker run --name new-api -d --restart always \
@@ -169,7 +172,7 @@ docker run --name new-api -d --restart always \
   -e SQL_DSN="root:123456@tcp(localhost:3306)/oneapi" \
   -e TZ=Asia/Shanghai \
   -v ./data:/data \
-  1317b90/new-api-aipdd:latest
+  crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest
 ```
 
 > **💡 Tip:** `-v ./data:/data` will save data in the `data` folder of the current directory, you can also change it to an absolute path like `-v /your/custom/path:/data`

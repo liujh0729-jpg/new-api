@@ -13,6 +13,8 @@ const (
 	AIPDDModelMimicMotion   = "aipdd-mimic-motion"
 	AIPDDModelLatentsync15  = "aipdd-latentsync-1.5"
 	AIPDDModelIndexTTS      = "aipdd-indextts"
+	AIPDDModelLTX23         = "aipdd_ltx_2.3"
+	AIPDDModelLTX23StartEnd = "aipdd_ltx_2.3 (首尾帧)"
 	AIPDDLogoPath           = "/aipdd-logo.png"
 	AIPDDWebsiteURL         = "https://app.aipdd.work"
 )
@@ -176,6 +178,79 @@ var AIPDDCapabilities = []AIPDDCapability{
 			aipddStringDefault("prompt", aipddMetadata("prompt"), aipddSource(AIPDDWorkflowSourcePrompt)),
 			aipddStringDefault("negative_prompt", aipddMetadata("negative_prompt")),
 			aipddStringDefault("fps", aipddMetadata("fps")),
+		},
+		EndpointType: EndpointTypeOpenAIVideo,
+		BillingType:  AIPDDBillingTypePerCall,
+	},
+	{
+		ModelName:         AIPDDModelLTX23,
+		ScriptCode:        AIPDDModelLTX23,
+		TaskKind:          "image_to_video",
+		InputModalities:   []string{"text", "image"},
+		OutputModalities:  []string{"video", "audio"},
+		WorkflowParamKeys: []string{"prompt", "image", "negativePrompt", "width", "height", "numFrames", "frameRate", "seed"},
+		RequiredWorkflowParams: map[string]bool{
+			"prompt": true,
+			"image":  true,
+		},
+		WorkflowDefaults: []AIPDDWorkflowParamDefault{
+			aipddStringDefault("prompt", aipddSource(AIPDDWorkflowSourcePrompt)),
+			aipddStringDefault("image", aipddSource(AIPDDWorkflowSourceImage), aipddSource(AIPDDWorkflowSourceFirstImage)),
+			aipddStringDefault("negativePrompt", aipddMetadata("negativePrompt"), aipddMetadata("negative_prompt")),
+			aipddIntDefault("width", aipddMetadata("width")),
+			aipddIntDefault("height", aipddMetadata("height")),
+			aipddIntDefault("numFrames", aipddMetadata("numFrames"), aipddMetadata("num_frames"), aipddSource(AIPDDWorkflowSourceDuration)),
+			{ParamKey: "frameRate", ValueType: AIPDDWorkflowValueTypeInt, Sources: []AIPDDWorkflowValueSource{
+				aipddMetadata("frameRate"), aipddMetadata("fps"), {Type: AIPDDWorkflowSourceStatic, Key: "24"},
+			}},
+			aipddIntDefault("seed", aipddMetadata("seed")),
+		},
+		EndpointType: EndpointTypeOpenAIVideo,
+		BillingType:  AIPDDBillingTypePerCall,
+	},
+	{
+		ModelName:        AIPDDModelLTX23StartEnd,
+		ScriptCode:       AIPDDModelLTX23StartEnd,
+		TaskKind:         "first_last_frame_to_video",
+		InputModalities:  []string{"text", "image"},
+		OutputModalities: []string{"video", "audio"},
+		WorkflowParamKeys: []string{
+			"first_frame_image",
+			"last_frame_image",
+			"audio",
+			"local_prompts",
+			"timeline_data",
+			"length",
+			"numFrames",
+			"frameRate",
+			"global_prompt",
+			"width",
+			"height",
+		},
+		RequiredWorkflowParams: map[string]bool{
+			"first_frame_image": true,
+			"last_frame_image":  true,
+			"audio":             false,
+			"local_prompts":     true,
+			"timeline_data":     true,
+			"length":            true,
+			"numFrames":         true,
+			"frameRate":         true,
+			"global_prompt":     true,
+			"width":             true,
+			"height":            true,
+		},
+		WorkflowDefaults: []AIPDDWorkflowParamDefault{
+			aipddStringDefault("first_frame_image", aipddSource(AIPDDWorkflowSourceFirstImage)),
+			aipddStringDefault("last_frame_image", aipddSource(AIPDDWorkflowSourceLastImage)),
+			aipddStringDefault("audio", aipddMetadata("audio"), aipddMetadata("audio_url")),
+			aipddStringDefault("local_prompts", aipddSource(AIPDDWorkflowSourcePrompt)),
+			aipddStringDefault("timeline_data", aipddMetadata("timeline_data")),
+			aipddIntDefault("length", aipddMetadata("length"), aipddSource(AIPDDWorkflowSourceDuration)),
+			{ParamKey: "frameRate", ValueType: AIPDDWorkflowValueTypeInt, Sources: []AIPDDWorkflowValueSource{{Type: AIPDDWorkflowSourceStatic, Key: "24"}}},
+			aipddStringDefault("global_prompt", aipddSource(AIPDDWorkflowSourcePrompt)),
+			aipddIntDefault("width", aipddMetadata("width")),
+			aipddIntDefault("height", aipddMetadata("height")),
 		},
 		EndpointType: EndpointTypeOpenAIVideo,
 		BillingType:  AIPDDBillingTypePerCall,

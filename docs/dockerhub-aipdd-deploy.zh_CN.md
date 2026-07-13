@@ -1,28 +1,45 @@
-# DockerHub 拉取部署方案
+# 阿里云 ACR 镜像部署方案
 
-本文用于从 DockerHub 拉取 `1317b90/new-api-aipdd` 镜像并部署服务，同时说明后台如何添加渠道和模型。
+本文用于从阿里云 ACR 拉取 New API、PostgreSQL 和 Redis 镜像并部署服务，同时说明后台如何添加渠道和模型。生产部署和版本升级统一使用 ACR，不再使用 DockerHub 作为运行时镜像源。
 
 ## 镜像信息
 
 | 项目 | 内容 |
 | --- | --- |
-| DockerHub | [1317b90/new-api-aipdd](https://hub.docker.com/r/1317b90/new-api-aipdd) |
-| 最新镜像 | `1317b90/new-api-aipdd:latest` |
-| 固定版本示例 | `1317b90/new-api-aipdd:25d72410` |
-| 当前镜像 digest | `sha256:464a53ae18c450f02cfebe79f4fc28e3aba9a21136125c222c5e19ca82ab538a` |
+| New API 公网镜像地址 | `crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest` |
+| PostgreSQL 公网镜像地址 | `crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/postgres:15` |
+| Redis 公网镜像地址 | `crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/redis:latest` |
+| 当前 New API 镜像 digest | `sha256:d1c68946c722eefe52866bdb53a69116ee36b0adffa88e73b8d9527aee4b6f2f` |
+| 目标架构 | `linux/amd64` |
 | 服务端口 | `3000` |
 
 拉取命令：
 
 ```bash
-docker pull 1317b90/new-api-aipdd:latest
+docker login crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com
+docker pull crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest
 ```
 
-使用固定版本：
+如需按 digest 固定版本：
 
 ```bash
-docker pull 1317b90/new-api-aipdd:25d72410
+docker pull crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd@sha256:d1c68946c722eefe52866bdb53a69116ee36b0adffa88e73b8d9527aee4b6f2f
 ```
+
+## 版本发布与更新规则
+
+以后更新项目 Docker 版本时，先使用当前项目代码构建并推送到 ACR，再到部署服务器执行更新。不要再向旧外部镜像仓库发布，也不要让生产服务器从外部镜像仓库拉取应用、PostgreSQL 或 Redis 镜像。
+
+在开发机或 CI 中执行：
+
+```bash
+docker login crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com
+docker build --platform linux/amd64 \
+  -t crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest .
+docker push crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest
+```
+
+如果 PostgreSQL 或 Redis 版本变化，也必须把对应版本同步到上面记录的 ACR 公网地址，并同步修改 Compose 文件。部署服务器只执行 `docker compose pull` 和 `docker compose up -d`，不要使用 `--build`。
 
 ## 部署前准备
 
@@ -68,7 +85,7 @@ version: "3.4"
 
 services:
   new-api:
-    image: 1317b90/new-api-aipdd:latest
+    image: crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest
     container_name: new-api
     restart: always
     command: --log-dir /app/logs
@@ -99,7 +116,7 @@ services:
       retries: 3
 
   postgres:
-    image: postgres:15
+    image: crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/postgres:15
     container_name: new-api-postgres
     restart: always
     environment:
@@ -112,7 +129,7 @@ services:
       - new-api-network
 
   redis:
-    image: redis:7-alpine
+    image: crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/redis:latest
     container_name: new-api-redis
     restart: always
     command: ["redis-server", "--requirepass", "${REDIS_PASSWORD}"]
@@ -164,7 +181,7 @@ docker run -d \
   -e TZ=Asia/Shanghai \
   -e AIPDD_API_KEY="change-this-aipdd-api-key" \
   -e SESSION_SECRET="change-this-random-session-secret" \
-  1317b90/new-api-aipdd:latest
+  crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest
 ```
 
 查看日志：
@@ -179,6 +196,7 @@ Compose 部署：
 
 ```bash
 cd /opt/new-api-aipdd
+docker login crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com
 docker compose pull
 docker compose up -d
 docker image prune -f
@@ -187,7 +205,8 @@ docker image prune -f
 单容器部署：
 
 ```bash
-docker pull 1317b90/new-api-aipdd:latest
+docker login crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com
+docker pull crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest
 docker stop new-api
 docker rm new-api
 
@@ -199,7 +218,7 @@ docker run -d \
   -e TZ=Asia/Shanghai \
   -e AIPDD_API_KEY="change-this-aipdd-api-key" \
   -e SESSION_SECRET="change-this-random-session-secret" \
-  1317b90/new-api-aipdd:latest
+  crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest
 ```
 
 ## AIPDD 渠道如何添加

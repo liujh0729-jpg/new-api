@@ -142,8 +142,7 @@ func (catalog *AtomicCatalog) FilterExcluded() {
 }
 
 func excludedAIPDDCatalogText(values ...string) bool {
-	text := strings.ToLower(strings.Join(values, " "))
-	return strings.Contains(text, "funasr") || strings.Contains(text, "lightx2v") || strings.Contains(text, "seedvr2")
+	return constant.IsAIPDDExcludedModel(strings.Join(values, " "))
 }
 
 func (catalog AtomicCatalog) Validate() error {
@@ -180,14 +179,14 @@ func (catalog AtomicCatalog) ModelNames() []string {
 	models := make([]string, 0, len(catalog.Capabilities)+len(catalog.Models))
 	for _, capability := range catalog.Capabilities {
 		name := strings.TrimSpace(capability.ID)
-		if name != "" && !seen[name] {
+		if name != "" && !excludedAIPDDCatalogText(capability.AdapterCode, capability.Code, capability.ID, capability.Name) && !seen[name] {
 			seen[name] = true
 			models = append(models, name)
 		}
 	}
 	for _, model := range catalog.Models {
 		name := strings.TrimSpace(model.ID)
-		if name != "" && !seen[name] {
+		if name != "" && !excludedAIPDDCatalogText(model.ID, model.Name) && !seen[name] {
 			seen[name] = true
 			models = append(models, name)
 		}
@@ -199,6 +198,9 @@ func (catalog AtomicCatalog) ModelNames() []string {
 func (catalog AtomicCatalog) RuntimeCapabilities() []constant.AIPDDCapability {
 	capabilities := make([]constant.AIPDDCapability, 0, len(catalog.Capabilities))
 	for _, item := range catalog.Capabilities {
+		if excludedAIPDDCatalogText(item.AdapterCode, item.Code, item.ID, item.Name) {
+			continue
+		}
 		script := Script{
 			ID: item.ID, Code: item.Code, Name: item.Name, Description: item.Description,
 			AdapterCode: item.AdapterCode, EndpointType: item.EndpointType, TaskKind: item.TaskKind,

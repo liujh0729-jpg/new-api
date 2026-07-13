@@ -67,6 +67,10 @@ func restoreAIPDDCatalogSnapshot(baseURL string, fetchErr error) (AIPDDCatalogSy
 }
 
 func applyAIPDDCatalog(catalog aipddcatalog.AtomicCatalog, baseURL, apiKey string) (AIPDDCatalogSyncResult, error) {
+	// FetchAtomic and UnmarshalAtomic already apply this filter, but keep the
+	// boundary defensive so a catalog assembled by another caller cannot
+	// reintroduce an intentionally unsupported AIPDD family.
+	catalog.FilterExcluded()
 	if err := catalog.Validate(); err != nil {
 		return AIPDDCatalogSyncResult{}, err
 	}
@@ -121,7 +125,7 @@ func applyAIPDDCatalog(catalog aipddcatalog.AtomicCatalog, baseURL, apiKey strin
 		err = replaceManagedAIPDDAbilitiesTx(tx, channel)
 	}
 	if err == nil {
-		err = cleanupExcludedAIPDDDataTx(tx, channel, vendorID)
+		err = cleanupExcludedAIPDDDataTx(tx, vendorID)
 	}
 	if err == nil {
 		err = removeStaleAIPDDModelsTx(tx, previousSet, currentSet, vendorID)
@@ -186,6 +190,7 @@ func previousAIPDDCatalogModels(baseURL string) ([]string, error) {
 }
 
 func activateAIPDDCatalog(catalog aipddcatalog.AtomicCatalog) {
+	catalog.FilterExcluded()
 	constant.SetAIPDDCapabilities(catalog.RuntimeCapabilities())
 	models := make([]string, 0, len(catalog.Models))
 	for _, model := range catalog.Models {
@@ -282,10 +287,18 @@ func replaceManagedAIPDDAbilitiesTx(tx *gorm.DB, channel *Channel) error {
 	return channel.AddAbilities(tx)
 }
 
-func cleanupExcludedAIPDDDataTx(tx *gorm.DB, managedChannel *Channel, vendorID int) error {
-	if managedChannel != nil {
+func cleanupExcludedAIPDDDataTx(tx *gorm.DB, vendorID int) error {
+	var channels []Channel
+	if err := tx.Where("type = ?", constant.ChannelTypeAIPDD).Find(&channels).Error; err != nil {
+		return err
+	}
+	channelIDs := make([]int, 0, len(channels))
+	for _, channel := range channels {
+		channelIDs = append(channelIDs, channel.Id)
+	}
+	if len(channelIDs) > 0 {
 		var abilities []Ability
-		if err := tx.Where("channel_id = ?", managedChannel.Id).Find(&abilities).Error; err != nil {
+		if err := tx.Where("channel_id IN ?", channelIDs).Find(&abilities).Error; err != nil {
 			return err
 		}
 		for _, ability := range abilities {

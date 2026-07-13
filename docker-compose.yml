@@ -5,7 +5,7 @@
 #   2. export REDIS_PASSWORD='change-this-redis-password'
 #   3. export AIPDD_API_KEY='change-this-aipdd-api-key'
 #   4. export SESSION_SECRET='change-this-random-session-secret'
-#   5. docker compose up -d --build
+#   5. docker compose up -d
 #   6. Access at http://localhost:3000
 #
 # Using MySQL instead of PostgreSQL:
@@ -20,10 +20,8 @@ version: '3.4' # For compatibility with older Docker versions
 
 services:
   new-api:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: 1317b90/new-api-aipdd:latest
+    # 发布规则：更新项目版本时先将当前代码构建并推送到 ACR；部署服务器只从 ACR 拉取，不再更新旧外部镜像仓库。
+    image: crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest
     container_name: new-api
     restart: always
     command: --log-dir /app/logs
@@ -61,7 +59,7 @@ services:
       retries: 3
 
   redis:
-    image: redis:latest
+    image: crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/redis:latest
     container_name: redis
     restart: always
     command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?set REDIS_PASSWORD}"]
@@ -69,7 +67,7 @@ services:
       - new-api-network
 
   postgres:
-    image: postgres:15
+    image: crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/postgres:15
     container_name: postgres
     restart: always
     environment:
