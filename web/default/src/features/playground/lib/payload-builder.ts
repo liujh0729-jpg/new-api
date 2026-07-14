@@ -34,6 +34,7 @@ import type {
   VideoGenerationRequest,
   VideoGenerationContentItem,
 } from '../types'
+import { LTX_23_FRAME_RATE, resolveLTXStartEndTimeline } from './ltx-start-end'
 import { formatMessageForAPI, isValidMessage } from './message-utils'
 
 function isWebUrl(url: string): boolean {
@@ -93,6 +94,10 @@ export function buildChatCompletionPayload(
     }
   })
 
+  if (config.thinking_mode !== 'auto') {
+    payload.think = config.thinking_mode === 'enabled'
+  }
+
   return payload
 }
 
@@ -141,8 +146,35 @@ export function buildVideoGenerationPayload(
     throw new Error(ERROR_MESSAGES.VIDEO_REFERENCE_UPLOAD_REQUIRED)
   }
 
+  const isLTXVideo = isLTXVideoModel(config.model)
+  const isLTXStartEnd = isLTX23StartEndModel(config.model)
+  const isSeedanceVideo = isSeedanceModel(config.model)
+  const imageReferences = references.filter(
+    (reference) => reference.kind === 'image'
+  )
+  const firstFrameReference = isLTXStartEnd
+    ? imageReferences.find((reference) => reference.role === 'first_frame') ||
+      imageReferences.find((reference) => reference.role !== 'last_frame')
+    : undefined
+  const lastFrameReference = isLTXStartEnd
+    ? imageReferences.find((reference) => reference.role === 'last_frame') ||
+      imageReferences.find((reference) => reference !== firstFrameReference)
+    : undefined
+  const orderedLTXImageReferences = isLTXStartEnd
+    ? [firstFrameReference, lastFrameReference].filter(
+        (reference): reference is SeedanceReference => !!reference
+      )
+    : imageReferences
+  const contentImageReferences = isLTXStartEnd
+    ? [
+        ...orderedLTXImageReferences,
+        ...imageReferences.filter(
+          (reference) => !orderedLTXImageReferences.includes(reference)
+        ),
+      ]
+    : imageReferences
   const sortedReferences = [
-    ...references.filter((reference) => reference.kind === 'image'),
+    ...contentImageReferences,
     ...references.filter((reference) => reference.kind === 'video'),
     ...references.filter((reference) => reference.kind === 'audio'),
   ]
@@ -179,29 +211,34 @@ export function buildVideoGenerationPayload(
     ...referenceContent,
   ]
 
-  const isLTXVideo = isLTXVideoModel(config.model)
-  const isLTXStartEnd = isLTX23StartEndModel(config.model)
-  const isSeedanceVideo = isSeedanceModel(config.model)
   const size = isLTXVideo ? undefined : getOpenAIVideoSize(config.video_ratio)
-  const ltxDimensions =
-    isLTXVideo && !isLTXStartEnd
-      ? getLTXVideoDimensions(config.video_size)
-      : undefined
+  const ltxDimensions = isLTXVideo
+    ? getLTXVideoDimensions(config.video_size)
+    : undefined
   const ltxImageReferences = isLTXVideo
-    ? references
-        .filter((reference) => reference.kind === 'image')
-        .map((reference) => reference.url)
+    ? orderedLTXImageReferences.map((reference) => reference.url)
     : []
   const ltxAudioReference = isLTXStartEnd
-    ? references.find((reference) => reference.kind === 'audio')?.url
+    ? (
+        references.find(
+          (reference) =>
+            reference.kind === 'audio' && reference.role === 'audio'
+        ) || references.find((reference) => reference.kind === 'audio')
+      )?.url
     : undefined
   let timelineData: unknown
-  if (isLTXStartEnd && config.ltx_timeline_data.trim()) {
-    try {
-      timelineData = JSON.parse(config.ltx_timeline_data)
-    } catch {
+  let ltxFrameCount: number | undefined
+  if (isLTXStartEnd) {
+    const timelineResolution = resolveLTXStartEndTimeline(
+      prompt,
+      config.video_duration,
+      config.ltx_timeline_data
+    )
+    if (!timelineResolution.timeline) {
       throw new Error(ERROR_MESSAGES.TIMELINE_JSON_INVALID)
     }
+    timelineData = timelineResolution.timeline
+    ltxFrameCount = timelineResolution.frameCount
   }
   const metadata: VideoGenerationRequest['metadata'] = {
     content,
@@ -210,12 +247,18 @@ export function buildVideoGenerationPayload(
           width: ltxDimensions.width,
           height: ltxDimensions.height,
         }
-      : isLTXStartEnd
+      : isLTXVideo
         ? {}
         : {
             ratio: config.video_ratio,
             resolution: config.video_resolution,
           }),
+    ...(isLTXStartEnd && ltxFrameCount
+      ? {
+          numFrames: ltxFrameCount,
+          frameRate: LTX_23_FRAME_RATE,
+        }
+      : {}),
     ...(ltxAudioReference ? { audio: ltxAudioReference } : {}),
     ...(timelineData !== undefined ? { timeline_data: timelineData } : {}),
   }
@@ -243,6 +286,18 @@ export function buildVideoGenerationPayload(
     ...(timelineData !== undefined ? { timeline_data: timelineData } : {}),
     duration: config.video_duration,
     seconds: String(config.video_duration),
+    ...(isLTXStartEnd && ltxDimensions
+      ? {
+          width: ltxDimensions.width,
+          height: ltxDimensions.height,
+        }
+      : {}),
+    ...(isLTXStartEnd && ltxFrameCount
+      ? {
+          numFrames: ltxFrameCount,
+          frameRate: LTX_23_FRAME_RATE,
+        }
+      : {}),
     ...(size ? { size } : {}),
     ...(isSeedanceVideo
       ? {

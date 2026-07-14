@@ -53,6 +53,10 @@ import {
   createClientTaskId,
   normalizePlaygroundError,
 } from './lib'
+import {
+  resolveLTXStartEndTimeline,
+  validateLTXStartEndImageCount,
+} from './lib/ltx-start-end'
 import type {
   Message as MessageType,
   SeedanceReference,
@@ -260,6 +264,7 @@ export function Playground() {
         message.files?.length || 0,
         config.model,
         config.ltx_timeline_data,
+        config.video_duration,
         t
       )
       if (validationError) {
@@ -461,6 +466,7 @@ export function Playground() {
             mode={config.mode}
             modelValue={config.model}
             models={models}
+            thinkingMode={config.thinking_mode}
             onGroupChange={(value) => updateConfig('group', value)}
             onImageCountChange={(value) => updateConfig('image_count', value)}
             onImageQualityChange={(value) =>
@@ -469,6 +475,9 @@ export function Playground() {
             onImageSizeChange={(value) => updateConfig('image_size', value)}
             onModeChange={(value) => updateConfig('mode', value)}
             onModelChange={(value) => updateConfig('model', value)}
+            onThinkingModeChange={(value) =>
+              updateConfig('thinking_mode', value)
+            }
             onStop={stopGeneration}
             onSubmit={handleSendMessage}
             onVideoDurationChange={(value) =>
@@ -517,6 +526,7 @@ function buildSeedanceReferenceCandidates(
         url,
         filename: file.filename,
         media_type: file.mediaType,
+        role: file.role,
         sourceFile: file.sourceFile,
       },
     ]
@@ -746,11 +756,9 @@ function validateVideoInput(
   rawFileCount: number,
   model: string,
   ltxTimelineData: string,
-  t: (key: string) => string
+  videoDuration: number,
+  t: (key: string, options?: Record<string, unknown>) => string
 ): string | null {
-  if (!text && references.length === 0) {
-    return t('Add text or reference media before generating')
-  }
   if (rawFileCount !== references.length) {
     return t('Only image, video, and audio references are supported')
   }
@@ -763,21 +771,31 @@ function validateVideoInput(
     if (videoCount > 0) {
       return t('LTX start-end supports image and audio references only')
     }
-    if (imageCount !== 2) {
-      return t('LTX start-end requires two reference images')
+    const imageCountError = validateLTXStartEndImageCount(imageCount)
+    if (imageCountError) {
+      return t(imageCountError)
+    }
+    if (!text) {
+      return t('LTX start-end requires a prompt')
     }
     if (audioCount > 1) {
       return t('LTX start-end supports at most one audio reference')
     }
-    if (!ltxTimelineData.trim()) {
-      return t('LTX start-end requires timeline JSON')
-    }
-    try {
-      JSON.parse(ltxTimelineData)
-    } catch {
-      return t('Timeline JSON is invalid')
+    const timelineResolution = resolveLTXStartEndTimeline(
+      text,
+      videoDuration,
+      ltxTimelineData
+    )
+    if (timelineResolution.error) {
+      return t(timelineResolution.error, {
+        frames: timelineResolution.frameCount,
+      })
     }
     return null
+  }
+
+  if (!text && references.length === 0) {
+    return t('Add text or reference media before generating')
   }
 
   if (isLTXVideoModel(model)) {

@@ -375,7 +375,7 @@ export function loadConversationState(
 export function saveConversationState(
   userId: number | string | null | undefined,
   state: PlaygroundConversationState
-): void {
+): boolean {
   try {
     const storageKey = getConversationStorageKey(userId)
     localStorage.setItem(storageKey, JSON.stringify(state))
@@ -391,9 +391,11 @@ export function saveConversationState(
         }
       )
     )
+    return true
   } catch (error) {
     // eslint-disable-next-line no-console
     console.error('Failed to save playground conversations:', error)
+    return false
   }
 }
 

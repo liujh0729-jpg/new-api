@@ -6,7 +6,7 @@
 
 const DEFAULT_TIMEOUT_SECONDS = 15 * 60;
 const DEFAULT_POLL_INTERVAL_SECONDS = 10;
-const DEFAULT_BASE_URL = 'https://newapi.jumcp.com/';
+const DEFAULT_BASE_URL = '';
 
 const args = parseArgs(process.argv.slice(2));
 
@@ -294,6 +294,9 @@ function isSuccessStatus(status) {
 }
 
 function validateBaseConfig() {
+  if (!config.baseUrl) {
+    throw new Error('Missing NewAPI base URL. Set NEW_API_BASE_URL or pass --base-url.');
+  }
   if (!config.token) {
     throw new Error('Missing NewAPI token. Set NEW_API_TOKEN or pass --token.');
   }
@@ -377,13 +380,13 @@ function sleep(ms) {
 function printUsage() {
   console.log(`
 Usage:
-  node bin/aipdd-user-smoke-test.mjs --base-url https://newapi.jumcp.com/ --token sk-newapi-token \\
+  node bin/aipdd-user-smoke-test.mjs --base-url <NewAPI-URL> --token sk-newapi-token \\
     --image-url https://example.com/input.png \\
     --video-url https://example.com/input.mp4 \\
     --audio-url https://example.com/reference.wav
 
 Environment variables:
-  NEW_API_BASE_URL                 NewAPI base URL, default https://newapi.jumcp.com/
+  NEW_API_BASE_URL                 NewAPI base URL (required unless --base-url is provided)
   NEW_API_TOKEN                    User NewAPI token
   AIPDD_TEST_IMAGE_URL             Public input image URL
   AIPDD_TEST_VIDEO_URL             Public input video URL

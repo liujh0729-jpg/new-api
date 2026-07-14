@@ -56,12 +56,16 @@ interface MaterialSelectorDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   mode: 'image' | 'video'
+  fixedType?: 'image' | 'video' | 'audio'
+  onSelect?: (material: Material) => void
 }
 
 export function MaterialSelectorDialog({
   open,
   onOpenChange,
   mode,
+  fixedType,
+  onSelect,
 }: MaterialSelectorDialogProps) {
   const { t } = useTranslation()
   const attachments = usePromptInputAttachments()
@@ -69,7 +73,8 @@ export function MaterialSelectorDialog({
   const [typeFilter, setTypeFilter] = useState<string>('')
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(24)
-  const activeTypeFilter = mode === 'image' ? 'image' : typeFilter
+  const activeTypeFilter =
+    fixedType || (mode === 'image' ? 'image' : typeFilter)
 
   const handleDialogOpenChange = useCallback(
     (nextOpen: boolean) => {
@@ -117,14 +122,18 @@ export function MaterialSelectorDialog({
 
   const handleSelect = useCallback(
     (material: Material) => {
-      attachments.addRemote({
-        url: material.url,
-        mediaType: material.mime_type,
-        filename: material.file_name,
-      })
+      if (onSelect) {
+        onSelect(material)
+      } else {
+        attachments.addRemote({
+          url: material.url,
+          mediaType: material.mime_type,
+          filename: material.file_name,
+        })
+      }
       onOpenChange(false)
     },
-    [attachments, onOpenChange]
+    [attachments, onOpenChange, onSelect]
   )
 
   const renderIcon = (type: string) => {
@@ -215,8 +224,9 @@ export function MaterialSelectorDialog({
     )
   }
 
-  const filterTypes =
-    mode === 'video'
+  const filterTypes = fixedType
+    ? [{ value: fixedType, label: fixedType }]
+    : mode === 'video'
       ? [
           { value: '', label: t('All') },
           { value: 'image', label: t('Image') },

@@ -136,6 +136,15 @@ export const SEEDANCE_15_PRO_VIDEO_RESOLUTION_OPTIONS = [
   DEFAULT_VIDEO_RESOLUTION,
   '1080p',
 ] as const
+export const AP_SEEDANCE_20_LITE_VIDEO_RESOLUTION_OPTIONS = [
+  '480p',
+  DEFAULT_VIDEO_RESOLUTION,
+  '1080p',
+] as const
+export const AP_SEEDANCE_20_COST_EFFECTIVE_VIDEO_RESOLUTION_OPTIONS = [
+  '1080p',
+  '4k',
+] as const
 export const DEFAULT_LTX_VIDEO_SIZE = '1920x1088'
 export const LTX_VIDEO_SIZE_OPTIONS = [
   '1280x720',
@@ -160,6 +169,11 @@ const SEEDANCE_VIDEO_RESOLUTION_OPTIONS_BY_MODEL: Record<
   string,
   readonly string[]
 > = {
+  'ap seedance-2-0 vip': VIDEO_RESOLUTION_OPTIONS,
+  'ap seedance-2-0 标准版': VIDEO_RESOLUTION_OPTIONS,
+  'ap seedance-2-0 轻量版': AP_SEEDANCE_20_LITE_VIDEO_RESOLUTION_OPTIONS,
+  'ap seedance-2-0 高性价比版':
+    AP_SEEDANCE_20_COST_EFFECTIVE_VIDEO_RESOLUTION_OPTIONS,
   'doubao-seedance-2-0-260128': VIDEO_RESOLUTION_OPTIONS,
   'doubao-seedance-2-0-fast-260128': SEEDANCE_20_FAST_VIDEO_RESOLUTION_OPTIONS,
   'doubao-seedance-2-0-mini-260615': SEEDANCE_20_FAST_VIDEO_RESOLUTION_OPTIONS,
@@ -389,8 +403,9 @@ export function getVideoResolutionOptionsForModel(
 export function getLTXVideoSizeOptionsForModel(
   model: string
 ): readonly string[] {
-  if (isLTX23StartEndModel(model)) return []
-  if (isLTX23PolicyModel(model)) return LTX_23_VIDEO_SIZE_OPTIONS
+  if (isLTX23StartEndModel(model) || isLTX23PolicyModel(model)) {
+    return LTX_23_VIDEO_SIZE_OPTIONS
+  }
 
   const normalized = normalizeModelName(model)
   return (
@@ -506,6 +521,7 @@ export const DEFAULT_CONFIG: PlaygroundConfig = {
   frequency_penalty: 0,
   presence_penalty: 0,
   seed: null,
+  thinking_mode: 'auto',
   stream: true,
   image_size: DEFAULT_IMAGE_SIZE,
   image_quality: 'standard',
@@ -521,8 +537,8 @@ export const DEFAULT_PARAMETER_ENABLED: ParameterEnabled = {
   temperature: true,
   top_p: true,
   max_tokens: false,
-  frequency_penalty: true,
-  presence_penalty: true,
+  frequency_penalty: false,
+  presence_penalty: false,
   seed: false,
 }
 

@@ -381,7 +381,7 @@ func buildMaterialStaticURL(c *gin.Context, filename string) string {
 	if prefix == "" {
 		requestOrigin := requestMaterialOrigin(c)
 		serverAddress := strings.TrimRight(strings.TrimSpace(system_setting.ServerAddress), "/")
-		if requestOrigin != "" && (isLocalMaterialRequestOrigin(requestOrigin) || isDefaultMaterialServerAddress(serverAddress)) {
+		if requestOrigin != "" && isLocalMaterialRequestOrigin(requestOrigin) {
 			prefix = requestOrigin
 		} else {
 			prefix = serverAddress
@@ -404,10 +404,6 @@ func isLocalMaterialRequestOrigin(origin string) bool {
 	}
 	host := strings.ToLower(strings.TrimSpace(parsed.Hostname()))
 	return host == "localhost" || host == "::1" || strings.HasPrefix(host, "127.")
-}
-
-func isDefaultMaterialServerAddress(serverAddress string) bool {
-	return strings.EqualFold(strings.TrimRight(strings.TrimSpace(serverAddress), "/"), "https://newapi.jumcp.com")
 }
 
 func requestMaterialOrigin(c *gin.Context) string {

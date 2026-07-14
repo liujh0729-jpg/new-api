@@ -64,12 +64,14 @@ export interface GeneratedVideo {
 }
 
 export type SeedanceReferenceKind = 'image' | 'video' | 'audio'
+export type SeedanceReferenceRole = 'first_frame' | 'last_frame' | 'audio'
 
 export interface SeedanceReference {
   kind: SeedanceReferenceKind
   url: string
   filename?: string
   media_type?: string
+  role?: SeedanceReferenceRole
 }
 
 // API payload types
@@ -97,6 +99,7 @@ export interface ChatCompletionRequest {
   frequency_penalty?: number
   presence_penalty?: number
   seed?: number
+  think?: boolean
 }
 
 export interface ChatCompletionChunk {
@@ -189,6 +192,10 @@ export interface VideoGenerationRequest {
   duration?: number
   seconds?: string
   size?: string
+  width?: number
+  height?: number
+  numFrames?: number
+  frameRate?: number
   content?: VideoGenerationContentItem[]
   ratio?: string
   resolution?: string
@@ -203,6 +210,8 @@ export interface VideoGenerationRequest {
     resolution?: string
     width?: number
     height?: number
+    numFrames?: number
+    frameRate?: number
     audio?: string
     timeline_data?: unknown
   }
@@ -229,6 +238,7 @@ export interface TaskFetchResponse {
 }
 
 export type PlaygroundMode = 'chat' | 'image' | 'video'
+export type ThinkingMode = 'auto' | 'enabled' | 'disabled'
 
 // Configuration types
 export interface PlaygroundConfig {
@@ -241,6 +251,7 @@ export interface PlaygroundConfig {
   frequency_penalty: number
   presence_penalty: number
   seed: number | null
+  thinking_mode: ThinkingMode
   stream: boolean
   image_size: string
   image_quality: string

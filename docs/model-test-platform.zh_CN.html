@@ -779,8 +779,8 @@
           </div>
           <div class="card-body">
             <div class="field">
-              <label for="baseUrl">API 端点 <span class="hint">默认线上服务</span></label>
-              <input id="baseUrl" value="https://newapi.jumcp.com" autocomplete="off">
+              <label for="baseUrl">API 端点</label>
+              <input id="baseUrl" value="" placeholder="https://your-newapi.example.com" autocomplete="off">
             </div>
             <div class="field">
               <label for="apiToken">NewAPI Token <span class="hint">只存本机浏览器</span></label>
@@ -1223,7 +1223,7 @@
     }
 
     function normalizeBaseUrl(value) {
-      return (value || "https://newapi.jumcp.com").trim().replace(/\/+$/, "");
+      return (value || "").trim().replace(/\/+$/, "");
     }
 
     function renderModelOptions() {
@@ -1818,7 +1818,7 @@
       $("forgetConfigBtn").addEventListener("click", () => {
         localStorage.removeItem(STORAGE_KEY);
         els.apiToken.value = "";
-        els.baseUrl.value = "https://newapi.jumcp.com";
+        els.baseUrl.value = "";
         showToast("已清除本地保存的连接配置");
       });
       $("testModelsBtn").addEventListener("click", testModelsEndpoint);

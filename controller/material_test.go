@@ -172,7 +172,7 @@ func TestUploadMaterialHandlerStoresLocalJPEGWithDevURL(t *testing.T) {
 	t.Setenv(materialStoragePathEnv, tempDir)
 	t.Setenv(materialPublicBaseURLEnv, "")
 	previousServerAddress := system_setting.ServerAddress
-	system_setting.ServerAddress = "https://newapi.jumcp.com"
+	system_setting.ServerAddress = ""
 	t.Cleanup(func() {
 		system_setting.ServerAddress = previousServerAddress
 	})
@@ -238,12 +238,9 @@ func TestBuildMaterialStaticURLFallbacks(t *testing.T) {
 	system_setting.ServerAddress = ""
 	require.Equal(t, "https://origin.example.com/static/materials/file.png", buildMaterialStaticURL(ctx, "file.png"))
 
-	system_setting.ServerAddress = "https://newapi.jumcp.com"
-	require.Equal(t, "https://origin.example.com/static/materials/file.png", buildMaterialStaticURL(ctx, "file.png"))
-
 	ctx.Request.Host = "127.0.0.1:3000"
 	ctx.Request.Header.Del("X-Forwarded-Proto")
-	system_setting.ServerAddress = "https://newapi.jumcp.com"
+	system_setting.ServerAddress = "https://server.example.com"
 	require.Equal(t, "http://127.0.0.1:3000/static/materials/file.png", buildMaterialStaticURL(ctx, "file.png"))
 }
 

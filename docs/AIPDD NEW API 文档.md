@@ -53,7 +53,7 @@ curl "$BASE_URL/v1/models" \
 
 素材字段应填写图片、视频或音频 URL。URL 必须能被 NewAPI 服务端和上游任务服务访问，推荐使用公网 HTTPS URL。
 
-业务参数可以直接放在 JSON 顶层；如果客户端 SDK 只支持扩展参数，也可以将同名参数放入 `metadata` 对象，顶层参数优先。当前任务接口不负责把本地 multipart 文件转换成 AIPDD 素材，使用本地文件时请先上传到对象存储或其他文件服务，再将得到的 URL 传入任务请求。
+业务参数可以直接放在 JSON 顶层；如果客户端 SDK 只支持扩展参数，也可以将同名参数放入 `metadata` 对象，顶层参数优先。当前任务接口不负责把本地 multipart 文件转换成 AIPDD 素材，使用本地文件时请先上传到对象存储或其他文件服务，再将得到的 URL 传入任务请求。带二进制文件项的 multipart 请求会返回 `aipdd_file_upload_not_supported`。
 
 ### 2.1 Ollama 兼容文本模型
 

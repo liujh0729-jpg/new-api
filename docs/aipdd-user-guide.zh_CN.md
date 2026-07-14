@@ -1,6 +1,6 @@
 # NewAPI 线上模型用户调用文档
 
-本文面向普通 API 用户，说明如何通过当前 NewAPI 服务调用线上 `newapi.jumcp.com` 已公开的 DeepSeek、Doubao 和 AIPDD 模型。调用方只需要使用平台发放的 NewAPI Token，不需要知道上游供应商 API Key。
+本文面向普通 API 用户，说明如何通过当前 NewAPI 服务调用已公开的 DeepSeek、Doubao 和 AIPDD 模型。调用方只需要使用平台发放的 NewAPI Token，不需要知道上游供应商 API Key。
 
 更新时间：2026-05-30。
 
@@ -35,7 +35,7 @@ Content-Type: application/json
 示例环境变量：
 
 ```bash
-export BASE_URL="https://newapi.jumcp.com"
+export BASE_URL="https://your-newapi.example.com"
 export NEW_API_TOKEN="sk-xxxx"
 ```
 
@@ -55,7 +55,7 @@ export NEW_API_TOKEN="sk-xxxx"
 | Latentsync 对口型 | `aipdd-latentsync-1.5` | `POST /v1/videos` | `GET /v1/videos/{task_id}` | 异步任务 / 按次 |
 | IndexTTS 声音复刻 | `aipdd-indextts` | `POST /v1/audio/speech` | `GET /v1/audio/speech/{task_id}` | 异步任务 / 按次 |
 
-素材 URL 必须能被 NewAPI 服务端和上游供应商访问，推荐使用公网 HTTPS URL。AIPDD 模型支持 `multipart/form-data` 上传本地文件，NewAPI 会先把文件上传到 AIPDD OSS，再把 OSS URL 写入任务参数。Doubao Seedance 和 Seedream 建议直接传 URL。
+素材 URL 必须能被 NewAPI 服务端和上游供应商访问，推荐使用公网 HTTPS URL。AIPDD 任务接口不负责把 multipart 本地文件转换成上游素材；请先上传文件，再把得到的 HTTP(S) URL 写入任务参数。带二进制文件项的 multipart 请求会返回 `aipdd_file_upload_not_supported`。
 
 视频模型可使用 OpenAI 风格路径 `/v1/videos`，也可使用 NewAPI 通用路径 `/v1/video/generations`。两条路径共用任务创建与查询链路；Seedance 的通用参数转换和官方字段透传在两条路径上保持一致。
 
@@ -349,16 +349,6 @@ curl "$BASE_URL/v1/images/generations" \
   }'
 ```
 
-本地文件上传示例：
-
-```bash
-curl "$BASE_URL/v1/images/generations" \
-  -H "Authorization: Bearer $NEW_API_TOKEN" \
-  -F "model=aipdd-flux-gguf" \
-  -F "prompt=a cinematic product photo, soft studio lighting" \
-  -F "image=@input.png"
-```
-
 ### Flux 文生图
 
 模型：`aipdd-flux-gguf-t2i`
@@ -416,16 +406,6 @@ curl "$BASE_URL/v1/videos" \
   }'
 ```
 
-本地文件上传示例：
-
-```bash
-curl "$BASE_URL/v1/videos" \
-  -H "Authorization: Bearer $NEW_API_TOKEN" \
-  -F "model=aipdd-wan2.2-wanx" \
-  -F "prompt=slow camera push in, stable motion, cinematic" \
-  -F "image=@input.png"
-```
-
 ### Wan2.2 主体替换
 
 模型：`aipdd-wan2.2-animater`
@@ -459,16 +439,6 @@ curl "$BASE_URL/v1/videos" \
   }'
 ```
 
-本地文件上传示例：
-
-```bash
-curl "$BASE_URL/v1/videos" \
-  -H "Authorization: Bearer $NEW_API_TOKEN" \
-  -F "model=aipdd-wan2.2-animater" \
-  -F "prompt=natural motion, stable subject" \
-  -F "video=@source.mp4"
-```
-
 ### MimicMotion 动作迁移
 
 模型：`aipdd-mimic-motion`
@@ -495,16 +465,6 @@ curl "$BASE_URL/v1/videos" \
   }'
 ```
 
-本地文件上传示例：
-
-```bash
-curl "$BASE_URL/v1/videos" \
-  -H "Authorization: Bearer $NEW_API_TOKEN" \
-  -F "model=aipdd-mimic-motion" \
-  -F "motion_video=@motion.mp4" \
-  -F "appearance_image=@person.png"
-```
-
 ### Latentsync 对口型
 
 模型：`aipdd-latentsync-1.5`
@@ -529,16 +489,6 @@ curl "$BASE_URL/v1/videos" \
     "video": "https://example.com/source.mp4",
     "LoadAudio": "https://example.com/speech.wav"
   }'
-```
-
-本地文件上传示例：
-
-```bash
-curl "$BASE_URL/v1/videos" \
-  -H "Authorization: Bearer $NEW_API_TOKEN" \
-  -F "model=aipdd-latentsync-1.5" \
-  -F "video=@source.mp4" \
-  -F "LoadAudio=@speech.wav"
 ```
 
 ### IndexTTS 声音复刻
@@ -573,27 +523,9 @@ curl "$BASE_URL/v1/audio/speech" \
   }'
 ```
 
-本地文件上传示例：
+## AIPDD 素材 URL
 
-```bash
-curl "$BASE_URL/v1/audio/speech" \
-  -H "Authorization: Bearer $NEW_API_TOKEN" \
-  -F "model=aipdd-indextts" \
-  -F "input=这里填写需要合成的文本" \
-  -F "audio=@reference.wav"
-```
-
-## AIPDD 本地文件上传字段
-
-| 模型名 | 推荐表单字段 | 兼容别名 |
-| --- | --- | --- |
-| `aipdd-flux-gguf` | `image` | `file`、`input_reference`、`reference`、`images` |
-| `aipdd-flux-gguf-t2i` | 无文件 | 无 |
-| `aipdd-wan2.2-wanx` | `image` | `file`、`input_reference`、`reference`、`images` |
-| `aipdd-wan2.2-animater` | `video`，可选 `image` | `video` 可用 `file`、`input_reference`、`reference`、`load_video`；`image` 可用 `fullpath`、`reference_image`、`appearance_image` |
-| `aipdd-mimic-motion` | `motion_video`、`appearance_image` | `motion_video` 可用 `video`、`load_video`、`input_reference`、`motion`；`appearance_image` 可用 `image`、`reference_image`、`appearance`、`person` |
-| `aipdd-latentsync-1.5` | `video`、`LoadAudio` | `video` 可用 `file`、`input_reference`、`reference`、`load_video`；`LoadAudio` 可用 `audio`、`input_audio`、`voice` |
-| `aipdd-indextts` | `audio`，可选 `emotion_audio` | `audio` 可用 `file`、`input_reference`、`ref_audio`、`reference_audio`、`voice` |
+图片、视频和音频素材字段只接受 NewAPI 与 AIPDD 上游均可访问的 HTTP(S) URL。可以使用只含文本 URL 字段的 `multipart/form-data`，但不能包含二进制文件项；本地文件必须先上传到对象存储或其他文件服务。
 
 ## 异步任务创建响应
 

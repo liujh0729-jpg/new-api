@@ -16,7 +16,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useState, useCallback, useEffect, useMemo } from 'react'
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
+import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 import { useAuthStore } from '@/stores/auth-store'
 import { DEFAULT_CONFIG, DEFAULT_PARAMETER_ENABLED } from '../constants'
 import {
@@ -46,9 +48,13 @@ type MessagesUpdater = Message[] | ((prev: Message[]) => Message[])
 type ConversationStateUpdater =
   | PlaygroundConversationState
   | ((prev: PlaygroundConversationState) => PlaygroundConversationState)
-interface PersistConversationStateOptions {
-  sanitizeMessages?: boolean
+type PlaygroundUserId = number | string | null | undefined
+interface PendingConversationPersistence {
+  userId: PlaygroundUserId
+  state: PlaygroundConversationState
 }
+
+const MESSAGE_PERSISTENCE_DELAY_MS = 200
 
 function loadDefaultConfig(): PlaygroundConfig {
   return { ...DEFAULT_CONFIG, ...loadConfig() }
@@ -102,17 +108,83 @@ function replaceConversation(
  * Main state management hook for playground
  */
 export function usePlaygroundState() {
+  const { t } = useTranslation()
   const userId = useAuthStore((state) => state.auth.user?.id)
   const [conversationState, setConversationState] =
     useState<PlaygroundConversationState>(() =>
       loadInitialConversationState(userId)
     )
+  const conversationStateRef = useRef(conversationState)
+  const pendingPersistenceRef = useRef<PendingConversationPersistence | null>(
+    null
+  )
+  const persistenceTimerRef = useRef<number | null>(null)
+  const persistenceErrorShownRef = useRef(false)
   const [models, setModels] = useState<ModelOption[]>([])
   const [groups, setGroups] = useState<GroupOption[]>([])
 
+  const persistStateToStorage = useCallback(
+    (targetUserId: PlaygroundUserId, state: PlaygroundConversationState) => {
+      if (saveConversationState(targetUserId, state)) {
+        persistenceErrorShownRef.current = false
+        return
+      }
+      if (!persistenceErrorShownRef.current) {
+        persistenceErrorShownRef.current = true
+        toast.error(t('Conversation could not be saved locally'))
+      }
+    },
+    [t]
+  )
+
+  const flushPendingPersistence = useCallback(() => {
+    if (persistenceTimerRef.current !== null) {
+      window.clearTimeout(persistenceTimerRef.current)
+      persistenceTimerRef.current = null
+    }
+    const pending = pendingPersistenceRef.current
+    pendingPersistenceRef.current = null
+    if (pending) {
+      persistStateToStorage(pending.userId, pending.state)
+    }
+  }, [persistStateToStorage])
+
+  const scheduleConversationPersistence = useCallback(
+    (targetUserId: PlaygroundUserId, state: PlaygroundConversationState) => {
+      pendingPersistenceRef.current = { userId: targetUserId, state }
+      if (persistenceTimerRef.current !== null) {
+        window.clearTimeout(persistenceTimerRef.current)
+      }
+      persistenceTimerRef.current = window.setTimeout(() => {
+        persistenceTimerRef.current = null
+        const pending = pendingPersistenceRef.current
+        pendingPersistenceRef.current = null
+        if (pending) {
+          persistStateToStorage(pending.userId, pending.state)
+        }
+      }, MESSAGE_PERSISTENCE_DELAY_MS)
+    },
+    [persistStateToStorage]
+  )
+
   useEffect(() => {
-    setConversationState(loadInitialConversationState(userId))
-  }, [userId])
+    flushPendingPersistence()
+    const loadTimer = window.setTimeout(() => {
+      const nextState = loadInitialConversationState(userId)
+      conversationStateRef.current = nextState
+      setConversationState(nextState)
+    }, 0)
+    return () => window.clearTimeout(loadTimer)
+  }, [flushPendingPersistence, userId])
+
+  useEffect(() => {
+    const handlePageHide = () => flushPendingPersistence()
+    window.addEventListener('pagehide', handlePageHide)
+    return () => {
+      window.removeEventListener('pagehide', handlePageHide)
+      flushPendingPersistence()
+    }
+  }, [flushPendingPersistence])
 
   useEffect(() => {
     const storageKey = getConversationStorageKey(userId)
@@ -121,6 +193,7 @@ export function usePlaygroundState() {
         event as CustomEvent<PlaygroundConversationStateEventDetail>
       ).detail
       if (detail?.storageKey !== storageKey) return
+      conversationStateRef.current = detail.state
       setConversationState(detail.state)
     }
 
@@ -137,20 +210,16 @@ export function usePlaygroundState() {
   }, [userId])
 
   const persistConversationState = useCallback(
-    (
-      updater: ConversationStateUpdater,
-      options: PersistConversationStateOptions = {}
-    ) => {
-      const currentState = loadInitialConversationState(
-        userId,
-        options.sanitizeMessages ?? true
-      )
+    (updater: ConversationStateUpdater) => {
+      flushPendingPersistence()
+      const currentState = conversationStateRef.current
       const nextState =
         typeof updater === 'function' ? updater(currentState) : updater
-      saveConversationState(userId, nextState)
+      conversationStateRef.current = nextState
       setConversationState(nextState)
+      persistStateToStorage(userId, nextState)
     },
-    [userId]
+    [flushPendingPersistence, persistStateToStorage, userId]
   )
 
   const activeConversation = getActiveConversation(conversationState)
@@ -207,21 +276,23 @@ export function usePlaygroundState() {
   // Update messages with automatic save
   const updateMessages = useCallback(
     (updater: MessagesUpdater) => {
-      persistConversationState((prev) => {
-        const active = getActiveConversation(prev)
-        const nextMessages =
-          typeof updater === 'function' ? updater(active.messages) : updater
-        const updatedConversation = {
-          ...active,
-          messages: nextMessages,
-          title: getConversationTitle(nextMessages, active.config.mode),
-          updatedAt: Date.now(),
-        }
+      const currentState = conversationStateRef.current
+      const active = getActiveConversation(currentState)
+      const nextMessages =
+        typeof updater === 'function' ? updater(active.messages) : updater
+      const updatedConversation = {
+        ...active,
+        messages: nextMessages,
+        title: getConversationTitle(nextMessages, active.config.mode),
+        updatedAt: Date.now(),
+      }
+      const nextState = replaceConversation(currentState, updatedConversation)
 
-        return replaceConversation(prev, updatedConversation)
-      }, { sanitizeMessages: false })
+      conversationStateRef.current = nextState
+      setConversationState(nextState)
+      scheduleConversationPersistence(userId, nextState)
     },
-    [persistConversationState]
+    [scheduleConversationPersistence, userId]
   )
 
   // Clear all messages
