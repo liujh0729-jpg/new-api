@@ -189,7 +189,7 @@ func TestUploadMaterialHandlerStoresLocalJPEGWithDevURL(t *testing.T) {
 	ctx, _ := gin.CreateTestContext(recorder)
 	ctx.Set("id", 42)
 	ctx.Request = httptest.NewRequest(http.MethodPost, "/pg/material/upload", body)
-	ctx.Request.Host = "127.0.0.1:3000"
+	ctx.Request.Host = "127.0.0.1:6070"
 	ctx.Request.Header.Set("Content-Type", writer.FormDataContentType())
 
 	UploadMaterial(ctx)
@@ -205,7 +205,7 @@ func TestUploadMaterialHandlerStoresLocalJPEGWithDevURL(t *testing.T) {
 	require.Equal(t, model.MaterialTypeImage, response.Data.Type)
 	require.Equal(t, "image/jpeg", response.Data.MimeType)
 	require.Equal(t, "sample.jpg", response.Data.FileName)
-	require.True(t, strings.HasPrefix(response.Data.Url, "http://127.0.0.1:3000/static/materials/"), response.Data.Url)
+	require.True(t, strings.HasPrefix(response.Data.Url, "http://127.0.0.1:6070/static/materials/"), response.Data.Url)
 	require.True(t, strings.HasSuffix(response.Data.Url, ".jpg"), response.Data.Url)
 	require.FileExists(t, response.Data.FilePath)
 
@@ -238,10 +238,13 @@ func TestBuildMaterialStaticURLFallbacks(t *testing.T) {
 	system_setting.ServerAddress = ""
 	require.Equal(t, "https://origin.example.com/static/materials/file.png", buildMaterialStaticURL(ctx, "file.png"))
 
-	ctx.Request.Host = "127.0.0.1:3000"
+	system_setting.ServerAddress = "https://server.example.com"
+	require.Equal(t, "https://server.example.com/static/materials/file.png", buildMaterialStaticURL(ctx, "file.png"))
+
+	ctx.Request.Host = "127.0.0.1:6070"
 	ctx.Request.Header.Del("X-Forwarded-Proto")
 	system_setting.ServerAddress = "https://server.example.com"
-	require.Equal(t, "http://127.0.0.1:3000/static/materials/file.png", buildMaterialStaticURL(ctx, "file.png"))
+	require.Equal(t, "http://127.0.0.1:6070/static/materials/file.png", buildMaterialStaticURL(ctx, "file.png"))
 }
 
 func TestDefaultMaterialExtensionPrefersStableJPEGExtension(t *testing.T) {

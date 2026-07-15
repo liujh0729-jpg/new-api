@@ -1,6 +1,6 @@
 package system_setting
 
-var ServerAddress = ""
+var ServerAddress = "http://localhost:6070"
 var WorkerUrl = ""
 var WorkerValidKey = ""
 var WorkerAllowHttpImageRequestEnabled = false

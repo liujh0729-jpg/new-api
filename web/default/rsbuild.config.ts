@@ -13,7 +13,7 @@ export default defineConfig(({ envMode }) => {
     process.env.VITE_REACT_APP_SERVER_URL ||
     env.rawPublicVars.VITE_REACT_APP_SERVER_URL ||
     ''
-  const devProxyTarget = configuredServerUrl || 'http://localhost:3000'
+  const devProxyTarget = configuredServerUrl || 'http://localhost:6070'
   const serverUrl = configuredServerUrl || (isProd ? '' : devProxyTarget)
 
   const devProxy = Object.fromEntries(

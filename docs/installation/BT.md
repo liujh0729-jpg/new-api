@@ -41,12 +41,12 @@
 3. 点击 **安装**
 4. 配置以下基本选项：
    - **容器名称**：可自定义，默认为 `new-api`
-   - **端口映射**：默认为 `3000:3000`
+   - **端口映射**：默认为 `6070:6070`
    - **环境变量**：
      - `SESSION_SECRET`：会话密钥（**必填**，多机部署时必须一致）
      - `CRYPTO_SECRET`：加密密钥（使用 Redis 时必填）
 5. 点击 **确认** 开始安装
-6. 等待安装完成后，访问 `http://您的服务器IP:3000` 即可使用
+6. 等待安装完成后，访问 `http://您的服务器IP:6070` 即可使用
 
 ### 方法二：使用 Docker Compose
 
@@ -61,7 +61,7 @@ services:
     container_name: new-api
     restart: always
     ports:
-      - "3000:3000"
+      - "6070:6070"
     volumes:
       - ./data:/data
     environment:

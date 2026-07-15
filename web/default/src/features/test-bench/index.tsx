@@ -110,7 +110,7 @@ const DEFAULT_STATUS_KEY =
 const selectClassName =
   'border-input focus-visible:border-ring focus-visible:ring-ring/50 dark:bg-input/30 h-8 w-full rounded-lg border bg-transparent px-2.5 py-1 text-sm outline-none transition-colors focus-visible:ring-3'
 
-const LOCALHOST_DEFAULT_BASE_URL = 'http://localhost:3000'
+const LOCALHOST_DEFAULT_BASE_URL = 'http://localhost:6070'
 const DEFAULT_POLL_MAX_ATTEMPTS = 1000
 const POSITIVE_INTEGER_REGEX = /^\d+$/
 

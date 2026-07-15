@@ -97,7 +97,7 @@ services:
     restart: unless-stopped
     command: --log-dir /app/logs
     ports:
-      - "3000:3000"
+      - "6070:6070"
     volumes:
       - ./data:/data
       - ./logs:/app/logs
@@ -121,7 +121,7 @@ services:
     networks:
       - new-api-network
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O - http://localhost:3000/api/status | grep -o '\"success\":\\s*true' || exit 1"]
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:6070/api/status | grep -o '\"success\":\\s*true' || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -180,10 +180,10 @@ docker compose logs -f --tail=200 new-api
 检查健康接口：
 
 ~~~bash
-curl http://127.0.0.1:3000/api/status
+curl http://127.0.0.1:6070/api/status
 ~~~
 
-看到成功响应后，用浏览器访问 http://服务器IP:3000。首次访问会进入初始化向导，按页面提示创建管理员账号。
+看到成功响应后，用浏览器访问 http://服务器IP:6070。首次访问会进入初始化向导，按页面提示创建管理员账号。
 
 ## 4. 使用仓库源码构建并更新 ACR 镜像
 
@@ -238,7 +238,7 @@ docker pull crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new
 docker run -d \
   --name new-api \
   --restart unless-stopped \
-  -p 3000:3000 \
+  -p 6070:6070 \
   -v /opt/new-api/data:/data \
   -v /opt/new-api/logs:/app/logs \
   -e TZ=Asia/Shanghai \
@@ -309,7 +309,7 @@ server {
     proxy_send_timeout 600s;
 
     location / {
-        proxy_pass http://127.0.0.1:3000;
+        proxy_pass http://127.0.0.1:6070;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -429,14 +429,14 @@ docker compose config
 检查端口：
 
 ~~~bash
-sudo ss -lntp | grep ':3000'
+sudo ss -lntp | grep ':6070'
 ~~~
 
 可以修改宿主机端口映射，例如：
 
 ~~~yaml
 ports:
-  - "8080:3000"
+  - "8080:6070"
 ~~~
 
 容器内部仍然监听 3000，访问地址改为 http://服务器IP:8080。

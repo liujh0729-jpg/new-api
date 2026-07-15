@@ -158,7 +158,7 @@ docker pull crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new
 # AIPDD イメージを起動し、AIPDD チャンネルを自動設定
 # AIPDD_API_KEY は https://app.aipdd.work で登録して取得してください
 docker run --name new-api -d --restart always \
-  -p 3000:3000 \
+  -p 6070:6070 \
   -e TZ=Asia/Shanghai \
   -e AIPDD_API_KEY="your-aipdd-api-key" \
   -v ./data:/data \
@@ -166,14 +166,14 @@ docker run --name new-api -d --restart always \
 
 # SQLiteを使用（デフォルト）
 docker run --name new-api -d --restart always \
-  -p 3000:3000 \
+  -p 6070:6070 \
   -e TZ=Asia/Shanghai \
   -v ./data:/data \
   crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest
 
 # MySQLを使用
 docker run --name new-api -d --restart always \
-  -p 3000:3000 \
+  -p 6070:6070 \
   -e SQL_DSN="root:123456@tcp(localhost:3306)/oneapi" \
   -e TZ=Asia/Shanghai \
   -v ./data:/data \
@@ -186,7 +186,7 @@ docker run --name new-api -d --restart always \
 
 ---
 
-🎉 デプロイが完了したら、`http://localhost:3000` にアクセスして使用を開始してください！
+🎉 デプロイが完了したら、`http://localhost:6070` にアクセスして使用を開始してください！
 
 📖 その他のデプロイ方法については[デプロイガイド](https://docs.newapi.pro/ja/docs/installation)を参照してください。
 

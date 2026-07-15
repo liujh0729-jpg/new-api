@@ -168,7 +168,7 @@ docker pull crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new
 # 使用 AIPDD 镜像并自动配置 AIPDD 渠道
 # AIPDD_API_KEY 请先到 https://app.aipdd.work 注册获取
 docker run --name new-api -d --restart always \
-  -p 3000:3000 \
+  -p 6070:6070 \
   -e TZ=Asia/Shanghai \
   -e AIPDD_API_KEY="your-aipdd-api-key" \
   -v ./data:/data \
@@ -176,14 +176,14 @@ docker run --name new-api -d --restart always \
 
 # 使用 SQLite（默认）
 docker run --name new-api -d --restart always \
-  -p 3000:3000 \
+  -p 6070:6070 \
   -e TZ=Asia/Shanghai \
   -v ./data:/data \
   crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest
 
 # 使用 MySQL
 docker run --name new-api -d --restart always \
-  -p 3000:3000 \
+  -p 6070:6070 \
   -e SQL_DSN="root:123456@tcp(localhost:3306)/oneapi" \
   -e TZ=Asia/Shanghai \
   -v ./data:/data \
@@ -196,7 +196,7 @@ docker run --name new-api -d --restart always \
 
 ---
 
-🎉 部署完成后，访问 `http://localhost:3000` 即可使用！
+🎉 部署完成后，访问 `http://localhost:6070` 即可使用！
 
 📖 更多部署方式请参考 [部署指南](https://docs.newapi.pro/zh/docs/installation)
 

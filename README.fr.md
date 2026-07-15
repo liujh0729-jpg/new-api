@@ -158,7 +158,7 @@ docker pull crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new
 # Exécuter l'image AIPDD et configurer automatiquement le canal AIPDD
 # Inscrivez-vous sur https://app.aipdd.work pour obtenir AIPDD_API_KEY
 docker run --name new-api -d --restart always \
-  -p 3000:3000 \
+  -p 6070:6070 \
   -e TZ=Asia/Shanghai \
   -e AIPDD_API_KEY="your-aipdd-api-key" \
   -v ./data:/data \
@@ -166,14 +166,14 @@ docker run --name new-api -d --restart always \
 
 # Utilisation de SQLite (par défaut)
 docker run --name new-api -d --restart always \
-  -p 3000:3000 \
+  -p 6070:6070 \
   -e TZ=Asia/Shanghai \
   -v ./data:/data \
   crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest
 
 # Utilisation de MySQL
 docker run --name new-api -d --restart always \
-  -p 3000:3000 \
+  -p 6070:6070 \
   -e SQL_DSN="root:123456@tcp(localhost:3306)/oneapi" \
   -e TZ=Asia/Shanghai \
   -v ./data:/data \
@@ -186,7 +186,7 @@ docker run --name new-api -d --restart always \
 
 ---
 
-🎉 Après le déploiement, visitez `http://localhost:3000` pour commencer à utiliser!
+🎉 Après le déploiement, visitez `http://localhost:6070` pour commencer à utiliser!
 
 📖 Pour plus de méthodes de déploiement, veuillez vous référer à [Guide de déploiement](https://docs.newapi.pro/en/docs/installation)
 

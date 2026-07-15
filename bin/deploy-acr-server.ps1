@@ -39,7 +39,7 @@ param(
     [string]$EnvFile = ".env.compose",
     [string]$ComposeService = "new-api",
     [string]$ContainerName = "new-api-aipdd",
-    [string]$StatusUrl = "http://127.0.0.1:3000/api/status",
+    [string]$StatusUrl = "http://127.0.0.1:6070/api/status",
 
     [int]$HealthRetries = 24,
     [int]$HealthIntervalSeconds = 5,

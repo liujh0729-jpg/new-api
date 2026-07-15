@@ -38,6 +38,6 @@ RUN apt-get update \
 
 COPY --from=builder2 /build/new-api /
 COPY LICENSE NOTICE THIRD-PARTY-LICENSES.md /licenses/
-EXPOSE 3000
+EXPOSE 6070
 WORKDIR /data
 ENTRYPOINT ["/new-api"]

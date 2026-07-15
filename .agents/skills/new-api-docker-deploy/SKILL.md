@@ -159,7 +159,7 @@ services:
     restart: unless-stopped
     command: --log-dir /app/logs
     ports:
-      - "6070:3000"
+      - "6070:6070"
     volumes:
       - ./data:/data
       - ./logs:/app/logs

@@ -3,7 +3,7 @@
 # Usage:
 #   1. docker compose -f docker-compose.dev.yml up -d
 #   2. cd web && bun install && bun run dev
-#   3. Open http://localhost:3001 (Rsbuild dev server, API auto-proxied to :3000)
+#   3. Open http://localhost:3001 (Rsbuild dev server, API auto-proxied to :6070)
 #
 # Rebuild backend after Go code changes:
 #   docker compose -f docker-compose.dev.yml up -d --build new-api
@@ -23,7 +23,7 @@ services:
     container_name: new-api-dev
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "6070:6070"
     volumes:
       - dev_data:/data
     environment:
@@ -32,7 +32,7 @@ services:
       - AIPDD_API_KEY=${AIPDD_API_KEY:-}
       - TZ=Asia/Shanghai
       - BATCH_UPDATE_ENABLED=true
-      - MATERIAL_PUBLIC_BASE_URL=http://127.0.0.1:3000
+      - MATERIAL_PUBLIC_BASE_URL=http://127.0.0.1:6070
     depends_on:
       redis:
         condition: service_started

@@ -90,7 +90,7 @@ services:
     restart: always
     command: --log-dir /app/logs
     ports:
-      - "3000:3000"
+      - "6070:6070"
     volumes:
       - ./data:/data
       - ./logs:/app/logs
@@ -110,7 +110,7 @@ services:
     networks:
       - new-api-network
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O - http://localhost:3000/api/status | grep -o '\"success\":\\s*true' || exit 1"]
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:6070/api/status | grep -o '\"success\":\\s*true' || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -161,7 +161,7 @@ docker logs -f new-api
 访问：
 
 ```text
-http://服务器IP:3000
+http://服务器IP:6070
 ```
 
 首次访问会进入初始化向导，按页面提示创建管理员账号。
@@ -176,7 +176,7 @@ mkdir -p /opt/new-api-aipdd/data
 docker run -d \
   --name new-api \
   --restart always \
-  -p 3000:3000 \
+  -p 6070:6070 \
   -v /opt/new-api-aipdd/data:/data \
   -e TZ=Asia/Shanghai \
   -e AIPDD_API_KEY="change-this-aipdd-api-key" \
@@ -213,7 +213,7 @@ docker rm new-api
 docker run -d \
   --name new-api \
   --restart always \
-  -p 3000:3000 \
+  -p 6070:6070 \
   -v /opt/new-api-aipdd/data:/data \
   -e TZ=Asia/Shanghai \
   -e AIPDD_API_KEY="change-this-aipdd-api-key" \
