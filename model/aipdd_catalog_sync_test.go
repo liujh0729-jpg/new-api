@@ -65,6 +65,24 @@ func TestSyncAIPDDCatalogFallsBackOnlyToSameOriginSnapshot(t *testing.T) {
 	require.Contains(t, err.Error(), "different base URL")
 }
 
+func TestPreviousAIPDDCatalogModelsUsesManagedChannelForLegacySnapshot(t *testing.T) {
+	truncateTables(t)
+	channel := Channel{
+		Type: constant.ChannelTypeAIPDD, Name: aipddEnvChannelName, Key: "sk-test",
+		Group: "default", Models: "legacy-task,legacy-llm", Status: 1,
+	}
+	require.NoError(t, DB.Create(&channel).Error)
+	require.NoError(t, DB.Create(&AIPDDCatalogSnapshot{
+		ID: aipddCatalogSnapshotID, SchemaVersion: 1, Revision: "legacy-revision",
+		SourceBaseURL: "https://aipdd.example",
+		Payload:       `{"schemaVersion":1,"revision":"legacy-revision","awcoinRate":{"rmbPerAwcoin":0.01,"usdPerAwcoin":0.001},"capabilities":[{"id":"AP Seedance","adapterCode":"seedance","execution":{"protocol":"seedance_official","path":"/api/v3/contents/generations/tasks"},"pricing":{"pricingModel":"per_second","currency":"awcoin","enabled":true,"byResolution":{"720p":{"defaultDurationSeconds":5,"defaultFramesPerSecond":24,"priceVariants":[{"hasReferenceVideo":false,"amountAwcoinPerSecond":10}]}}}}],"models":[]}`,
+	}).Error)
+
+	models, err := previousAIPDDCatalogModels("https://aipdd.example")
+	require.NoError(t, err)
+	require.ElementsMatch(t, []string{"legacy-task", "legacy-llm"}, models)
+}
+
 func TestApplyAIPDDCatalogReplacesModelsAndCleansOnlySeededCNChannels(t *testing.T) {
 	truncateTables(t)
 	t.Cleanup(func() {
@@ -149,11 +167,14 @@ func TestApplyAIPDDCatalogDoesNotCreatePricingOptions(t *testing.T) {
 			PricingModel: "per_second", Currency: "awcoin", Enabled: true,
 			ByResolution: map[string]constant.AIPDDSeedanceResolutionPricing{
 				"1080p": {
-					DefaultDurationSeconds: 5, DefaultFramesPerSecond: 24,
-					PriceVariants: []constant.AIPDDSeedancePriceVariant{
-						{HasReferenceVideo: false, AWCoinPerSecond: 40.1, MinimumAWCoin: 100.2},
-						{HasReferenceVideo: true, AWCoinPerSecond: 30, MinimumAWCoin: 120.1},
-					},
+					TargetResolution:          "1080p",
+					DefaultDurationSeconds:    5,
+					DefaultFramesPerSecond:    24,
+					AmountAWCoinPerSecond:     40.1,
+					TextInputAWCoinPerSecond:  40.1,
+					ImageInputAWCoinPerSecond: 40.1,
+					VideoInputAWCoinPerSecond: 30,
+					AudioInputAWCoinPerSecond: 40.1,
 				},
 			},
 		},

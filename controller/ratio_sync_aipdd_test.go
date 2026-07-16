@@ -14,12 +14,14 @@ func TestAIPDDCatalogRatioDataSkipsPerSecondTaskPrices(t *testing.T) {
 		PricingModel: "per_second", Currency: "awcoin", Enabled: true,
 		ByResolution: map[string]constant.AIPDDSeedanceResolutionPricing{
 			"1080p": {
-				DefaultDurationSeconds: 5,
-				PriceVariants: []constant.AIPDDSeedancePriceVariant{{
-					HasReferenceVideo: false,
-					AWCoinPerSecond:   40,
-					MinimumAWCoin:     100,
-				}},
+				TargetResolution:          "1080p",
+				DefaultDurationSeconds:    5,
+				DefaultFramesPerSecond:    24,
+				AmountAWCoinPerSecond:     40,
+				TextInputAWCoinPerSecond:  40,
+				ImageInputAWCoinPerSecond: 40,
+				VideoInputAWCoinPerSecond: 60,
+				AudioInputAWCoinPerSecond: 40,
 			},
 		},
 	}

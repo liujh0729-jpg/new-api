@@ -39,21 +39,51 @@ func TestFetchAtomicFiltersExcludedFamiliesOnReceiver(t *testing.T) {
 	require.Equal(t, "keep-comfy", runtimeCapabilities[0].ModelName)
 }
 
-func TestTaskAWCoinPriceUsesMinimumDeterministicSeedanceEstimate(t *testing.T) {
+func TestTaskAWCoinPriceUsesNewSeedanceModalityContract(t *testing.T) {
 	pricing := AtomicPricing{ByResolution: map[string]constant.AIPDDSeedanceResolutionPricing{
 		"4k": {
-			DefaultDurationSeconds: 5,
-			PriceVariants: []constant.AIPDDSeedancePriceVariant{{
-				AWCoinPerSecond: 100, MinimumAWCoin: 600,
-			}},
+			TargetResolution:          "4k",
+			DefaultDurationSeconds:    5,
+			DefaultFramesPerSecond:    24,
+			AmountAWCoinPerSecond:     100,
+			TextInputAWCoinPerSecond:  100,
+			ImageInputAWCoinPerSecond: 100,
+			VideoInputAWCoinPerSecond: 120,
+			AudioInputAWCoinPerSecond: 100,
 		},
 		"720p": {
-			DefaultDurationSeconds: 5,
-			PriceVariants: []constant.AIPDDSeedancePriceVariant{{
-				AWCoinPerSecond: 20.1, MinimumAWCoin: 50,
-			}},
+			TargetResolution:          "720p",
+			DefaultDurationSeconds:    5,
+			DefaultFramesPerSecond:    24,
+			AmountAWCoinPerSecond:     20.1,
+			TextInputAWCoinPerSecond:  20.1,
+			ImageInputAWCoinPerSecond: 20.1,
+			VideoInputAWCoinPerSecond: 30,
+			AudioInputAWCoinPerSecond: 20.1,
 		},
 	}}
 
 	require.Equal(t, float64(101), TaskAWCoinPrice(pricing))
+}
+
+func TestAtomicCatalogRejectsLegacySeedancePriceVariants(t *testing.T) {
+	catalog := AtomicCatalog{
+		SchemaVersion: 1,
+		Revision:      "revision-legacy",
+		AWCoinRate:    AtomicAWCoinRate{RMBPerAWCoin: 0.01, USDPerAWCoin: 0.001},
+		Capabilities: []AtomicCapability{{
+			ID: "AP Seedance", AdapterCode: "seedance",
+			Execution: AtomicExecution{Protocol: "seedance_official", Path: "/api/v3/contents/generations/tasks"},
+			Pricing: AtomicPricing{
+				PricingModel: "per_second", Currency: "awcoin", Enabled: true,
+				ByResolution: map[string]constant.AIPDDSeedanceResolutionPricing{
+					"720p": {TargetResolution: "720p", DefaultDurationSeconds: 5, DefaultFramesPerSecond: 24},
+				},
+			},
+		}},
+	}
+
+	err := catalog.Validate()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "amountAwcoinPerSecond")
 }

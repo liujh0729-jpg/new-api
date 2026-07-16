@@ -87,16 +87,17 @@ type AIPDDCapability struct {
 	SeedancePricing        *AIPDDSeedancePricing
 }
 
-type AIPDDSeedancePriceVariant struct {
-	HasReferenceVideo bool    `json:"hasReferenceVideo"`
-	AWCoinPerSecond   float64 `json:"amountAwcoinPerSecond"`
-	MinimumAWCoin     float64 `json:"minimumAwcoin"`
-}
-
 type AIPDDSeedanceResolutionPricing struct {
-	DefaultDurationSeconds float64                     `json:"defaultDurationSeconds"`
-	DefaultFramesPerSecond float64                     `json:"defaultFramesPerSecond"`
-	PriceVariants          []AIPDDSeedancePriceVariant `json:"priceVariants"`
+	TargetResolution          string   `json:"targetResolution"`
+	EnhancementType           string   `json:"enhancementType"`
+	InputTypes                []string `json:"inputTypes"`
+	AmountAWCoinPerSecond     float64  `json:"amountAwcoinPerSecond"`
+	TextInputAWCoinPerSecond  float64  `json:"textInputAwcoinPerSecond"`
+	ImageInputAWCoinPerSecond float64  `json:"imageInputAwcoinPerSecond"`
+	VideoInputAWCoinPerSecond float64  `json:"videoInputAwcoinPerSecond"`
+	AudioInputAWCoinPerSecond float64  `json:"audioInputAwcoinPerSecond"`
+	DefaultDurationSeconds    float64  `json:"defaultDurationSeconds"`
+	DefaultFramesPerSecond    float64  `json:"defaultFramesPerSecond"`
 }
 
 type AIPDDSeedancePricing struct {
@@ -416,7 +417,7 @@ func cloneAIPDDCapability(capability AIPDDCapability) AIPDDCapability {
 	if capability.SeedancePricing != nil {
 		pricing := &AIPDDSeedancePricing{ByResolution: make(map[string]AIPDDSeedanceResolutionPricing, len(capability.SeedancePricing.ByResolution))}
 		for resolution, item := range capability.SeedancePricing.ByResolution {
-			item.PriceVariants = append([]AIPDDSeedancePriceVariant(nil), item.PriceVariants...)
+			item.InputTypes = append([]string(nil), item.InputTypes...)
 			pricing.ByResolution[resolution] = item
 		}
 		capability.SeedancePricing = pricing
@@ -523,9 +524,9 @@ func IsAIPDDExactBillingModel(modelName string) bool {
 }
 
 // IsAIPDDSeedanceModel identifies the Seedance execution family without
-// relying solely on upstream price data. The synchronized catalog may change
-// or omit cost fields, but that must never make New API fall back to a legacy
-// per-request retail ModelPrice.
+// relying solely on upstream price data. Catalog validation separately
+// requires the current modality-price contract, and this identity check keeps
+// Seedance from ever falling back to a legacy per-request retail ModelPrice.
 func IsAIPDDSeedanceModel(modelName string) bool {
 	capability, ok := GetAIPDDCapability(modelName)
 	return ok && (strings.EqualFold(strings.TrimSpace(capability.AdapterCode), "seedance") ||

@@ -219,10 +219,12 @@ func TestSeedanceCatalogBillingFactsIgnoreCatalogPrices(t *testing.T) {
 		capability := seedanceTestCapabilityForModel(modelName)
 		capability.AWCoinUSDPerCoin = float64(index+1) * 99
 		for resolution, pricing := range capability.SeedancePricing.ByResolution {
-			for variantIndex := range pricing.PriceVariants {
-				pricing.PriceVariants[variantIndex].AWCoinPerSecond = float64((index + 1) * (variantIndex + 1) * 10_000)
-				pricing.PriceVariants[variantIndex].MinimumAWCoin = float64((index + 1) * (variantIndex + 1) * 100_000)
-			}
+			amount := float64((index + 1) * 10_000)
+			pricing.AmountAWCoinPerSecond = amount
+			pricing.TextInputAWCoinPerSecond = amount
+			pricing.ImageInputAWCoinPerSecond = amount
+			pricing.AudioInputAWCoinPerSecond = amount
+			pricing.VideoInputAWCoinPerSecond = amount * 2
 			capability.SeedancePricing.ByResolution[resolution] = pricing
 		}
 		capabilities = append(capabilities, capability)
@@ -411,25 +413,34 @@ func seedanceTestCapabilityForModel(modelName string) constant.AIPDDCapability {
 		ExecutionPath: "/api/v3/contents/generations/tasks", AWCoinUSDPerCoin: 0.001,
 		SeedancePricing: &constant.AIPDDSeedancePricing{ByResolution: map[string]constant.AIPDDSeedanceResolutionPricing{
 			"720p": {
-				DefaultDurationSeconds: 5, DefaultFramesPerSecond: 24,
-				PriceVariants: []constant.AIPDDSeedancePriceVariant{
-					{HasReferenceVideo: false, AWCoinPerSecond: 10, MinimumAWCoin: 50},
-					{HasReferenceVideo: true, AWCoinPerSecond: 12, MinimumAWCoin: 60},
-				},
+				TargetResolution:          "720p",
+				DefaultDurationSeconds:    5,
+				DefaultFramesPerSecond:    24,
+				AmountAWCoinPerSecond:     10,
+				TextInputAWCoinPerSecond:  10,
+				ImageInputAWCoinPerSecond: 10,
+				VideoInputAWCoinPerSecond: 12,
+				AudioInputAWCoinPerSecond: 10,
 			},
 			"1080p": {
-				DefaultDurationSeconds: 5, DefaultFramesPerSecond: 24,
-				PriceVariants: []constant.AIPDDSeedancePriceVariant{
-					{HasReferenceVideo: false, AWCoinPerSecond: 40.1, MinimumAWCoin: 100.2},
-					{HasReferenceVideo: true, AWCoinPerSecond: 30, MinimumAWCoin: 120.1},
-				},
+				TargetResolution:          "1080p",
+				DefaultDurationSeconds:    5,
+				DefaultFramesPerSecond:    24,
+				AmountAWCoinPerSecond:     40.1,
+				TextInputAWCoinPerSecond:  40.1,
+				ImageInputAWCoinPerSecond: 40.1,
+				VideoInputAWCoinPerSecond: 30,
+				AudioInputAWCoinPerSecond: 40.1,
 			},
 			"4k": {
-				DefaultDurationSeconds: 5, DefaultFramesPerSecond: 24,
-				PriceVariants: []constant.AIPDDSeedancePriceVariant{
-					{HasReferenceVideo: false, AWCoinPerSecond: 70, MinimumAWCoin: 300},
-					{HasReferenceVideo: true, AWCoinPerSecond: 80, MinimumAWCoin: 320},
-				},
+				TargetResolution:          "4k",
+				DefaultDurationSeconds:    5,
+				DefaultFramesPerSecond:    24,
+				AmountAWCoinPerSecond:     70,
+				TextInputAWCoinPerSecond:  70,
+				ImageInputAWCoinPerSecond: 70,
+				VideoInputAWCoinPerSecond: 80,
+				AudioInputAWCoinPerSecond: 70,
 			},
 		}},
 	}

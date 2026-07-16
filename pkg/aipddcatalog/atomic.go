@@ -162,6 +162,11 @@ func (catalog AtomicCatalog) Validate() error {
 		if strings.TrimSpace(capability.ID) == "" || strings.TrimSpace(capability.Execution.Protocol) == "" || strings.TrimSpace(capability.Execution.Path) == "" {
 			return fmt.Errorf("AIPDD task capability has incomplete execution metadata")
 		}
+		if capability.AdapterCode == "seedance" {
+			if err := validateSeedancePricing(capability.ID, capability.Pricing); err != nil {
+				return err
+			}
+		}
 	}
 	for _, model := range catalog.Models {
 		if strings.TrimSpace(model.ID) == "" || model.Pricing.PromptPerMillion < 0 || model.Pricing.CompletionPerMillion < 0 {
@@ -169,6 +174,45 @@ func (catalog AtomicCatalog) Validate() error {
 		}
 		if model.Pricing.PromptPerMillion == 0 && model.Pricing.CompletionPerMillion == 0 {
 			return fmt.Errorf("AIPDD LLM model %q has no effective price", model.ID)
+		}
+	}
+	return nil
+}
+
+func validateSeedancePricing(modelName string, pricing AtomicPricing) error {
+	if !strings.EqualFold(strings.TrimSpace(pricing.PricingModel), "per_second") ||
+		!strings.EqualFold(strings.TrimSpace(pricing.Currency), "awcoin") || !pricing.Enabled {
+		return fmt.Errorf("AIPDD Seedance model %q has invalid pricing metadata", modelName)
+	}
+	if len(pricing.ByResolution) == 0 {
+		return fmt.Errorf("AIPDD Seedance model %q has no resolution pricing", modelName)
+	}
+	for resolution, item := range pricing.ByResolution {
+		resolution = strings.TrimSpace(resolution)
+		if resolution == "" || !strings.EqualFold(resolution, strings.TrimSpace(item.TargetResolution)) {
+			return fmt.Errorf(
+				"AIPDD Seedance model %q has invalid targetResolution for %q: got %q",
+				modelName,
+				resolution,
+				item.TargetResolution,
+			)
+		}
+		fields := []struct {
+			name  string
+			value float64
+		}{
+			{name: "amountAwcoinPerSecond", value: item.AmountAWCoinPerSecond},
+			{name: "textInputAwcoinPerSecond", value: item.TextInputAWCoinPerSecond},
+			{name: "imageInputAwcoinPerSecond", value: item.ImageInputAWCoinPerSecond},
+			{name: "videoInputAwcoinPerSecond", value: item.VideoInputAWCoinPerSecond},
+			{name: "audioInputAwcoinPerSecond", value: item.AudioInputAWCoinPerSecond},
+			{name: "defaultDurationSeconds", value: item.DefaultDurationSeconds},
+			{name: "defaultFramesPerSecond", value: item.DefaultFramesPerSecond},
+		}
+		for _, field := range fields {
+			if field.value <= 0 || math.IsNaN(field.value) || math.IsInf(field.value, 0) {
+				return fmt.Errorf("AIPDD Seedance model %q resolution %q requires positive %s", modelName, resolution, field.name)
+			}
 		}
 	}
 	return nil
@@ -233,15 +277,12 @@ func TaskAWCoinPrice(pricing AtomicPricing) float64 {
 	}
 	best := 0.0
 	for _, resolution := range pricing.ByResolution {
-		for _, variant := range resolution.PriceVariants {
-			seconds := resolution.DefaultDurationSeconds
-			if seconds <= 0 {
-				seconds = 5
-			}
-			amount := math.Max(math.Ceil(variant.MinimumAWCoin), math.Ceil(variant.AWCoinPerSecond*seconds))
-			if amount > 0 && (best == 0 || amount < best) {
-				best = amount
-			}
+		if resolution.DefaultDurationSeconds <= 0 || resolution.AmountAWCoinPerSecond <= 0 {
+			continue
+		}
+		amount := math.Ceil(resolution.AmountAWCoinPerSecond * resolution.DefaultDurationSeconds)
+		if amount > 0 && (best == 0 || amount < best) {
+			best = amount
 		}
 	}
 	return best

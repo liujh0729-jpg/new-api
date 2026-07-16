@@ -1,6 +1,6 @@
 ---
 name: new-api-docker-deploy
-description: Deploy and update New API on a pre-provisioned Docker server over SSH using Alibaba Cloud ACR images for the application, PostgreSQL, and Redis with Docker Compose. Use when the user provides server SSH credentials and an AIPDD API key, asks for a first deployment or an update, optionally sets New API's own ServerAddress to a supplied domain without configuring a reverse proxy or HTTPS, or asks to reset or synchronize the AIPDD channel. Keep first-deployment initialization separate from updates; generate credentials and create the root account only on first deployment; updates preserve .env, databases, users, and channels, pull the ACR image, and never publish updated application images to Docker Hub.
+description: Deploy and update New API on a pre-provisioned Docker server over SSH using Alibaba Cloud ACR images for the application, PostgreSQL, and Redis with Docker Compose. Use when the user provides server SSH credentials and an AIPDD API key, asks for a first deployment or an update, optionally sets New API's own ServerAddress to a supplied domain without configuring a reverse proxy or HTTPS, asks to reset or synchronize the AIPDD channel, or confirms that AIPDD local prices may be overwritten and reconciled from the authenticated catalog. Keep first-deployment initialization separate from updates; generate credentials and create the root account only on first deployment; updates preserve .env, databases, users, and channels, pull the ACR image, and never publish updated application images to Docker Hub.
 ---
 
 # New API Docker 自动部署（阿里云 ACR）
@@ -57,7 +57,7 @@ Treat the following as required inputs. Ask for any missing value before connect
 3. SSH password. Never put it in a command, URL, temporary file, or log.
 4. AIPDD upstream API key for first deployment. During an update, reuse the key already stored in the remote `.env`; ask for a new key only when the user explicitly requests an AIPDD key change or the existing deployment has no usable key. Keep it masked and do not echo it in the final report.
 
-Optionally ask for SSH port, deployment directory, public port, and the New API application domain. Use port `22`, `/opt/new-api`, and `6070` when omitted. A supplied domain means only setting New API’s `ServerAddress` option; it does not authorize a reverse proxy, HTTPS, certificate, DNS, or firewall change. Before any destructive AIPDD action, ask exactly whether to force-overwrite AIPDD channels: “是否强制覆盖 AIPDD 渠道？这会删除现有 AIPDD 渠道并按当前 AIPDD API Key 重建。” Never infer a yes from a general request to deploy.
+Optionally ask for SSH port, deployment directory, public port, and the New API application domain. Use port `22`, `/opt/new-api`, and `6070` when omitted. A supplied domain means only setting New API’s `ServerAddress` option; it does not authorize a reverse proxy, HTTPS, certificate, DNS, or firewall change. Before any destructive AIPDD action, ask exactly whether to force-overwrite AIPDD channels: “是否强制覆盖 AIPDD 渠道？这会删除现有 AIPDD 渠道并按当前 AIPDD API Key 重建。” Ask the price decision independently in either deployment mode: “是否覆盖 AIPDD 模型价格？选择是会根据当前 API Key 的实时认证目录重建 AIPDD 本地价格规则，包括 Seedance 的每秒售价和计费模式；非 AIPDD 价格不变。” Never infer either yes from a general request to deploy.
 
 When a domain is supplied, validate it as a hostname and ask the user to ensure its A/AAAA record points to this server. Do not edit DNS. With no reverse proxy, the public URL must include the application port: `http://<domain>:6070`. Accept a bare hostname or an `http://` URL; reject an `https://` value unless the user explicitly understands that TLS is not being configured by this skill.
 
@@ -120,7 +120,7 @@ Use this path only after the remote inspection confirms a complete deployment an
 Before pulling the new image, ask two independent questions and record the answers:
 
 1. **是否覆盖 AIPDD 渠道？** Default to **否**. **是** means delete all existing AIPDD channels and rebuild the managed AIPDD channel from the current AIPDD key; this is destructive and requires the existing administrator login.
-2. **是否覆盖 AIPDD 模型价格？** Default to **否**. **是** means enable the AIPDD catalog sync so upstream model catalog and AIPDD-authoritative pricing are applied; it may add, remove, or update AIPDD catalog models and prices, but must not delete non-AIPDD channels. **否** means preserve current AIPDD model prices and do not call the catalog sync endpoint.
+2. **是否覆盖 AIPDD 模型价格？** Default to **否**. **是** authorizes the complete price-reconciliation procedure below: fetch the live authenticated catalog, replace pricing entries belonging to the previous and current AIPDD model sets, and automatically write `ModelPrice`, `billing_setting.billing_expr`, `billing_setting.task_pricing`, and `billing_setting.billing_mode` while preserving non-AIPDD entries. Seedance pricing must come exclusively from the current AIPDD modality fields (`amountAwcoinPerSecond`, `textInputAwcoinPerSecond`, `imageInputAwcoinPerSecond`, `audioInputAwcoinPerSecond`, and `videoInputAwcoinPerSecond`). The legacy `priceVariants` contract and any local-price fallback are unsupported. **否** preserves all current local AIPDD pricing options and does not call the catalog sync endpoint.
 
 Do not infer either answer from the request to update the application. If the user does not explicitly answer, stop before changing the deployment.
 
@@ -220,7 +220,7 @@ REDIS_PASSWORD=<generated>
 SESSION_SECRET=<generated>
 CRYPTO_SECRET=<generated>
 AIPDD_API_KEY=<user-provided>
-AIPDD_CATALOG_SYNC_ON_BOOT=true
+AIPDD_CATALOG_SYNC_ON_BOOT=<true only when price overwrite is confirmed, otherwise false>
 AIPDD_CHANNEL_OVERWRITE_ON_BOOT=false
 ```
 
@@ -284,7 +284,38 @@ When force overwrite is **not** confirmed:
 - On update, set `AIPDD_CHANNEL_OVERWRITE_ON_BOOT=false` for this update and preserve all other `.env` values.
 - Verify the existing channel state with the authenticated admin API and report if no usable AIPDD channel exists.
 
-In update mode, when price overwrite is **not** confirmed, set `AIPDD_CATALOG_SYNC_ON_BOOT=false`, do not call `POST /api/channel/<id>/aipdd/sync`, and report that current AIPDD prices were preserved. When price overwrite **is** confirmed, set it to `true`, confirm that catalog synchronization completed, and report the returned `updated_prices` count without printing pricing secrets.
+When price overwrite is **not** confirmed, set `AIPDD_CATALOG_SYNC_ON_BOOT=false`, do not call `POST /api/channel/<id>/aipdd/sync`, do not write any pricing option, and report that current AIPDD prices were preserved. When price overwrite **is** confirmed, set it to `true` and execute the complete procedure below. The environment toggle and the sync response's `updated_prices` field are not proof of price replacement: catalog synchronization intentionally preserves local pricing in current versions.
+
+#### Automatically reconcile AIPDD prices after confirmation
+
+Run this only after the administrator login succeeds. Treat the confirmation as authorization to replace AIPDD-owned entries in the five pricing options below, not as authorization to change non-AIPDD prices or user/group ratios.
+
+1. Before catalog synchronization, save these items in a timestamped, mode-`600` backup without printing them:
+   - the current AIPDD channel model list from `GET /api/channel/?p=1&page_size=100&type=58`;
+   - the exact current values of `ModelPrice`, `ModelRatio`, `billing_setting.billing_expr`, `billing_setting.task_pricing`, and `billing_setting.billing_mode` from `GET /api/option/`.
+2. Call `POST /api/channel/<managed-aipdd-id>/aipdd/sync`. Require `success=true`, a non-empty revision, and `used_snapshot=false`. A fallback snapshot is not fresh enough for an approved overwrite, especially after an API-key change; stop before writing options if a live authenticated catalog was not fetched.
+3. Export only the saved catalog JSON payload from the newest `a_ip_dd_catalog_snapshots` row. This is the actual GORM table name for the acronym-heavy model on the SQLite deployment. Discover the equivalent table name from the target database schema before querying if the deployment uses another database or an older schema. Do not export the channel key, `.env`, cookies, or any database-wide dump. Store the catalog, option response, and previous-model list in protected temporary JSON files.
+4. Run the bundled offline helper from a trusted local environment:
+
+   ```bash
+   python .agents/skills/new-api-docker-deploy/scripts/build_aipdd_pricing_options.py \
+     --catalog catalog.json \
+     --options options-before.json \
+     --managed-models aipdd-models-before.json \
+     --output pricing-plan.json
+   ```
+
+   The helper removes only entries owned by the previous/current AIPDD model sets, then rebuilds:
+   - non-duration AIPDD tasks as catalog-derived per-call `ModelPrice` values;
+   - AIPDD LLMs as `tiered_expr` rules using the catalog's USD-converted prompt/completion prices;
+   - Seedance/per-second capabilities as `task_pricing`, with `unit=second`, a no-reference-video price, an automatic `same`/`custom` reference-video policy, and `billing_mode=task_pricing`.
+
+   The flat Seedance price is deliberately conservative and uses only the current AIPDD contract. For every resolution, require matching `targetResolution`, positive `defaultDurationSeconds`, positive `defaultFramesPerSecond`, all four positive non-video modality fields, and a positive `videoInputAwcoinPerSecond`. Select the highest non-video modality USD/second across all supported resolutions for the no-reference-video price, and the highest video-input USD/second for the reference-video price. Do not read `priceVariants`, `minimumAwcoin`, an existing `ModelPrice`, a previous `task_pricing` value, or any other fallback source. A missing, zero, invalid, or structurally incompatible field must abort plan generation before any option write.
+5. Inspect the helper summary, not the complete option bodies. Require every current catalog model to appear exactly once in the per-call, task-pricing, or tiered-expression lists, and require `task_pricing_contract` to state that only the current AIPDD modality fields were used with no fallback. If catalog validation, a positive price, a model ID, or any required current-contract field is missing, make no option writes.
+6. Apply `pricing-plan.json.updates` through authenticated `PUT /api/option/` calls in the emitted order. This writes task pricing and expressions first and enables billing modes last. Require HTTP 200 and `success=true` for every write. Never put the cookie or complete JSON request in a command line or ordinary log.
+7. If any write or verification fails, apply every item in `pricing-plan.json.rollback` in the emitted order, verify the original option values were restored, and report the failure. Do not leave `billing_mode=task_pricing` without a matching valid task-pricing object.
+8. Re-fetch `GET /api/option/` and require all five values to equal the generated plan. Then call `GET /api/pricing` and verify every model in `TaskPricingRequiredModels` has `billing_mode=task_pricing` plus a valid positive `task_pricing` object. This read-only validation must replace a paid model request.
+9. Delete all temporary catalog, option, model-list, plan, cookie, and request files after verification. Report the catalog revision and counts by pricing mode, but do not print the full price maps or any secret.
 
 When force overwrite **is** confirmed, delete and rebuild only AIPDD channels:
 
@@ -293,7 +324,7 @@ When force overwrite **is** confirmed, delete and rebuild only AIPDD channels:
 3. Ask for a final confirmation immediately before the first deletion if the user’s confirmation was not explicit for this exact action.
 4. Send `DELETE /api/channel/<id>` for every returned AIPDD channel. Do not delete other channel types, disabled non-AIPDD channels, database volumes, or application data.
 5. On first deployment, ensure `.env` contains `AIPDD_CHANNEL_OVERWRITE_ON_BOOT=true`. On update, back up `.env`, change only this setting temporarily or as explicitly approved, then run `docker compose restart new-api`.
-6. Poll `/api/status`, then query the AIPDD channel list again. Confirm that the startup bootstrap created a fresh managed AIPDD channel. If price overwrite was confirmed, also confirm catalog synchronization succeeded; if it was declined, confirm that catalog synchronization was not run and existing prices were preserved.
+6. Poll `/api/status`, then query the AIPDD channel list again. Confirm that the startup bootstrap created a fresh managed AIPDD channel. If price overwrite was confirmed, run the complete automatic reconciliation procedure after the fresh channel exists; if it was declined, confirm that catalog synchronization was not run and existing prices were preserved.
 
 After a successful channel rebuild, set `AIPDD_CHANNEL_OVERWRITE_ON_BOOT=false` for future restarts and preserve the user’s separate price-sync choice. Do not leave a one-time destructive overwrite enabled by accident.
 
@@ -310,6 +341,7 @@ Verify all of the following:
 - In first-deployment mode, the root administrator was created on the new database. In update mode, `/api/setup` was not called and the existing administrator was preserved.
 - The requested AIPDD overwrite result matches the user’s answer.
 - In update mode, report both decisions separately: channel overwrite `是/否` and AIPDD price overwrite `是/否`.
+- When price overwrite was confirmed, every `TaskPricingRequiredModels` entry has a valid `task_pricing` object and `billing_mode=task_pricing`; catalog sync alone does not satisfy this check.
 
 Do not claim success if health checks, admin initialization, or requested AIPDD synchronization failed. State which stage failed and preserve the deployment directory for diagnosis.
 

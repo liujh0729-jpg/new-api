@@ -161,13 +161,7 @@ func previousAIPDDCatalogModels(baseURL string) ([]string, error) {
 	var snapshot AIPDDCatalogSnapshot
 	if err := DB.First(&snapshot, aipddCatalogSnapshotID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			var channel Channel
-			if channelErr := DB.Where("type = ? AND name = ?", constant.ChannelTypeAIPDD, aipddEnvChannelName).First(&channel).Error; channelErr == nil {
-				return channel.GetModels(), nil
-			} else if !errors.Is(channelErr, gorm.ErrRecordNotFound) {
-				return nil, channelErr
-			}
-			return nil, nil
+			return managedAIPDDChannelModels()
 		}
 		return nil, err
 	}
@@ -176,9 +170,26 @@ func previousAIPDDCatalogModels(baseURL string) ([]string, error) {
 	}
 	catalog, err := aipddcatalog.UnmarshalAtomic([]byte(snapshot.Payload))
 	if err != nil {
-		return nil, err
+		// A live catalog has already passed the current contract before this
+		// function is called. Do not interpret or migrate an incompatible legacy
+		// snapshot; use only the managed channel's model names for stale cleanup,
+		// then let the transaction replace the snapshot with the live catalog.
+		common.SysLog("AIPDD previous snapshot is incompatible with the current contract; using managed channel models: " + err.Error())
+		return managedAIPDDChannelModels()
 	}
 	return catalog.ModelNames(), nil
+}
+
+func managedAIPDDChannelModels() ([]string, error) {
+	var channel Channel
+	err := DB.Where("type = ? AND name = ?", constant.ChannelTypeAIPDD, aipddEnvChannelName).First(&channel).Error
+	if err == nil {
+		return channel.GetModels(), nil
+	}
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	return nil, err
 }
 
 func activateAIPDDCatalog(catalog aipddcatalog.AtomicCatalog) {

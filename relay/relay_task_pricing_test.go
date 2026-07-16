@@ -296,12 +296,14 @@ func taskPricingTestCapabilities(usdPerAWCoin, awcoinPerSecond float64) []consta
 			ExecutionPath: "/api/v3/contents/generations/tasks", AWCoinUSDPerCoin: usdPerAWCoin,
 			SeedancePricing: &constant.AIPDDSeedancePricing{ByResolution: map[string]constant.AIPDDSeedanceResolutionPricing{
 				"1080p": {
-					DefaultDurationSeconds: 5,
-					DefaultFramesPerSecond: 24,
-					PriceVariants: []constant.AIPDDSeedancePriceVariant{
-						{HasReferenceVideo: false, AWCoinPerSecond: awcoinPerSecond, MinimumAWCoin: awcoinPerSecond * 5},
-						{HasReferenceVideo: true, AWCoinPerSecond: awcoinPerSecond * 2, MinimumAWCoin: awcoinPerSecond * 10},
-					},
+					TargetResolution:          "1080p",
+					DefaultDurationSeconds:    5,
+					DefaultFramesPerSecond:    24,
+					AmountAWCoinPerSecond:     awcoinPerSecond,
+					TextInputAWCoinPerSecond:  awcoinPerSecond,
+					ImageInputAWCoinPerSecond: awcoinPerSecond,
+					VideoInputAWCoinPerSecond: awcoinPerSecond * 2,
+					AudioInputAWCoinPerSecond: awcoinPerSecond,
 				},
 			}},
 		}
