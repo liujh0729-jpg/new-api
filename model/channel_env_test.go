@@ -8,7 +8,6 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/stretchr/testify/require"
 )
 
@@ -309,16 +308,17 @@ func TestEnsureAIPDDDefaultsSyncsDynamicCatalogOnBoot(t *testing.T) {
 	require.Equal(t, []string{"image", "text"}, capability.InputModalities)
 	require.Equal(t, []string{"video"}, capability.OutputModalities)
 
-	modelPrice, ok := ratio_setting.GetModelPrice("dynamic-script-id", false)
-	require.True(t, ok)
-	require.Equal(t, 0.75, modelPrice)
-
-	var option Option
-	require.NoError(t, DB.Where(&Option{Key: "ModelPrice"}).First(&option).Error)
-	require.Contains(t, option.Value, `"dynamic-script-id":0.75`)
-	var modeOption Option
-	require.NoError(t, DB.Where(&Option{Key: "billing_setting.billing_mode"}).First(&modeOption).Error)
-	require.Contains(t, modeOption.Value, `"gemma3:1b":"tiered_expr"`)
+	for _, key := range []string{
+		"ModelPrice",
+		"ModelRatio",
+		"billing_setting.billing_mode",
+		"billing_setting.billing_expr",
+		"billing_setting.task_pricing",
+	} {
+		var count int64
+		require.NoError(t, DB.Model(&Option{}).Where("key = ?", key).Count(&count).Error)
+		require.Zero(t, count, key)
+	}
 }
 
 func TestEnsureAIPDDDefaultsFailsWhenAtomicCatalogUnavailable(t *testing.T) {

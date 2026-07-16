@@ -22,6 +22,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
+	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/types"
 
@@ -589,6 +590,16 @@ func RelayTask(c *gin.Context) {
 			OriginModelName: relayInfo.OriginModelName,
 			PerCallBilling:  isTaskPerCallBilling(relayInfo),
 		}
+		if quote := relayInfo.TaskPricingQuote; quote != nil {
+			task.PrivateData.BillingContext.GroupRatio = quote.GroupRatio
+			task.PrivateData.BillingContext.BillingMode = billing_setting.BillingModeTaskPricing
+			task.PrivateData.BillingContext.BillingUnit = quote.Unit
+			task.PrivateData.BillingContext.PricingVariant = quote.Variant
+			task.PrivateData.BillingContext.UnitPriceUSD = quote.UnitPriceUSD
+			task.PrivateData.BillingContext.Quantity = quote.Quantity
+			task.PrivateData.BillingContext.SaleUSD = quote.SaleUSD
+			task.PrivateData.BillingContext.HasReferenceVideo = quote.HasReferenceVideo
+		}
 		task.PrivateData.AIPDDExecution = result.AIPDDExecution
 		task.Quota = result.Quota
 		task.Data = result.TaskData
@@ -606,6 +617,9 @@ func RelayTask(c *gin.Context) {
 func isTaskPerCallBilling(relayInfo *relaycommon.RelayInfo) bool {
 	if relayInfo == nil {
 		return false
+	}
+	if relayInfo.TaskPricingQuote != nil || billing_setting.GetBillingMode(relayInfo.OriginModelName) == billing_setting.BillingModeTaskPricing {
+		return true
 	}
 	if constant.IsAIPDDTaskModel(relayInfo.OriginModelName) {
 		return constant.IsAIPDDPerCallBillingModel(relayInfo.OriginModelName) ||

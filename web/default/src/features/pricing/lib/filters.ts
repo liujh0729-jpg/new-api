@@ -24,6 +24,7 @@ import {
   ENDPOINT_TYPES,
 } from '../constants'
 import type { PricingModel } from '../types'
+import { isValidTaskPricing } from './model-helpers'
 
 // ----------------------------------------------------------------------------
 // Filter Utilities
@@ -102,6 +103,19 @@ export function filterByEndpointType(
  * Get model price for sorting
  */
 function getModelPrice(model: PricingModel): number {
+  if (
+    model.billing_mode === 'task_pricing' &&
+    isValidTaskPricing(model.task_pricing)
+  ) {
+    const prices = [model.task_pricing.no_reference_video_unit_price]
+    if (
+      model.task_pricing.reference_video_policy === 'custom' &&
+      Number(model.task_pricing.reference_video_unit_price) > 0
+    ) {
+      prices.push(Number(model.task_pricing.reference_video_unit_price))
+    }
+    return Math.min(...prices)
+  }
   return model.quota_type === 0 ? model.model_ratio : model.model_price || 0
 }
 

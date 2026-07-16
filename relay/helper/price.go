@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
@@ -94,10 +95,7 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 		var matchName string
 		modelRatio, success, matchName = ratio_setting.GetModelRatio(info.OriginModelName)
 		if !success {
-			acceptUnsetRatio := false
-			if info.UserSetting.AcceptUnsetRatioModel {
-				acceptUnsetRatio = true
-			}
+			acceptUnsetRatio := acceptsUnsetRatio(info)
 			if !acceptUnsetRatio {
 				return types.PriceData{}, modelPriceNotConfiguredError(matchName, info.UserId)
 			}
@@ -166,6 +164,26 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 // ModelPriceHelperPerCall 按次/按量计费的 PriceHelper (MJ、Task)
 func ModelPriceHelperPerCall(c *gin.Context, info *relaycommon.RelayInfo) (types.PriceData, error) {
 	groupRatioInfo := HandleGroupRatio(c, info)
+	billingMode := billing_setting.GetBillingMode(info.OriginModelName)
+	if billingMode == billing_setting.BillingModeTaskPricing {
+		pricing, ok := billing_setting.GetTaskPricing(info.OriginModelName)
+		if !ok {
+			return types.PriceData{}, modelPriceNotConfiguredError(info.OriginModelName, info.UserId)
+		}
+		if err := billing_setting.ValidateTaskPricingConfig(pricing); err != nil {
+			return types.PriceData{}, fmt.Errorf("model %s task pricing is invalid: %w", info.OriginModelName, err)
+		}
+		return types.PriceData{
+			FreeModel:      groupRatioInfo.GroupRatio == 0,
+			ModelPrice:     pricing.NoReferenceVideoUnitPrice,
+			UsePrice:       true,
+			GroupRatioInfo: groupRatioInfo,
+		}, nil
+	}
+	if constant.IsAIPDDSeedanceModel(info.OriginModelName) ||
+		model.IsAIPDDSeedancePricingRequiredModel(info.OriginModelName) {
+		return types.PriceData{}, modelPriceNotConfiguredError(info.OriginModelName, info.UserId)
+	}
 
 	modelPrice, success := ratio_setting.GetModelPrice(info.OriginModelName, true)
 	usePrice := success
@@ -180,10 +198,7 @@ func ModelPriceHelperPerCall(c *gin.Context, info *relaycommon.RelayInfo) (types
 			var ratioSuccess bool
 			var matchName string
 			modelRatio, ratioSuccess, matchName = ratio_setting.GetModelRatio(info.OriginModelName)
-			acceptUnsetRatio := false
-			if info.UserSetting.AcceptUnsetRatioModel {
-				acceptUnsetRatio = true
-			}
+			acceptUnsetRatio := acceptsUnsetRatio(info)
 			if !ratioSuccess && !acceptUnsetRatio {
 				return types.PriceData{}, modelPriceNotConfiguredError(matchName, info.UserId)
 			}
@@ -224,7 +239,26 @@ func ModelPriceHelperPerCall(c *gin.Context, info *relaycommon.RelayInfo) (types
 	return priceData, nil
 }
 
+func acceptsUnsetRatio(info *relaycommon.RelayInfo) bool {
+	if info == nil || !info.UserSetting.AcceptUnsetRatioModel {
+		return false
+	}
+	// AIPDD catalog discovery no longer provisions retail prices. Newly
+	// discovered models must therefore be explicitly priced by an administrator
+	// instead of inheriting the global "accept unset ratio" escape hatch.
+	return info.ChannelMeta == nil || info.ChannelMeta.ChannelType != constant.ChannelTypeAIPDD
+}
+
 func HasModelBillingConfig(modelName string) bool {
+	billingMode := billing_setting.GetBillingMode(modelName)
+	if billingMode == billing_setting.BillingModeTaskPricing {
+		pricing, ok := billing_setting.GetTaskPricing(modelName)
+		return ok && billing_setting.ValidateTaskPricingConfig(pricing) == nil
+	}
+	if constant.IsAIPDDSeedanceModel(modelName) ||
+		model.IsAIPDDSeedancePricingRequiredModel(modelName) {
+		return false
+	}
 	if _, ok := ratio_setting.GetModelPrice(modelName, false); ok {
 		return true
 	}
@@ -234,7 +268,7 @@ func HasModelBillingConfig(modelName string) bool {
 	if _, ok, _ := ratio_setting.GetModelRatio(modelName); ok {
 		return true
 	}
-	if billing_setting.GetBillingMode(modelName) != billing_setting.BillingModeTieredExpr {
+	if billingMode != billing_setting.BillingModeTieredExpr {
 		return false
 	}
 	expr, ok := billing_setting.GetBillingExpr(modelName)

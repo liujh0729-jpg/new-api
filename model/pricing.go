@@ -2,8 +2,8 @@ package model
 
 import (
 	"fmt"
+	"sort"
 	"strings"
-
 	"sync"
 	"time"
 
@@ -15,26 +15,27 @@ import (
 )
 
 type Pricing struct {
-	ModelName              string                  `json:"model_name"`
-	Description            string                  `json:"description,omitempty"`
-	Icon                   string                  `json:"icon,omitempty"`
-	Tags                   string                  `json:"tags,omitempty"`
-	VendorID               int                     `json:"vendor_id,omitempty"`
-	QuotaType              int                     `json:"quota_type"`
-	ModelRatio             float64                 `json:"model_ratio"`
-	ModelPrice             float64                 `json:"model_price"`
-	OwnerBy                string                  `json:"owner_by"`
-	CompletionRatio        float64                 `json:"completion_ratio"`
-	CacheRatio             *float64                `json:"cache_ratio,omitempty"`
-	CreateCacheRatio       *float64                `json:"create_cache_ratio,omitempty"`
-	ImageRatio             *float64                `json:"image_ratio,omitempty"`
-	AudioRatio             *float64                `json:"audio_ratio,omitempty"`
-	AudioCompletionRatio   *float64                `json:"audio_completion_ratio,omitempty"`
-	EnableGroup            []string                `json:"enable_groups"`
-	SupportedEndpointTypes []constant.EndpointType `json:"supported_endpoint_types"`
-	BillingMode            string                  `json:"billing_mode,omitempty"`
-	BillingExpr            string                  `json:"billing_expr,omitempty"`
-	PricingVersion         string                  `json:"pricing_version,omitempty"`
+	ModelName              string                             `json:"model_name"`
+	Description            string                             `json:"description,omitempty"`
+	Icon                   string                             `json:"icon,omitempty"`
+	Tags                   string                             `json:"tags,omitempty"`
+	VendorID               int                                `json:"vendor_id,omitempty"`
+	QuotaType              int                                `json:"quota_type"`
+	ModelRatio             float64                            `json:"model_ratio"`
+	ModelPrice             float64                            `json:"model_price"`
+	OwnerBy                string                             `json:"owner_by"`
+	CompletionRatio        float64                            `json:"completion_ratio"`
+	CacheRatio             *float64                           `json:"cache_ratio,omitempty"`
+	CreateCacheRatio       *float64                           `json:"create_cache_ratio,omitempty"`
+	ImageRatio             *float64                           `json:"image_ratio,omitempty"`
+	AudioRatio             *float64                           `json:"audio_ratio,omitempty"`
+	AudioCompletionRatio   *float64                           `json:"audio_completion_ratio,omitempty"`
+	EnableGroup            []string                           `json:"enable_groups"`
+	SupportedEndpointTypes []constant.EndpointType            `json:"supported_endpoint_types"`
+	BillingMode            string                             `json:"billing_mode,omitempty"`
+	BillingExpr            string                             `json:"billing_expr,omitempty"`
+	TaskPricing            *billing_setting.TaskPricingConfig `json:"task_pricing,omitempty"`
+	PricingVersion         string                             `json:"pricing_version,omitempty"`
 }
 
 type PricingVendor struct {
@@ -46,11 +47,12 @@ type PricingVendor struct {
 }
 
 var (
-	pricingMap           []Pricing
-	vendorsList          []PricingVendor
-	supportedEndpointMap map[string]common.EndpointInfo
-	lastGetPricingTime   time.Time
-	updatePricingLock    sync.Mutex
+	pricingMap                      []Pricing
+	vendorsList                     []PricingVendor
+	supportedEndpointMap            map[string]common.EndpointInfo
+	lastGetPricingTime              time.Time
+	updatePricingLock               sync.Mutex
+	aipddSeedancePricingRequiredSet map[string]struct{}
 
 	// 缓存映射：模型名 -> 启用分组 / 计费类型
 	modelEnableGroups     = make(map[string][]string)
@@ -64,17 +66,120 @@ var (
 )
 
 func GetPricing() []Pricing {
+	updatePricingLock.Lock()
+	defer updatePricingLock.Unlock()
+	refreshPricingLocked()
+	return append([]Pricing(nil), pricingMap...)
+}
+
+func refreshPricingLocked() {
 	if time.Since(lastGetPricingTime) > time.Minute*1 || len(pricingMap) == 0 {
-		updatePricingLock.Lock()
-		defer updatePricingLock.Unlock()
-		// Double check after acquiring the lock
-		if time.Since(lastGetPricingTime) > time.Minute*1 || len(pricingMap) == 0 {
-			modelSupportEndpointsLock.Lock()
-			defer modelSupportEndpointsLock.Unlock()
-			updatePricing()
+		modelSupportEndpointsLock.Lock()
+		updatePricing()
+		modelSupportEndpointsLock.Unlock()
+	}
+}
+
+// GetAIPDDSeedancePricingRequiredModels returns local/origin model names that
+// route to Seedance. It includes channel model mappings so an alias cannot
+// expose a legacy fixed ModelPrice while relay correctly rejects that price.
+func GetAIPDDSeedancePricingRequiredModels() []string {
+	updatePricingLock.Lock()
+	defer updatePricingLock.Unlock()
+	required := getAIPDDSeedancePricingRequiredSetLocked()
+	return sortedPricingModelNames(required)
+}
+
+// IsAIPDDSeedancePricingRequiredModel applies the same origin-level rule used
+// by the public pricing list. If any enabled AIPDD route maps an origin model
+// to Seedance, every route for that origin must use local task pricing; a
+// different selected channel must not revive a legacy fixed ModelPrice.
+func IsAIPDDSeedancePricingRequiredModel(modelName string) bool {
+	modelName = strings.TrimSpace(modelName)
+	if modelName == "" {
+		return false
+	}
+	updatePricingLock.Lock()
+	defer updatePricingLock.Unlock()
+	_, ok := getAIPDDSeedancePricingRequiredSetLocked()[modelName]
+	return ok
+}
+
+func getAIPDDSeedancePricingRequiredSetLocked() map[string]struct{} {
+	if aipddSeedancePricingRequiredSet != nil {
+		return aipddSeedancePricingRequiredSet
+	}
+	aipddSeedancePricingRequiredSet = computeAIPDDSeedancePricingRequiredSet()
+	return aipddSeedancePricingRequiredSet
+}
+
+func computeAIPDDSeedancePricingRequiredSet() map[string]struct{} {
+	required := make(map[string]struct{})
+	for _, capability := range constant.GetAIPDDCapabilities() {
+		name := strings.TrimSpace(capability.ModelName)
+		if name != "" && constant.IsAIPDDSeedanceModel(name) {
+			required[name] = struct{}{}
 		}
 	}
-	return pricingMap
+
+	if DB != nil {
+		var rows []struct {
+			Model        string
+			ModelMapping *string
+		}
+		err := DB.Table("abilities").
+			Select("abilities.model, channels.model_mapping").
+			Joins("JOIN channels ON channels.id = abilities.channel_id").
+			Where("abilities.enabled = ? AND channels.status = ? AND channels.type = ?", true, common.ChannelStatusEnabled, constant.ChannelTypeAIPDD).
+			Scan(&rows).Error
+		if err != nil {
+			common.SysLog("failed to resolve AIPDD Seedance pricing aliases: " + err.Error())
+		} else {
+			for _, row := range rows {
+				origin := strings.TrimSpace(row.Model)
+				if origin == "" {
+					continue
+				}
+				mapped := origin
+				if row.ModelMapping != nil && strings.TrimSpace(*row.ModelMapping) != "" {
+					var mapping map[string]string
+					if err := common.UnmarshalJsonStr(*row.ModelMapping, &mapping); err == nil {
+						mapped = finalPricingMappedModel(origin, mapping)
+					}
+				}
+				if constant.IsAIPDDSeedanceModel(mapped) {
+					required[origin] = struct{}{}
+				}
+			}
+		}
+	}
+
+	return required
+}
+
+func sortedPricingModelNames(models map[string]struct{}) []string {
+	names := make([]string, 0, len(models))
+	for modelName := range models {
+		names = append(names, modelName)
+	}
+	sort.Strings(names)
+	return names
+}
+
+func finalPricingMappedModel(origin string, mapping map[string]string) string {
+	current := origin
+	visited := map[string]struct{}{current: {}}
+	for {
+		next := strings.TrimSpace(mapping[current])
+		if next == "" {
+			return current
+		}
+		if _, exists := visited[next]; exists {
+			return origin
+		}
+		visited[next] = struct{}{}
+		current = next
+	}
 }
 
 func InvalidatePricingCache() {
@@ -84,15 +189,15 @@ func InvalidatePricingCache() {
 	pricingMap = nil
 	vendorsList = nil
 	lastGetPricingTime = time.Time{}
+	aipddSeedancePricingRequiredSet = nil
 }
 
 // GetVendors 返回当前定价接口使用到的供应商信息
 func GetVendors() []PricingVendor {
-	if time.Since(lastGetPricingTime) > time.Minute*1 || len(pricingMap) == 0 {
-		// 保证先刷新一次
-		GetPricing()
-	}
-	return vendorsList
+	updatePricingLock.Lock()
+	defer updatePricingLock.Unlock()
+	refreshPricingLocked()
+	return append([]PricingVendor(nil), vendorsList...)
 }
 
 func GetModelSupportEndpointTypes(model string) []constant.EndpointType {
@@ -288,6 +393,7 @@ func updatePricing() {
 	}
 
 	pricingMap = make([]Pricing, 0)
+	taskPricingRequiredModels := getAIPDDSeedancePricingRequiredSetLocked()
 	for model, groups := range modelGroupsMap {
 		pricing := Pricing{
 			ModelName:              model,
@@ -306,15 +412,34 @@ func updatePricing() {
 			pricing.Tags = meta.Tags
 			pricing.VendorID = meta.VendorID
 		}
-		modelPrice, findPrice := ratio_setting.GetModelPrice(model, false)
-		if findPrice {
-			pricing.ModelPrice = modelPrice
+		billingMode := billing_setting.GetBillingMode(model)
+		if billingMode == billing_setting.BillingModeTaskPricing {
+			taskPricing, ok := billing_setting.GetTaskPricing(model)
+			if !ok || billing_setting.ValidateTaskPricingConfig(taskPricing) != nil {
+				continue
+			}
+			pricing.BillingMode = billingMode
+			pricing.TaskPricing = &taskPricing
+			pricing.ModelPrice = taskPricing.NoReferenceVideoUnitPrice
+			if taskPricing.ReferenceVideoPolicy == billing_setting.ReferenceVideoPolicyCustom &&
+				taskPricing.ReferenceVideoUnitPrice < pricing.ModelPrice {
+				pricing.ModelPrice = taskPricing.ReferenceVideoUnitPrice
+			}
 			pricing.QuotaType = 1
 		} else {
-			modelRatio, _, _ := ratio_setting.GetModelRatio(model)
-			pricing.ModelRatio = modelRatio
-			pricing.CompletionRatio = ratio_setting.GetCompletionRatio(model)
-			pricing.QuotaType = 0
+			if _, requiresTaskPricing := taskPricingRequiredModels[model]; requiresTaskPricing {
+				continue
+			}
+			modelPrice, findPrice := ratio_setting.GetModelPrice(model, false)
+			if findPrice {
+				pricing.ModelPrice = modelPrice
+				pricing.QuotaType = 1
+			} else {
+				modelRatio, _, _ := ratio_setting.GetModelRatio(model)
+				pricing.ModelRatio = modelRatio
+				pricing.CompletionRatio = ratio_setting.GetCompletionRatio(model)
+				pricing.QuotaType = 0
+			}
 		}
 		if cacheRatio, ok := ratio_setting.GetCacheRatio(model); ok {
 			pricing.CacheRatio = &cacheRatio
@@ -333,7 +458,7 @@ func updatePricing() {
 			audioCompletionRatio := ratio_setting.GetAudioCompletionRatio(model)
 			pricing.AudioCompletionRatio = &audioCompletionRatio
 		}
-		if billingMode := billing_setting.GetBillingMode(model); billingMode == "tiered_expr" {
+		if billingMode == billing_setting.BillingModeTieredExpr {
 			if expr, ok := billing_setting.GetBillingExpr(model); ok && strings.TrimSpace(expr) != "" {
 				pricing.BillingMode = billingMode
 				pricing.BillingExpr = expr

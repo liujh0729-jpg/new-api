@@ -8,6 +8,8 @@ import (
 
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/pkg/aipddcatalog"
+	"github.com/QuantumNous/new-api/setting/billing_setting"
+	"github.com/QuantumNous/new-api/setting/config"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/stretchr/testify/require"
 )
@@ -74,8 +76,21 @@ func TestApplyAIPDDCatalogReplacesModelsAndCleansOnlySeededCNChannels(t *testing
 	require.NoError(t, DB.Create(&custom).Error)
 
 	first := aipddTestCatalog("revision-1", "task-old", "llm-old")
-	_, err := applyAIPDDCatalog(first, "https://aipdd.example", "sk-test")
+	firstResult, err := applyAIPDDCatalog(first, "https://aipdd.example", "sk-test")
 	require.NoError(t, err)
+	require.Zero(t, firstResult.UpdatedPrices)
+
+	preserveAIPDDPricingRuntime(t)
+	localPricing := map[string]string{
+		"ModelPrice":                   `{"task-old":1.25,"llm-old":2.5,"unrelated-model":3.75}`,
+		"ModelRatio":                   `{"task-old":4.25,"llm-old":5.5,"unrelated-model":6.75}`,
+		"billing_setting.billing_mode": `{"task-old":"task_pricing","llm-old":"tiered_expr","unrelated-model":"ratio"}`,
+		"billing_setting.billing_expr": `{"llm-old":"tier(\"local\", p * 1 + c * 2)"}`,
+		"billing_setting.task_pricing": `{"task-old":{"unit":"second","no_reference_video_unit_price":0.12,"reference_video_policy":"same"}}`,
+	}
+	for key, value := range localPricing {
+		require.NoError(t, UpdateOption(key, value))
+	}
 
 	for _, provider := range cnProviders {
 		var count int64
@@ -91,6 +106,7 @@ func TestApplyAIPDDCatalogReplacesModelsAndCleansOnlySeededCNChannels(t *testing
 	require.NoError(t, err)
 	require.Equal(t, 2, result.AddedModels)
 	require.Equal(t, 2, result.RemovedModels)
+	require.Zero(t, result.UpdatedPrices)
 
 	var staleModels, staleAbilities int64
 	require.NoError(t, DB.Unscoped().Model(&Model{}).Where("model_name IN ?", []string{"task-old", "llm-old"}).Count(&staleModels).Error)
@@ -101,9 +117,23 @@ func TestApplyAIPDDCatalogReplacesModelsAndCleansOnlySeededCNChannels(t *testing
 	var managed Channel
 	require.NoError(t, DB.Where("type = ? AND name = ?", constant.ChannelTypeAIPDD, "AIPDD").First(&managed).Error)
 	require.Equal(t, "llm-new,task-new", managed.Models)
+
+	for key, expected := range localPricing {
+		var option Option
+		require.NoError(t, DB.Where("key = ?", key).First(&option).Error)
+		require.JSONEq(t, expected, option.Value, key)
+	}
+	price, ok := ratio_setting.GetModelPrice("task-old", false)
+	require.True(t, ok)
+	require.Equal(t, 1.25, price)
+	ratio, ok, _ := ratio_setting.GetModelRatio("task-old")
+	require.True(t, ok)
+	require.Equal(t, 4.25, ratio)
+	require.Equal(t, "task_pricing", billing_setting.GetBillingMode("task-old"))
+	require.Equal(t, "tier(\"local\", p * 1 + c * 2)", mustAIPDDBillingExpr(t, "llm-old"))
 }
 
-func TestApplyAIPDDCatalogConfiguresSeedanceBasePrice(t *testing.T) {
+func TestApplyAIPDDCatalogDoesNotCreatePricingOptions(t *testing.T) {
 	truncateTables(t)
 	t.Cleanup(func() {
 		constant.ResetAIPDDCapabilities()
@@ -129,17 +159,74 @@ func TestApplyAIPDDCatalogConfiguresSeedanceBasePrice(t *testing.T) {
 		},
 	}}
 
-	_, err := applyAIPDDCatalog(catalog, "https://aipdd.example", "sk-test")
+	result, err := applyAIPDDCatalog(catalog, "https://aipdd.example", "sk-test")
 	require.NoError(t, err)
+	require.Zero(t, result.UpdatedPrices)
 
-	price, ok := ratio_setting.GetModelPrice("AP Seedance", false)
-	require.True(t, ok)
-	require.InDelta(t, 0.225, price, 0.0000001)
+	for _, key := range []string{
+		"ModelPrice",
+		"ModelRatio",
+		"billing_setting.billing_mode",
+		"billing_setting.billing_expr",
+		"billing_setting.task_pricing",
+	} {
+		var count int64
+		require.NoError(t, DB.Model(&Option{}).Where("key = ?", key).Count(&count).Error)
+		require.Zero(t, count, key)
+	}
 
 	capability, ok := constant.GetAIPDDCapability("AP Seedance")
 	require.True(t, ok)
 	require.NotNil(t, capability.SeedancePricing)
 	require.Contains(t, capability.SeedancePricing.ByResolution, "1080p")
+}
+
+func TestEnsureAIPDDOpenAIModelDefaultsDoesNotCreateLocalPricing(t *testing.T) {
+	truncateTables(t)
+	constant.ResetAIPDDCapabilities()
+	constant.ResetAIPDDOpenAIModels()
+	t.Cleanup(func() {
+		constant.ResetAIPDDCapabilities()
+		constant.ResetAIPDDOpenAIModels()
+	})
+
+	require.NoError(t, EnsureAIPDDOpenAIModelDefaults([]string{"aipdd-local-price-boundary-test"}))
+
+	for _, key := range []string{
+		"ModelPrice",
+		"ModelRatio",
+		"billing_setting.billing_mode",
+		"billing_setting.billing_expr",
+		"billing_setting.task_pricing",
+	} {
+		var count int64
+		require.NoError(t, DB.Model(&Option{}).Where("key = ?", key).Count(&count).Error)
+		require.Zero(t, count, key)
+	}
+}
+
+func preserveAIPDDPricingRuntime(t *testing.T) {
+	t.Helper()
+	modelPrice := ratio_setting.ModelPrice2JSONString()
+	modelRatio := ratio_setting.ModelRatio2JSONString()
+	billingConfig := make(map[string]string)
+	for key, value := range config.GlobalConfig.ExportAllConfigs() {
+		if len(key) >= len("billing_setting.") && key[:len("billing_setting.")] == "billing_setting." {
+			billingConfig[key] = value
+		}
+	}
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(modelPrice))
+		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(modelRatio))
+		require.NoError(t, config.GlobalConfig.LoadFromDB(billingConfig))
+	})
+}
+
+func mustAIPDDBillingExpr(t *testing.T, modelName string) string {
+	t.Helper()
+	expr, ok := billing_setting.GetBillingExpr(modelName)
+	require.True(t, ok)
+	return expr
 }
 
 func aipddTestCatalog(revision, taskModel, llmModel string) aipddcatalog.AtomicCatalog {

@@ -38,6 +38,33 @@ import {
   validateJsonString,
 } from './utils'
 
+function isTaskPricingMap(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  return Object.values(value).every((entry) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      return false
+    }
+    const pricing = entry as Record<string, unknown>
+    const policy = pricing.reference_video_policy
+    const referencePrice = pricing.reference_video_unit_price
+    const optionalReferencePriceValid =
+      referencePrice === undefined ||
+      (typeof referencePrice === 'number' &&
+        Number.isFinite(referencePrice) &&
+        referencePrice >= 0)
+    return (
+      pricing.unit === 'second' &&
+      typeof pricing.no_reference_video_unit_price === 'number' &&
+      Number.isFinite(pricing.no_reference_video_unit_price) &&
+      pricing.no_reference_video_unit_price > 0 &&
+      (policy === 'same' || policy === 'custom' || policy === 'disabled') &&
+      optionalReferencePriceValid &&
+      (policy !== 'custom' ||
+        (typeof referencePrice === 'number' && referencePrice > 0))
+    )
+  })
+}
+
 const modelSchema = z.object({
   ModelPrice: z.string().superRefine((value, ctx) => {
     const result = validateJsonString(value)
@@ -130,6 +157,19 @@ const modelSchema = z.object({
       })
     }
   }),
+  TaskPricing: z.string().superRefine((value, ctx) => {
+    const result = validateJsonString(value, {
+      predicate: isTaskPricingMap,
+      predicateMessage:
+        'Expected a model-to-task-pricing map with positive per-second prices',
+    })
+    if (!result.valid) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: result.message || 'Invalid JSON',
+      })
+    }
+  }),
 })
 
 const groupSchema = z.object({
@@ -206,6 +246,7 @@ type RatioSettingsCardProps = {
   titleKey?: string
   descriptionKey?: string
   visibleTabs?: RatioTabId[]
+  taskPricingRequiredModels: string
 }
 
 export function RatioSettingsCard({
@@ -215,6 +256,7 @@ export function RatioSettingsCard({
   titleKey = 'Pricing Ratios',
   descriptionKey = 'Configure model, caching, and group ratios used for billing',
   visibleTabs = ['models', 'groups', 'tool-prices', 'upstream-sync'],
+  taskPricingRequiredModels,
 }: RatioSettingsCardProps) {
   const { t } = useTranslation()
   const updateOption = useUpdateOption()
@@ -251,6 +293,7 @@ export function RatioSettingsCard({
     ExposeRatioEnabled: modelDefaults.ExposeRatioEnabled,
     BillingMode: normalizeJsonString(modelDefaults.BillingMode),
     BillingExpr: normalizeJsonString(modelDefaults.BillingExpr),
+    TaskPricing: normalizeJsonString(modelDefaults.TaskPricing),
   })
 
   const groupNormalizedDefaults = useRef({
@@ -282,6 +325,7 @@ export function RatioSettingsCard({
       ),
       BillingMode: formatJsonForTextarea(modelDefaults.BillingMode),
       BillingExpr: formatJsonForTextarea(modelDefaults.BillingExpr),
+      TaskPricing: formatJsonForTextarea(modelDefaults.TaskPricing),
     },
   })
 
@@ -316,6 +360,7 @@ export function RatioSettingsCard({
       ExposeRatioEnabled: modelDefaults.ExposeRatioEnabled,
       BillingMode: normalizeJsonString(modelDefaults.BillingMode),
       BillingExpr: normalizeJsonString(modelDefaults.BillingExpr),
+      TaskPricing: normalizeJsonString(modelDefaults.TaskPricing),
     }
 
     modelForm.reset({
@@ -332,6 +377,7 @@ export function RatioSettingsCard({
       ),
       BillingMode: formatJsonForTextarea(modelDefaults.BillingMode),
       BillingExpr: formatJsonForTextarea(modelDefaults.BillingExpr),
+      TaskPricing: formatJsonForTextarea(modelDefaults.TaskPricing),
     })
   }, [modelDefaults, modelForm])
 
@@ -375,11 +421,13 @@ export function RatioSettingsCard({
         ExposeRatioEnabled: values.ExposeRatioEnabled,
         BillingMode: normalizeJsonString(values.BillingMode),
         BillingExpr: normalizeJsonString(values.BillingExpr),
+        TaskPricing: normalizeJsonString(values.TaskPricing),
       }
 
       const apiKeyMap: Record<string, string> = {
         BillingMode: 'billing_setting.billing_mode',
         BillingExpr: 'billing_setting.billing_expr',
+        TaskPricing: 'billing_setting.task_pricing',
       }
 
       const updates = (
@@ -432,7 +480,7 @@ export function RatioSettingsCard({
 
   const handleResetRatios = useCallback(() => {
     setConfirmOpen(true)
-  }, [])
+  }, [setConfirmOpen])
 
   const { mutate: resetMutate } = resetMutation
   const handleConfirmReset = useCallback(() => {
@@ -463,6 +511,7 @@ export function RatioSettingsCard({
           onReset={handleResetRatios}
           isSaving={updateOption.isPending}
           isResetting={resetMutation.isPending}
+          taskPricingRequiredModels={taskPricingRequiredModels}
         />
       )
     }

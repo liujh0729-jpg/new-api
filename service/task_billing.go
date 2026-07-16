@@ -20,7 +20,9 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo) {
 	tokenName := c.GetString("token_name")
 	logContent := fmt.Sprintf("操作 %s", info.Action)
 	// 支持任务仅按次计费
-	if common.StringsContains(constant.TaskPricePatches, info.OriginModelName) {
+	if info.TaskPricingQuote != nil {
+		logContent = fmt.Sprintf("%s，按视频时长计费", logContent)
+	} else if common.StringsContains(constant.TaskPricePatches, info.OriginModelName) {
 		logContent = fmt.Sprintf("%s，按次计费", logContent)
 	} else {
 		if len(info.PriceData.OtherRatios) > 0 {
@@ -43,6 +45,16 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo) {
 		other["model_ratio"] = info.PriceData.ModelRatio
 	}
 	other["group_ratio"] = info.PriceData.GroupRatioInfo.GroupRatio
+	if quote := info.TaskPricingQuote; quote != nil {
+		other["group_ratio"] = quote.GroupRatio
+		other["billing_mode"] = "task_pricing"
+		other["billing_unit"] = quote.Unit
+		other["pricing_variant"] = quote.Variant
+		other["unit_price_usd"] = quote.UnitPriceUSD
+		other["quantity"] = quote.Quantity
+		other["sale_usd"] = quote.SaleUSD
+		other["has_reference_video"] = quote.HasReferenceVideo
+	}
 	if info.PriceData.GroupRatioInfo.HasSpecialRatio {
 		other["user_group_ratio"] = info.PriceData.GroupRatioInfo.GroupSpecialRatio
 	}
@@ -125,8 +137,22 @@ func taskBillingOther(task *model.Task) map[string]interface{} {
 			other["model_ratio"] = bc.ModelRatio
 		}
 		other["group_ratio"] = bc.GroupRatio
+		if bc.BillingMode != "" {
+			other["billing_mode"] = bc.BillingMode
+			other["billing_unit"] = bc.BillingUnit
+			other["pricing_variant"] = bc.PricingVariant
+			other["unit_price_usd"] = bc.UnitPriceUSD
+			other["quantity"] = bc.Quantity
+			other["sale_usd"] = bc.SaleUSD
+			other["has_reference_video"] = bc.HasReferenceVideo
+		}
 		if len(bc.OtherRatios) > 0 {
 			for k, v := range bc.OtherRatios {
+				if bc.BillingMode == "task_pricing" && k == "has_reference_video" {
+					// Keep the typed, frozen snapshot value above. The adapter fact
+					// uses 0/1 only because OtherRatios is numeric.
+					continue
+				}
 				other[k] = v
 			}
 		}

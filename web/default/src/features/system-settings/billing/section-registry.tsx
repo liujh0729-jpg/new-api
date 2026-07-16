@@ -37,6 +37,7 @@ const getModelDefaults = (settings: BillingSettings) => ({
   ExposeRatioEnabled: settings.ExposeRatioEnabled,
   BillingMode: settings['billing_setting.billing_mode'],
   BillingExpr: settings['billing_setting.billing_expr'],
+  TaskPricing: settings['billing_setting.task_pricing'],
 })
 
 const getGroupDefaults = (settings: BillingSettings) => ({
@@ -114,6 +115,7 @@ const BILLING_SECTIONS = [
         groupDefaults={getGroupDefaults(settings)}
         toolPricesDefault={settings['tool_price_setting.prices']}
         visibleTabs={['models', 'tool-prices', 'upstream-sync']}
+        taskPricingRequiredModels={settings.TaskPricingRequiredModels}
       />
     ),
   },
@@ -129,6 +131,7 @@ const BILLING_SECTIONS = [
         groupDefaults={getGroupDefaults(settings)}
         toolPricesDefault={settings['tool_price_setting.prices']}
         visibleTabs={['groups']}
+        taskPricingRequiredModels={settings.TaskPricingRequiredModels}
       />
     ),
   },

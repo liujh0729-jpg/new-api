@@ -43,6 +43,7 @@ import {
   Field,
   FieldContent,
   FieldDescription,
+  FieldError,
   FieldGroup,
   FieldLabel,
   FieldTitle,
@@ -72,7 +73,13 @@ import {
 } from '@/components/ui/sheet'
 import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { combineBillingExpr } from '@/features/pricing/lib/billing-expr'
+import type {
+  ReferenceVideoPolicy,
+  TaskPricing,
+} from '@/features/pricing/types'
+import { isValidTaskPricing } from './task-pricing-utils'
 import { TieredPricingEditor } from './tiered-pricing-editor'
 
 const createModelPricingSchema = (t: (key: string) => string) =>
@@ -92,7 +99,7 @@ type ModelPricingFormValues = z.infer<
   ReturnType<typeof createModelPricingSchema>
 >
 
-type PricingMode = 'per-token' | 'per-request' | 'tiered_expr'
+type PricingMode = 'per-token' | 'per-request' | 'task_pricing' | 'tiered_expr'
 type LaneKey =
   | 'completion'
   | 'cache'
@@ -114,6 +121,7 @@ export type ModelRatioData = {
   billingMode?: PricingMode
   billingExpr?: string
   requestRuleExpr?: string
+  taskPricing?: TaskPricing
 }
 
 type ModelPricingSheetProps = {
@@ -305,6 +313,7 @@ function createInitialLaneState(data?: ModelRatioData | null) {
 
 function getModeLabel(mode: PricingMode) {
   if (mode === 'per-request') return 'Per-request'
+  if (mode === 'task_pricing') return 'Per-second'
   if (mode === 'tiered_expr') return 'Expression'
   return 'Per-token'
 }
@@ -313,6 +322,7 @@ function getModeBadgeVariant(
   mode: PricingMode
 ): 'default' | 'secondary' | 'outline' {
   if (mode === 'per-request') return 'secondary'
+  if (mode === 'task_pricing') return 'secondary'
   if (mode === 'tiered_expr') return 'default'
   return 'outline'
 }
@@ -325,6 +335,9 @@ function buildPreviewRows(
   promptPrice: string,
   lanePrices: Record<LaneKey, string>,
   laneEnabled: Record<LaneKey, boolean>,
+  taskNoReferencePrice: string,
+  referenceVideoPolicy: ReferenceVideoPolicy,
+  taskReferencePrice: string,
   t: (key: string) => string
 ): PreviewRow[] {
   if (mode === 'tiered_expr') {
@@ -350,6 +363,48 @@ function buildPreviewRows(
           : t('Empty'),
       },
     ]
+  }
+
+  if (mode === 'task_pricing') {
+    const noReferencePrice = toNumberOrNull(taskNoReferencePrice)
+    const referencePrice =
+      referenceVideoPolicy === 'same'
+        ? noReferencePrice
+        : toNumberOrNull(taskReferencePrice)
+    const rows: PreviewRow[] = [
+      { key: 'mode', label: 'BillingMode', value: 'task_pricing' },
+      {
+        key: 'noReferencePrice',
+        label: t('Without video input'),
+        value:
+          noReferencePrice !== null
+            ? `${formatDisplayBillingPrice(noReferencePrice)} / ${t('second')}`
+            : t('Empty'),
+      },
+      {
+        key: 'referencePolicy',
+        label: t('Video input rule'),
+        value: t(
+          referenceVideoPolicy === 'same'
+            ? 'Same price'
+            : referenceVideoPolicy === 'custom'
+              ? 'Separate price'
+              : 'Not allowed'
+        ),
+      },
+    ]
+
+    if (referenceVideoPolicy !== 'disabled') {
+      rows.push({
+        key: 'fiveSecondPreview',
+        label: t('5-second preview'),
+        value:
+          noReferencePrice !== null && referencePrice !== null
+            ? `${t('Without video input')} ${formatDisplayBillingPrice(noReferencePrice * 5)} · ${t('With video input')} ${formatDisplayBillingPrice(referencePrice * 5)}`
+            : t('Empty'),
+      })
+    }
+    return rows
   }
 
   return [
@@ -462,6 +517,11 @@ export function ModelPricingEditorPanel({
   })
   const [billingExpr, setBillingExpr] = useState('')
   const [requestRuleExpr, setRequestRuleExpr] = useState('')
+  const [taskNoReferencePrice, setTaskNoReferencePrice] = useState('')
+  const [referenceVideoPolicy, setReferenceVideoPolicy] =
+    useState<ReferenceVideoPolicy>('same')
+  const [taskReferencePrice, setTaskReferencePrice] = useState('')
+  const [showTaskErrors, setShowTaskErrors] = useState(false)
   const [previewOpen, setPreviewOpen] = useState(true)
   const isEditMode = !!editData
   const priceUnitLabel = `${getBillingCurrencyLabel()}/1M ${t('tokens')}`
@@ -497,14 +557,25 @@ export function ModelPricingEditorPanel({
         audioCompletionRatio: editData.audioCompletionRatio || '',
       })
       setPricingMode(
-        editData.billingMode === 'tiered_expr'
-          ? 'tiered_expr'
-          : editData.price
-            ? 'per-request'
-            : 'per-token'
+        editData.billingMode === 'task_pricing'
+          ? 'task_pricing'
+          : editData.billingMode === 'tiered_expr'
+            ? 'tiered_expr'
+            : editData.price
+              ? 'per-request'
+              : 'per-token'
       )
       setBillingExpr(editData.billingExpr || '')
       setRequestRuleExpr(editData.requestRuleExpr || '')
+      setTaskNoReferencePrice(
+        formatNumber(editData.taskPricing?.no_reference_video_unit_price)
+      )
+      setReferenceVideoPolicy(
+        editData.taskPricing?.reference_video_policy || 'same'
+      )
+      setTaskReferencePrice(
+        formatNumber(editData.taskPricing?.reference_video_unit_price)
+      )
     } else {
       form.reset({
         name: '',
@@ -520,12 +591,16 @@ export function ModelPricingEditorPanel({
       setPricingMode('per-token')
       setBillingExpr('')
       setRequestRuleExpr('')
+      setTaskNoReferencePrice('')
+      setReferenceVideoPolicy('same')
+      setTaskReferencePrice('')
     }
 
     setPromptPrice(nextLaneState.promptPrice)
     setLanePrices(nextLaneState.prices)
     setLaneEnabled(nextLaneState.enabled)
     setPreviewOpen(true)
+    setShowTaskErrors(false)
   }, [editData, form])
 
   const setFormValue = (field: keyof ModelPricingFormValues, value: string) => {
@@ -643,6 +718,7 @@ export function ModelPricingEditorPanel({
   const handleModeChange = (value: string) => {
     const nextMode = value as PricingMode
     setPricingMode(nextMode)
+    setShowTaskErrors(false)
     if (nextMode === 'tiered_expr' && !billingExpr) {
       setBillingExpr('tier("base", p * 0 + c * 0)')
     }
@@ -659,6 +735,9 @@ export function ModelPricingEditorPanel({
       promptPrice,
       lanePrices,
       laneEnabled,
+      taskNoReferencePrice,
+      referenceVideoPolicy,
+      taskReferencePrice,
       t
     )
   }, [
@@ -668,10 +747,24 @@ export function ModelPricingEditorPanel({
     pricingMode,
     promptPrice,
     requestRuleExpr,
+    taskNoReferencePrice,
+    referenceVideoPolicy,
+    taskReferencePrice,
     t,
     watchedValues,
     currency,
   ])
+
+  const taskNoReferencePriceValid =
+    (toNumberOrNull(taskNoReferencePrice) ?? 0) > 0
+  const taskReferencePriceValid =
+    referenceVideoPolicy !== 'custom' ||
+    (toNumberOrNull(taskReferencePrice) ?? 0) > 0
+  const showNoReferencePriceError =
+    !taskNoReferencePriceValid &&
+    (showTaskErrors || taskNoReferencePrice !== '')
+  const showReferencePriceError =
+    !taskReferencePriceValid && (showTaskErrors || taskReferencePrice !== '')
 
   const warnings = useMemo(() => {
     const nextWarnings: string[] = []
@@ -691,6 +784,18 @@ export function ModelPricingEditorPanel({
       nextWarnings.push(
         t(
           'This model has both fixed-price and token-price settings. Saving the current mode will rewrite the conflicting fields.'
+        )
+      )
+    }
+
+    if (
+      pricingMode === 'task_pricing' &&
+      editData &&
+      !isValidTaskPricing(editData.taskPricing)
+    ) {
+      nextWarnings.push(
+        t(
+          'Configure a positive per-second price before this model can be used.'
         )
       )
     }
@@ -719,6 +824,13 @@ export function ModelPricingEditorPanel({
   }, [editData, laneEnabled, lanePrices, pricingMode, promptPrice, t])
 
   const handleSubmit = (values: ModelPricingFormValues) => {
+    if (
+      pricingMode === 'task_pricing' &&
+      (!taskNoReferencePriceValid || !taskReferencePriceValid)
+    ) {
+      setShowTaskErrors(true)
+      return
+    }
     if (
       pricingMode === 'per-token' &&
       toNumberOrNull(promptPrice) === null &&
@@ -759,6 +871,17 @@ export function ModelPricingEditorPanel({
     if (pricingMode === 'tiered_expr') {
       data.billingExpr = billingExpr
       data.requestRuleExpr = requestRuleExpr
+    }
+
+    if (pricingMode === 'task_pricing') {
+      data.taskPricing = {
+        unit: 'second',
+        no_reference_video_unit_price: Number(taskNoReferencePrice),
+        reference_video_policy: referenceVideoPolicy,
+        ...(referenceVideoPolicy === 'custom'
+          ? { reference_video_unit_price: Number(taskReferencePrice) }
+          : {}),
+      }
     }
 
     onSave(data)
@@ -834,10 +957,13 @@ export function ModelPricingEditorPanel({
               />
 
               <Tabs value={pricingMode} onValueChange={handleModeChange}>
-                <TabsList className='grid w-full grid-cols-3'>
+                <TabsList className='grid h-auto w-full grid-cols-2 sm:grid-cols-4'>
                   <TabsTrigger value='per-token'>{t('Per-token')}</TabsTrigger>
                   <TabsTrigger value='per-request'>
                     {t('Per-request')}
+                  </TabsTrigger>
+                  <TabsTrigger value='task_pricing'>
+                    {t('Per-second')}
                   </TabsTrigger>
                   <TabsTrigger value='tiered_expr'>
                     {t('Expression')}
@@ -912,6 +1038,106 @@ export function ModelPricingEditorPanel({
                       </FormItem>
                     )}
                   />
+                </TabsContent>
+
+                <TabsContent
+                  value='task_pricing'
+                  className='flex flex-col gap-5'
+                >
+                  <FieldGroup>
+                    <Field
+                      data-invalid={showNoReferencePriceError || undefined}
+                    >
+                      <FieldLabel>{t('Without video input')}</FieldLabel>
+                      <PriceInput
+                        value={taskNoReferencePrice}
+                        placeholder='0.12'
+                        suffix={t('per second')}
+                        invalid={showNoReferencePriceError}
+                        onChange={setTaskNoReferencePrice}
+                      />
+                      <FieldDescription>
+                        {t(
+                          'Local selling price for each requested output second when no video is provided.'
+                        )}
+                      </FieldDescription>
+                      {showNoReferencePriceError && (
+                        <FieldError>
+                          {t('The per-second price must be greater than 0.')}
+                        </FieldError>
+                      )}
+                    </Field>
+
+                    <Field>
+                      <FieldLabel>{t('Video input rule')}</FieldLabel>
+                      <ToggleGroup
+                        value={[referenceVideoPolicy]}
+                        onValueChange={(values) => {
+                          const next = values.at(-1) as
+                            | ReferenceVideoPolicy
+                            | undefined
+                          if (next) setReferenceVideoPolicy(next)
+                        }}
+                        variant='outline'
+                        className='grid w-full grid-cols-3'
+                        aria-label={t('Video input rule')}
+                      >
+                        <ToggleGroupItem value='same'>
+                          {t('Same price')}
+                        </ToggleGroupItem>
+                        <ToggleGroupItem value='custom'>
+                          {t('Separate price')}
+                        </ToggleGroupItem>
+                        <ToggleGroupItem value='disabled'>
+                          {t('Not allowed')}
+                        </ToggleGroupItem>
+                      </ToggleGroup>
+                      <FieldDescription>
+                        {t(
+                          'New API detects video input automatically and applies this local rule.'
+                        )}
+                      </FieldDescription>
+                    </Field>
+
+                    {referenceVideoPolicy === 'custom' && (
+                      <Field
+                        data-invalid={showReferencePriceError || undefined}
+                      >
+                        <FieldLabel>{t('With video input')}</FieldLabel>
+                        <PriceInput
+                          value={taskReferencePrice}
+                          placeholder='0.18'
+                          suffix={t('per second')}
+                          invalid={showReferencePriceError}
+                          onChange={setTaskReferencePrice}
+                        />
+                        <FieldDescription>
+                          {t(
+                            'Local selling price for each requested output second when video input is present.'
+                          )}
+                        </FieldDescription>
+                        {showReferencePriceError && (
+                          <FieldError>
+                            {t('The per-second price must be greater than 0.')}
+                          </FieldError>
+                        )}
+                      </Field>
+                    )}
+
+                    <Field className='rounded-lg border p-3'>
+                      <FieldTitle>{t('5-second preview')}</FieldTitle>
+                      <FieldDescription>
+                        {taskNoReferencePriceValid
+                          ? `${t('Without video input')} ${formatDisplayBillingPrice(Number(taskNoReferencePrice) * 5)}`
+                          : `${t('Without video input')} —`}
+                        {referenceVideoPolicy === 'disabled'
+                          ? ` · ${t('With video input')} ${t('Not allowed')}`
+                          : taskReferencePriceValid
+                            ? ` · ${t('With video input')} ${formatDisplayBillingPrice(Number(referenceVideoPolicy === 'same' ? taskNoReferencePrice : taskReferencePrice) * 5)}`
+                            : ` · ${t('With video input')} —`}
+                      </FieldDescription>
+                    </Field>
+                  </FieldGroup>
                 </TabsContent>
 
                 <TabsContent
@@ -1001,6 +1227,7 @@ function PriceInput(props: {
   value: string
   placeholder?: string
   disabled?: boolean
+  invalid?: boolean
   suffix?: string
   onChange: (value: string) => void
 }) {
@@ -1039,6 +1266,7 @@ function PriceInput(props: {
       <InputGroupAddon>{getBillingCurrencySymbol()}</InputGroupAddon>
       <InputGroupInput
         inputMode='decimal'
+        aria-invalid={props.invalid || undefined}
         value={value}
         placeholder={props.placeholder}
         disabled={props.disabled}

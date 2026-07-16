@@ -28,6 +28,15 @@ export type PricingVendor = {
   website?: string
 }
 
+export type ReferenceVideoPolicy = 'same' | 'custom' | 'disabled'
+
+export type TaskPricing = {
+  unit: 'second'
+  no_reference_video_unit_price: number
+  reference_video_policy: ReferenceVideoPolicy
+  reference_video_unit_price?: number
+}
+
 export type PricingModel = {
   id: number
   model_name: string
@@ -57,6 +66,8 @@ export type PricingModel = {
   billing_expr?: string
   /** Pricing version returned by backend, useful for cache busting */
   pricing_version?: string
+  /** Structured local task pricing. This is authoritative for task billing. */
+  task_pricing?: TaskPricing
   /**
    * Optional model metadata fields. These are not yet returned by the backend
    * and are populated client-side from {@link inferModelMetadata}.

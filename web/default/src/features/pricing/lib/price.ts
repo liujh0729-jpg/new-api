@@ -19,6 +19,15 @@ For commercial licensing, please contact support@quantumnous.com
 import { formatBillingCurrencyFromUSD } from '@/lib/currency'
 import { QUOTA_TYPE_VALUES, TOKEN_UNIT_DIVISORS } from '../constants'
 import type { PricingModel, TokenUnit, PriceType } from '../types'
+import { isValidTaskPricing } from './model-helpers'
+
+export type TaskPriceInfo = {
+  startingPrice: string
+  noReferencePrice: string
+  referencePrice?: string
+  hasRange: boolean
+  isFree: boolean
+}
 
 // ----------------------------------------------------------------------------
 // Price Calculation Utilities
@@ -55,7 +64,7 @@ export function stripTrailingZeros(formatted: string): string {
 /**
  * Find minimum group ratio from enabled groups
  */
-function getMinGroupRatio(
+export function getMinGroupRatio(
   enableGroups: string[],
   groupRatio: Record<string, number>
 ): number {
@@ -71,6 +80,91 @@ function getMinGroupRatio(
   }
 
   return minRatio === Number.POSITIVE_INFINITY ? 1 : minRatio
+}
+
+function formatTaskCurrency(
+  priceInUSD: number,
+  showWithRecharge: boolean,
+  priceRate: number,
+  usdExchangeRate: number
+): string {
+  const adjusted = applyRechargeRate(
+    priceInUSD,
+    showWithRecharge,
+    priceRate,
+    usdExchangeRate
+  )
+  return formatBillingCurrencyFromUSD(adjusted, {
+    digitsLarge: 4,
+    digitsSmall: 6,
+    abbreviate: false,
+  })
+}
+
+/** Format authoritative local per-second task prices for list/detail views. */
+export function getTaskPriceInfo(
+  model: PricingModel,
+  options: {
+    group?: string
+    showWithRecharge?: boolean
+    priceRate?: number
+    usdExchangeRate?: number
+    groupRatio?: Record<string, number>
+  } = {}
+): TaskPriceInfo | null {
+  const pricing = model.task_pricing
+  if (model.billing_mode !== 'task_pricing' || !isValidTaskPricing(pricing)) {
+    return null
+  }
+
+  const groupRatio = options.groupRatio ?? model.group_ratio ?? {}
+  const ratio = options.group
+    ? (groupRatio[options.group] ?? 1)
+    : getMinGroupRatio(model.enable_groups || [], groupRatio)
+  const showWithRecharge = options.showWithRecharge ?? false
+  const priceRate = options.priceRate ?? 1
+  const usdExchangeRate = options.usdExchangeRate ?? 1
+  const noReferenceValue = pricing.no_reference_video_unit_price * ratio
+  const referenceValue =
+    pricing.reference_video_policy === 'same'
+      ? noReferenceValue
+      : pricing.reference_video_policy === 'custom' &&
+          Number.isFinite(pricing.reference_video_unit_price) &&
+          Number(pricing.reference_video_unit_price) > 0
+        ? Number(pricing.reference_video_unit_price) * ratio
+        : undefined
+  const startingValue =
+    referenceValue === undefined
+      ? noReferenceValue
+      : Math.min(noReferenceValue, referenceValue)
+
+  return {
+    startingPrice: formatTaskCurrency(
+      startingValue,
+      showWithRecharge,
+      priceRate,
+      usdExchangeRate
+    ),
+    noReferencePrice: formatTaskCurrency(
+      noReferenceValue,
+      showWithRecharge,
+      priceRate,
+      usdExchangeRate
+    ),
+    referencePrice:
+      referenceValue === undefined
+        ? undefined
+        : formatTaskCurrency(
+            referenceValue,
+            showWithRecharge,
+            priceRate,
+            usdExchangeRate
+          ),
+    hasRange:
+      pricing.reference_video_policy === 'custom' &&
+      referenceValue !== undefined,
+    isFree: ratio === 0,
+  }
 }
 
 /**
@@ -211,7 +305,7 @@ export function formatGroupPrice(
     return '-'
   }
 
-  const ratio = groupRatio[group] || 1
+  const ratio = groupRatio[group] ?? 1
   let priceInUSD = calculateTokenPrice(model, type, ratio)
 
   priceInUSD = applyRechargeRate(
@@ -244,7 +338,7 @@ export function formatFixedPrice(
     return '-'
   }
 
-  const ratio = groupRatio[group] || 1
+  const ratio = groupRatio[group] ?? 1
   let priceInUSD = (model.model_price || 0) * ratio
 
   priceInUSD = applyRechargeRate(

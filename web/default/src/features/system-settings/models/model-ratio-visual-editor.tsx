@@ -61,12 +61,17 @@ import {
   combineBillingExpr,
   splitBillingExprAndRequestRules,
 } from '@/features/pricing/lib/billing-expr'
+import type { TaskPricing } from '@/features/pricing/types'
 import { safeJsonParse } from '../utils/json-parser'
 import {
   ModelPricingEditorPanel,
   ModelPricingSheet,
   type ModelRatioData,
 } from './model-pricing-sheet'
+import {
+  isValidTaskPricing,
+  parseTaskPricingRequiredModels,
+} from './task-pricing-utils'
 
 type ModelRatioVisualEditorProps = {
   modelPrice: string
@@ -79,6 +84,8 @@ type ModelRatioVisualEditorProps = {
   audioCompletionRatio: string
   billingMode: string
   billingExpr: string
+  taskPricing: string
+  taskPricingRequiredModels: string
   onChange: (field: string, value: string) => void
 }
 
@@ -95,6 +102,7 @@ type ModelRow = {
   billingMode?: string
   billingExpr?: string
   requestRuleExpr?: string
+  taskPricing?: TaskPricing
   hasConflict: boolean
 }
 
@@ -140,12 +148,14 @@ const filterBySelectedValues = (
 
 const getModeLabel = (mode?: string) => {
   if (mode === 'per-request') return 'Per-request'
+  if (mode === 'task_pricing') return 'Per-second'
   if (mode === 'tiered_expr') return 'Expression'
   return 'Per-token'
 }
 
 const getModeVariant = (mode?: string): 'warning' | 'info' | 'success' => {
   if (mode === 'per-request') return 'warning'
+  if (mode === 'task_pricing') return 'info'
   if (mode === 'tiered_expr') return 'info'
   return 'success'
 }
@@ -166,6 +176,19 @@ const getPriceSummary = (row: ModelRow, t: (key: string) => string) => {
     return row.price
       ? `${formatBillingPrice(row.price)} / ${t('request')}`
       : t('Unset price')
+  }
+  if (row.billingMode === 'task_pricing') {
+    const base = row.taskPricing?.no_reference_video_unit_price
+    if (!isValidTaskPricing(row.taskPricing) || !base) {
+      return t('Price not configured')
+    }
+    const reference = row.taskPricing?.reference_video_unit_price
+    const startingPrice =
+      row.taskPricing?.reference_video_policy === 'custom' &&
+      Number(reference) > 0
+        ? Math.min(base, Number(reference))
+        : base
+    return `${formatBillingPrice(startingPrice)} / ${t('second')}${row.taskPricing?.reference_video_policy === 'custom' ? ` ${t('and up')}` : ''}`
   }
 
   const inputPrice = ratioToPrice(row.ratio)
@@ -193,6 +216,19 @@ const getPriceDetail = (row: ModelRow, t: (key: string) => string) => {
   }
   if (row.billingMode === 'per-request') {
     return t('Fixed request price')
+  }
+  if (row.billingMode === 'task_pricing') {
+    if (!isValidTaskPricing(row.taskPricing)) {
+      return t(
+        'Configure a positive per-second price before this model can be used.'
+      )
+    }
+    if (row.taskPricing?.reference_video_policy === 'custom') {
+      return `${t('With video input')} ${formatBillingPrice(row.taskPricing.reference_video_unit_price)}`
+    }
+    return row.taskPricing?.reference_video_policy === 'disabled'
+      ? t('Video input not supported')
+      : t('Same price with or without video input')
   }
 
   const inputPrice = ratioToPrice(row.ratio)
@@ -222,6 +258,8 @@ export const ModelRatioVisualEditor = memo(
     audioCompletionRatio,
     billingMode,
     billingExpr,
+    taskPricing,
+    taskPricingRequiredModels,
     onChange,
   }: ModelRatioVisualEditorProps) {
     const { t } = useTranslation()
@@ -324,6 +362,17 @@ export const ModelRatioVisualEditor = memo(
           context: 'billing expression',
         }
       )
+      const taskPricingMap = safeJsonParse<Record<string, TaskPricing>>(
+        taskPricing,
+        {
+          fallback: {},
+          context: 'task pricing',
+        }
+      )
+      const requiredTaskPricingModels = parseTaskPricingRequiredModels(
+        taskPricingRequiredModels
+      )
+      const requiredTaskPricingSet = new Set(requiredTaskPricingModels)
 
       const modelNames = new Set([
         ...Object.keys(priceMap),
@@ -336,6 +385,8 @@ export const ModelRatioVisualEditor = memo(
         ...Object.keys(audioCompletionMap),
         ...Object.keys(billingModeMap),
         ...Object.keys(billingExprMap),
+        ...Object.keys(taskPricingMap),
+        ...requiredTaskPricingModels,
       ])
 
       const modelData: ModelRow[] = Array.from(modelNames).map((name) => {
@@ -349,6 +400,33 @@ export const ModelRatioVisualEditor = memo(
         const audioCompletion = audioCompletionMap[name]?.toString() || ''
 
         const modeForModel = billingModeMap[name]
+        const taskPricingForModel = taskPricingMap[name]
+        const usesTaskPricing =
+          modeForModel === 'task_pricing' || requiredTaskPricingSet.has(name)
+        if (usesTaskPricing) {
+          return {
+            name,
+            billingMode: 'task_pricing',
+            taskPricing: taskPricingForModel,
+            price,
+            ratio,
+            cacheRatio: cache,
+            createCacheRatio: createCache,
+            completionRatio: completion,
+            imageRatio: image,
+            audioRatio: audio,
+            audioCompletionRatio: audioCompletion,
+            hasConflict:
+              price !== '' ||
+              ratio !== '' ||
+              completion !== '' ||
+              cache !== '' ||
+              createCache !== '' ||
+              image !== '' ||
+              audio !== '' ||
+              audioCompletion !== '',
+          }
+        }
         if (modeForModel === 'tiered_expr') {
           // Tiered_expr models may also retain ratio/price values as fallback
           // during multi-instance sync delays. We preserve them in the row so
@@ -408,6 +486,8 @@ export const ModelRatioVisualEditor = memo(
       audioCompletionRatio,
       billingMode,
       billingExpr,
+      taskPricing,
+      taskPricingRequiredModels,
     ])
 
     const modeCounts = useMemo(
@@ -416,6 +496,7 @@ export const ModelRatioVisualEditor = memo(
           (acc, model) => {
             const mode =
               model.billingMode === 'per-request' ||
+              model.billingMode === 'task_pricing' ||
               model.billingMode === 'tiered_expr'
                 ? model.billingMode
                 : 'per-token'
@@ -425,8 +506,12 @@ export const ModelRatioVisualEditor = memo(
           {
             'per-token': 0,
             'per-request': 0,
+            task_pricing: 0,
             tiered_expr: 0,
-          } as Record<'per-token' | 'per-request' | 'tiered_expr', number>
+          } as Record<
+            'per-token' | 'per-request' | 'task_pricing' | 'tiered_expr',
+            number
+          >
         ),
       [models]
     )
@@ -444,13 +529,16 @@ export const ModelRatioVisualEditor = memo(
           audioRatio: model.audioRatio,
           audioCompletionRatio: model.audioCompletionRatio,
           billingMode:
-            model.billingMode === 'tiered_expr'
-              ? 'tiered_expr'
-              : model.price && model.price !== ''
-                ? 'per-request'
-                : 'per-token',
+            model.billingMode === 'task_pricing'
+              ? 'task_pricing'
+              : model.billingMode === 'tiered_expr'
+                ? 'tiered_expr'
+                : model.price && model.price !== ''
+                  ? 'per-request'
+                  : 'per-token',
           billingExpr: model.billingExpr,
           requestRuleExpr: model.requestRuleExpr,
+          taskPricing: model.taskPricing,
         })
         setEditorOpen(true)
         if (isMobile) setSheetOpen(true)
@@ -528,6 +616,10 @@ export const ModelRatioVisualEditor = memo(
           billingExpr,
           { fallback: {}, silent: true }
         )
+        const taskPricingMap = safeJsonParse<Record<string, TaskPricing>>(
+          taskPricing,
+          { fallback: {}, silent: true }
+        )
 
         delete priceMap[name]
         delete ratioMap[name]
@@ -539,6 +631,7 @@ export const ModelRatioVisualEditor = memo(
         delete audioCompletionMap[name]
         delete billingModeMap[name]
         delete billingExprMap[name]
+        delete taskPricingMap[name]
 
         onChange('ModelPrice', JSON.stringify(priceMap, null, 2))
         onChange('ModelRatio', JSON.stringify(ratioMap, null, 2))
@@ -559,6 +652,10 @@ export const ModelRatioVisualEditor = memo(
           'billing_setting.billing_expr',
           JSON.stringify(billingExprMap, null, 2)
         )
+        onChange(
+          'billing_setting.task_pricing',
+          JSON.stringify(taskPricingMap, null, 2)
+        )
       },
       [
         modelPrice,
@@ -571,6 +668,7 @@ export const ModelRatioVisualEditor = memo(
         audioCompletionRatio,
         billingMode,
         billingExpr,
+        taskPricing,
         onChange,
       ]
     )
@@ -618,6 +716,14 @@ export const ModelRatioVisualEditor = memo(
                   copyable={false}
                 />
               )}
+              {row.original.billingMode === 'task_pricing' &&
+                !isValidTaskPricing(row.original.taskPricing) && (
+                  <StatusBadge
+                    label={t('Price not configured')}
+                    variant='danger'
+                    copyable={false}
+                  />
+                )}
               {row.original.hasConflict && (
                 <StatusBadge
                   label={t('Conflict')}
@@ -764,6 +870,10 @@ export const ModelRatioVisualEditor = memo(
           billingExpr,
           { fallback: {}, silent: true }
         )
+        const taskPricingMap = safeJsonParse<Record<string, TaskPricing>>(
+          taskPricing,
+          { fallback: {}, silent: true }
+        )
 
         const setIfPresent = (
           target: Record<string, number>,
@@ -786,8 +896,12 @@ export const ModelRatioVisualEditor = memo(
           delete audioCompletionMap[name]
           delete billingModeMap[name]
           delete billingExprMap[name]
+          delete taskPricingMap[name]
 
-          if (data.billingMode === 'tiered_expr') {
+          if (data.billingMode === 'task_pricing' && data.taskPricing) {
+            billingModeMap[name] = 'task_pricing'
+            taskPricingMap[name] = { ...data.taskPricing }
+          } else if (data.billingMode === 'tiered_expr') {
             const combined = combineBillingExpr(
               data.billingExpr || '',
               data.requestRuleExpr || ''
@@ -840,6 +954,10 @@ export const ModelRatioVisualEditor = memo(
           'billing_setting.billing_expr',
           JSON.stringify(billingExprMap, null, 2)
         )
+        onChange(
+          'billing_setting.task_pricing',
+          JSON.stringify(taskPricingMap, null, 2)
+        )
       },
       [
         modelPrice,
@@ -852,6 +970,7 @@ export const ModelRatioVisualEditor = memo(
         audioCompletionRatio,
         billingMode,
         billingExpr,
+        taskPricing,
         onChange,
       ]
     )
@@ -913,6 +1032,11 @@ export const ModelRatioVisualEditor = memo(
                       label: 'Per-request',
                       value: 'per-request',
                       count: modeCounts['per-request'],
+                    },
+                    {
+                      label: t('Per-second'),
+                      value: 'task_pricing',
+                      count: modeCounts.task_pricing,
                     },
                     {
                       label: 'Expression',
@@ -1057,6 +1181,9 @@ export const ModelRatioVisualEditor = memo(
       prevProps.audioCompletionRatio === nextProps.audioCompletionRatio &&
       prevProps.billingMode === nextProps.billingMode &&
       prevProps.billingExpr === nextProps.billingExpr &&
+      prevProps.taskPricing === nextProps.taskPricing &&
+      prevProps.taskPricingRequiredModels ===
+        nextProps.taskPricingRequiredModels &&
       prevProps.onChange === nextProps.onChange
     )
   }

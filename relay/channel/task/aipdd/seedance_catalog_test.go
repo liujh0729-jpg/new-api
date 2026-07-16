@@ -17,36 +17,43 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestSeedanceCatalogExactBillingMatrix(t *testing.T) {
-	oldQuotaPerUnit := common.QuotaPerUnit
-	common.QuotaPerUnit = 500000
-	t.Cleanup(func() {
-		common.QuotaPerUnit = oldQuotaPerUnit
-		constant.ResetAIPDDCapabilities()
-	})
+func TestSeedanceCatalogBillingFactsMatrix(t *testing.T) {
+	t.Cleanup(constant.ResetAIPDDCapabilities)
 	constant.SetAIPDDCapabilities([]constant.AIPDDCapability{seedanceTestCapability()})
 
 	tests := []struct {
-		name   string
-		body   string
-		quota  int
-		awcoin float64
+		name              string
+		body              string
+		seconds           float64
+		hasReferenceVideo bool
 	}{
-		{name: "minimum and decimal duration", body: `{"model":"AP Seedance","resolution":"1080p","duration":2.2,"content":[{"type":"text","text":"hello"}]}`, quota: 101000, awcoin: 101},
-		{name: "frames divided by explicit fps", body: `{"model":"AP Seedance","resolution":"1080p","frames":49,"frames_per_second":24,"content":[{"type":"text","text":"hello"}]}`, quota: 101000, awcoin: 101},
-		{name: "reference video variant", body: `{"model":"AP Seedance","resolution":"1080p","duration":5,"content":[{"type":"video","role":"reference_video"}]}`, quota: 150000, awcoin: 150},
-		{name: "playground metadata compatibility", body: `{"model":"AP Seedance","prompt":"hello","duration":5,"metadata":{"resolution":"1080p","content":[{"type":"video_url","role":"reference_video","video_url":{"url":"https://cdn.example.com/reference.mp4"}}]}}`, quota: 150000, awcoin: 150},
-		{name: "model default duration", body: `{"model":"AP Seedance","resolution":"1080p","content":[{"type":"text","text":"hello"}]}`, quota: 201000, awcoin: 201},
+		{name: "decimal duration", body: `{"model":"AP Seedance","resolution":"1080p","duration":2.2,"content":[{"type":"text","text":"hello"}]}`, seconds: 2.2},
+		{name: "frames divided by explicit fps", body: `{"model":"AP Seedance","resolution":"1080p","frames":49,"frames_per_second":24,"content":[{"type":"text","text":"hello"}]}`, seconds: 49.0 / 24},
+		{name: "frames divided by fps alias", body: `{"model":"AP Seedance","resolution":"1080p","frames":30,"fps":12,"content":[{"type":"text","text":"hello"}]}`, seconds: 2.5},
+		{name: "frames divided by catalog fps", body: `{"model":"AP Seedance","resolution":"1080p","frames":49,"content":[{"type":"text","text":"hello"}]}`, seconds: 49.0 / 24},
+		{name: "reference video type", body: `{"model":"AP Seedance","resolution":"1080p","duration":5,"content":[{"type":"video","role":"input"}]}`, seconds: 5, hasReferenceVideo: true},
+		{name: "reference video URL type", body: `{"model":"AP Seedance","resolution":"1080p","duration":5,"content":[{"type":"video_url","video_url":{"url":"https://cdn.example.com/reference.mp4"}}]}`, seconds: 5, hasReferenceVideo: true},
+		{name: "reference video role", body: `{"model":"AP Seedance","resolution":"1080p","duration":5,"content":[{"type":"input_file","role":"reference_video"}]}`, seconds: 5, hasReferenceVideo: true},
+		{name: "valid video URL field", body: `{"model":"AP Seedance","resolution":"1080p","duration":5,"content":[{"type":"input_file","video_url":"https://cdn.example.com/reference.mp4"}]}`, seconds: 5, hasReferenceVideo: true},
+		{name: "empty video URL field is not video", body: `{"model":"AP Seedance","resolution":"1080p","duration":5,"content":[{"type":"input_file","video_url":""}]}`, seconds: 5},
+		{name: "playground metadata compatibility", body: `{"model":"AP Seedance","prompt":"hello","duration":5,"metadata":{"resolution":"1080p","content":[{"type":"video_url","role":"reference_video","video_url":{"url":"https://cdn.example.com/reference.mp4"}}]}}`, seconds: 5, hasReferenceVideo: true},
+		{name: "image and audio are not video", body: `{"model":"AP Seedance","resolution":"1080p","duration":5,"content":[{"type":"image_url","image_url":{"url":"https://cdn.example.com/reference.png"}},{"type":"audio","audio_url":"https://cdn.example.com/reference.mp3"}]}`, seconds: 5},
+		{name: "model default duration", body: `{"model":"AP Seedance","resolution":"1080p","content":[{"type":"text","text":"hello"}]}`, seconds: 5},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			ctx, info, adaptor := seedanceRequestContext(t, test.body)
 			require.Nil(t, adaptor.ValidateRequestAndSetAction(ctx, info))
-			quota, details, err := adaptor.EstimateExactQuota(ctx, info)
-			require.NoError(t, err)
-			require.Equal(t, test.quota, quota)
-			require.Equal(t, test.awcoin, details["aipdd_awcoin"])
+			facts := adaptor.EstimateBilling(ctx, info)
+			require.InDelta(t, test.seconds, facts["seconds"], 0.0000001)
+			if test.hasReferenceVideo {
+				require.Equal(t, float64(1), facts["has_reference_video"])
+			} else {
+				require.NotContains(t, facts, "has_reference_video")
+			}
+			require.NotContains(t, facts, "aipdd_awcoin")
+			require.NotContains(t, facts, "aipdd_usd")
 		})
 	}
 }
@@ -176,8 +183,6 @@ func TestSeedanceCatalogValidationErrorsAreHTTP400(t *testing.T) {
 		{"incomplete dimensions", `{"model":"AP Seedance","prompt":"hello","width":1280}`, "invalid_dimensions"},
 		{"invalid dimensions", `{"model":"AP Seedance","prompt":"hello","width":1000,"height":720}`, "invalid_dimensions"},
 		{"unsupported ratio", `{"model":"AP Seedance","prompt":"hello","resolution":"720p","ratio":"2:1"}`, "unsupported_ratio"},
-		{"unsupported resolution", `{"model":"AP Seedance","prompt":"hello","resolution":"8k"}`, "unsupported_resolution"},
-		{"unsupported model", `{"model":"AP Missing Seedance","prompt":"hello","resolution":"720p"}`, "unsupported_model"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -188,9 +193,21 @@ func TestSeedanceCatalogValidationErrorsAreHTTP400(t *testing.T) {
 			require.Equal(t, test.code, taskErr.Code)
 		})
 	}
+
+	t.Run("unsupported model", func(t *testing.T) {
+		ctx, info, adaptor := seedanceRequestContextForModel(
+			t,
+			"AP Missing Seedance",
+			`{"model":"AP Missing Seedance","prompt":"hello","resolution":"720p"}`,
+		)
+		taskErr := adaptor.ValidateRequestAndSetAction(ctx, info)
+		require.NotNil(t, taskErr)
+		require.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
+		require.Equal(t, "unsupported_model", taskErr.Code)
+	})
 }
 
-func TestSeedanceCatalogFourModelResolutionBillingMatrix(t *testing.T) {
+func TestSeedanceCatalogBillingFactsIgnoreCatalogPrices(t *testing.T) {
 	models := []string{
 		"AP Seedance-2.0 VIP",
 		"AP Seedance-2.0 标准版",
@@ -198,26 +215,87 @@ func TestSeedanceCatalogFourModelResolutionBillingMatrix(t *testing.T) {
 		"AP Seedance-2.0 高性价比版",
 	}
 	capabilities := make([]constant.AIPDDCapability, 0, len(models))
-	for _, modelName := range models {
-		capabilities = append(capabilities, seedanceTestCapabilityForModel(modelName))
+	for index, modelName := range models {
+		capability := seedanceTestCapabilityForModel(modelName)
+		capability.AWCoinUSDPerCoin = float64(index+1) * 99
+		for resolution, pricing := range capability.SeedancePricing.ByResolution {
+			for variantIndex := range pricing.PriceVariants {
+				pricing.PriceVariants[variantIndex].AWCoinPerSecond = float64((index + 1) * (variantIndex + 1) * 10_000)
+				pricing.PriceVariants[variantIndex].MinimumAWCoin = float64((index + 1) * (variantIndex + 1) * 100_000)
+			}
+			capability.SeedancePricing.ByResolution[resolution] = pricing
+		}
+		capabilities = append(capabilities, capability)
 	}
 	constant.SetAIPDDCapabilities(capabilities)
 	t.Cleanup(constant.ResetAIPDDCapabilities)
 
-	resolutions := map[string]float64{"720p": 50, "1080p": 201, "4k": 350}
+	resolutions := []string{"720p", "1080p", "4k"}
 	for _, modelName := range models {
-		for resolution, expectedAWCoin := range resolutions {
+		for _, resolution := range resolutions {
 			t.Run(modelName+"/"+resolution, func(t *testing.T) {
 				body := fmt.Sprintf(`{"model":%q,"resolution":%q,"duration":5,"content":[{"type":"text","text":"hello"}]}`, modelName, resolution)
 				ctx, info, adaptor := seedanceRequestContextForModel(t, modelName, body)
 				require.Nil(t, adaptor.ValidateRequestAndSetAction(ctx, info))
-				quota, details, err := adaptor.EstimateExactQuota(ctx, info)
-				require.NoError(t, err)
-				require.Positive(t, quota)
-				require.Equal(t, expectedAWCoin, details["aipdd_awcoin"])
+				facts := adaptor.EstimateBilling(ctx, info)
+				require.Equal(t, map[string]float64{"seconds": 5}, facts)
 			})
 		}
 	}
+}
+
+func TestSeedanceCatalogBillingFactsDoNotRequirePricingMetadata(t *testing.T) {
+	capability := seedanceTestCapability()
+	capability.AdapterCode = "seedance"
+	capability.SeedancePricing = nil
+	constant.SetAIPDDCapabilities([]constant.AIPDDCapability{capability})
+	t.Cleanup(constant.ResetAIPDDCapabilities)
+
+	tests := []struct {
+		name    string
+		body    string
+		seconds float64
+	}{
+		{
+			name:    "fixed default fps",
+			body:    `{"model":"AP Seedance","resolution":"480p","frames":49,"content":[{"type":"text","text":"hello"}]}`,
+			seconds: 49.0 / 24,
+		},
+		{
+			name:    "fixed default duration",
+			body:    `{"model":"AP Seedance","resolution":"480p","content":[{"type":"text","text":"hello"}]}`,
+			seconds: 5,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, info, adaptor := seedanceRequestContext(t, test.body)
+			require.Nil(t, adaptor.ValidateRequestAndSetAction(ctx, info))
+			facts := adaptor.EstimateBilling(ctx, info)
+			require.InDelta(t, test.seconds, facts["seconds"], 0.0000001)
+		})
+	}
+}
+
+func TestSeedanceCatalogExecutionSnapshotContainsFactsNotUpstreamPrice(t *testing.T) {
+	constant.SetAIPDDCapabilities([]constant.AIPDDCapability{seedanceTestCapability()})
+	t.Cleanup(constant.ResetAIPDDCapabilities)
+
+	ctx, info, adaptor := seedanceRequestContext(t, `{"model":"AP Seedance","resolution":"1080p","duration":2.25,"content":[{"type":"video_url","video_url":{"url":"https://cdn.example.com/reference.mp4"}}]}`)
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(ctx, info))
+	info.PriceData.OtherRatios = adaptor.EstimateBilling(ctx, info)
+
+	snapshot := adaptor.AIPDDTaskSnapshot(info)
+	require.NotNil(t, snapshot)
+	require.Equal(t, "revision-1", snapshot.CatalogRevision)
+	require.Equal(t, "seedance_official", snapshot.Protocol)
+	require.Equal(t, "/api/v3/contents/generations/tasks", snapshot.Endpoint)
+	require.InDelta(t, 2.25, snapshot.BillingSeconds, 0.0000001)
+	require.True(t, snapshot.HasReferenceVideo)
+	require.Zero(t, snapshot.USDPerAWCoin)
+	require.Zero(t, snapshot.EstimatedAWCoin)
+	require.Empty(t, snapshot.Resolution)
 }
 
 func TestSeedanceOfficialBusinessErrorsUseHTTPStatus(t *testing.T) {

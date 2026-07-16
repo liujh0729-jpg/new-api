@@ -5,14 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/pkg/aipddcatalog"
-	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -133,10 +131,6 @@ func applyAIPDDCatalog(catalog aipddcatalog.AtomicCatalog, baseURL, apiKey strin
 	if err == nil {
 		err = cleanupCNProviderDefaultsTx(tx, currentSet)
 	}
-	var optionValues map[string]string
-	if err == nil {
-		optionValues, result.UpdatedPrices, err = syncAIPDDPricingOptionsTx(tx, catalog, previousSet)
-	}
 	if err == nil {
 		snapshot := AIPDDCatalogSnapshot{
 			ID: aipddCatalogSnapshotID, SchemaVersion: catalog.SchemaVersion,
@@ -157,8 +151,6 @@ func applyAIPDDCatalog(catalog aipddcatalog.AtomicCatalog, baseURL, apiKey strin
 	}
 
 	activateAIPDDCatalog(catalog)
-	_ = optionValues
-	InitOptionMap()
 	InitChannelCache()
 	InvalidatePricingCache()
 	ratio_setting.InvalidateExposedDataCache()
@@ -397,120 +389,6 @@ func cleanupCNProviderDefaultsTx(tx *gorm.DB, keepModels map[string]bool) error 
 	return nil
 }
 
-func syncAIPDDPricingOptionsTx(tx *gorm.DB, catalog aipddcatalog.AtomicCatalog, previous map[string]bool) (map[string]string, int, error) {
-	prices, err := loadFloatOptionMapTx(tx, "ModelPrice", ratio_setting.GetModelPriceCopy())
-	if err != nil {
-		return nil, 0, err
-	}
-	ratios, err := loadFloatOptionMapTx(tx, "ModelRatio", ratio_setting.GetModelRatioCopy())
-	if err != nil {
-		return nil, 0, err
-	}
-	modes, err := loadStringOptionMapTx(tx, "billing_setting.billing_mode", billing_setting.GetBillingModeCopy())
-	if err != nil {
-		return nil, 0, err
-	}
-	exprs, err := loadStringOptionMapTx(tx, "billing_setting.billing_expr", billing_setting.GetBillingExprCopy())
-	if err != nil {
-		return nil, 0, err
-	}
-	removeExcludedAIPDDOptionKeys(prices)
-	removeExcludedAIPDDOptionKeys(ratios)
-	removeExcludedAIPDDOptionKeys(modes)
-	removeExcludedAIPDDOptionKeys(exprs)
-	for modelName := range previous {
-		delete(prices, modelName)
-		delete(ratios, modelName)
-		delete(modes, modelName)
-		delete(exprs, modelName)
-	}
-	updated := 0
-	for _, capability := range catalog.Capabilities {
-		awcoin := aipddcatalog.TaskAWCoinPrice(capability.Pricing)
-		if awcoin <= 0 {
-			continue
-		}
-		prices[capability.ID] = awcoin * catalog.AWCoinRate.USDPerAWCoin
-		delete(ratios, capability.ID)
-		delete(modes, capability.ID)
-		delete(exprs, capability.ID)
-		updated++
-	}
-	for _, model := range catalog.Models {
-		promptUSD := model.Pricing.PromptPerMillion * catalog.AWCoinRate.USDPerAWCoin
-		completionUSD := model.Pricing.CompletionPerMillion * catalog.AWCoinRate.USDPerAWCoin
-		expr := fmt.Sprintf("tier(\"aipdd\", p * %s + c * %s)", formatPrice(promptUSD), formatPrice(completionUSD))
-		if err := billing_setting.SmokeTestExpr(expr); err != nil {
-			return nil, 0, fmt.Errorf("invalid AIPDD billing expression for %s: %w", model.ID, err)
-		}
-		modes[model.ID] = billing_setting.BillingModeTieredExpr
-		exprs[model.ID] = expr
-		delete(prices, model.ID)
-		delete(ratios, model.ID)
-		updated++
-	}
-	values := make(map[string]string, 4)
-	for key, value := range map[string]any{
-		"ModelPrice": prices, "ModelRatio": ratios,
-		"billing_setting.billing_mode": modes, "billing_setting.billing_expr": exprs,
-	} {
-		bytes, err := common.Marshal(value)
-		if err != nil {
-			return nil, 0, err
-		}
-		values[key] = string(bytes)
-		option := Option{Key: key, Value: string(bytes)}
-		if err := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "key"}}, DoUpdates: clause.AssignmentColumns([]string{"value"})}).Create(&option).Error; err != nil {
-			return nil, 0, err
-		}
-	}
-	return values, updated, nil
-}
-
-func removeExcludedAIPDDOptionKeys[T any](values map[string]T) {
-	for modelName := range values {
-		if constant.IsAIPDDExcludedModel(modelName) {
-			delete(values, modelName)
-		}
-	}
-}
-
-func loadFloatOptionMapTx(tx *gorm.DB, key string, fallback map[string]float64) (map[string]float64, error) {
-	out := make(map[string]float64, len(fallback))
-	for name, value := range fallback {
-		out[name] = value
-	}
-	var option Option
-	if err := tx.Where("key = ?", key).First(&option).Error; err == nil {
-		if strings.TrimSpace(option.Value) != "" {
-			if err := common.Unmarshal([]byte(option.Value), &out); err != nil {
-				return nil, err
-			}
-		}
-	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, err
-	}
-	return out, nil
-}
-
-func loadStringOptionMapTx(tx *gorm.DB, key string, fallback map[string]string) (map[string]string, error) {
-	out := make(map[string]string, len(fallback))
-	for name, value := range fallback {
-		out[name] = value
-	}
-	var option Option
-	if err := tx.Where("key = ?", key).First(&option).Error; err == nil {
-		if strings.TrimSpace(option.Value) != "" {
-			if err := common.Unmarshal([]byte(option.Value), &out); err != nil {
-				return nil, err
-			}
-		}
-	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, err
-	}
-	return out, nil
-}
-
 func stringSet(values []string) map[string]bool {
 	out := make(map[string]bool, len(values))
 	for _, value := range values {
@@ -519,10 +397,6 @@ func stringSet(values []string) map[string]bool {
 		}
 	}
 	return out
-}
-
-func formatPrice(value float64) string {
-	return strconv.FormatFloat(value, 'f', -1, 64)
 }
 
 func aipddCatalogEndpointType(value string) (constant.EndpointType, bool) {

@@ -67,6 +67,7 @@ type AIPDDWorkflowParamConstraint struct {
 
 type AIPDDCapability struct {
 	ModelName              string
+	AdapterCode            string
 	ScriptID               string
 	ScriptCode             string
 	TaskKind               string
@@ -518,8 +519,18 @@ func IsAIPDDPerCallBillingModel(modelName string) bool {
 }
 
 func IsAIPDDExactBillingModel(modelName string) bool {
+	return IsAIPDDSeedanceModel(modelName)
+}
+
+// IsAIPDDSeedanceModel identifies the Seedance execution family without
+// relying solely on upstream price data. The synchronized catalog may change
+// or omit cost fields, but that must never make New API fall back to a legacy
+// per-request retail ModelPrice.
+func IsAIPDDSeedanceModel(modelName string) bool {
 	capability, ok := GetAIPDDCapability(modelName)
-	return ok && capability.SeedancePricing != nil
+	return ok && (strings.EqualFold(strings.TrimSpace(capability.AdapterCode), "seedance") ||
+		strings.EqualFold(strings.TrimSpace(capability.ExecutionProtocol), "seedance_official") ||
+		capability.SeedancePricing != nil)
 }
 
 func GetAIPDDEndpointTypes(modelName string) []EndpointType {

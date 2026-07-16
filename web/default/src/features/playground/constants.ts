@@ -136,15 +136,99 @@ export const SEEDANCE_15_PRO_VIDEO_RESOLUTION_OPTIONS = [
   DEFAULT_VIDEO_RESOLUTION,
   '1080p',
 ] as const
-export const AP_SEEDANCE_20_LITE_VIDEO_RESOLUTION_OPTIONS = [
-  '480p',
-  DEFAULT_VIDEO_RESOLUTION,
-  '1080p',
-] as const
-export const AP_SEEDANCE_20_COST_EFFECTIVE_VIDEO_RESOLUTION_OPTIONS = [
-  '1080p',
-  '4k',
-] as const
+
+export type SeedanceVideoProcessingChainOption = {
+  resolution: string
+  sourceResolution: string
+  outputResolution: string
+}
+
+const AP_SEEDANCE_20_VIP_PROCESSING_CHAINS = [
+  {
+    resolution: '480p',
+    sourceResolution: '480p',
+    outputResolution: '480p',
+  },
+  {
+    resolution: '720p',
+    sourceResolution: '480p',
+    outputResolution: '720p',
+  },
+  {
+    resolution: '1080p',
+    sourceResolution: '720p',
+    outputResolution: '1080p',
+  },
+  {
+    resolution: '4k',
+    sourceResolution: '1080p',
+    outputResolution: '4K',
+  },
+] as const satisfies readonly SeedanceVideoProcessingChainOption[]
+
+const AP_SEEDANCE_20_STANDARD_PROCESSING_CHAINS = [
+  {
+    resolution: '480p',
+    sourceResolution: '480p',
+    outputResolution: '480p',
+  },
+  {
+    resolution: '720p',
+    sourceResolution: '480p',
+    outputResolution: '720p',
+  },
+  {
+    resolution: '1080p',
+    sourceResolution: '720p',
+    outputResolution: '1080p',
+  },
+  {
+    resolution: '4k',
+    sourceResolution: '720p',
+    outputResolution: '4K',
+  },
+] as const satisfies readonly SeedanceVideoProcessingChainOption[]
+
+const AP_SEEDANCE_20_LITE_PROCESSING_CHAINS = [
+  {
+    resolution: '480p',
+    sourceResolution: '480p',
+    outputResolution: '480p',
+  },
+  {
+    resolution: '720p',
+    sourceResolution: '480p',
+    outputResolution: '720p',
+  },
+  {
+    resolution: '1080p',
+    sourceResolution: '720p',
+    outputResolution: '1080p',
+  },
+] as const satisfies readonly SeedanceVideoProcessingChainOption[]
+
+const AP_SEEDANCE_20_COST_EFFECTIVE_PROCESSING_CHAINS = [
+  {
+    resolution: '1080p',
+    sourceResolution: '720p',
+    outputResolution: '1080p',
+  },
+  {
+    resolution: '4k',
+    sourceResolution: '720p',
+    outputResolution: '4K',
+  },
+] as const satisfies readonly SeedanceVideoProcessingChainOption[]
+
+const AIPDD_SEEDANCE_VIDEO_PROCESSING_CHAINS_BY_MODEL: Record<
+  string,
+  readonly SeedanceVideoProcessingChainOption[]
+> = {
+  'ap seedance-2-0 vip': AP_SEEDANCE_20_VIP_PROCESSING_CHAINS,
+  'ap seedance-2-0 标准版': AP_SEEDANCE_20_STANDARD_PROCESSING_CHAINS,
+  'ap seedance-2-0 轻量版': AP_SEEDANCE_20_LITE_PROCESSING_CHAINS,
+  'ap seedance-2-0 高性价比版': AP_SEEDANCE_20_COST_EFFECTIVE_PROCESSING_CHAINS,
+}
 export const DEFAULT_LTX_VIDEO_SIZE = '1920x1088'
 export const LTX_VIDEO_SIZE_OPTIONS = [
   '1280x720',
@@ -169,11 +253,6 @@ const SEEDANCE_VIDEO_RESOLUTION_OPTIONS_BY_MODEL: Record<
   string,
   readonly string[]
 > = {
-  'ap seedance-2-0 vip': VIDEO_RESOLUTION_OPTIONS,
-  'ap seedance-2-0 标准版': VIDEO_RESOLUTION_OPTIONS,
-  'ap seedance-2-0 轻量版': AP_SEEDANCE_20_LITE_VIDEO_RESOLUTION_OPTIONS,
-  'ap seedance-2-0 高性价比版':
-    AP_SEEDANCE_20_COST_EFFECTIVE_VIDEO_RESOLUTION_OPTIONS,
   'doubao-seedance-2-0-260128': VIDEO_RESOLUTION_OPTIONS,
   'doubao-seedance-2-0-fast-260128': SEEDANCE_20_FAST_VIDEO_RESOLUTION_OPTIONS,
   'doubao-seedance-2-0-mini-260615': SEEDANCE_20_FAST_VIDEO_RESOLUTION_OPTIONS,
@@ -385,9 +464,25 @@ export function getVideoRatioOptionsForModel(model: string): readonly string[] {
   return VIDEO_RATIO_OPTIONS
 }
 
+export function getSeedanceVideoProcessingChainOptionsForModel(
+  model: string
+): readonly SeedanceVideoProcessingChainOption[] {
+  return (
+    AIPDD_SEEDANCE_VIDEO_PROCESSING_CHAINS_BY_MODEL[
+      normalizeModelName(model)
+    ] || []
+  )
+}
+
 export function getVideoResolutionOptionsForModel(
   model: string
 ): readonly string[] {
+  const processingChainOptions =
+    getSeedanceVideoProcessingChainOptionsForModel(model)
+  if (processingChainOptions.length > 0) {
+    return processingChainOptions.map((option) => option.resolution)
+  }
+
   const normalized = normalizeModelName(model)
   const exactOptions = SEEDANCE_VIDEO_RESOLUTION_OPTIONS_BY_MODEL[normalized]
   if (exactOptions) return exactOptions

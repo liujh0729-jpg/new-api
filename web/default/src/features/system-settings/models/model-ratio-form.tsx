@@ -46,6 +46,7 @@ type ModelFormValues = {
   ExposeRatioEnabled: boolean
   BillingMode: string
   BillingExpr: string
+  TaskPricing: string
 }
 
 type ModelRatioFormProps = {
@@ -54,6 +55,7 @@ type ModelRatioFormProps = {
   onReset: () => void
   isSaving: boolean
   isResetting: boolean
+  taskPricingRequiredModels: string
 }
 
 export const ModelRatioForm = memo(function ModelRatioForm({
@@ -62,6 +64,7 @@ export const ModelRatioForm = memo(function ModelRatioForm({
   onReset,
   isSaving,
   isResetting,
+  taskPricingRequiredModels,
 }: ModelRatioFormProps) {
   const { t } = useTranslation()
   const [editMode, setEditMode] = useState<'visual' | 'json'>('visual')
@@ -112,10 +115,13 @@ export const ModelRatioForm = memo(function ModelRatioForm({
               audioCompletionRatio={form.watch('AudioCompletionRatio')}
               billingMode={form.watch('BillingMode')}
               billingExpr={form.watch('BillingExpr')}
+              taskPricing={form.watch('TaskPricing')}
+              taskPricingRequiredModels={taskPricingRequiredModels}
               onChange={(field, value) => {
                 const fieldMap: Record<string, keyof ModelFormValues> = {
                   'billing_setting.billing_mode': 'BillingMode',
                   'billing_setting.billing_expr': 'BillingExpr',
+                  'billing_setting.task_pricing': 'TaskPricing',
                 }
                 const formField =
                   fieldMap[field] || (field as keyof ModelFormValues)
@@ -176,6 +182,25 @@ export const ModelRatioForm = memo(function ModelRatioForm({
                   <FormDescription>
                     {t(
                       'JSON map of model → USD cost per request. Takes precedence over ratio based billing.'
+                    )}
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name='TaskPricing'
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{t('Task pricing')}</FormLabel>
+                  <FormControl>
+                    <Textarea rows={8} {...field} />
+                  </FormControl>
+                  <FormDescription>
+                    {t(
+                      'JSON map of model → local per-second pricing with separate video-input policy.'
                     )}
                   </FormDescription>
                   <FormMessage />

@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { EXCLUDED_GROUPS, QUOTA_TYPE_VALUES } from '../constants'
-import type { PricingModel } from '../types'
+import type { PricingModel, TaskPricing } from '../types'
 
 // ----------------------------------------------------------------------------
 // Model Helper Utilities
@@ -51,4 +51,27 @@ export function replaceModelInPath(path: string, modelName: string): string {
  */
 export function isTokenBasedModel(model: PricingModel): boolean {
   return model.quota_type === QUOTA_TYPE_VALUES.TOKEN
+}
+
+/** Check whether a model exposes valid local per-second task pricing. */
+export function isValidTaskPricing(
+  value: TaskPricing | undefined
+): value is TaskPricing {
+  return (
+    value?.unit === 'second' &&
+    Number.isFinite(value.no_reference_video_unit_price) &&
+    value.no_reference_video_unit_price > 0 &&
+    (value.reference_video_policy === 'same' ||
+      value.reference_video_policy === 'disabled' ||
+      (value.reference_video_policy === 'custom' &&
+        Number.isFinite(value.reference_video_unit_price) &&
+        Number(value.reference_video_unit_price) > 0))
+  )
+}
+
+export function isTaskPricingModel(model: PricingModel): boolean {
+  return (
+    model.billing_mode === 'task_pricing' &&
+    isValidTaskPricing(model.task_pricing)
+  )
 }

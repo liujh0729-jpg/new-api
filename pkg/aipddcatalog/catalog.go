@@ -142,6 +142,7 @@ func buildCapability(script Script, feeRuleByKey map[string]FeeRule) (constant.A
 	paramKeys, requiredParams := buildParamMaps(params, base)
 	capability := constant.AIPDDCapability{
 		ModelName:              modelName,
+		AdapterCode:            strings.TrimSpace(script.AdapterCode),
 		ScriptID:               firstNonEmpty(script.ID, base.ScriptID),
 		ScriptCode:             firstNonEmpty(script.Code, base.ScriptCode, modelName),
 		TaskKind:               strings.TrimSpace(script.TaskKind),

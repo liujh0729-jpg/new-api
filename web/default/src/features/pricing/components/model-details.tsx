@@ -59,9 +59,17 @@ import {
   isDynamicPricingModel,
 } from '../lib/dynamic-price'
 import { parseTags } from '../lib/filters'
-import { getAvailableGroups, isTokenBasedModel } from '../lib/model-helpers'
+import {
+  getAvailableGroups,
+  isTaskPricingModel,
+  isTokenBasedModel,
+} from '../lib/model-helpers'
 import { inferModelMetadata } from '../lib/model-metadata'
-import { formatFixedPrice, formatGroupPrice } from '../lib/price'
+import {
+  formatFixedPrice,
+  formatGroupPrice,
+  getTaskPriceInfo,
+} from '../lib/price'
 import type {
   Modality,
   ModelCapability,
@@ -299,9 +307,11 @@ function ModelHeader(props: { model: PricingModel }) {
         )}
         <span className='text-muted-foreground/30'>·</span>
         <span className='text-muted-foreground/70'>
-          {model.quota_type === QUOTA_TYPE_VALUES.TOKEN
-            ? t('Token-based')
-            : t('Per Request')}
+          {isTaskPricingModel(model)
+            ? t('Per Second')
+            : model.quota_type === QUOTA_TYPE_VALUES.TOKEN
+              ? t('Token-based')
+              : t('Per Request')}
         </span>
         {model.billing_mode === 'tiered_expr' && model.billing_expr && (
           <>
@@ -357,6 +367,13 @@ function PriceSection(props: {
     priceRate: props.priceRate,
     usdExchangeRate: props.usdExchangeRate,
     groupRatioMultiplier: 1,
+  })
+  const taskPriceInfo = getTaskPriceInfo(props.model, {
+    group: baseGroupKey,
+    showWithRecharge: props.showRechargePrice,
+    priceRate: props.priceRate,
+    usdExchangeRate: props.usdExchangeRate,
+    groupRatio: baseGroupRatioMap,
   })
 
   const primaryPriceTypes: { label: string; type: PriceType }[] = [
@@ -471,6 +488,43 @@ function PriceSection(props: {
             </div>
           </div>
         )}
+      </section>
+    )
+  }
+
+  if (taskPriceInfo) {
+    const policy = props.model.task_pricing?.reference_video_policy
+    return (
+      <section>
+        <SectionTitle>{t('Base Price')}</SectionTitle>
+        <div className='grid grid-cols-2 gap-2'>
+          <div className='bg-muted/20 rounded-lg border p-3'>
+            <div className='text-muted-foreground text-xs'>
+              {t('Without video input')}
+            </div>
+            <div className='text-foreground mt-1 font-mono text-base font-semibold tabular-nums'>
+              {taskPriceInfo.noReferencePrice}
+              <span className='text-muted-foreground/40 ml-1 text-xs font-normal'>
+                / {t('second')}
+              </span>
+            </div>
+          </div>
+          <div className='bg-muted/20 rounded-lg border p-3'>
+            <div className='text-muted-foreground text-xs'>
+              {t('With video input')}
+            </div>
+            <div className='text-foreground mt-1 font-mono text-base font-semibold tabular-nums'>
+              {policy === 'disabled'
+                ? t('Not supported')
+                : taskPriceInfo.referencePrice}
+              {policy !== 'disabled' && (
+                <span className='text-muted-foreground/40 ml-1 text-xs font-normal'>
+                  / {t('second')}
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
       </section>
     )
   }
@@ -607,6 +661,7 @@ function GroupPricingSection(props: {
   )
 
   const isTokenBased = isTokenBasedModel(props.model)
+  const isTaskPricing = isTaskPricingModel(props.model)
   const tokenUnitLabel = props.tokenUnit === 'K' ? '1K' : '1M'
 
   const extraPriceTypes = useMemo(() => {
@@ -643,6 +698,67 @@ function GroupPricingSection(props: {
 
   const thClass =
     'text-muted-foreground py-2 text-[10px] font-medium tracking-wider uppercase'
+
+  if (isTaskPricing) {
+    const policy = props.model.task_pricing?.reference_video_policy
+    return (
+      <section>
+        <SectionTitle>{t('Pricing by Group')}</SectionTitle>
+        <AutoGroupChain model={props.model} autoGroups={props.autoGroups} />
+        <div className='-mx-4 overflow-x-auto sm:mx-0'>
+          <Table className='text-sm'>
+            <TableHeader>
+              <TableRow className='hover:bg-transparent'>
+                <TableHead className={thClass}>{t('Group')}</TableHead>
+                <TableHead className={thClass}>{t('Ratio')}</TableHead>
+                <TableHead className={`${thClass} text-right`}>
+                  {t('Without video input')}
+                </TableHead>
+                <TableHead className={`${thClass} text-right`}>
+                  {t('With video input')}
+                </TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {availableGroups.map((group) => {
+                const ratio = props.groupRatio[group] ?? 1
+                const info = getTaskPriceInfo(props.model, {
+                  group,
+                  showWithRecharge: showRechargePrice,
+                  priceRate: props.priceRate,
+                  usdExchangeRate: props.usdExchangeRate,
+                  groupRatio: props.groupRatio,
+                })
+                return (
+                  <TableRow key={group}>
+                    <TableCell className='py-2.5'>
+                      <GroupBadge group={group} size='sm' />
+                    </TableCell>
+                    <TableCell className='text-muted-foreground py-2.5 font-mono text-xs'>
+                      {ratio}x
+                    </TableCell>
+                    <TableCell className='py-2.5 text-right font-mono'>
+                      {info?.isFree ? t('Free') : info?.noReferencePrice}
+                    </TableCell>
+                    <TableCell className='py-2.5 text-right font-mono'>
+                      {policy === 'disabled'
+                        ? t('Not supported')
+                        : info?.isFree
+                          ? t('Free')
+                          : info?.referencePrice}
+                    </TableCell>
+                  </TableRow>
+                )
+              })}
+            </TableBody>
+          </Table>
+          <p className='text-muted-foreground/40 mt-1.5 px-4 text-[10px] sm:px-0'>
+            {t('Prices shown per second')}
+          </p>
+        </div>
+      </section>
+    )
+  }
 
   if (isDynamicPricingModel(props.model)) {
     const dynamicTiers = getDynamicPricingTiers(props.model)

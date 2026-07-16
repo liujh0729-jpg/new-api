@@ -19,6 +19,7 @@ import (
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/gin-gonic/gin"
 )
 
@@ -29,6 +30,23 @@ type TaskSubmitResult struct {
 	Quota          int
 	AIPDDExecution *model.AIPDDTaskExecutionSnapshot
 	//PerCallPrice   types.PriceData
+}
+
+func taskErrorFromUpstreamResponse(responseBody []byte, statusCode int) *dto.TaskError {
+	var errorResponse dto.GeneralErrorResponse
+	if err := common.Unmarshal(responseBody, &errorResponse); err == nil {
+		if upstreamError := errorResponse.TryToOpenAIError(); upstreamError != nil {
+			code := "fail_to_fetch_task"
+			if upstreamError.Code != nil {
+				if upstreamCode := strings.TrimSpace(fmt.Sprint(upstreamError.Code)); upstreamCode != "" {
+					code = upstreamCode
+				}
+			}
+			return service.TaskErrorWrapper(errors.New(upstreamError.Message), code, statusCode)
+		}
+	}
+
+	return service.TaskErrorWrapper(fmt.Errorf("%s", string(responseBody)), "fail_to_fetch_task", statusCode)
 }
 
 func isValidClientPublicTaskID(taskID string) bool {
@@ -177,21 +195,46 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		return nil, service.TaskErrorWrapperLocal(fmt.Errorf("invalid api platform: %s", platform), "invalid_api_platform", http.StatusBadRequest)
 	}
 	adaptor.Init(info)
+
+	// Resolve a request model before provider validation whenever one is already
+	// known. AIPDD aliases are local names and do not exist in the upstream
+	// capability catalog, so validating the alias before mapping would reject a
+	// perfectly valid route as unsupported.
+	modelName := info.OriginModelName
+	applyModelMapping := func(originModelName string) *dto.TaskError {
+		info.OriginModelName = originModelName
+		info.UpstreamModelName = originModelName
+		if err := helper.ModelMappedHelper(c, info, nil); err != nil {
+			return service.TaskErrorWrapperLocal(err, "model_mapping_failed", http.StatusBadRequest)
+		}
+		return nil
+	}
+	if modelName != "" {
+		if taskErr := applyModelMapping(modelName); taskErr != nil {
+			return nil, taskErr
+		}
+	}
 	if taskErr := adaptor.ValidateRequestAndSetAction(c, info); taskErr != nil {
 		return nil, taskErr
 	}
 
 	// 2. 确定模型名称
-	modelName := info.OriginModelName
 	if modelName == "" {
 		modelName = service.CoverTaskActionToModelName(platform, info.Action)
+		if taskErr := applyModelMapping(modelName); taskErr != nil {
+			return nil, taskErr
+		}
 	}
-
-	// 2.5 应用渠道的模型映射（与同步任务对齐）
-	info.OriginModelName = modelName
-	info.UpstreamModelName = modelName
-	if err := helper.ModelMappedHelper(c, info, nil); err != nil {
-		return nil, service.TaskErrorWrapperLocal(err, "model_mapping_failed", http.StatusBadRequest)
+	taskPricingMode := info.TaskPricingQuote != nil ||
+		billing_setting.GetBillingMode(modelName) == billing_setting.BillingModeTaskPricing
+	if (constant.IsAIPDDSeedanceModel(info.UpstreamModelName) ||
+		model.IsAIPDDSeedancePricingRequiredModel(modelName)) &&
+		!taskPricingMode {
+		return nil, service.TaskErrorWrapperLocal(
+			fmt.Errorf("model %s task pricing is not configured", modelName),
+			"model_price_error",
+			http.StatusBadRequest,
+		)
 	}
 
 	// 3. 预生成公开 task ID（仅首次）
@@ -212,11 +255,21 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 
 	// 4. 价格计算：基础模型价格
 	info.OriginModelName = modelName
-	priceData, err := helper.ModelPriceHelperPerCall(c, info)
-	if err != nil {
-		return nil, service.TaskErrorWrapper(err, "model_price_error", http.StatusBadRequest)
+	if quote := info.TaskPricingQuote; quote != nil {
+		// A retry keeps the first attempt's complete local quote even if an
+		// administrator edits or removes the live pricing configuration meanwhile.
+		info.PriceData.ModelPrice = quote.UnitPriceUSD
+		info.PriceData.UsePrice = true
+		info.PriceData.Quota = quote.Quota
+		info.PriceData.GroupRatioInfo.GroupRatio = quote.GroupRatio
+		info.PriceData.FreeModel = quote.GroupRatio == 0
+	} else {
+		priceData, err := helper.ModelPriceHelperPerCall(c, info)
+		if err != nil {
+			return nil, service.TaskErrorWrapper(err, "model_price_error", http.StatusBadRequest)
+		}
+		info.PriceData = priceData
 	}
-	info.PriceData = priceData
 
 	// 5. 计费估算：让适配器根据用户请求提供 OtherRatios（时长、分辨率等）
 	//    必须在 ModelPriceHelperPerCall 之后调用（它会重建 PriceData）。
@@ -229,15 +282,51 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 
 	// 6. 将 OtherRatios 应用到基础额度，或使用适配器给出的不可分解精确额度。
 	exactQuota := false
-	if estimator, ok := adaptor.(channel.ExactTaskBillingEstimator); ok {
-		quota, details, exactErr := estimator.EstimateExactQuota(c, info)
-		if exactErr != nil {
-			return nil, service.TaskErrorWrapperLocal(exactErr, "model_price_error", http.StatusBadRequest)
+	if taskPricingMode {
+		quote := info.TaskPricingQuote
+		if quote == nil {
+			resolved, quoteErr := billing_setting.QuoteTaskPricing(
+				info.OriginModelName,
+				info.PriceData.OtherRatios["seconds"],
+				info.PriceData.GroupRatioInfo.GroupRatio,
+				common.QuotaPerUnit,
+				info.PriceData.OtherRatios["has_reference_video"] > 0,
+			)
+			if quoteErr != nil {
+				code := "model_price_error"
+				if errors.Is(quoteErr, billing_setting.ErrReferenceVideoDisabled) {
+					code = "reference_video_not_allowed"
+				}
+				return nil, service.TaskErrorWrapperLocal(quoteErr, code, http.StatusBadRequest)
+			}
+			info.TaskPricingQuote = &resolved
+			quote = info.TaskPricingQuote
 		}
-		if quota > 0 {
-			info.PriceData.Quota = quota
-			info.PriceData.OtherRatios = details
-			exactQuota = true
+		info.PriceData.ModelPrice = quote.UnitPriceUSD
+		info.PriceData.UsePrice = true
+		info.PriceData.Quota = quote.Quota
+		// A quote survives channel retries. Restore its frozen group ratio as well
+		// as the price and request facts so a concurrent settings change cannot
+		// alter the task's retail charge or audit snapshot mid-request.
+		info.PriceData.GroupRatioInfo.GroupRatio = quote.GroupRatio
+		info.PriceData.FreeModel = quote.GroupRatio == 0
+		info.PriceData.OtherRatios = map[string]float64{
+			"seconds":             quote.Quantity,
+			"has_reference_video": boolFloat64(quote.HasReferenceVideo),
+		}
+		exactQuota = true
+	}
+	if !exactQuota {
+		if estimator, ok := adaptor.(channel.ExactTaskBillingEstimator); ok {
+			quota, details, exactErr := estimator.EstimateExactQuota(c, info)
+			if exactErr != nil {
+				return nil, service.TaskErrorWrapperLocal(exactErr, "model_price_error", http.StatusBadRequest)
+			}
+			if quota > 0 {
+				info.PriceData.Quota = quota
+				info.PriceData.OtherRatios = details
+				exactQuota = true
+			}
 		}
 	}
 	if !exactQuota && !common.StringsContains(constant.TaskPricePatches, modelName) {
@@ -269,7 +358,7 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	}
 	if resp != nil && resp.StatusCode != http.StatusOK {
 		responseBody, _ := io.ReadAll(resp.Body)
-		return nil, service.TaskErrorWrapper(fmt.Errorf("%s", string(responseBody)), "fail_to_fetch_task", resp.StatusCode)
+		return nil, taskErrorFromUpstreamResponse(responseBody, resp.StatusCode)
 	}
 
 	// 10. 返回 OtherRatios 给下游（header 必须在 DoResponse 写 body 之前设置）
@@ -288,7 +377,7 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 
 	// 11. 提交后计费调整：让适配器根据上游实际返回调整 OtherRatios
 	finalQuota := info.PriceData.Quota
-	if adjustedRatios := adaptor.AdjustBillingOnSubmit(info, taskData); len(adjustedRatios) > 0 {
+	if adjustedRatios := adaptor.AdjustBillingOnSubmit(info, taskData); info.TaskPricingQuote == nil && len(adjustedRatios) > 0 {
 		// 基于调整后的 ratios 重新计算 quota
 		finalQuota = recalcQuotaFromRatios(info, adjustedRatios)
 		info.PriceData.OtherRatios = adjustedRatios
@@ -305,6 +394,13 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		result.AIPDDExecution = provider.AIPDDTaskSnapshot(info)
 	}
 	return result, nil
+}
+
+func boolFloat64(value bool) float64 {
+	if value {
+		return 1
+	}
+	return 0
 }
 
 // recalcQuotaFromRatios 根据 adjustedRatios 重新计算 quota。

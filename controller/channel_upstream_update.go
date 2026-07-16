@@ -569,8 +569,9 @@ func runChannelUpstreamModelUpdateTaskOnce() {
 			if channel == nil {
 				continue
 			}
-			// AIPDD pricing is synchronized only at startup or by the explicit
-			// administrator catalog sync endpoint; never from the periodic checker.
+			// AIPDD model/capability metadata is synchronized at startup or by the
+			// explicit administrator catalog endpoint. Local pricing is never
+			// synchronized by either path or by this periodic checker.
 			if channel.Type == constant.ChannelTypeAIPDD {
 				continue
 			}

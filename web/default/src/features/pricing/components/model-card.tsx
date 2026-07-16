@@ -29,8 +29,8 @@ import {
   getDynamicPricingSummary,
 } from '../lib/dynamic-price'
 import { parseTags } from '../lib/filters'
-import { isTokenBasedModel } from '../lib/model-helpers'
-import { formatPrice, formatRequestPrice } from '../lib/price'
+import { isTaskPricingModel, isTokenBasedModel } from '../lib/model-helpers'
+import { formatPrice, formatRequestPrice, getTaskPriceInfo } from '../lib/price'
 import type { PricingModel, TokenUnit } from '../types'
 import { ModelPerfBadge, type ModelPerfBadgeData } from './model-perf-badge'
 
@@ -52,6 +52,7 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
   const usdExchangeRate = props.usdExchangeRate ?? 1
   const showRechargePrice = props.showRechargePrice ?? false
   const isTokenBased = isTokenBasedModel(props.model)
+  const isTaskPricing = isTaskPricingModel(props.model)
   const tokenUnitLabel = tokenUnit === 'K' ? '1K' : '1M'
   const tags = parseTags(props.model.tags)
   const groups = props.model.enable_groups || []
@@ -71,6 +72,13 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
         priceRate,
         usdExchangeRate,
         groupRatioMultiplier: getDynamicDisplayGroupRatio(props.model),
+      })
+    : null
+  const taskPriceInfo = isTaskPricing
+    ? getTaskPriceInfo(props.model, {
+        showWithRecharge: showRechargePrice,
+        priceRate,
+        usdExchangeRate,
       })
     : null
 
@@ -138,6 +146,18 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
                     {t('Dynamic Pricing')}
                   </span>
                 )
+              ) : taskPriceInfo ? (
+                <span className='text-muted-foreground whitespace-nowrap'>
+                  <span className='text-foreground font-mono font-semibold'>
+                    {taskPriceInfo.isFree
+                      ? t('Free')
+                      : taskPriceInfo.startingPrice}
+                  </span>{' '}
+                  {taskPriceInfo.hasRange && !taskPriceInfo.isFree
+                    ? t('and up')
+                    : ''}{' '}
+                  / {t('second')}
+                </span>
               ) : isTokenBased ? (
                 <>
                   <span className='text-muted-foreground whitespace-nowrap'>
@@ -235,7 +255,11 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
             </span>
           )}
           <span className='text-muted-foreground text-xs font-medium'>
-            {isTokenBased ? t('Token-based') : t('Per Request')}
+            {isTaskPricing
+              ? t('Per Second')
+              : isTokenBased
+                ? t('Token-based')
+                : t('Per Request')}
           </span>
           {isDynamicPricing && (
             <StatusBadge
@@ -245,6 +269,15 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
               size='sm'
             />
           )}
+          {isTaskPricing &&
+            props.model.task_pricing?.reference_video_policy === 'disabled' && (
+              <StatusBadge
+                label={t('Video input not supported')}
+                variant='neutral'
+                copyable={false}
+                size='sm'
+              />
+            )}
         </div>
         <ModelPerfBadge perf={props.perf} className='row-span-2 self-start' />
 
@@ -254,9 +287,11 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
               {item}
             </span>
           ))}
-          <span className='text-muted-foreground/50 text-xs'>
-            {tokenUnitLabel}
-          </span>
+          {!isTaskPricing && (
+            <span className='text-muted-foreground/50 text-xs'>
+              {tokenUnitLabel}
+            </span>
+          )}
           {hiddenCount > 0 && (
             <span className='text-muted-foreground/40 text-xs'>
               +{hiddenCount}

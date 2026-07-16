@@ -6,10 +6,13 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/config"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
@@ -59,4 +62,55 @@ func TestModelPriceHelperTieredUsesPreloadedRequestInput(t *testing.T) {
 	require.Equal(t, "stream", info.TieredBillingSnapshot.EstimatedTier)
 	require.Equal(t, billing_setting.BillingModeTieredExpr, info.TieredBillingSnapshot.BillingMode)
 	require.Equal(t, common.QuotaPerUnit, info.TieredBillingSnapshot.QuotaPerUnit)
+}
+
+func TestHasModelBillingConfigRejectsSeedanceAdapterWithoutCatalogPrice(t *testing.T) {
+	configSnapshot := config.GlobalConfig.ExportAllConfigs()
+	capabilitiesSnapshot := constant.GetAIPDDCapabilities()
+	modelPriceSnapshot := ratio_setting.ModelPrice2JSONString()
+	t.Cleanup(func() {
+		require.NoError(t, config.GlobalConfig.LoadFromDB(configSnapshot))
+		require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(modelPriceSnapshot))
+		constant.SetAIPDDCapabilities(capabilitiesSnapshot)
+	})
+
+	const modelName = "seedance-adapter-without-upstream-price"
+	constant.SetAIPDDCapabilities([]constant.AIPDDCapability{{
+		ModelName:    modelName,
+		AdapterCode:  "seedance",
+		EndpointType: constant.EndpointTypeOpenAIVideo,
+	}})
+	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
+		"billing_setting.billing_mode": `{}`,
+		"billing_setting.task_pricing": `{}`,
+	}))
+	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{"seedance-adapter-without-upstream-price":99}`))
+
+	require.True(t, constant.IsAIPDDSeedanceModel(modelName))
+	require.False(t, HasModelBillingConfig(modelName), "legacy ModelPrice must not enable an unpriced Seedance task model")
+}
+
+func TestAIPDDDoesNotAcceptUnsetRatioAsLocalPricing(t *testing.T) {
+	modelPriceSnapshot := ratio_setting.ModelPrice2JSONString()
+	modelRatioSnapshot := ratio_setting.ModelRatio2JSONString()
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(modelPriceSnapshot))
+		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(modelRatioSnapshot))
+	})
+	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{}`))
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{}`))
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Set("group", "default")
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "new-aipdd-model-without-local-price",
+		UserGroup:       "default",
+		UsingGroup:      "default",
+		UserSetting:     dto.UserSetting{AcceptUnsetRatioModel: true},
+		ChannelMeta:     &relaycommon.ChannelMeta{ChannelType: constant.ChannelTypeAIPDD},
+	}
+
+	_, err := ModelPriceHelperPerCall(ctx, info)
+	require.Error(t, err)
 }

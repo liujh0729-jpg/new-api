@@ -8,6 +8,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting"
+	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/console_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
@@ -69,6 +70,15 @@ func buildCompletionRatioMetaValue(optionValues map[string]string) string {
 	return string(jsonBytes)
 }
 
+func buildTaskPricingRequiredModelsValue() string {
+	models := model.GetAIPDDSeedancePricingRequiredModels()
+	jsonBytes, err := common.Marshal(models)
+	if err != nil {
+		return "[]"
+	}
+	return string(jsonBytes)
+}
+
 func GetOptions(c *gin.Context) {
 	var options []*model.Option
 	optionValues := make(map[string]string)
@@ -98,6 +108,10 @@ func GetOptions(c *gin.Context) {
 	options = append(options, &model.Option{
 		Key:   "CompletionRatioMeta",
 		Value: buildCompletionRatioMetaValue(optionValues),
+	})
+	options = append(options, &model.Option{
+		Key:   "TaskPricingRequiredModels",
+		Value: buildTaskPricingRequiredModelsValue(),
 	})
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
@@ -204,6 +218,15 @@ func UpdateOption(c *gin.Context) {
 			c.JSON(http.StatusOK, gin.H{
 				"success": false,
 				"message": err.Error(),
+			})
+			return
+		}
+	case "billing_setting.task_pricing":
+		_, err = billing_setting.ParseTaskPricingMapJSON(option.Value.(string))
+		if err != nil {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": "按视频时长售价设置失败: " + err.Error(),
 			})
 			return
 		}

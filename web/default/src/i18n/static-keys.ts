@@ -601,6 +601,7 @@ export const STATIC_I18N_KEYS = [
   'Seedance may reject reference videos containing real people.',
   'Seedance rejected the reference media because it may contain a real person. Use text-only generation or replace the reference with non-real-person media.',
   'The selected model service is temporarily unavailable because its upstream balance is insufficient. Please try again later or contact an administrator.',
+  'The upstream account has not activated the selected model. Ask an administrator to enable it in the provider console, or switch to another available model.',
   'Untitled',
   'Unable to read reference media duration. Please reselect the file.',
   'Your account balance is insufficient. Please add credits and try again.',

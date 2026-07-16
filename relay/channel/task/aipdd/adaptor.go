@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -16,7 +15,6 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
-	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -49,18 +47,6 @@ type TaskAdaptor struct {
 	apiKey  string
 	baseURL string
 	proxy   string
-	quote   *seedanceBillingQuote
-}
-
-type seedanceBillingQuote struct {
-	CatalogRevision   string
-	Protocol          string
-	Endpoint          string
-	USDPerAWCoin      float64
-	EstimatedAWCoin   float64
-	Seconds           float64
-	Resolution        string
-	HasReferenceVideo bool
 }
 
 type createTaskPayload struct {
@@ -168,9 +154,10 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	if strings.TrimSpace(req.Model) == "" {
 		return service.TaskErrorWrapperLocal(fmt.Errorf("model field is required"), "missing_model", http.StatusBadRequest)
 	}
-	cfg, ok := a.resolveModelConfig(ginRequestContext(c), req.Model)
+	configModelName := firstNonEmpty(info.UpstreamModelName, req.Model, info.OriginModelName)
+	cfg, ok := a.resolveModelConfig(ginRequestContext(c), configModelName)
 	if !ok {
-		return service.TaskErrorWrapperLocal(fmt.Errorf("unsupported AIPDD model: %s", req.Model), "unsupported_model", http.StatusBadRequest)
+		return service.TaskErrorWrapperLocal(fmt.Errorf("unsupported AIPDD model: %s", configModelName), "unsupported_model", http.StatusBadRequest)
 	}
 	if endpoint := endpointTypeFromPath(c.Request.URL.Path); endpoint != "" && endpoint != cfg.EndpointType {
 		return service.TaskErrorWrapperLocal(
@@ -184,7 +171,7 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		if err := common.UnmarshalBodyReusable(c, &raw); err != nil {
 			return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
 		}
-		payload, errorCode, err := normalizeAndValidateSeedanceOfficialPayload(raw, cfg)
+		payload, errorCode, err := normalizeAndValidateSeedanceOfficialPayload(raw)
 		if err != nil {
 			return service.TaskErrorWrapperLocal(err, errorCode, http.StatusBadRequest)
 		}
@@ -220,11 +207,19 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 	if !ok {
 		return nil
 	}
-	if cfg.SeedancePricing != nil {
-		return nil
+	ratios := map[string]float64{}
+	if isSeedanceExecutionConfig(cfg) {
+		raw, err := getSeedanceOfficialPayload(c)
+		if err != nil {
+			return nil
+		}
+		ratios["seconds"] = seedanceBillingSeconds(raw)
+		if seedanceHasReferenceVideo(raw["content"]) {
+			ratios["has_reference_video"] = 1
+		}
+		return ratios
 	}
 
-	ratios := map[string]float64{}
 	if cfg.BillingType == constant.AIPDDBillingTypeDurationSeconds {
 		duration, err := normalizeDurationSeconds(&req, cfg)
 		if err != nil {
@@ -244,67 +239,20 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 	return ratios
 }
 
-func (a *TaskAdaptor) EstimateExactQuota(c *gin.Context, info *relaycommon.RelayInfo) (int, map[string]float64, error) {
-	req, err := relaycommon.GetTaskRequest(c)
-	if err != nil {
-		return 0, nil, err
-	}
-	cfg, ok := a.resolveModelConfig(ginRequestContext(c), firstNonEmpty(info.UpstreamModelName, info.OriginModelName, req.Model))
-	if !ok || cfg.SeedancePricing == nil {
-		return 0, nil, nil
-	}
-	raw, err := getSeedanceOfficialPayload(c)
-	if err != nil {
-		return 0, nil, err
-	}
-	resolution := canonicalSeedanceResolution(raw["resolution"])
-	pricing, ok := seedanceResolutionPricing(cfg, resolution)
-	if !ok {
-		return 0, nil, fmt.Errorf("Seedance resolution %q has no synchronized price", resolution)
-	}
-	hasReferenceVideo := seedanceHasReferenceVideo(raw["content"])
-	variant, ok := seedancePriceVariant(pricing.PriceVariants, hasReferenceVideo)
-	if !ok || (variant.AWCoinPerSecond <= 0 && variant.MinimumAWCoin <= 0) {
-		return 0, nil, fmt.Errorf("Seedance price variant is not configured for resolution %s", resolution)
-	}
-	seconds := seedanceBillingSeconds(raw, pricing)
-	estimated := math.Max(math.Ceil(variant.MinimumAWCoin), math.Ceil(variant.AWCoinPerSecond*seconds))
-	if cfg.AWCoinUSDPerCoin <= 0 {
-		return 0, nil, fmt.Errorf("AIPDD AWCoin exchange rate is unavailable")
-	}
-	quota := billingexpr.QuotaRound(estimated * cfg.AWCoinUSDPerCoin * common.QuotaPerUnit * info.PriceData.GroupRatioInfo.GroupRatio)
-	if quota <= 0 && estimated > 0 && info.PriceData.GroupRatioInfo.GroupRatio > 0 {
-		quota = 1
-	}
-	a.quote = &seedanceBillingQuote{
-		CatalogRevision: cfg.CatalogRevision, Protocol: cfg.ExecutionProtocol,
-		Endpoint: cfg.ExecutionPath, USDPerAWCoin: cfg.AWCoinUSDPerCoin,
-		EstimatedAWCoin: estimated, Seconds: seconds, Resolution: resolution,
-		HasReferenceVideo: hasReferenceVideo,
-	}
-	return quota, map[string]float64{
-		"aipdd_awcoin": estimated, "seconds": seconds,
-		"has_reference_video": boolFloat(hasReferenceVideo),
-	}, nil
-}
-
 func (a *TaskAdaptor) AIPDDTaskSnapshot(info *relaycommon.RelayInfo) *model.AIPDDTaskExecutionSnapshot {
-	if a.quote == nil {
-		cfg, ok := constant.GetAIPDDCapability(firstNonEmpty(info.UpstreamModelName, info.OriginModelName))
-		if !ok {
-			return nil
-		}
-		return &model.AIPDDTaskExecutionSnapshot{
-			CatalogRevision: cfg.CatalogRevision, Protocol: cfg.ExecutionProtocol,
-			Endpoint: cfg.ExecutionPath, BaseURL: a.baseURL, USDPerAWCoin: cfg.AWCoinUSDPerCoin,
-		}
+	cfg, ok := constant.GetAIPDDCapability(firstNonEmpty(info.UpstreamModelName, info.OriginModelName))
+	if !ok {
+		return nil
 	}
-	return &model.AIPDDTaskExecutionSnapshot{
-		CatalogRevision: a.quote.CatalogRevision, Protocol: a.quote.Protocol,
-		Endpoint: a.quote.Endpoint, BaseURL: a.baseURL, USDPerAWCoin: a.quote.USDPerAWCoin,
-		EstimatedAWCoin: a.quote.EstimatedAWCoin, BillingSeconds: a.quote.Seconds,
-		Resolution: a.quote.Resolution, HasReferenceVideo: a.quote.HasReferenceVideo,
+	snapshot := &model.AIPDDTaskExecutionSnapshot{
+		CatalogRevision: cfg.CatalogRevision, Protocol: cfg.ExecutionProtocol,
+		Endpoint: cfg.ExecutionPath, BaseURL: a.baseURL,
 	}
+	if ratios := info.PriceData.OtherRatios; ratios != nil {
+		snapshot.BillingSeconds = ratios["seconds"]
+		snapshot.HasReferenceVideo = ratios["has_reference_video"] > 0
+	}
+	return snapshot
 }
 
 func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, error) {
@@ -1003,18 +951,6 @@ func normalizeExecutionPath(path string) string {
 	return strings.TrimRight(path, "/")
 }
 
-func seedancePriceVariant(
-	variants []constant.AIPDDSeedancePriceVariant,
-	hasReferenceVideo bool,
-) (constant.AIPDDSeedancePriceVariant, bool) {
-	for _, variant := range variants {
-		if variant.HasReferenceVideo == hasReferenceVideo {
-			return variant, true
-		}
-	}
-	return constant.AIPDDSeedancePriceVariant{}, false
-}
-
 func seedanceHasReferenceVideo(content any) bool {
 	items, ok := content.([]any)
 	if !ok {
@@ -1025,26 +961,39 @@ func seedanceHasReferenceVideo(content any) bool {
 		if !ok {
 			continue
 		}
-		typeName := anyToString(item["type"])
-		role := anyToString(item["role"])
-		if typeName == "video_url" || typeName == "video" || strings.EqualFold(role, "reference_video") {
+		typeName := strings.TrimSpace(anyToString(item["type"]))
+		role := strings.TrimSpace(anyToString(item["role"]))
+		if strings.EqualFold(typeName, "video_url") ||
+			strings.EqualFold(typeName, "video") ||
+			strings.EqualFold(role, "reference_video") {
 			return true
 		}
-		if videoURL, exists := item["video_url"]; exists && videoURL != nil {
+		if validSeedanceVideoURL(item["video_url"]) {
 			return true
 		}
 	}
 	return false
 }
 
-func normalizeAndValidateSeedanceOfficialPayload(raw map[string]any, cfg modelConfig) (map[string]any, string, error) {
+func validSeedanceVideoURL(value any) bool {
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed) != ""
+	case map[string]any:
+		return strings.TrimSpace(anyToString(typed["url"])) != ""
+	default:
+		return false
+	}
+}
+
+func normalizeAndValidateSeedanceOfficialPayload(raw map[string]any) (map[string]any, string, error) {
 	if raw == nil {
 		return nil, "invalid_request", fmt.Errorf("request body is required")
 	}
 	payload := cloneAnyMap(raw)
 	metadata, _ := payload["metadata"].(map[string]any)
 	for _, key := range []string{
-		"content", "resolution", "ratio", "duration", "frames", "framespersecond",
+		"content", "resolution", "ratio", "duration", "frames", "fps", "framespersecond",
 		"frames_per_second", "seed", "callback_url", "return_last_frame", "service_tier",
 		"generate_audio", "priority",
 	} {
@@ -1103,9 +1052,6 @@ func normalizeAndValidateSeedanceOfficialPayload(raw map[string]any, cfg modelCo
 	if ratio != "" && !isSupportedSeedanceRatio(ratio) {
 		return nil, "unsupported_ratio", fmt.Errorf("Seedance ratio %q is not supported", ratio)
 	}
-	if _, ok := seedanceResolutionPricing(cfg, resolution); !ok {
-		return nil, "unsupported_resolution", fmt.Errorf("Seedance resolution %q has no synchronized price", resolution)
-	}
 	payload["resolution"] = resolution
 	if ratio != "" {
 		payload["ratio"] = ratio
@@ -1137,19 +1083,10 @@ func canonicalSeedanceResolution(value any) string {
 	return strings.ToLower(strings.TrimSpace(anyToString(value)))
 }
 
-func seedanceResolutionPricing(cfg modelConfig, resolution string) (constant.AIPDDSeedanceResolutionPricing, bool) {
-	if cfg.SeedancePricing == nil {
-		return constant.AIPDDSeedanceResolutionPricing{}, false
-	}
-	if pricing, ok := cfg.SeedancePricing.ByResolution[resolution]; ok {
-		return pricing, true
-	}
-	for key, pricing := range cfg.SeedancePricing.ByResolution {
-		if strings.EqualFold(strings.TrimSpace(key), resolution) {
-			return pricing, true
-		}
-	}
-	return constant.AIPDDSeedanceResolutionPricing{}, false
+func isSeedanceExecutionConfig(cfg modelConfig) bool {
+	return strings.EqualFold(strings.TrimSpace(cfg.AdapterCode), "seedance") ||
+		strings.EqualFold(strings.TrimSpace(cfg.ExecutionProtocol), "seedance_official") ||
+		cfg.SeedancePricing != nil
 }
 
 func seedanceRequestDimensions(payload, metadata map[string]any) (int, int, bool, error) {
@@ -1227,25 +1164,22 @@ func seedanceRequestValuePresent(value any) bool {
 	}
 }
 
-func seedanceBillingSeconds(raw map[string]any, pricing constant.AIPDDSeedanceResolutionPricing) float64 {
+func seedanceBillingSeconds(raw map[string]any) float64 {
 	if duration := positiveFloat(raw["duration"]); duration > 0 {
 		return duration
 	}
 	if frames := positiveFloat(raw["frames"]); frames > 0 {
-		fps := positiveFloat(raw["framespersecond"])
+		fps := positiveFloat(raw["fps"])
+		if fps <= 0 {
+			fps = positiveFloat(raw["framespersecond"])
+		}
 		if fps <= 0 {
 			fps = positiveFloat(raw["frames_per_second"])
 		}
 		if fps <= 0 {
-			fps = pricing.DefaultFramesPerSecond
-		}
-		if fps <= 0 {
 			fps = 24
 		}
-		return math.Ceil((frames/fps)*10000) / 10000
-	}
-	if pricing.DefaultDurationSeconds > 0 {
-		return pricing.DefaultDurationSeconds
+		return frames / fps
 	}
 	return 5
 }
@@ -1272,13 +1206,6 @@ func positiveFloat(value any) float64 {
 		if parsed, err := strconv.ParseFloat(strings.TrimSpace(typed), 64); err == nil && parsed > 0 {
 			return parsed
 		}
-	}
-	return 0
-}
-
-func boolFloat(value bool) float64 {
-	if value {
-		return 1
 	}
 	return 0
 }

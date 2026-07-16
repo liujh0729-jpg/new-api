@@ -304,20 +304,35 @@ func updateVideoTasks(ctx context.Context, platform constant.TaskPlatform, chann
 	}
 	cacheGetChannel, err := model.CacheGetChannel(channelId)
 	if err != nil {
-		// Collect DB primary key IDs for bulk update (taskIds are upstream IDs, not task_id column values)
-		var failedIDs []int64
+		reason := fmt.Sprintf("Failed to get channel info, channel ID: %d", channelId)
+		now := time.Now().Unix()
 		for _, upstreamID := range taskIds {
-			if t, ok := taskM[upstreamID]; ok {
-				failedIDs = append(failedIDs, t.ID)
+			task, ok := taskM[upstreamID]
+			if !ok || task == nil {
+				continue
 			}
-		}
-		errUpdate := model.TaskBulkUpdateByID(failedIDs, map[string]any{
-			"fail_reason": fmt.Sprintf("Failed to get channel info, channel ID: %d", channelId),
-			"status":      "FAILURE",
-			"progress":    "100%",
-		})
-		if errUpdate != nil {
-			common.SysLog(fmt.Sprintf("UpdateVideoTask error: %v", errUpdate))
+			oldStatus := task.Status
+			if oldStatus == model.TaskStatus(model.TaskStatusFailure) || oldStatus == model.TaskStatus(model.TaskStatusSuccess) {
+				continue
+			}
+			task.FailReason = reason
+			task.Status = model.TaskStatusFailure
+			task.Progress = taskcommon.ProgressComplete
+			if task.FinishTime == 0 {
+				task.FinishTime = now
+			}
+			won, updateErr := task.UpdateWithStatus(oldStatus)
+			if updateErr != nil {
+				logger.LogError(ctx, fmt.Sprintf("Failed to mark task %s after channel lookup failure: %v", task.TaskID, updateErr))
+				continue
+			}
+			if !won {
+				logger.LogWarn(ctx, fmt.Sprintf("Task %s already transitioned after channel lookup failure, skip refund", task.TaskID))
+				continue
+			}
+			if task.Quota != 0 {
+				RefundTaskQuota(ctx, task, reason)
+			}
 		}
 		return fmt.Errorf("CacheGetChannel failed: %w", err)
 	}

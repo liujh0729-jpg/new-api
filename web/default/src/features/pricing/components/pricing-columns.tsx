@@ -33,10 +33,11 @@ import {
   getDynamicPricingSummary,
 } from '../lib/dynamic-price'
 import { parseTags } from '../lib/filters'
-import { isTokenBasedModel } from '../lib/model-helpers'
+import { isTaskPricingModel, isTokenBasedModel } from '../lib/model-helpers'
 import {
   formatPrice,
   formatRequestPrice,
+  getTaskPriceInfo,
   stripTrailingZeros,
 } from '../lib/price'
 import type { PricingModel, TokenUnit } from '../types'
@@ -139,10 +140,15 @@ export function usePricingColumns(
       meta: { label: t('Type') },
       header: t('Type'),
       cell: ({ row }) => {
+        const isTaskPricing = isTaskPricingModel(row.original)
         const isTokenBased = row.original.quota_type === QUOTA_TYPE_VALUES.TOKEN
         return (
           <span className='text-muted-foreground text-xs font-medium tracking-wider uppercase'>
-            {isTokenBased ? t('Token') : t('Request')}
+            {isTaskPricing
+              ? t('Second')
+              : isTokenBased
+                ? t('Token')
+                : t('Request')}
           </span>
         )
       },
@@ -217,6 +223,34 @@ export function usePricingColumns(
         }
 
         const isTokenBased = isTokenBasedModel(model)
+        const taskPriceInfo = getTaskPriceInfo(model, {
+          showWithRecharge: showRechargePrice,
+          priceRate,
+          usdExchangeRate,
+        })
+
+        if (taskPriceInfo) {
+          return (
+            <div className='min-w-[120px]'>
+              <span className='font-mono text-sm tabular-nums'>
+                {taskPriceInfo.isFree
+                  ? t('Free')
+                  : stripTrailingZeros(taskPriceInfo.startingPrice)}
+                {taskPriceInfo.hasRange && !taskPriceInfo.isFree
+                  ? ` ${t('and up')}`
+                  : ''}
+              </span>
+              <div className='text-muted-foreground/50 text-[10px]'>
+                / {t('second')}
+              </div>
+              {model.task_pricing?.reference_video_policy === 'disabled' && (
+                <div className='text-muted-foreground mt-0.5 text-[10px]'>
+                  {t('Video input not supported')}
+                </div>
+              )}
+            </div>
+          )
+        }
 
         if (isTokenBased) {
           const inputPrice = stripTrailingZeros(

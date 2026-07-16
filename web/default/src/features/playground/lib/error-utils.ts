@@ -27,6 +27,8 @@ const SEEDANCE_PRIVACY_ERROR_MESSAGE =
   'Seedance rejected the reference media because it may contain a real person. Use text-only generation or replace the reference with non-real-person media.'
 const UPSTREAM_BALANCE_INSUFFICIENT_MESSAGE =
   'The selected model service is temporarily unavailable because its upstream balance is insufficient. Please try again later or contact an administrator.'
+const UPSTREAM_MODEL_NOT_OPEN_MESSAGE =
+  'The upstream account has not activated the selected model. Ask an administrator to enable it in the provider console, or switch to another available model.'
 const USER_QUOTA_INSUFFICIENT_MESSAGE =
   'Your account balance is insufficient. Please add credits and try again.'
 
@@ -177,6 +179,23 @@ function isLocalQuotaError(code?: string, message?: string): boolean {
   )
 }
 
+function isUpstreamModelNotOpenError(code?: string, message?: string): boolean {
+  const normalizedCode = normalizeForCodeMatch(code)
+  const normalizedMessage = normalizeForMessageMatch(message)
+
+  return (
+    normalizedCode.includes('modelnotopen') ||
+    normalizedMessage.includes('model not open') ||
+    normalizedMessage.includes('model is not activated') ||
+    normalizedMessage.includes('model service is not activated') ||
+    normalizedMessage.includes('has not activated the model') ||
+    (normalizedMessage.includes('模型') &&
+      (normalizedMessage.includes('未开通') ||
+        normalizedMessage.includes('尚未开通') ||
+        normalizedMessage.includes('未启用')))
+  )
+}
+
 function isUpstreamBalanceError(code?: string, message?: string): boolean {
   const normalizedCode = normalizeForCodeMatch(code)
   const normalizedMessage = normalizeForMessageMatch(message)
@@ -224,6 +243,13 @@ export function normalizePlaygroundError(
   if (isSeedancePrivacyError(code, message)) {
     return {
       message: t(SEEDANCE_PRIVACY_ERROR_MESSAGE),
+      code,
+    }
+  }
+
+  if (isUpstreamModelNotOpenError(code, message)) {
+    return {
+      message: t(UPSTREAM_MODEL_NOT_OPEN_MESSAGE),
       code,
     }
   }

@@ -9,7 +9,9 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
@@ -219,6 +221,42 @@ func TestRefundTaskQuota_Wallet(t *testing.T) {
 	assert.Equal(t, "test-model", log.ModelName)
 }
 
+func TestUpdateVideoTasksMissingChannelTransitionsWithCASAndRefunds(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const (
+		userID      = 101
+		tokenID     = 101
+		missingChan = 919191
+		initQuota   = 10000
+		preConsumed = 1800
+		tokenRemain = 5000
+	)
+	seedUser(t, userID, initQuota)
+	seedToken(t, tokenID, userID, "sk-missing-channel", tokenRemain)
+	task := makeTask(userID, missingChan, preConsumed, tokenID, BillingSourceWallet, 0)
+	task.TaskID = "task_missing_channel_refund"
+	require.NoError(t, model.DB.Create(task).Error)
+
+	err := updateVideoTasks(
+		ctx,
+		constant.TaskPlatform(""),
+		missingChan,
+		[]string{"upstream-missing-channel"},
+		map[string]*model.Task{"upstream-missing-channel": task},
+	)
+	require.Error(t, err)
+
+	var persisted model.Task
+	require.NoError(t, model.DB.First(&persisted, task.ID).Error)
+	require.Equal(t, model.TaskStatus(model.TaskStatusFailure), persisted.Status)
+	require.Equal(t, taskcommon.ProgressComplete, persisted.Progress)
+	require.Contains(t, persisted.FailReason, "Failed to get channel info")
+	assert.Equal(t, initQuota+preConsumed, getUserQuota(t, userID))
+	assert.Equal(t, tokenRemain+preConsumed, getTokenRemainQuota(t, tokenID))
+}
+
 func TestRefundTaskQuota_Subscription(t *testing.T) {
 	truncate(t)
 	ctx := context.Background()
@@ -287,6 +325,80 @@ func TestRefundTaskQuota_NoToken(t *testing.T) {
 	log := getLastLog(t)
 	require.NotNil(t, log)
 	assert.Equal(t, model.LogTypeRefund, log.Type)
+}
+
+func TestRefundTaskQuota_PreservesTaskPricingSnapshotAndAuditFields(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID, tokenID, channelID = 5, 5, 5
+	const initQuota, preConsumed, tokenRemain = 10_000, 608, 5_000
+	seedUser(t, userID, initQuota)
+	seedToken(t, tokenID, userID, "sk-task-pricing", tokenRemain)
+	seedChannel(t, channelID)
+
+	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
+	task.Properties.OriginModelName = "AP Seedance local alias"
+	task.Properties.UpstreamModelName = "AP Seedance upstream"
+	task.PrivateData.BillingContext = &model.TaskBillingContext{
+		ModelPrice:        0.18,
+		GroupRatio:        1.5,
+		OtherRatios:       map[string]float64{"seconds": 2.25, "has_reference_video": 1},
+		OriginModelName:   "AP Seedance local alias",
+		PerCallBilling:    true,
+		BillingMode:       "task_pricing",
+		BillingUnit:       "second",
+		PricingVariant:    "reference_video",
+		UnitPriceUSD:      0.18,
+		Quantity:          2.25,
+		SaleUSD:           0.6075,
+		HasReferenceVideo: true,
+	}
+	task.PrivateData.AIPDDExecution = &model.AIPDDTaskExecutionSnapshot{
+		CatalogRevision:   "revision-1",
+		Protocol:          "seedance_official",
+		Endpoint:          "/api/v3/contents/generations/tasks",
+		BillingSeconds:    2.25,
+		HasReferenceVideo: true,
+	}
+	require.NoError(t, model.DB.Create(task).Error)
+
+	var persisted model.Task
+	require.NoError(t, model.DB.First(&persisted, task.ID).Error)
+	require.NotNil(t, persisted.PrivateData.BillingContext)
+	require.Equal(t, "task_pricing", persisted.PrivateData.BillingContext.BillingMode)
+	require.Equal(t, "second", persisted.PrivateData.BillingContext.BillingUnit)
+	require.Equal(t, "reference_video", persisted.PrivateData.BillingContext.PricingVariant)
+	require.Equal(t, 0.18, persisted.PrivateData.BillingContext.UnitPriceUSD)
+	require.Equal(t, 2.25, persisted.PrivateData.BillingContext.Quantity)
+	require.Equal(t, 1.5, persisted.PrivateData.BillingContext.GroupRatio)
+	require.Equal(t, 0.6075, persisted.PrivateData.BillingContext.SaleUSD)
+	require.True(t, persisted.PrivateData.BillingContext.HasReferenceVideo)
+	require.NotNil(t, persisted.PrivateData.AIPDDExecution)
+	require.Zero(t, persisted.PrivateData.AIPDDExecution.USDPerAWCoin)
+	require.Zero(t, persisted.PrivateData.AIPDDExecution.EstimatedAWCoin)
+
+	RefundTaskQuota(ctx, &persisted, "upstream failed")
+
+	assert.Equal(t, initQuota+preConsumed, getUserQuota(t, userID))
+	assert.Equal(t, tokenRemain+preConsumed, getTokenRemainQuota(t, tokenID))
+	log := getLastLog(t)
+	require.NotNil(t, log)
+	assert.Equal(t, model.LogTypeRefund, log.Type)
+	assert.Equal(t, preConsumed, log.Quota)
+	assert.Equal(t, "AP Seedance local alias", log.ModelName)
+	other, err := common.StrToMap(log.Other)
+	require.NoError(t, err)
+	assert.Equal(t, "task_pricing", other["billing_mode"])
+	assert.Equal(t, "second", other["billing_unit"])
+	assert.Equal(t, "reference_video", other["pricing_variant"])
+	assert.Equal(t, 0.18, other["unit_price_usd"])
+	assert.Equal(t, 2.25, other["quantity"])
+	assert.Equal(t, 1.5, other["group_ratio"])
+	assert.Equal(t, 0.6075, other["sale_usd"])
+	assert.Equal(t, true, other["has_reference_video"])
+	assert.Equal(t, true, other["is_model_mapped"])
+	assert.Equal(t, "AP Seedance upstream", other["upstream_model_name"])
 }
 
 // ===========================================================================

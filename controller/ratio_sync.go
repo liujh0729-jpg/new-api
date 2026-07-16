@@ -106,11 +106,52 @@ func valueMap(value any) map[string]any {
 	}
 }
 
+// stripTaskPricingSyncModels removes duration-priced models from generic
+// remote pricing imports. Their derived model_price is a per-second sorting
+// value, not a legacy per-request price, and this release intentionally does
+// not auto-import structured task_pricing.
+func stripTaskPricingSyncModels(data map[string]any) {
+	modes := valueMap(data[billing_setting.BillingModeField])
+	if len(modes) == 0 {
+		return
+	}
+	taskModels := make(map[string]struct{})
+	for modelName, rawMode := range modes {
+		if strings.EqualFold(strings.TrimSpace(fmt.Sprint(rawMode)), billing_setting.BillingModeTaskPricing) {
+			taskModels[modelName] = struct{}{}
+		}
+	}
+	if len(taskModels) == 0 {
+		return
+	}
+	for _, field := range pricingSyncFields {
+		values := valueMap(data[field])
+		if values == nil {
+			continue
+		}
+		for modelName := range taskModels {
+			delete(values, modelName)
+		}
+		if len(values) == 0 {
+			delete(data, field)
+		} else {
+			data[field] = values
+		}
+	}
+}
+
 func aipddCatalogRatioData(catalog aipddcatalog.AtomicCatalog) map[string]any {
 	prices := make(map[string]float64)
 	modes := make(map[string]string)
 	exprs := make(map[string]string)
 	for _, capability := range catalog.Capabilities {
+		// A per-second task price cannot be represented by the legacy per-call
+		// ModelPrice field. In particular, Seedance's default-duration cost must
+		// not be offered as a local retail price candidate.
+		if strings.EqualFold(strings.TrimSpace(capability.AdapterCode), "seedance") ||
+			strings.EqualFold(strings.TrimSpace(capability.Pricing.PricingModel), "per_second") {
+			continue
+		}
 		if awcoin := aipddcatalog.TaskAWCoinPrice(capability.Pricing); awcoin > 0 {
 			prices[capability.ID] = awcoin * catalog.AWCoinRate.USDPerAWCoin
 		}
@@ -426,6 +467,7 @@ func FetchUpstreamRatios(c *gin.Context) {
 					}
 				}
 				if isType1 {
+					stripTaskPricingSyncModels(type1Data)
 					ch <- upstreamResult{Name: uniqueName, Data: type1Data}
 					return
 				}
@@ -465,6 +507,9 @@ func FetchUpstreamRatios(c *gin.Context) {
 
 			for _, item := range pricingItems {
 				if item.ModelName == "" {
+					continue
+				}
+				if strings.EqualFold(strings.TrimSpace(item.BillingMode), billing_setting.BillingModeTaskPricing) {
 					continue
 				}
 				if item.BillingMode == billing_setting.BillingModeTieredExpr && strings.TrimSpace(item.BillingExpr) != "" {
