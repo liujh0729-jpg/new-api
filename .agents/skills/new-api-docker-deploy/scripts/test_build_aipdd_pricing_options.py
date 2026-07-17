@@ -41,17 +41,64 @@ def seedance_capability(by_resolution: dict) -> dict:
 
 
 class BuildAIPDDPricingOptionsTest(unittest.TestCase):
-    def test_flat_task_pricing_uses_only_new_modality_fields(self) -> None:
+    def test_resolution_task_pricing_uses_only_new_modality_fields(self) -> None:
         capability = seedance_capability({
             "720p": resolution("720p", 10, 15, image=12),
             "1080p": resolution("1080p", 20, 25),
         })
 
-        pricing = MODULE.flat_task_pricing(capability, Decimal("0.01"))
+        pricing = MODULE.resolution_task_pricing(capability, Decimal("0.01"))
 
-        self.assertEqual(0.2, pricing["no_reference_video_unit_price"])
-        self.assertEqual("custom", pricing["reference_video_policy"])
-        self.assertEqual(0.25, pricing["reference_video_unit_price"])
+        self.assertEqual(
+            {
+                "unit": "second",
+                "by_resolution": {
+                    "720p": {
+                        "no_reference_video_unit_price": 0.12,
+                        "reference_video_policy": "custom",
+                        "reference_video_unit_price": 0.15,
+                    },
+                    "1080p": {
+                        "no_reference_video_unit_price": 0.2,
+                        "reference_video_policy": "custom",
+                        "reference_video_unit_price": 0.25,
+                    },
+                },
+            },
+            pricing,
+        )
+
+    def test_resolution_keys_are_canonical_and_same_policy_omits_custom_price(self) -> None:
+        capability = seedance_capability({
+            " 4K ": resolution("4k", 30, 30),
+        })
+
+        pricing = MODULE.resolution_task_pricing(capability, Decimal("0.01"))
+
+        self.assertEqual(
+            {
+                "no_reference_video_unit_price": 0.3,
+                "reference_video_policy": "same",
+            },
+            pricing["by_resolution"]["4k"],
+        )
+
+    def test_duplicate_resolution_after_normalization_is_rejected(self) -> None:
+        capability = seedance_capability({
+            "4K": resolution("4k", 30, 30),
+            "4k ": resolution("4k", 30, 30),
+        })
+
+        with self.assertRaisesRegex(ValueError, "duplicate resolution"):
+            MODULE.resolution_task_pricing(capability, Decimal("0.01"))
+
+    def test_non_string_target_resolution_is_rejected(self) -> None:
+        capability = seedance_capability({
+            "720p": resolution(None, 10, 15),
+        })
+
+        with self.assertRaisesRegex(ValueError, "resolution key must be a string"):
+            MODULE.resolution_task_pricing(capability, Decimal("0.01"))
 
     def test_legacy_price_variants_are_rejected(self) -> None:
         capability = seedance_capability({
@@ -67,7 +114,7 @@ class BuildAIPDDPricingOptionsTest(unittest.TestCase):
         })
 
         with self.assertRaisesRegex(ValueError, "amountAwcoinPerSecond"):
-            MODULE.flat_task_pricing(capability, Decimal("0.01"))
+            MODULE.resolution_task_pricing(capability, Decimal("0.01"))
 
     def test_existing_model_price_is_never_used_as_a_fallback(self) -> None:
         catalog = {
@@ -97,20 +144,60 @@ class BuildAIPDDPricingOptionsTest(unittest.TestCase):
             })],
             "models": [],
         }
-        result = MODULE.build_updates(catalog, {"ModelPrice": {"AP Seedance": 99}}, {"AP Seedance"})
+        result = MODULE.build_updates(
+            catalog,
+            {
+                "ModelPrice": {"AP Seedance": 99},
+                "billing_setting.task_pricing": {
+                    "AP Seedance": {
+                        "unit": "second",
+                        "no_reference_video_unit_price": 99,
+                        "reference_video_policy": "same",
+                    },
+                    "unrelated-task": {
+                        "unit": "second",
+                        "no_reference_video_unit_price": 1,
+                        "reference_video_policy": "same",
+                    },
+                },
+            },
+            {"AP Seedance"},
+        )
         updates = {item["key"]: json.loads(item["value"]) for item in result["updates"]}
 
         self.assertNotIn("AP Seedance", updates["ModelPrice"])
         self.assertEqual(
             {
                 "unit": "second",
-                "no_reference_video_unit_price": 0.2,
-                "reference_video_policy": "custom",
-                "reference_video_unit_price": 0.25,
+                "by_resolution": {
+                    "720p": {
+                        "no_reference_video_unit_price": 0.1,
+                        "reference_video_policy": "custom",
+                        "reference_video_unit_price": 0.15,
+                    },
+                    "1080p": {
+                        "no_reference_video_unit_price": 0.2,
+                        "reference_video_policy": "custom",
+                        "reference_video_unit_price": 0.25,
+                    },
+                },
             },
             updates["billing_setting.task_pricing"]["AP Seedance"],
         )
-        self.assertIn("no priceVariants or legacy ModelPrice fallback", result["summary"]["task_pricing_contract"])
+        self.assertEqual(
+            {
+                "unit": "second",
+                "no_reference_video_unit_price": 1,
+                "reference_video_policy": "same",
+            },
+            updates["billing_setting.task_pricing"]["unrelated-task"],
+        )
+        self.assertNotIn(
+            "no_reference_video_unit_price",
+            updates["billing_setting.task_pricing"]["AP Seedance"],
+        )
+        self.assertIn("by_resolution matrix", result["summary"]["task_pricing_contract"])
+        self.assertIn("no priceVariants", result["summary"]["task_pricing_contract"])
 
 
 if __name__ == "__main__":

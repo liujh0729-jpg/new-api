@@ -129,7 +129,18 @@ def task_awcoin_price(pricing: dict[str, Any]) -> Decimal:
     return Decimal(0)
 
 
-def flat_task_pricing(
+def normalize_resolution(value: Any, capability_id: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{capability_id}: resolution key must be a string")
+    resolution = value.strip().lower()
+    if not resolution:
+        raise ValueError(f"{capability_id}: resolution key must not be empty")
+    if len(resolution) > 128:
+        raise ValueError(f"{capability_id}/{resolution}: resolution key exceeds 128 characters")
+    return resolution
+
+
+def resolution_task_pricing(
     capability: dict[str, Any],
     usd_per_awcoin: Decimal,
 ) -> dict[str, Any]:
@@ -145,13 +156,19 @@ def flat_task_pricing(
     if not pricing["byResolution"]:
         raise ValueError(f"{capability.get('id')}: per-second pricing matrix is empty")
 
-    no_reference_prices: list[Decimal] = []
-    reference_prices: list[Decimal] = []
-    for resolution, item in pricing["byResolution"].items():
+    by_resolution: dict[str, dict[str, Any]] = {}
+    for raw_resolution, item in pricing["byResolution"].items():
+        resolution = normalize_resolution(raw_resolution, str(capability.get("id")))
+        if resolution in by_resolution:
+            raise ValueError(
+                f"{capability.get('id')}/{resolution}: duplicate resolution after normalization"
+            )
         if not isinstance(item, dict):
             raise ValueError(f"{capability.get('id')}/{resolution}: pricing must be an object")
-        target_resolution = str(item.get("targetResolution", "")).strip()
-        if not target_resolution or target_resolution.lower() != str(resolution).strip().lower():
+        target_resolution = normalize_resolution(
+            item.get("targetResolution", ""), str(capability.get("id"))
+        )
+        if target_resolution != resolution:
             raise ValueError(
                 f"{capability.get('id')}/{resolution}: targetResolution must match the resolution key"
             )
@@ -183,18 +200,20 @@ def flat_task_pricing(
             f"{capability.get('id')}/{resolution}.videoInputAwcoinPerSecond",
             positive=True,
         )
-        no_reference_prices.append(max(non_video_rates) * usd_per_awcoin)
-        reference_prices.append(video_rate * usd_per_awcoin)
-
-    no_reference_price = max(no_reference_prices)
-    reference_price = max(reference_prices)
-    policy = "same" if reference_price == no_reference_price else "custom"
+        no_reference_price = max(non_video_rates) * usd_per_awcoin
+        reference_price = video_rate * usd_per_awcoin
+        policy = "same" if reference_price == no_reference_price else "custom"
+        tier = {
+            "no_reference_video_unit_price": json_number(no_reference_price),
+            "reference_video_policy": policy,
+        }
+        if policy == "custom":
+            tier["reference_video_unit_price"] = json_number(reference_price)
+        by_resolution[resolution] = tier
 
     return {
         "unit": "second",
-        "no_reference_video_unit_price": json_number(no_reference_price),
-        "reference_video_policy": policy,
-        "reference_video_unit_price": json_number(reference_price),
+        "by_resolution": by_resolution,
     }
 
 
@@ -238,7 +257,7 @@ def build_updates(
             or str(pricing.get("pricingModel", "")).strip().lower() == "per_second"
         )
         if is_task_pricing:
-            task_pricing = flat_task_pricing(capability, usd_per_awcoin)
+            task_pricing = resolution_task_pricing(capability, usd_per_awcoin)
             maps["billing_setting.task_pricing"][model_name] = task_pricing
             maps["billing_setting.billing_mode"][model_name] = "task_pricing"
             task_models.append(model_name)
@@ -305,8 +324,8 @@ def build_updates(
             "per_call_models": sorted(per_call_models),
             "task_pricing_models": sorted(task_models),
             "tiered_expr_models": sorted(llm_names),
-            "task_pricing_contract": "AIPDD modality pricing fields only; no priceVariants or legacy ModelPrice fallback",
-            "task_pricing_policy": "maximum non-video modality USD/second and maximum video-input USD/second across catalog resolutions",
+            "task_pricing_contract": "AIPDD modality pricing fields only; by_resolution matrix; no priceVariants, flat task pricing, or legacy ModelPrice fallback",
+            "task_pricing_policy": "per-resolution maximum non-video modality USD/second with same/custom video-input USD/second",
         },
     }
 
