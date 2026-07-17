@@ -274,12 +274,16 @@ func upsertManagedAIPDDChannelTx(tx *gorm.DB, baseURL, apiKey string, modelNames
 	if err != nil {
 		return nil, err
 	}
-	updates := map[string]any{"models": models, "group": "default", "base_url": baseURL, "status": common.ChannelStatusEnabled}
+	updates := map[string]any{"models": models, "base_url": baseURL, "status": common.ChannelStatusEnabled}
+	if strings.TrimSpace(channel.Group) == "" {
+		updates["group"] = "default"
+		channel.Group = "default"
+	}
 	if strings.TrimSpace(apiKey) != "" {
 		updates["key"] = apiKey
 		channel.Key = apiKey
 	}
-	channel.Models, channel.Group, channel.BaseURL, channel.Status = models, "default", &baseURL, common.ChannelStatusEnabled
+	channel.Models, channel.BaseURL, channel.Status = models, &baseURL, common.ChannelStatusEnabled
 	return &channel, tx.Model(&channel).Updates(updates).Error
 }
 

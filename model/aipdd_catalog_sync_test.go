@@ -97,6 +97,10 @@ func TestApplyAIPDDCatalogReplacesModelsAndCleansOnlySeededCNChannels(t *testing
 	firstResult, err := applyAIPDDCatalog(first, "https://aipdd.example", "sk-test")
 	require.NoError(t, err)
 	require.Zero(t, firstResult.UpdatedPrices)
+	var firstManaged Channel
+	require.NoError(t, DB.Where("type = ? AND name = ?", constant.ChannelTypeAIPDD, "AIPDD").First(&firstManaged).Error)
+	require.Equal(t, "default", firstManaged.Group)
+	require.NoError(t, DB.Model(&firstManaged).Update("group", "default,VIP1,VIP2,VIP3,VIP4,VIP5").Error)
 
 	preserveAIPDDPricingRuntime(t)
 	localPricing := map[string]string{
@@ -135,6 +139,7 @@ func TestApplyAIPDDCatalogReplacesModelsAndCleansOnlySeededCNChannels(t *testing
 	var managed Channel
 	require.NoError(t, DB.Where("type = ? AND name = ?", constant.ChannelTypeAIPDD, "AIPDD").First(&managed).Error)
 	require.Equal(t, "llm-new,task-new", managed.Models)
+	require.Equal(t, "default,VIP1,VIP2,VIP3,VIP4,VIP5", managed.Group)
 
 	for key, expected := range localPricing {
 		var option Option
