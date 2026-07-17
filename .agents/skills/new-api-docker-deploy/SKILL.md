@@ -1,6 +1,6 @@
 ---
 name: new-api-docker-deploy
-description: Deploy and update New API on a pre-provisioned Docker server over SSH using Alibaba Cloud ACR images for the application, PostgreSQL, and Redis with Docker Compose. Use when the user provides server SSH credentials and an AIPDD API key, asks for a first deployment or an update, optionally sets New API's own ServerAddress to a supplied domain without configuring a reverse proxy or HTTPS, asks to reset or synchronize the AIPDD channel, or confirms that AIPDD local prices may be overwritten and reconciled from the authenticated catalog. Keep first-deployment initialization separate from updates; generate credentials and create the root account only on first deployment; updates preserve .env, databases, users, and channels, pull the ACR image, and never publish updated application images to Docker Hub.
+description: Deploy and update New API on a pre-provisioned Docker server over SSH using Alibaba Cloud ACR images for the application, PostgreSQL, and Redis with Docker Compose. Use when the user provides server SSH credentials and an AIPDD API key, asks for a first deployment or an update, optionally sets New API's own ServerAddress to a supplied domain without configuring a reverse proxy or HTTPS, asks to reset or synchronize the AIPDD channel, confirms that AIPDD local prices may be overwritten and reconciled from the authenticated catalog, or requests idempotent VIP1-VIP5 group-price synchronization. Keep first-deployment initialization separate from updates; generate credentials and create the root account only on first deployment; updates preserve .env, databases, users, and channels, pull the ACR image, and never publish updated application images to Docker Hub.
 ---
 
 # New API Docker 自动部署（阿里云 ACR）
@@ -57,7 +57,11 @@ Treat the following as required inputs. Ask for any missing value before connect
 3. SSH password. Never put it in a command, URL, temporary file, or log.
 4. AIPDD upstream API key for first deployment. During an update, reuse the key already stored in the remote `.env`; ask for a new key only when the user explicitly requests an AIPDD key change or the existing deployment has no usable key. Keep it masked and do not echo it in the final report.
 
-Optionally ask for SSH port, deployment directory, public port, and the New API application domain. Use port `22`, `/opt/new-api`, and `6070` when omitted. A supplied domain means only setting New API’s `ServerAddress` option; it does not authorize a reverse proxy, HTTPS, certificate, DNS, or firewall change. Before any destructive AIPDD action, ask exactly whether to force-overwrite AIPDD channels: “是否强制覆盖 AIPDD 渠道？这会删除现有 AIPDD 渠道并按当前 AIPDD API Key 重建。” Ask the price decision independently in either deployment mode: “是否覆盖 AIPDD 模型价格？选择是会根据当前 API Key 的实时认证目录重建 AIPDD 本地价格规则，包括 Seedance 的分辨率价格矩阵、LTX 等按秒模型的单位价格和计费模式；非 AIPDD 价格不变。” Never infer either yes from a general request to deploy.
+Optionally ask for SSH port, deployment directory, public port, and the New API application domain. Use port `22`, `/opt/new-api`, and `6070` when omitted. A supplied domain means only setting New API’s `ServerAddress` option; it does not authorize a reverse proxy, HTTPS, certificate, DNS, or firewall change. Ask these three decisions independently in either deployment mode and never infer any `yes` from a general request to deploy:
+
+1. Before any destructive AIPDD action, ask exactly: “是否强制覆盖 AIPDD 渠道？这会删除现有 AIPDD 渠道并按当前 AIPDD API Key 重建。”
+2. Ask exactly: “是否覆盖 AIPDD 模型价格？选择是会根据当前 API Key 的实时认证目录重建 AIPDD 本地价格规则，包括 Seedance 的分辨率价格矩阵、LTX 等按秒模型的单位价格和计费模式；非 AIPDD 价格不变。”
+3. Ask exactly: “是否同步 VIP 分组价格？选择是会把 VIP1=0.78、VIP2=0.80、VIP3=0.85、VIP4=0.90、VIP5=0.95 合并到全局分组，创建缺失的可用分组说明，并把这五个分组追加到所有 AIPDD 渠道；其他分组、渠道设置和模型原价不变。”
 
 When a domain is supplied, validate it as a hostname and ask the user to ensure its A/AAAA record points to this server. Do not edit DNS. With no reverse proxy, the public URL must include the application port: `http://<domain>:6070`. Accept a bare hostname or an `http://` URL; reject an `https://` value unless the user explicitly understands that TLS is not being configured by this skill.
 
@@ -117,17 +121,18 @@ Substitute the user-selected deployment directory when it is not `/opt/new-api`.
 
 Use this path only after the remote inspection confirms a complete deployment and the user selected **Update**. Do not execute the first-deployment sections below.
 
-Before pulling the new image, ask two independent questions and record the answers:
+Before pulling the new image, ask three independent questions and record the answers:
 
 1. **是否覆盖 AIPDD 渠道？** Default to **否**. **是** means delete all existing AIPDD channels and rebuild the managed AIPDD channel from the current AIPDD key; this is destructive and requires the existing administrator login.
 2. **是否覆盖 AIPDD 模型价格？** Default to **否**. **是** authorizes the complete price-reconciliation procedure below: fetch the live authenticated catalog, replace pricing entries belonging to the previous and current AIPDD model sets, and automatically write `ModelPrice`, `billing_setting.billing_expr`, `billing_setting.task_pricing`, and `billing_setting.billing_mode` while preserving non-AIPDD entries. Seedance pricing must be written as a `by_resolution` matrix. Require `pricingBasis=display`, `displayAmountAwcoinPerSecond`, and `displayVideoInputAwcoinPerSecond`; reject catalogs that omit any of them. Never use legacy modality fields, `byokAmountAwcoinPerSecond`, or `byokVideoInputAwcoinPerSecond` as New API's sale price. A non-Seedance `per_unit` capability is supported only when `chargeConfig.unit=second`; it must be written as legacy-shaped flat `task_pricing` whose unit price is the catalog AWCoin amount converted to USD/second. `priceVariants` and every local-price or legacy `ModelPrice` fallback are unsupported for an approved reconciliation. **否** preserves all current local AIPDD pricing options, including any legacy flat Seedance pricing, and does not call the catalog sync endpoint. Never claim that an update migrated pricing when overwrite was declined.
+3. **是否同步 VIP 分组价格？** Default to **否**. **是** authorizes only the idempotent VIP synchronization procedure below: force the five fixed global ratios, create missing `UserUsableGroups` descriptions without replacing existing descriptions, and append the five group names to every AIPDD channel while preserving all existing channel groups and every non-group channel field. It does not authorize any model-price write, channel deletion, user-group reassignment, `GroupGroupRatio`, or top-up-ratio change.
 
-Do not infer either answer from the request to update the application. If the user does not explicitly answer, stop before changing the deployment.
+Do not infer any answer from the request to update the application. If the user does not explicitly answer all three decisions, stop before changing the deployment.
 
 1. Back up the existing Compose file and `.env` to the protected timestamped backup directory. Do not print either file.
 2. Read the current Compose file without exposing secrets. Confirm that the application image points to the expected ACR repository. If it points elsewhere, show the image name and ask before changing it.
 3. If the ACR repository is private, authenticate with the user-provided least-privilege registry account interactively. Never put registry credentials in the Compose file or command arguments.
-4. Preserve every existing `.env` value except these two explicit update decisions:
+4. Preserve every existing `.env` value except the two decisions represented by environment toggles:
 
    ```dotenv
    AIPDD_CATALOG_SYNC_ON_BOOT=<true when price overwrite is confirmed, otherwise false>
@@ -145,7 +150,7 @@ Do not infer either answer from the request to update the application. If the us
 
 6. Do not run `/api/setup`, do not generate new passwords, and do not change PostgreSQL or Redis services unless the user explicitly requested a dependency upgrade. If a dependency upgrade is requested, back up first and handle it as a separate approved change.
 7. Confirm `/api/status` and the application logs. Preserve the existing administrator password and all existing application data.
-8. If the user requests an application-domain change or AIPDD channel overwrite during the update, use the authenticated existing administrator account and the separate procedures below. Do not treat an image update as permission to perform either operation.
+8. If the user requests an application-domain change, AIPDD channel overwrite, AIPDD price overwrite, or VIP group-price synchronization during the update, use the authenticated existing administrator account and the separate procedures below. Do not treat an image update as permission to perform any of these operations.
 
 ### 3. First deployment: generate and transfer deployment files
 
@@ -226,7 +231,7 @@ AIPDD_CHANNEL_OVERWRITE_ON_BOOT=false
 
 Set `AIPDD_CHANNEL_OVERWRITE_ON_BOOT=true` only when the user explicitly confirmed force overwrite. Transfer both files over the protected SSH session, then run `chmod 600 .env` remotely. Do not use `docker compose config` after secrets are present because it expands them.
 
-For a first deployment, an approved AIPDD price overwrite must complete the authenticated reconciliation after the root administrator and managed AIPDD channel exist. That reconciliation must write Seedance prices as `by_resolution` and every supported `per_unit/second` capability as flat per-second `task_pricing`; a successful catalog fetch or channel bootstrap alone is not sufficient. If price overwrite is declined, report that catalog-derived local prices were not initialized and do not claim that the new duration pricing rules are active.
+For a first deployment, an approved AIPDD price overwrite must complete the authenticated reconciliation after the root administrator and managed AIPDD channel exist. That reconciliation must write Seedance prices as `by_resolution` and every supported `per_unit/second` capability as flat per-second `task_pricing`; a successful catalog fetch or channel bootstrap alone is not sufficient. If price overwrite is declined, report that catalog-derived local prices were not initialized and do not claim that the new duration pricing rules are active. Independently, when VIP group-price synchronization is approved, run it only after the root administrator and final managed AIPDD channel exist; if channel overwrite is also approved, rebuild the channel first and synchronize its groups afterward.
 
 ### 4. First deployment: pull and start the ACR deployment
 
@@ -277,20 +282,22 @@ Content-Type: application/json
 
 Call `GET /api/option/` afterward and verify that the `ServerAddress` option matches the normalized URL. This is a database-backed New API setting and survives container restarts. Do not set `MATERIAL_PUBLIC_BASE_URL` unless the user separately asks to configure public material URLs.
 
-### 6. Handle the AIPDD channel choice in either mode
+### 6. Handle the AIPDD channel, model-price, and VIP group choices in either mode
 
 When force overwrite is **not** confirmed:
 
-- Do not delete or modify existing AIPDD channels.
+- Do not delete existing AIPDD channels. Do not modify them unless the independent VIP group-price synchronization was confirmed; that procedure may change only their `group` field.
 - On first deployment, leave `AIPDD_CHANNEL_OVERWRITE_ON_BOOT=false`.
 - On update, set `AIPDD_CHANNEL_OVERWRITE_ON_BOOT=false` for this update and preserve all other `.env` values.
 - Verify the existing channel state with the authenticated admin API and report if no usable AIPDD channel exists.
 
-When price overwrite is **not** confirmed, set `AIPDD_CATALOG_SYNC_ON_BOOT=false`, do not call `POST /api/channel/<id>/aipdd/sync`, do not write any pricing option, and report that current AIPDD prices were preserved. When price overwrite **is** confirmed, set it to `true` and execute the complete procedure below. The environment toggle and the sync response's `updated_prices` field are not proof of price replacement: catalog synchronization intentionally preserves local pricing in current versions.
+When price overwrite is **not** confirmed, set `AIPDD_CATALOG_SYNC_ON_BOOT=false`, do not call `POST /api/channel/<id>/aipdd/sync`, do not write any AIPDD model-pricing option, and report that current AIPDD prices were preserved. The independently approved VIP procedure may still write only `GroupRatio`, `UserUsableGroups`, and AIPDD channel `group` fields. When price overwrite **is** confirmed, set it to `true` and execute the complete procedure below. The environment toggle and the sync response's `updated_prices` field are not proof of price replacement: catalog synchronization intentionally preserves local pricing in current versions.
+
+When VIP group-price synchronization is **not** confirmed, do not run its helper, do not write `GroupRatio` or `UserUsableGroups`, and do not modify channel group associations. Report that the current group configuration was preserved.
 
 #### Automatically reconcile AIPDD prices after confirmation
 
-Run this only after the administrator login succeeds. Treat the confirmation as authorization to replace AIPDD-owned entries in the five pricing options below, not as authorization to change non-AIPDD prices or user/group ratios.
+Run this only after the administrator login succeeds. Treat the confirmation as authorization to replace AIPDD-owned entries in the five pricing options below, not as authorization to change non-AIPDD prices or user/group ratios unless the independent VIP synchronization decision was also explicitly confirmed.
 
 1. Before catalog synchronization, save these items in a timestamped, mode-`600` backup without printing them:
    - the current AIPDD channel model list from `GET /api/channel/?p=1&page_size=100&type=58`;
@@ -327,11 +334,43 @@ When force overwrite **is** confirmed, delete and rebuild only AIPDD channels:
 3. Ask for a final confirmation immediately before the first deletion if the user’s confirmation was not explicit for this exact action.
 4. Send `DELETE /api/channel/<id>` for every returned AIPDD channel. Do not delete other channel types, disabled non-AIPDD channels, database volumes, or application data.
 5. On first deployment, ensure `.env` contains `AIPDD_CHANNEL_OVERWRITE_ON_BOOT=true`. On update, back up `.env`, change only this setting temporarily or as explicitly approved, then run `docker compose restart new-api`.
-6. Poll `/api/status`, then query the AIPDD channel list again. Confirm that the startup bootstrap created a fresh managed AIPDD channel. If price overwrite was confirmed, run the complete automatic reconciliation procedure after the fresh channel exists; if it was declined, confirm that catalog synchronization was not run and existing prices were preserved.
+6. Poll `/api/status`, then query the AIPDD channel list again. Confirm that the startup bootstrap created a fresh managed AIPDD channel. If price overwrite was confirmed, run the complete automatic reconciliation procedure after the fresh channel exists; if it was declined, confirm that catalog synchronization was not run and existing prices were preserved. If VIP group-price synchronization was confirmed, run it only after this rebuild and any approved model-price reconciliation have completed.
 
-After a successful channel rebuild, set `AIPDD_CHANNEL_OVERWRITE_ON_BOOT=false` for future restarts and preserve the user’s separate price-sync choice. Do not leave a one-time destructive overwrite enabled by accident.
+After a successful channel rebuild, set `AIPDD_CHANNEL_OVERWRITE_ON_BOOT=false` for future restarts and preserve the user’s separate model-price and VIP group-price choices. Do not leave a one-time destructive overwrite enabled by accident.
 
 The environment toggle alone is insufficient: it updates one existing AIPDD channel but does not clear additional AIPDD channels. If any AIPDD deletion fails, stop the destructive workflow, preserve the remaining data, and report the channel ID and error without claiming that overwrite completed.
+
+#### Idempotently synchronize VIP group prices after confirmation
+
+Run this only when the independent VIP decision was explicitly confirmed and the administrator login succeeds. It is valid whether AIPDD model-price overwrite was accepted or declined. When model-price overwrite was also confirmed, complete and verify model-price reconciliation first. When channel overwrite was also confirmed, wait until the final managed AIPDD channel exists. The only authorized mutations are `GroupRatio`, `UserUsableGroups`, and the `group` field of channels whose type is exactly `58`.
+
+The fixed contract is:
+
+- `VIP1=0.78`
+- `VIP2=0.80`
+- `VIP3=0.85`
+- `VIP4=0.90`
+- `VIP5=0.95`
+
+Do not modify `GroupGroupRatio`, `TopupGroupRatio`, user records, subscription plans, non-AIPDD channels, channel keys, channel models, model mappings, model prices, billing modes, or task-pricing matrices. Existing non-VIP groups and existing `UserUsableGroups` descriptions must be preserved. Re-running the procedure against already synchronized state must produce no writes.
+
+1. Fetch the exact current `GroupRatio` and `UserUsableGroups` values from `GET /api/option/`. Fetch all AIPDD channel pages from `GET /api/channel/?p=<page>&page_size=100&type=58` until the reported total is exhausted. Require at least one AIPDD channel; do not claim success when there is nothing to associate.
+2. Save the two exact option values and the redacted AIPDD channel list in a timestamped mode-`600` backup. Never call the channel-key endpoint and never print option bodies or channel payloads.
+3. Store the option response and a single combined `{"items":[...]}` AIPDD channel document in protected temporary files, then run the bundled offline helper from a trusted local environment:
+
+   ```bash
+   python .agents/skills/new-api-docker-deploy/scripts/build_vip_group_sync_plan.py \
+     --options options-before.json \
+     --channels aipdd-channels-before.json \
+     --output vip-group-plan.json
+   ```
+
+4. Inspect only `vip-group-plan.json.summary`. Require `fixed_groups` to equal the five-value contract above and `contract` to state that unrelated groups, channels, keys, models, and model prices are preserved. Reject any plan containing an option key other than `GroupRatio` or `UserUsableGroups`, any channel type other than `58`, a duplicate channel ID, or a merged channel group longer than 64 characters.
+5. Apply `option_updates` in order. Immediately before each authenticated `PUT /api/option/` call, re-fetch that option and require its parsed JSON map to equal the item’s `previous_value`; if it changed after plan generation, stop and regenerate the plan instead of overwriting concurrent administrator work. Send only `key` and `value`. Require HTTP 200 and `success=true` after every write.
+6. For each `channel_updates` item, immediately re-fetch `GET /api/channel/<id>` and require that its ID and type are unchanged and its current `group` exactly equals `previous_group`. Use the complete redacted channel object returned by that request, change only its `group` field to the planned value, and send it to `PUT /api/channel/`. The redacted empty `key` is intentionally not updated by the backend; do not fetch, copy, or send the real key. Require `success=true` and then re-fetch the channel to verify the exact merged group.
+7. Re-fetch `GET /api/option/` and require both changed option maps to equal the plan. Query every AIPDD channel again and require it to contain each VIP group exactly once while preserving every original group in its original relative order.
+8. If any option write, channel write, or verification fails, stop forward changes. Roll back changed channels in `channel_rollback` order by re-fetching each latest channel, requiring its current group to equal `expected_group`, changing only `group` to the rollback value, and sending the complete redacted object to `PUT /api/channel/`. Then apply `option_rollback` in order. Verify all original option values and channel group strings were restored. Report any rollback failure without exposing payloads.
+9. Delete all temporary option, channel, plan, cookie, and request files after verification. Report only the five fixed ratios, changed option names, changed channel count, and whether the operation was a no-op.
 
 ### 7. Verify and hand off
 
@@ -342,16 +381,17 @@ Verify all of the following:
 - When an application domain was configured, `http://<domain>:6070/api/status` succeeds and the `ServerAddress` option matches; do not claim HTTPS. Otherwise report that the port-only mode is active.
 - Application logs do not contain a missing `AIPDD_API_KEY` or database/Redis connection error.
 - In first-deployment mode, the root administrator was created on the new database. In update mode, `/api/setup` was not called and the existing administrator was preserved.
-- The requested AIPDD overwrite result matches the user’s answer.
-- In update mode, report both decisions separately: channel overwrite `是/否` and AIPDD price overwrite `是/否`.
+- All three requested decisions match the user’s answers.
+- In either mode, report the three decisions separately: channel overwrite `是/否`, AIPDD model-price overwrite `是/否`, and VIP group-price synchronization `是/否`.
 - When AIPDD price overwrite was confirmed, report that Seedance was verified as `by_resolution` matrix pricing and every `per_unit/second` model was verified as flat per-second task pricing; when it was declined, report that the existing pricing shape was preserved and may still be legacy pricing.
 - When price overwrite was confirmed, every `TaskPricingRequiredModels` entry has a valid positive task-pricing object and `billing_mode=task_pricing`; Seedance entries have a non-empty `by_resolution` matrix, `per_unit/second` entries use the flat shape and do not remain in `ModelPrice`, and catalog sync alone does not satisfy this check.
+- When VIP group-price synchronization was confirmed, `GroupRatio` contains the five exact fixed ratios, missing `UserUsableGroups` entries were created without replacing existing descriptions, and every AIPDD channel contains VIP1-VIP5 exactly once. When it was declined, report that group ratios, usable-group descriptions, and channel group associations were preserved.
 
 Do not claim success if health checks, admin initialization, or requested AIPDD synchronization failed. State which stage failed and preserve the deployment directory for diagnosis.
 
 ## Final response format
 
-After successful first deployment, provide the server address, deployment directory, service status, AIPDD overwrite result, and this block. Use `http://<domain>:6070` when the New API application domain was configured; otherwise use `http://<server>:6070`. Do not claim HTTPS. Do not include the AIPDD API key:
+After successful first deployment, provide the server address, deployment directory, service status, the three independent AIPDD/VIP decision results, and this block. Use `http://<domain>:6070` when the New API application domain was configured; otherwise use `http://<server>:6070`. Do not claim HTTPS. Do not include the AIPDD API key:
 
 ```text
 === New API 部署凭据（请立即保存）===
@@ -367,4 +407,4 @@ AIPDD_API_KEY：已配置（不回显）
 
 Warn the user that these values are shown once and should be stored in a password manager. Never paste `.env` or raw Docker logs into the final response.
 
-For an update, do not print or regenerate credentials. Report that `.env`, the database, the root password, and existing data were preserved, and include the separate results for channel overwrite and AIPDD price overwrite.
+For an update, do not print or regenerate credentials. Report that `.env`, the database, the root password, and existing data were preserved, and include the separate results for channel overwrite, AIPDD model-price overwrite, and VIP group-price synchronization.
