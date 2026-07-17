@@ -88,16 +88,20 @@ type AIPDDCapability struct {
 }
 
 type AIPDDSeedanceResolutionPricing struct {
-	TargetResolution          string   `json:"targetResolution"`
-	EnhancementType           string   `json:"enhancementType"`
-	InputTypes                []string `json:"inputTypes"`
-	AmountAWCoinPerSecond     float64  `json:"amountAwcoinPerSecond"`
-	TextInputAWCoinPerSecond  float64  `json:"textInputAwcoinPerSecond"`
-	ImageInputAWCoinPerSecond float64  `json:"imageInputAwcoinPerSecond"`
-	VideoInputAWCoinPerSecond float64  `json:"videoInputAwcoinPerSecond"`
-	AudioInputAWCoinPerSecond float64  `json:"audioInputAwcoinPerSecond"`
-	DefaultDurationSeconds    float64  `json:"defaultDurationSeconds"`
-	DefaultFramesPerSecond    float64  `json:"defaultFramesPerSecond"`
+	TargetResolution                 string   `json:"targetResolution"`
+	EnhancementType                  string   `json:"enhancementType"`
+	InputTypes                       []string `json:"inputTypes"`
+	AmountAWCoinPerSecond            float64  `json:"amountAwcoinPerSecond"`
+	DisplayAmountAWCoinPerSecond     *float64 `json:"displayAmountAwcoinPerSecond,omitempty"`
+	BYOKAmountAWCoinPerSecond        *float64 `json:"byokAmountAwcoinPerSecond,omitempty"`
+	TextInputAWCoinPerSecond         float64  `json:"textInputAwcoinPerSecond"`
+	ImageInputAWCoinPerSecond        float64  `json:"imageInputAwcoinPerSecond"`
+	VideoInputAWCoinPerSecond        float64  `json:"videoInputAwcoinPerSecond"`
+	DisplayVideoInputAWCoinPerSecond *float64 `json:"displayVideoInputAwcoinPerSecond,omitempty"`
+	BYOKVideoInputAWCoinPerSecond    *float64 `json:"byokVideoInputAwcoinPerSecond,omitempty"`
+	AudioInputAWCoinPerSecond        float64  `json:"audioInputAwcoinPerSecond"`
+	DefaultDurationSeconds           float64  `json:"defaultDurationSeconds"`
+	DefaultFramesPerSecond           float64  `json:"defaultFramesPerSecond"`
 }
 
 type AIPDDSeedancePricing struct {
@@ -520,7 +524,21 @@ func IsAIPDDPerCallBillingModel(modelName string) bool {
 }
 
 func IsAIPDDExactBillingModel(modelName string) bool {
-	return IsAIPDDSeedanceModel(modelName)
+	return IsAIPDDTaskPricingModel(modelName)
+}
+
+// IsAIPDDDurationBillingModel identifies catalog capabilities whose upstream
+// charge is proportional to generated seconds.
+func IsAIPDDDurationBillingModel(modelName string) bool {
+	capability, ok := GetAIPDDCapability(modelName)
+	return ok && capability.BillingType == AIPDDBillingTypeDurationSeconds
+}
+
+// IsAIPDDTaskPricingModel identifies task models that must use the structured
+// task-pricing pipeline. This includes resolution-aware Seedance models and
+// generic per-second workflows such as LTX.
+func IsAIPDDTaskPricingModel(modelName string) bool {
+	return IsAIPDDSeedanceModel(modelName) || IsAIPDDDurationBillingModel(modelName)
 }
 
 // IsAIPDDSeedanceModel identifies the Seedance execution family without

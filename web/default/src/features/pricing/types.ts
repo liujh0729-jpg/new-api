@@ -29,11 +29,13 @@ export type PricingVendor = {
 }
 
 export type ReferenceVideoPolicy = 'same' | 'custom' | 'disabled'
+export type TaskPricingGroupRatioPolicy = 'global' | 'none'
 
 export type TaskPricingTier = {
   no_reference_video_unit_price: number
   reference_video_policy: ReferenceVideoPolicy
   reference_video_unit_price?: number
+  group_ratio_policy?: TaskPricingGroupRatioPolicy
 }
 
 export type LegacyTaskPricing = TaskPricingTier & {

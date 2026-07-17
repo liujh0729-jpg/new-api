@@ -114,6 +114,13 @@ function formatTaskCurrency(
   })
 }
 
+function taskTierGroupRatio(
+  tier: { group_ratio_policy?: 'global' | 'none' },
+  ratio: number
+): number {
+  return tier.group_ratio_policy === 'none' ? 1 : ratio
+}
+
 /** Format authoritative local per-second task prices for list/detail views. */
 export function getTaskPriceInfo(
   model: PricingModel,
@@ -140,24 +147,27 @@ export function getTaskPriceInfo(
   const tiers = getTaskPricingTiers(pricing, model.task_pricing_resolutions)
   if (tiers.length === 0) return null
   const values = tiers.flatMap((tier) => {
-    const tierValues = [tier.no_reference_video_unit_price * ratio]
+    const tierRatio = taskTierGroupRatio(tier, ratio)
+    const tierValues = [tier.no_reference_video_unit_price * tierRatio]
     if (
       tier.reference_video_policy === 'custom' &&
       Number(tier.reference_video_unit_price) > 0
     ) {
-      tierValues.push(Number(tier.reference_video_unit_price) * ratio)
+      tierValues.push(Number(tier.reference_video_unit_price) * tierRatio)
     }
     return tierValues
   })
   const startingValue = Math.min(...values)
   const firstTier = tiers[0]
-  const firstNoReferenceValue = firstTier.no_reference_video_unit_price * ratio
+  const firstTierRatio = taskTierGroupRatio(firstTier, ratio)
+  const firstNoReferenceValue =
+    firstTier.no_reference_video_unit_price * firstTierRatio
   const firstReferenceValue =
     firstTier.reference_video_policy === 'same'
       ? firstNoReferenceValue
       : firstTier.reference_video_policy === 'custom' &&
           Number(firstTier.reference_video_unit_price) > 0
-        ? Number(firstTier.reference_video_unit_price) * ratio
+        ? Number(firstTier.reference_video_unit_price) * firstTierRatio
         : undefined
 
   return {
@@ -183,15 +193,16 @@ export function getTaskPriceInfo(
             usdExchangeRate
           ),
     hasRange: new Set(values).size > 1,
-    isFree: ratio === 0,
+    isFree: values.every((value) => value === 0),
     rows: tiers.map((tier) => {
-      const noReferenceValue = tier.no_reference_video_unit_price * ratio
+      const tierRatio = taskTierGroupRatio(tier, ratio)
+      const noReferenceValue = tier.no_reference_video_unit_price * tierRatio
       const referenceValue =
         tier.reference_video_policy === 'same'
           ? noReferenceValue
           : tier.reference_video_policy === 'custom' &&
               Number(tier.reference_video_unit_price) > 0
-            ? Number(tier.reference_video_unit_price) * ratio
+            ? Number(tier.reference_video_unit_price) * tierRatio
             : undefined
       return {
         resolution: tier.resolution,

@@ -406,7 +406,7 @@ func TestConvertToRequestPayloadValidatesLTX23Policy(t *testing.T) {
 		ModelName:              modelName,
 		ScriptCode:             modelName,
 		EndpointType:           constant.EndpointTypeOpenAIVideo,
-		BillingType:            constant.AIPDDBillingTypePerCall,
+		BillingType:            constant.AIPDDBillingTypeDurationSeconds,
 		WorkflowParamKeys:      []string{"prompt", "image", "negativePrompt", "width", "height", "numFrames", "frameRate", "seed"},
 		RequiredWorkflowParams: map[string]bool{"prompt": true, "image": true, "negativePrompt": false, "width": false, "height": false, "numFrames": true, "frameRate": false, "seed": false},
 		WorkflowDefaults: []constant.AIPDDWorkflowParamDefault{
@@ -447,9 +447,25 @@ func TestConvertToRequestPayloadValidatesLTX23Policy(t *testing.T) {
 	}
 
 	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
-	ctx.Set("task_request", relaycommon.TaskSubmitReq{Model: modelName, Duration: 20})
-	if ratios := adaptor.EstimateBilling(ctx, relayInfoWithModel(modelName)); ratios != nil {
-		t.Fatalf("per-call LTX must not add seconds billing: %#v", ratios)
+	ctx.Set("task_request", relaycommon.TaskSubmitReq{
+		Model: modelName, Prompt: "camera push in", Image: "https://cdn.example.com/input.png", Duration: 20,
+		Metadata: map[string]interface{}{"width": 704, "height": 1280},
+	})
+	if ratios := adaptor.EstimateBilling(ctx, relayInfoWithModel(modelName)); ratios["seconds"] != 20 {
+		t.Fatalf("duration-priced LTX must bill generated seconds: %#v", ratios)
+	}
+	facts, taskErr := adaptor.EstimateTaskPricingFacts(ctx, relayInfoWithModel(modelName))
+	if taskErr != nil || facts.Quantity != 20 || facts.Resolution != "" || facts.HasReferenceVideo {
+		t.Fatalf("unexpected explicit-duration LTX pricing facts: facts=%#v err=%#v", facts, taskErr)
+	}
+
+	defaultCtx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	defaultCtx.Set("task_request", relaycommon.TaskSubmitReq{
+		Model: modelName, Prompt: "camera push in", Image: "https://cdn.example.com/input.png",
+	})
+	defaultFacts, taskErr := adaptor.EstimateTaskPricingFacts(defaultCtx, relayInfoWithModel(modelName))
+	if taskErr != nil || defaultFacts.Quantity != 2 {
+		t.Fatalf("default 49-frame LTX request must bill 2 seconds: facts=%#v err=%#v", defaultFacts, taskErr)
 	}
 
 	cases := []struct {
@@ -483,7 +499,7 @@ func TestConvertToRequestPayloadMapsLTX23FirstAndLastFramesSeparately(t *testing
 		ModelName:              modelName,
 		ScriptCode:             modelName,
 		EndpointType:           constant.EndpointTypeOpenAIVideo,
-		BillingType:            constant.AIPDDBillingTypePerCall,
+		BillingType:            constant.AIPDDBillingTypeDurationSeconds,
 		WorkflowParamKeys:      []string{"first_frame_image", "last_frame_image", "audio", "local_prompts", "timeline_data", "length", "global_prompt"},
 		RequiredWorkflowParams: map[string]bool{"first_frame_image": true, "last_frame_image": true, "audio": false, "local_prompts": true, "timeline_data": true, "length": true, "global_prompt": true},
 		WorkflowDefaults: []constant.AIPDDWorkflowParamDefault{

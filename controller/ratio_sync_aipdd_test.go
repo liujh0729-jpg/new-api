@@ -10,18 +10,17 @@ import (
 )
 
 func TestAIPDDCatalogRatioDataSkipsPerSecondTaskPrices(t *testing.T) {
+	displayAmount := 40.0
+	displayVideoAmount := 60.0
 	seedancePricing := aipddcatalog.AtomicPricing{
-		PricingModel: "per_second", Currency: "awcoin", Enabled: true,
+		PricingModel: "per_second", Currency: "awcoin", PricingBasis: "display", Enabled: true,
 		ByResolution: map[string]constant.AIPDDSeedanceResolutionPricing{
 			"1080p": {
-				TargetResolution:          "1080p",
-				DefaultDurationSeconds:    5,
-				DefaultFramesPerSecond:    24,
-				AmountAWCoinPerSecond:     40,
-				TextInputAWCoinPerSecond:  40,
-				ImageInputAWCoinPerSecond: 40,
-				VideoInputAWCoinPerSecond: 60,
-				AudioInputAWCoinPerSecond: 40,
+				TargetResolution:                 "1080p",
+				DisplayAmountAWCoinPerSecond:     &displayAmount,
+				DisplayVideoInputAWCoinPerSecond: &displayVideoAmount,
+				DefaultDurationSeconds:           5,
+				DefaultFramesPerSecond:           24,
 			},
 		},
 	}

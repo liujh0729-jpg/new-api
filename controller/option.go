@@ -71,7 +71,7 @@ func buildCompletionRatioMetaValue(optionValues map[string]string) string {
 }
 
 func buildTaskPricingRequiredModelsValue() string {
-	models := model.GetAIPDDSeedancePricingRequiredModels()
+	models := model.GetAIPDDTaskPricingRequiredModels()
 	jsonBytes, err := common.Marshal(models)
 	if err != nil {
 		return "[]"

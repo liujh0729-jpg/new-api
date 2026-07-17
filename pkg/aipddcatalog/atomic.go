@@ -38,6 +38,7 @@ type AtomicExecution struct {
 type AtomicPricing struct {
 	PricingModel         string                                             `json:"pricingModel"`
 	Currency             string                                             `json:"currency"`
+	PricingBasis         string                                             `json:"pricingBasis,omitempty"`
 	Enabled              bool                                               `json:"enabled"`
 	ChargeConfig         map[string]any                                     `json:"chargeConfig"`
 	PromptPerMillion     float64                                            `json:"promptPerMillion"`
@@ -166,6 +167,10 @@ func (catalog AtomicCatalog) Validate() error {
 			if err := validateSeedancePricing(capability.ID, capability.Pricing); err != nil {
 				return err
 			}
+		} else if strings.EqualFold(strings.TrimSpace(capability.Pricing.PricingModel), "per_unit") {
+			if err := validateDurationUnitPricing(capability.ID, capability.Pricing); err != nil {
+				return err
+			}
 		}
 	}
 	for _, model := range catalog.Models {
@@ -179,15 +184,40 @@ func (catalog AtomicCatalog) Validate() error {
 	return nil
 }
 
+func validateDurationUnitPricing(modelName string, pricing AtomicPricing) error {
+	if !strings.EqualFold(strings.TrimSpace(pricing.Currency), "awcoin") || !pricing.Enabled {
+		return fmt.Errorf("AIPDD per-unit model %q has invalid pricing metadata", modelName)
+	}
+	unit, _ := pricing.ChargeConfig["unit"].(string)
+	if !strings.EqualFold(strings.TrimSpace(unit), "second") {
+		return fmt.Errorf("AIPDD per-unit model %q has unsupported charge unit %q", modelName, unit)
+	}
+	amount := TaskAWCoinPrice(pricing)
+	if amount <= 0 || math.IsNaN(amount) || math.IsInf(amount, 0) {
+		return fmt.Errorf("AIPDD per-unit model %q requires a positive AWCoin amount per second", modelName)
+	}
+	return nil
+}
+
 func validateSeedancePricing(modelName string, pricing AtomicPricing) error {
 	if !strings.EqualFold(strings.TrimSpace(pricing.PricingModel), "per_second") ||
 		!strings.EqualFold(strings.TrimSpace(pricing.Currency), "awcoin") || !pricing.Enabled {
 		return fmt.Errorf("AIPDD Seedance model %q has invalid pricing metadata", modelName)
 	}
+	if basis := strings.TrimSpace(pricing.PricingBasis); !strings.EqualFold(basis, "display") {
+		return fmt.Errorf("AIPDD Seedance model %q requires pricingBasis %q", modelName, "display")
+	}
 	if len(pricing.ByResolution) == 0 {
 		return fmt.Errorf("AIPDD Seedance model %q has no resolution pricing", modelName)
 	}
 	for resolution, item := range pricing.ByResolution {
+		if item.DisplayAmountAWCoinPerSecond == nil || item.DisplayVideoInputAWCoinPerSecond == nil {
+			return fmt.Errorf(
+				"AIPDD Seedance model %q resolution %q requires explicit display pricing fields",
+				modelName,
+				resolution,
+			)
+		}
 		resolution = strings.TrimSpace(resolution)
 		if resolution == "" || !strings.EqualFold(resolution, strings.TrimSpace(item.TargetResolution)) {
 			return fmt.Errorf(
@@ -201,11 +231,8 @@ func validateSeedancePricing(modelName string, pricing AtomicPricing) error {
 			name  string
 			value float64
 		}{
-			{name: "amountAwcoinPerSecond", value: item.AmountAWCoinPerSecond},
-			{name: "textInputAwcoinPerSecond", value: item.TextInputAWCoinPerSecond},
-			{name: "imageInputAwcoinPerSecond", value: item.ImageInputAWCoinPerSecond},
-			{name: "videoInputAwcoinPerSecond", value: item.VideoInputAWCoinPerSecond},
-			{name: "audioInputAwcoinPerSecond", value: item.AudioInputAWCoinPerSecond},
+			{name: "displayAmountAwcoinPerSecond", value: *item.DisplayAmountAWCoinPerSecond},
+			{name: "displayVideoInputAwcoinPerSecond", value: *item.DisplayVideoInputAWCoinPerSecond},
 			{name: "defaultDurationSeconds", value: item.DefaultDurationSeconds},
 			{name: "defaultFramesPerSecond", value: item.DefaultFramesPerSecond},
 		}
@@ -262,11 +289,46 @@ func (catalog AtomicCatalog) RuntimeCapabilities() []constant.AIPDDCapability {
 		capability.AWCoinUSDPerCoin = catalog.AWCoinRate.USDPerAWCoin
 		if item.AdapterCode == "seedance" {
 			capability.BillingType = constant.AIPDDBillingTypeDurationSeconds
-			capability.SeedancePricing = &constant.AIPDDSeedancePricing{ByResolution: item.Pricing.ByResolution}
+			capability.SeedancePricing = &constant.AIPDDSeedancePricing{
+				ByResolution: normalizeSeedanceDisplayPricingMatrix(item.Pricing.ByResolution),
+			}
+		} else if strings.EqualFold(strings.TrimSpace(item.Pricing.PricingModel), "per_unit") &&
+			chargeConfigUnit(item.Pricing.ChargeConfig) == "second" {
+			capability.BillingType = constant.AIPDDBillingTypeDurationSeconds
 		}
 		capabilities = append(capabilities, capability)
 	}
 	return capabilities
+}
+
+func chargeConfigUnit(chargeConfig map[string]any) string {
+	unit, _ := chargeConfig["unit"].(string)
+	return strings.ToLower(strings.TrimSpace(unit))
+}
+
+func normalizeSeedanceDisplayPricingMatrix(
+	byResolution map[string]constant.AIPDDSeedanceResolutionPricing,
+) map[string]constant.AIPDDSeedanceResolutionPricing {
+	normalized := make(map[string]constant.AIPDDSeedanceResolutionPricing, len(byResolution))
+	for resolution, pricing := range byResolution {
+		normalized[resolution] = normalizeSeedanceDisplayPricing(pricing)
+	}
+	return normalized
+}
+
+func normalizeSeedanceDisplayPricing(
+	pricing constant.AIPDDSeedanceResolutionPricing,
+) constant.AIPDDSeedanceResolutionPricing {
+	if pricing.DisplayAmountAWCoinPerSecond != nil {
+		pricing.AmountAWCoinPerSecond = *pricing.DisplayAmountAWCoinPerSecond
+		pricing.TextInputAWCoinPerSecond = *pricing.DisplayAmountAWCoinPerSecond
+		pricing.ImageInputAWCoinPerSecond = *pricing.DisplayAmountAWCoinPerSecond
+		pricing.AudioInputAWCoinPerSecond = *pricing.DisplayAmountAWCoinPerSecond
+	}
+	if pricing.DisplayVideoInputAWCoinPerSecond != nil {
+		pricing.VideoInputAWCoinPerSecond = *pricing.DisplayVideoInputAWCoinPerSecond
+	}
+	return pricing
 }
 
 func TaskAWCoinPrice(pricing AtomicPricing) float64 {
@@ -277,10 +339,11 @@ func TaskAWCoinPrice(pricing AtomicPricing) float64 {
 	}
 	best := 0.0
 	for _, resolution := range pricing.ByResolution {
-		if resolution.DefaultDurationSeconds <= 0 || resolution.AmountAWCoinPerSecond <= 0 {
+		if resolution.DisplayAmountAWCoinPerSecond == nil || resolution.DefaultDurationSeconds <= 0 ||
+			*resolution.DisplayAmountAWCoinPerSecond <= 0 {
 			continue
 		}
-		amount := math.Ceil(resolution.AmountAWCoinPerSecond * resolution.DefaultDurationSeconds)
+		amount := math.Ceil(*resolution.DisplayAmountAWCoinPerSecond * resolution.DefaultDurationSeconds)
 		if amount > 0 && (best == 0 || amount < best) {
 			best = amount
 		}

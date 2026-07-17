@@ -142,6 +142,18 @@ describe('local task pricing display', () => {
       isValidTaskPricing({
         unit: 'second',
         by_resolution: {
+          '480p': {
+            no_reference_video_unit_price: 0.08,
+            reference_video_policy: 'same',
+            group_ratio_policy: 'unexpected' as never,
+          },
+        },
+      })
+    ).toBe(false)
+    expect(
+      isValidTaskPricing({
+        unit: 'second',
+        by_resolution: {
           ' 720P ': {
             no_reference_video_unit_price: 0.08,
             reference_video_policy: 'same',
@@ -163,6 +175,24 @@ describe('local task pricing display', () => {
     expect(info?.rows[0].referencePrice).toContain('0.06')
     expect(info?.startingPrice).toContain('0.04')
     expect(info?.hasRange).toBe(true)
+  })
+
+  test('keeps native price for a resolution that opts out of group discounts', () => {
+    const model = createMatrixTaskModel()
+    if ('by_resolution' in model.task_pricing!) {
+      model.task_pricing.by_resolution['480p'].group_ratio_policy = 'none'
+    }
+    model.group_ratio = { ...model.group_ratio, VIP1: 0.78 }
+
+    const info = getTaskPriceInfo(model, {
+      group: 'VIP1',
+      groupRatio: model.group_ratio,
+    })
+
+    expect(info?.rows[0].resolution).toBe('480p')
+    expect(info?.rows[0].noReferencePrice).toContain('0.04')
+    expect(info?.rows[1].resolution).toBe('720p')
+    expect(info?.rows[1].noReferencePrice).toContain('0.0624')
   })
 
   test('sorts matrix task pricing by the lowest active tier', () => {

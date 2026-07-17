@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -191,7 +192,7 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		}
 		c.Set(seedanceOfficialPayloadContextKey, payload)
 	}
-	if cfg.BillingType == constant.AIPDDBillingTypeDurationSeconds && cfg.SeedancePricing == nil {
+	if cfg.BillingType == constant.AIPDDBillingTypeDurationSeconds && cfg.SeedancePricing == nil && !isLtx23Config(cfg) {
 		duration, err := normalizeDurationSeconds(&req, cfg)
 		if err != nil {
 			return service.TaskErrorWrapperLocal(err, "invalid_duration", http.StatusBadRequest)
@@ -254,11 +255,11 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 	}
 
 	if cfg.BillingType == constant.AIPDDBillingTypeDurationSeconds {
-		duration, err := normalizeDurationSeconds(&req, cfg)
+		duration, err := taskPricingDurationSeconds(req, cfg)
 		if err != nil {
 			return nil
 		}
-		ratios["seconds"] = float64(duration)
+		ratios["seconds"] = duration
 	}
 
 	if cfg.EndpointType == constant.EndpointTypeImageGeneration {
@@ -278,42 +279,53 @@ func (a *TaskAdaptor) EstimateTaskPricingFacts(c *gin.Context, info *relaycommon
 		return relaycommon.TaskPricingFacts{}, service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
 	}
 	cfg, ok := a.resolveModelConfig(ginRequestContext(c), firstNonEmpty(info.UpstreamModelName, info.OriginModelName, req.Model))
-	if !ok || !isSeedanceExecutionConfig(cfg) {
+	if !ok || cfg.BillingType != constant.AIPDDBillingTypeDurationSeconds {
 		return relaycommon.TaskPricingFacts{}, service.TaskErrorWrapperLocal(
 			fmt.Errorf("task pricing facts are unavailable for model %s", info.OriginModelName),
 			"task_pricing_facts_unavailable",
 			http.StatusBadRequest,
 		)
 	}
-	raw, err := getSeedanceOfficialPayload(c)
-	if err != nil {
-		return relaycommon.TaskPricingFacts{}, service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+	if isSeedanceExecutionConfig(cfg) {
+		raw, err := getSeedanceOfficialPayload(c)
+		if err != nil {
+			return relaycommon.TaskPricingFacts{}, service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+		}
+		resolution, err := billing_setting.NormalizeTaskPricingResolution(anyToString(raw["resolution"]))
+		if err != nil {
+			return relaycommon.TaskPricingFacts{}, service.TaskErrorWrapperLocal(err, "missing_resolution", http.StatusBadRequest)
+		}
+		pricing, ok := seedanceResolutionPricing(cfg, resolution)
+		if !ok {
+			return relaycommon.TaskPricingFacts{}, service.TaskErrorWrapperLocal(
+				fmt.Errorf("resolution %q is not supported by AIPDD model %s", resolution, cfg.ModelName),
+				"unsupported_resolution",
+				http.StatusBadRequest,
+			)
+		}
+		quantity := seedanceBillingSeconds(raw, pricing)
+		if quantity <= 0 {
+			return relaycommon.TaskPricingFacts{}, service.TaskErrorWrapperLocal(
+				fmt.Errorf("invalid billing duration for model %s", info.OriginModelName),
+				"invalid_duration",
+				http.StatusBadRequest,
+			)
+		}
+		return relaycommon.TaskPricingFacts{
+			Quantity:          quantity,
+			Resolution:        resolution,
+			HasReferenceVideo: seedanceHasReferenceVideo(raw["content"]),
+		}, nil
 	}
-	resolution, err := billing_setting.NormalizeTaskPricingResolution(anyToString(raw["resolution"]))
-	if err != nil {
-		return relaycommon.TaskPricingFacts{}, service.TaskErrorWrapperLocal(err, "missing_resolution", http.StatusBadRequest)
+
+	quantity, err := taskPricingDurationSeconds(req, cfg)
+	if err != nil || quantity <= 0 || math.IsNaN(quantity) || math.IsInf(quantity, 0) {
+		if err == nil {
+			err = fmt.Errorf("invalid billing duration for model %s", info.OriginModelName)
+		}
+		return relaycommon.TaskPricingFacts{}, service.TaskErrorWrapperLocal(err, "invalid_duration", http.StatusBadRequest)
 	}
-	pricing, ok := seedanceResolutionPricing(cfg, resolution)
-	if !ok {
-		return relaycommon.TaskPricingFacts{}, service.TaskErrorWrapperLocal(
-			fmt.Errorf("resolution %q is not supported by AIPDD model %s", resolution, cfg.ModelName),
-			"unsupported_resolution",
-			http.StatusBadRequest,
-		)
-	}
-	quantity := seedanceBillingSeconds(raw, pricing)
-	if quantity <= 0 {
-		return relaycommon.TaskPricingFacts{}, service.TaskErrorWrapperLocal(
-			fmt.Errorf("invalid billing duration for model %s", info.OriginModelName),
-			"invalid_duration",
-			http.StatusBadRequest,
-		)
-	}
-	return relaycommon.TaskPricingFacts{
-		Quantity:          quantity,
-		Resolution:        resolution,
-		HasReferenceVideo: seedanceHasReferenceVideo(raw["content"]),
-	}, nil
+	return relaycommon.TaskPricingFacts{Quantity: quantity}, nil
 }
 
 func (a *TaskAdaptor) AIPDDTaskSnapshot(info *relaycommon.RelayInfo) *model.AIPDDTaskExecutionSnapshot {
@@ -914,7 +926,7 @@ func (a *TaskAdaptor) convertToRequestPayload(req relaycommon.TaskSubmitReq, inf
 	if err != nil {
 		return nil, err
 	}
-	if cfg.BillingType == constant.AIPDDBillingTypeDurationSeconds {
+	if cfg.BillingType == constant.AIPDDBillingTypeDurationSeconds && !isLtx23Config(cfg) {
 		duration, err := normalizeDurationSeconds(&req, cfg)
 		if err != nil {
 			return nil, err
@@ -1373,6 +1385,32 @@ func normalizeDurationSeconds(req *relaycommon.TaskSubmitReq, cfg modelConfig) (
 		return 0, fmt.Errorf("duration must be 5 or 10 seconds")
 	}
 	return duration, nil
+}
+
+func taskPricingDurationSeconds(req relaycommon.TaskSubmitReq, cfg modelConfig) (float64, error) {
+	if !isLtx23Config(cfg) {
+		duration, err := normalizeDurationSeconds(&req, cfg)
+		return float64(duration), err
+	}
+	if err := normalizeLtxRequestDuration(&req, cfg); err != nil {
+		return 0, err
+	}
+	content, err := buildWorkflowContent(req, cfg)
+	if err != nil {
+		return 0, err
+	}
+	frames := positiveIntValue(content["numFrames"])
+	if frames <= 0 {
+		frames = positiveIntValue(content["length"])
+	}
+	frameRate := positiveIntValue(content["frameRate"])
+	if frameRate <= 0 && isLtx23StartEndConfig(cfg) {
+		frameRate = 24
+	}
+	if frames <= 1 || frameRate <= 0 {
+		return 0, fmt.Errorf("LTX 2.3 requires at least two frames and a positive frame rate")
+	}
+	return float64(frames-1) / float64(frameRate), nil
 }
 
 func parseDurationValue(value string) int {

@@ -53,7 +53,7 @@ var (
 	supportedEndpointMap              map[string]common.EndpointInfo
 	lastGetPricingTime                time.Time
 	updatePricingLock                 sync.Mutex
-	aipddSeedancePricingRequiredSet   map[string]struct{}
+	aipddTaskPricingRequiredSet       map[string]struct{}
 	aipddTaskPricingResolutionOptions map[string][]string
 
 	// 缓存映射：模型名 -> 启用分组 / 计费类型
@@ -114,8 +114,24 @@ func refreshPricingLocked() {
 func GetAIPDDSeedancePricingRequiredModels() []string {
 	updatePricingLock.Lock()
 	defer updatePricingLock.Unlock()
-	required := getAIPDDSeedancePricingRequiredSetLocked()
-	return sortedPricingModelNames(required)
+	required := getAIPDDTaskPricingRequiredSetLocked()
+	options := getTaskPricingResolutionOptionsLocked()
+	seedance := make(map[string]struct{})
+	for modelName := range required {
+		if _, ok := options[modelName]; ok {
+			seedance[modelName] = struct{}{}
+		}
+	}
+	return sortedPricingModelNames(seedance)
+}
+
+// GetAIPDDTaskPricingRequiredModels returns local/origin model names that
+// route to an AIPDD duration-priced capability. It includes channel aliases so
+// they cannot fall back to a stale fixed ModelPrice.
+func GetAIPDDTaskPricingRequiredModels() []string {
+	updatePricingLock.Lock()
+	defer updatePricingLock.Unlock()
+	return sortedPricingModelNames(getAIPDDTaskPricingRequiredSetLocked())
 }
 
 // GetTaskPricingResolutionOptions returns the current upstream-supported
@@ -285,23 +301,39 @@ func IsAIPDDSeedancePricingRequiredModel(modelName string) bool {
 	}
 	updatePricingLock.Lock()
 	defer updatePricingLock.Unlock()
-	_, ok := getAIPDDSeedancePricingRequiredSetLocked()[modelName]
+	if _, required := getAIPDDTaskPricingRequiredSetLocked()[modelName]; !required {
+		return false
+	}
+	_, seedance := getTaskPricingResolutionOptionsLocked()[modelName]
+	return seedance
+}
+
+// IsAIPDDTaskPricingRequiredModel applies the same origin-level rule used by
+// the public pricing list for every AIPDD duration-priced task model.
+func IsAIPDDTaskPricingRequiredModel(modelName string) bool {
+	modelName = strings.TrimSpace(modelName)
+	if modelName == "" {
+		return false
+	}
+	updatePricingLock.Lock()
+	defer updatePricingLock.Unlock()
+	_, ok := getAIPDDTaskPricingRequiredSetLocked()[modelName]
 	return ok
 }
 
-func getAIPDDSeedancePricingRequiredSetLocked() map[string]struct{} {
-	if aipddSeedancePricingRequiredSet != nil {
-		return aipddSeedancePricingRequiredSet
+func getAIPDDTaskPricingRequiredSetLocked() map[string]struct{} {
+	if aipddTaskPricingRequiredSet != nil {
+		return aipddTaskPricingRequiredSet
 	}
-	aipddSeedancePricingRequiredSet = computeAIPDDSeedancePricingRequiredSet()
-	return aipddSeedancePricingRequiredSet
+	aipddTaskPricingRequiredSet = computeAIPDDTaskPricingRequiredSet()
+	return aipddTaskPricingRequiredSet
 }
 
-func computeAIPDDSeedancePricingRequiredSet() map[string]struct{} {
+func computeAIPDDTaskPricingRequiredSet() map[string]struct{} {
 	required := make(map[string]struct{})
 	for _, capability := range constant.GetAIPDDCapabilities() {
 		name := strings.TrimSpace(capability.ModelName)
-		if name != "" && constant.IsAIPDDSeedanceModel(name) {
+		if name != "" && constant.IsAIPDDTaskPricingModel(name) {
 			required[name] = struct{}{}
 		}
 	}
@@ -317,7 +349,7 @@ func computeAIPDDSeedancePricingRequiredSet() map[string]struct{} {
 			Where("abilities.enabled = ? AND channels.status = ? AND channels.type = ?", true, common.ChannelStatusEnabled, constant.ChannelTypeAIPDD).
 			Scan(&rows).Error
 		if err != nil {
-			common.SysLog("failed to resolve AIPDD Seedance pricing aliases: " + err.Error())
+			common.SysLog("failed to resolve AIPDD task pricing aliases: " + err.Error())
 		} else {
 			for _, row := range rows {
 				origin := strings.TrimSpace(row.Model)
@@ -331,7 +363,7 @@ func computeAIPDDSeedancePricingRequiredSet() map[string]struct{} {
 						mapped = finalPricingMappedModel(origin, mapping)
 					}
 				}
-				if constant.IsAIPDDSeedanceModel(mapped) {
+				if constant.IsAIPDDTaskPricingModel(mapped) {
 					required[origin] = struct{}{}
 				}
 			}
@@ -373,7 +405,7 @@ func InvalidatePricingCache() {
 	pricingMap = nil
 	vendorsList = nil
 	lastGetPricingTime = time.Time{}
-	aipddSeedancePricingRequiredSet = nil
+	aipddTaskPricingRequiredSet = nil
 	aipddTaskPricingResolutionOptions = nil
 }
 
@@ -578,7 +610,7 @@ func updatePricing() {
 	}
 
 	pricingMap = make([]Pricing, 0)
-	taskPricingRequiredModels := getAIPDDSeedancePricingRequiredSetLocked()
+	taskPricingRequiredModels := getAIPDDTaskPricingRequiredSetLocked()
 	taskPricingResolutionOptions := getTaskPricingResolutionOptionsLocked()
 	for model, groups := range modelGroupsMap {
 		pricing := Pricing{
@@ -604,8 +636,9 @@ func updatePricing() {
 			if !ok || billing_setting.ValidateTaskPricingConfig(taskPricing) != nil {
 				continue
 			}
-			activeResolutions := effectiveTaskPricingResolutions(taskPricing, taskPricingResolutionOptions[model])
-			if len(activeResolutions) == 0 {
+			supportedResolutions, resolutionAware := taskPricingResolutionOptions[model]
+			activeResolutions := effectiveTaskPricingResolutions(taskPricing, supportedResolutions)
+			if (resolutionAware || len(taskPricing.ByResolution) > 0) && len(activeResolutions) == 0 {
 				continue
 			}
 			minimumPrice, ok := taskPricingMinimumUnitPrice(taskPricing, activeResolutions)

@@ -180,8 +180,8 @@ func ModelPriceHelperPerCall(c *gin.Context, info *relaycommon.RelayInfo) (types
 			GroupRatioInfo: groupRatioInfo,
 		}, nil
 	}
-	if constant.IsAIPDDSeedanceModel(info.OriginModelName) ||
-		model.IsAIPDDSeedancePricingRequiredModel(info.OriginModelName) {
+	if constant.IsAIPDDTaskPricingModel(info.OriginModelName) ||
+		model.IsAIPDDTaskPricingRequiredModel(info.OriginModelName) {
 		return types.PriceData{}, modelPriceNotConfiguredError(info.OriginModelName, info.UserId)
 	}
 
@@ -255,8 +255,8 @@ func HasModelBillingConfig(modelName string) bool {
 		pricing, ok := billing_setting.GetTaskPricing(modelName)
 		return ok && billing_setting.ValidateTaskPricingConfig(pricing) == nil
 	}
-	if constant.IsAIPDDSeedanceModel(modelName) ||
-		model.IsAIPDDSeedancePricingRequiredModel(modelName) {
+	if constant.IsAIPDDTaskPricingModel(modelName) ||
+		model.IsAIPDDTaskPricingRequiredModel(modelName) {
 		return false
 	}
 	if _, ok := ratio_setting.GetModelPrice(modelName, false); ok {

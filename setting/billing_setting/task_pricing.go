@@ -19,6 +19,8 @@ const (
 	ReferenceVideoPolicySame     = "same"
 	ReferenceVideoPolicyCustom   = "custom"
 	ReferenceVideoPolicyDisabled = "disabled"
+	TaskPricingGroupRatioGlobal  = "global"
+	TaskPricingGroupRatioNone    = "none"
 
 	TaskPricingVariantNoReferenceVideo = "no_reference_video"
 	TaskPricingVariantReferenceVideo   = "reference_video"
@@ -40,6 +42,7 @@ type TaskPricingTier struct {
 	NoReferenceVideoUnitPrice float64 `json:"no_reference_video_unit_price"`
 	ReferenceVideoPolicy      string  `json:"reference_video_policy"`
 	ReferenceVideoUnitPrice   float64 `json:"reference_video_unit_price,omitempty"`
+	GroupRatioPolicy          string  `json:"group_ratio_policy,omitempty"`
 }
 
 // TaskPricingConfig defines the local retail price for a duration-based task.
@@ -50,6 +53,7 @@ type TaskPricingConfig struct {
 	NoReferenceVideoUnitPrice float64                    `json:"no_reference_video_unit_price,omitempty"`
 	ReferenceVideoPolicy      string                     `json:"reference_video_policy,omitempty"`
 	ReferenceVideoUnitPrice   float64                    `json:"reference_video_unit_price,omitempty"`
+	GroupRatioPolicy          string                     `json:"group_ratio_policy,omitempty"`
 	ByResolution              map[string]TaskPricingTier `json:"by_resolution,omitempty"`
 }
 
@@ -263,7 +267,7 @@ func ValidateTaskPricingConfig(cfg TaskPricingConfig) error {
 		if len(cfg.ByResolution) == 0 {
 			return fmt.Errorf("%w: by_resolution must contain at least one tier", ErrInvalidTaskPricing)
 		}
-		if cfg.NoReferenceVideoUnitPrice != 0 || cfg.ReferenceVideoPolicy != "" || cfg.ReferenceVideoUnitPrice != 0 {
+		if cfg.NoReferenceVideoUnitPrice != 0 || cfg.ReferenceVideoPolicy != "" || cfg.ReferenceVideoUnitPrice != 0 || cfg.GroupRatioPolicy != "" {
 			return fmt.Errorf("%w: legacy price fields and by_resolution are mutually exclusive", ErrInvalidTaskPricing)
 		}
 		seen := make(map[string]struct{}, len(cfg.ByResolution))
@@ -287,6 +291,7 @@ func ValidateTaskPricingConfig(cfg TaskPricingConfig) error {
 		NoReferenceVideoUnitPrice: cfg.NoReferenceVideoUnitPrice,
 		ReferenceVideoPolicy:      cfg.ReferenceVideoPolicy,
 		ReferenceVideoUnitPrice:   cfg.ReferenceVideoUnitPrice,
+		GroupRatioPolicy:          cfg.GroupRatioPolicy,
 	})
 }
 
@@ -311,6 +316,17 @@ func validateTaskPricingTier(tier TaskPricingTier) error {
 			ReferenceVideoPolicySame,
 			ReferenceVideoPolicyCustom,
 			ReferenceVideoPolicyDisabled,
+		)
+	}
+
+	switch tier.GroupRatioPolicy {
+	case "", TaskPricingGroupRatioGlobal, TaskPricingGroupRatioNone:
+	default:
+		return fmt.Errorf(
+			"%w: group_ratio_policy must be one of %q or %q",
+			ErrInvalidTaskPricing,
+			TaskPricingGroupRatioGlobal,
+			TaskPricingGroupRatioNone,
 		)
 	}
 	return nil
@@ -353,6 +369,7 @@ func TaskPricingUnitPrices(cfg TaskPricingConfig) []float64 {
 			NoReferenceVideoUnitPrice: cfg.NoReferenceVideoUnitPrice,
 			ReferenceVideoPolicy:      cfg.ReferenceVideoPolicy,
 			ReferenceVideoUnitPrice:   cfg.ReferenceVideoUnitPrice,
+			GroupRatioPolicy:          cfg.GroupRatioPolicy,
 		})
 		return prices
 	}
@@ -415,6 +432,7 @@ func QuoteTaskPricing(
 		NoReferenceVideoUnitPrice: cfg.NoReferenceVideoUnitPrice,
 		ReferenceVideoPolicy:      cfg.ReferenceVideoPolicy,
 		ReferenceVideoUnitPrice:   cfg.ReferenceVideoUnitPrice,
+		GroupRatioPolicy:          cfg.GroupRatioPolicy,
 	}
 	if cfg.ByResolution != nil {
 		if canonicalResolution == "" {
@@ -446,7 +464,11 @@ func QuoteTaskPricing(
 	if !isFinitePositive(baseUSD) {
 		return TaskPricingQuote{}, fmt.Errorf("%w: calculated sale USD is not finite and positive", ErrInvalidTaskPricing)
 	}
-	saleUSD := baseUSD * groupRatio
+	appliedGroupRatio := groupRatio
+	if tier.GroupRatioPolicy == TaskPricingGroupRatioNone {
+		appliedGroupRatio = 1
+	}
+	saleUSD := baseUSD * appliedGroupRatio
 	if !isFiniteNonNegative(saleUSD) {
 		return TaskPricingQuote{}, fmt.Errorf("%w: calculated sale USD is invalid", ErrInvalidTaskPricing)
 	}
@@ -463,7 +485,7 @@ func QuoteTaskPricing(
 		Variant:           variant,
 		UnitPriceUSD:      unitPrice,
 		Quantity:          quantity,
-		GroupRatio:        groupRatio,
+		GroupRatio:        appliedGroupRatio,
 		BaseUSD:           baseUSD,
 		SaleUSD:           saleUSD,
 		Quota:             billingexpr.QuotaRound(quotaValue),

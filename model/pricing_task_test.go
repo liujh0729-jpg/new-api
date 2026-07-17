@@ -113,6 +113,74 @@ func TestPricingExposesStructuredTaskPricingAndHidesUnconfiguredSeedance(t *test
 	require.False(t, ok)
 }
 
+func TestPricingExposesFlatDurationTaskPricingAndRejectsFixedFallback(t *testing.T) {
+	truncateTables(t)
+	const (
+		modelName         = "local LTX duration alias"
+		upstreamModelName = "aipdd_ltx_2.3 pricing API test"
+	)
+
+	configSnapshot := config.GlobalConfig.ExportAllConfigs()
+	modelPriceSnapshot := ratio_setting.ModelPrice2JSONString()
+	capabilitiesSnapshot := constant.GetAIPDDCapabilities()
+	t.Cleanup(func() {
+		require.NoError(t, config.GlobalConfig.LoadFromDB(configSnapshot))
+		require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(modelPriceSnapshot))
+		constant.SetAIPDDCapabilities(capabilitiesSnapshot)
+		InvalidatePricingCache()
+	})
+
+	constant.SetAIPDDCapabilities([]constant.AIPDDCapability{{
+		ModelName:    upstreamModelName,
+		AdapterCode:  "comfyui",
+		EndpointType: constant.EndpointTypeOpenAIVideo,
+		BillingType:  constant.AIPDDBillingTypeDurationSeconds,
+	}})
+	modelMapping := `{"local LTX duration alias":"aipdd_ltx_2.3 pricing API test"}`
+	channel := Channel{
+		Type:         constant.ChannelTypeAIPDD,
+		Name:         "duration-task-pricing-public-test",
+		Key:          "sk-test",
+		Group:        "default",
+		Models:       modelName,
+		ModelMapping: &modelMapping,
+		Status:       common.ChannelStatusEnabled,
+	}
+	require.NoError(t, DB.Create(&channel).Error)
+	require.NoError(t, DB.Create(&Ability{
+		Group: "default", Model: modelName, ChannelId: channel.Id, Enabled: true,
+	}).Error)
+	require.NoError(t, DB.Create(&Model{
+		ModelName: modelName, Status: 1, NameRule: NameRuleExact,
+	}).Error)
+
+	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
+		"billing_setting.billing_mode": `{"local LTX duration alias":"task_pricing"}`,
+		"billing_setting.task_pricing": `{"local LTX duration alias":{"unit":"second","no_reference_video_unit_price":0.03,"reference_video_policy":"same"}}`,
+	}))
+	InvalidatePricingCache()
+	require.True(t, IsAIPDDTaskPricingRequiredModel(modelName))
+	require.False(t, IsAIPDDSeedancePricingRequiredModel(modelName))
+	require.NotContains(t, GetTaskPricingResolutionOptions(), modelName)
+
+	configured, ok := findPricingForTest(GetPricing(), modelName)
+	require.True(t, ok)
+	require.Equal(t, billing_setting.BillingModeTaskPricing, configured.BillingMode)
+	require.NotNil(t, configured.TaskPricing)
+	require.Equal(t, 0.03, configured.ModelPrice)
+	require.Empty(t, configured.TaskPricingResolutions)
+
+	// A stale fixed price must never revive a catalog duration-priced model.
+	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{"local LTX duration alias":99}`))
+	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
+		"billing_setting.billing_mode": `{}`,
+		"billing_setting.task_pricing": `{}`,
+	}))
+	InvalidatePricingCache()
+	_, ok = findPricingForTest(GetPricing(), modelName)
+	require.False(t, ok)
+}
+
 func findPricingForTest(items []Pricing, modelName string) (Pricing, bool) {
 	for _, item := range items {
 		if item.ModelName == modelName {

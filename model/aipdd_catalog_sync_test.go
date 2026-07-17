@@ -158,23 +158,22 @@ func TestApplyAIPDDCatalogDoesNotCreatePricingOptions(t *testing.T) {
 		constant.ResetAIPDDOpenAIModels()
 	})
 
+	displayAmount := 40.1
+	displayVideoAmount := 30.0
 	catalog := aipddTestCatalog("seedance-price-revision", "task-model", "llm-model")
 	catalog.Capabilities = []aipddcatalog.AtomicCapability{{
 		ID: "AP Seedance", Code: "seedance", Name: "AP Seedance", AdapterCode: "seedance",
 		EndpointType: "openai-video", TaskKind: "video_generation",
 		Execution: aipddcatalog.AtomicExecution{Protocol: "seedance_official", Path: "/api/v3/contents/generations/tasks"},
 		Pricing: aipddcatalog.AtomicPricing{
-			PricingModel: "per_second", Currency: "awcoin", Enabled: true,
+			PricingModel: "per_second", Currency: "awcoin", PricingBasis: "display", Enabled: true,
 			ByResolution: map[string]constant.AIPDDSeedanceResolutionPricing{
 				"1080p": {
-					TargetResolution:          "1080p",
-					DefaultDurationSeconds:    5,
-					DefaultFramesPerSecond:    24,
-					AmountAWCoinPerSecond:     40.1,
-					TextInputAWCoinPerSecond:  40.1,
-					ImageInputAWCoinPerSecond: 40.1,
-					VideoInputAWCoinPerSecond: 30,
-					AudioInputAWCoinPerSecond: 40.1,
+					TargetResolution:                 "1080p",
+					DisplayAmountAWCoinPerSecond:     &displayAmount,
+					DisplayVideoInputAWCoinPerSecond: &displayVideoAmount,
+					DefaultDurationSeconds:           5,
+					DefaultFramesPerSecond:           24,
 				},
 			},
 		},

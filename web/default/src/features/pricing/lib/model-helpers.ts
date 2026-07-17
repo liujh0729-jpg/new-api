@@ -99,7 +99,10 @@ export function isValidTaskPricingTier(
       tier.reference_video_policy === 'disabled' ||
       (tier.reference_video_policy === 'custom' &&
         Number.isFinite(tier.reference_video_unit_price) &&
-        Number(tier.reference_video_unit_price) > 0))
+        Number(tier.reference_video_unit_price) > 0)) &&
+    (tier.group_ratio_policy === undefined ||
+      tier.group_ratio_policy === 'global' ||
+      tier.group_ratio_policy === 'none')
   )
 }
 
@@ -170,6 +173,9 @@ export function getTaskPricingTiers(
       reference_video_policy: pricing.reference_video_policy,
       ...(pricing.reference_video_unit_price !== undefined
         ? { reference_video_unit_price: pricing.reference_video_unit_price }
+        : {}),
+      ...(pricing.group_ratio_policy !== undefined
+        ? { group_ratio_policy: pricing.group_ratio_policy }
         : {}),
     }))
   }

@@ -153,6 +153,11 @@ def resolution_task_pricing(
         or pricing.get("enabled") is not True
     ):
         raise ValueError(f"{capability.get('id')}: invalid per-second pricing metadata")
+    pricing_basis = str(pricing.get("pricingBasis", "")).strip().lower()
+    if pricing_basis != "display":
+        raise ValueError(
+            f"{capability.get('id')}: pricingBasis must be 'display'"
+        )
     if not pricing["byResolution"]:
         raise ValueError(f"{capability.get('id')}: per-second pricing matrix is empty")
 
@@ -182,25 +187,17 @@ def resolution_task_pricing(
             f"{capability.get('id')}/{resolution}.defaultFramesPerSecond",
             positive=True,
         )
-        non_video_rates = [
-            decimal_value(
-                item.get(field),
-                f"{capability.get('id')}/{resolution}.{field}",
-                positive=True,
-            )
-            for field in (
-                "amountAwcoinPerSecond",
-                "textInputAwcoinPerSecond",
-                "imageInputAwcoinPerSecond",
-                "audioInputAwcoinPerSecond",
-            )
-        ]
-        video_rate = decimal_value(
-            item.get("videoInputAwcoinPerSecond"),
-            f"{capability.get('id')}/{resolution}.videoInputAwcoinPerSecond",
+        no_reference_rate = decimal_value(
+            item.get("displayAmountAwcoinPerSecond"),
+            f"{capability.get('id')}/{resolution}.displayAmountAwcoinPerSecond",
             positive=True,
         )
-        no_reference_price = max(non_video_rates) * usd_per_awcoin
+        video_rate = decimal_value(
+            item.get("displayVideoInputAwcoinPerSecond"),
+            f"{capability.get('id')}/{resolution}.displayVideoInputAwcoinPerSecond",
+            positive=True,
+        )
+        no_reference_price = no_reference_rate * usd_per_awcoin
         reference_price = video_rate * usd_per_awcoin
         policy = "same" if reference_price == no_reference_price else "custom"
         tier = {
@@ -214,6 +211,33 @@ def resolution_task_pricing(
     return {
         "unit": "second",
         "by_resolution": by_resolution,
+    }
+
+
+def duration_task_pricing(
+    capability: dict[str, Any],
+    usd_per_awcoin: Decimal,
+) -> dict[str, Any]:
+    pricing = capability.get("pricing")
+    model_name = str(capability.get("id", "")).strip()
+    if not isinstance(pricing, dict):
+        raise ValueError(f"{model_name}: pricing is missing")
+    charge = pricing.get("chargeConfig")
+    if (
+        str(pricing.get("pricingModel", "")).strip().lower() != "per_unit"
+        or str(pricing.get("currency", "")).strip().lower() != "awcoin"
+        or pricing.get("enabled") is not True
+        or not isinstance(charge, dict)
+        or str(charge.get("unit", "")).strip().lower() != "second"
+    ):
+        raise ValueError(f"{model_name}: invalid per-unit second pricing metadata")
+    amount = task_awcoin_price(pricing)
+    if amount <= 0:
+        raise ValueError(f"{model_name}: no positive per-second catalog price")
+    return {
+        "unit": "second",
+        "no_reference_video_unit_price": json_number(amount * usd_per_awcoin),
+        "reference_video_policy": "same",
     }
 
 
@@ -252,12 +276,19 @@ def build_updates(
         pricing = capability.get("pricing")
         if not isinstance(pricing, dict):
             raise ValueError(f"{model_name}: pricing is missing")
-        is_task_pricing = (
+        pricing_model = str(pricing.get("pricingModel", "")).strip().lower()
+        is_resolution_task_pricing = (
             str(capability.get("adapterCode", "")).strip().lower() == "seedance"
-            or str(pricing.get("pricingModel", "")).strip().lower() == "per_second"
+            or pricing_model == "per_second"
         )
-        if is_task_pricing:
+        if is_resolution_task_pricing:
             task_pricing = resolution_task_pricing(capability, usd_per_awcoin)
+            maps["billing_setting.task_pricing"][model_name] = task_pricing
+            maps["billing_setting.billing_mode"][model_name] = "task_pricing"
+            task_models.append(model_name)
+            continue
+        if pricing_model == "per_unit":
+            task_pricing = duration_task_pricing(capability, usd_per_awcoin)
             maps["billing_setting.task_pricing"][model_name] = task_pricing
             maps["billing_setting.billing_mode"][model_name] = "task_pricing"
             task_models.append(model_name)
@@ -324,8 +355,8 @@ def build_updates(
             "per_call_models": sorted(per_call_models),
             "task_pricing_models": sorted(task_models),
             "tiered_expr_models": sorted(llm_names),
-            "task_pricing_contract": "AIPDD modality pricing fields only; by_resolution matrix; no priceVariants, flat task pricing, or legacy ModelPrice fallback",
-            "task_pricing_policy": "per-resolution maximum non-video modality USD/second with same/custom video-input USD/second",
+            "task_pricing_contract": "Seedance by_resolution matrix requires explicit display prices and rejects legacy catalog pricing; per_unit/second tasks use flat USD/second task pricing; no legacy ModelPrice fallback",
+            "task_pricing_policy": "per-resolution Seedance display USD/second plus catalog per-unit duration USD/second; BYOK prices are informational only",
         },
     }
 

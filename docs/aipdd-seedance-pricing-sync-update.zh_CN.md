@@ -1,5 +1,7 @@
 # AIPDD Seedance 定价同步与 480p 支持改造说明
 
+> **合同更正（2026-07-17）**：本文关于“目录价格随 API Key 的 PLATFORM/BYOK 身份切换”的设计已被取代，不再作为实现依据。`/v1/new-api/catalog` 现在以 `pricingBasis: "display"` 固定发布展示售价，权威字段为 `displayAmountAwcoinPerSecond` 和 `displayVideoInputAwcoinPerSecond`；BYOK 价格通过独立 `byok...` 字段返回。NewAPI 只接受该严格合同：缺少 `pricingBasis: "display"` 或任一展示价字段时立即拒绝同步，不读取旧目录价格字段，也不得将 `byok...` 用作展示售价。本文其余关于旧计费身份合同的内容仅保留为历史记录；480p 能力与执行链说明仍可参考。
+
 ## 1. 背景
 
 AIPDD 的 Seedance 展示模型近期调整了计费和执行规则：

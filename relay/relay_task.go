@@ -235,8 +235,8 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	}
 	taskPricingMode := info.TaskPricingQuote != nil ||
 		billing_setting.GetBillingMode(modelName) == billing_setting.BillingModeTaskPricing
-	if (constant.IsAIPDDSeedanceModel(info.UpstreamModelName) ||
-		model.IsAIPDDSeedancePricingRequiredModel(modelName)) &&
+	if (constant.IsAIPDDTaskPricingModel(info.UpstreamModelName) ||
+		model.IsAIPDDTaskPricingRequiredModel(modelName)) &&
 		!taskPricingMode {
 		return nil, service.TaskErrorWrapperLocal(
 			fmt.Errorf("model %s task pricing is not configured", modelName),

@@ -150,6 +150,13 @@ func TestTaskPricingMatrixValidationAndNormalization(t *testing.T) {
 	if got := TaskPricingResolutionKeys(parsed["matrix"]); !reflect.DeepEqual(got, []string{"720p", "4k"}) {
 		t.Fatalf("normalized resolution keys = %v", got)
 	}
+	parsedWithGroupPolicy, err := ParseTaskPricingMapJSON(`{"matrix":{"unit":"second","by_resolution":{"480p":{"no_reference_video_unit_price":0.08,"reference_video_policy":"same","group_ratio_policy":"none"}}}}`)
+	if err != nil {
+		t.Fatalf("ParseTaskPricingMapJSON(group policy) error = %v", err)
+	}
+	if got := parsedWithGroupPolicy["matrix"].ByResolution["480p"].GroupRatioPolicy; got != TaskPricingGroupRatioNone {
+		t.Fatalf("group ratio policy = %q", got)
+	}
 
 	invalid := []TaskPricingConfig{
 		{Unit: TaskPricingUnitSecond, ByResolution: map[string]TaskPricingTier{}},
@@ -168,6 +175,9 @@ func TestTaskPricingMatrixValidationAndNormalization(t *testing.T) {
 
 	if _, err := ParseTaskPricingMapJSON(`{"matrix":{"unit":"second","by_resolution":{"720P":{"no_reference_video_unit_price":0.08,"reference_video_policy":"same"},"720p":{"no_reference_video_unit_price":0.09,"reference_video_policy":"same"}}}}`); !errors.Is(err, ErrInvalidTaskPricing) {
 		t.Fatalf("normalized duplicate error = %v, want ErrInvalidTaskPricing", err)
+	}
+	if _, err := ParseTaskPricingMapJSON(`{"matrix":{"unit":"second","by_resolution":{"480p":{"no_reference_video_unit_price":0.08,"reference_video_policy":"same","group_ratio_policy":"unexpected"}}}}`); !errors.Is(err, ErrInvalidTaskPricing) {
+		t.Fatalf("invalid group ratio policy error = %v, want ErrInvalidTaskPricing", err)
 	}
 }
 
@@ -349,6 +359,30 @@ func TestQuoteTaskPricingSelectsResolutionTier(t *testing.T) {
 	}
 	if _, err := QuoteTaskPricing("matrix", 5, "4k", 1, 500_000, true); !errors.Is(err, ErrReferenceVideoDisabled) {
 		t.Fatalf("disabled resolution error = %v", err)
+	}
+}
+
+func TestQuoteTaskPricingCanKeepNativePriceForResolution(t *testing.T) {
+	cfg := validMatrixTaskPricing()
+	tier := cfg.ByResolution["480p"]
+	tier.GroupRatioPolicy = TaskPricingGroupRatioNone
+	cfg.ByResolution["480p"] = tier
+	installTaskPricingForTest(t, map[string]TaskPricingConfig{"matrix": cfg})
+
+	nativeQuote, err := QuoteTaskPricing("matrix", 5, "480p", 0.78, 500_000, false)
+	if err != nil {
+		t.Fatalf("QuoteTaskPricing(native resolution) error = %v", err)
+	}
+	if nativeQuote.GroupRatio != 1 || nativeQuote.BaseUSD != 0.2 || nativeQuote.SaleUSD != 0.2 || nativeQuote.Quota != 100_000 {
+		t.Fatalf("native resolution quote = %#v", nativeQuote)
+	}
+
+	discountedQuote, err := QuoteTaskPricing("matrix", 5, "720p", 0.78, 500_000, false)
+	if err != nil {
+		t.Fatalf("QuoteTaskPricing(discounted resolution) error = %v", err)
+	}
+	if discountedQuote.GroupRatio != 0.78 || discountedQuote.SaleUSD != discountedQuote.BaseUSD*0.78 {
+		t.Fatalf("discounted resolution quote = %#v", discountedQuote)
 	}
 }
 

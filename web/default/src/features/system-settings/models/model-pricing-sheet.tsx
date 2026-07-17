@@ -615,6 +615,9 @@ export function ModelPricingEditorPanel({
   const [showTaskErrors, setShowTaskErrors] = useState(false)
   const [previewOpen, setPreviewOpen] = useState(true)
   const isEditMode = !!editData
+  const editModelSupportsResolutionMatrix = editData
+    ? (taskPricingResolutionOptions[editData.name]?.length ?? 0) > 0
+    : false
   const priceUnitLabel = `${getBillingCurrencyLabel()}/1M ${t('tokens')}`
 
   const form = useForm<ModelPricingFormValues>({
@@ -664,7 +667,13 @@ export function ModelPricingEditorPanel({
         'by_resolution' in editTaskPricing &&
         !!editTaskPricing.by_resolution
       setTaskPricingVariant(
-        editTaskPricing ? (usesMatrix ? 'matrix' : 'legacy') : 'matrix'
+        editTaskPricing
+          ? usesMatrix
+            ? 'matrix'
+            : 'legacy'
+          : editModelSupportsResolutionMatrix
+            ? 'matrix'
+            : 'legacy'
       )
       setTaskPricingSource(
         editTaskPricing
@@ -723,7 +732,7 @@ export function ModelPricingEditorPanel({
     setLaneEnabled(nextLaneState.enabled)
     setPreviewOpen(true)
     setShowTaskErrors(false)
-  }, [editData, form])
+  }, [editData, editModelSupportsResolutionMatrix, form])
 
   const setFormValue = (field: keyof ModelPricingFormValues, value: string) => {
     form.setValue(field, value, {

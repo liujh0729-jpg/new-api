@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestBuildTaskPricingRequiredModelsValueUsesSeedanceCapabilityIdentity(t *testing.T) {
+func TestBuildTaskPricingRequiredModelsValueUsesDurationCapabilityIdentity(t *testing.T) {
 	original := constant.GetAIPDDCapabilities()
 	t.Cleanup(func() {
 		constant.SetAIPDDCapabilities(original)
@@ -19,6 +19,7 @@ func TestBuildTaskPricingRequiredModelsValueUsesSeedanceCapabilityIdentity(t *te
 	constant.SetAIPDDCapabilities([]constant.AIPDDCapability{
 		{ModelName: "seedance-by-adapter", AdapterCode: "seedance"},
 		{ModelName: "seedance-by-protocol", ExecutionProtocol: "seedance_official"},
+		{ModelName: "duration-workflow", BillingType: constant.AIPDDBillingTypeDurationSeconds},
 		{ModelName: "ordinary-aipdd-task", AdapterCode: "workflow", ExecutionProtocol: "shared_task"},
 		{ModelName: "seedance-by-adapter", AdapterCode: "SEEDANCE"},
 		{ModelName: "  ", AdapterCode: "seedance"},
@@ -27,6 +28,6 @@ func TestBuildTaskPricingRequiredModelsValueUsesSeedanceCapabilityIdentity(t *te
 
 	var modelNames []string
 	require.NoError(t, common.UnmarshalJsonStr(buildTaskPricingRequiredModelsValue(), &modelNames))
-	require.Equal(t, []string{"seedance-by-adapter", "seedance-by-protocol"}, modelNames)
+	require.Equal(t, []string{"duration-workflow", "seedance-by-adapter", "seedance-by-protocol"}, modelNames)
 	require.NotContains(t, modelNames, "ordinary-aipdd-task")
 }

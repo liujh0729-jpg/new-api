@@ -39,34 +39,116 @@ func TestFetchAtomicFiltersExcludedFamiliesOnReceiver(t *testing.T) {
 	require.Equal(t, "keep-comfy", runtimeCapabilities[0].ModelName)
 }
 
-func TestTaskAWCoinPriceUsesNewSeedanceModalityContract(t *testing.T) {
+func TestTaskAWCoinPriceUsesStrictSeedanceDisplayContract(t *testing.T) {
+	display4K := float64(100)
+	display720P := float64(20.1)
 	pricing := AtomicPricing{ByResolution: map[string]constant.AIPDDSeedanceResolutionPricing{
 		"4k": {
-			TargetResolution:          "4k",
-			DefaultDurationSeconds:    5,
-			DefaultFramesPerSecond:    24,
-			AmountAWCoinPerSecond:     100,
-			TextInputAWCoinPerSecond:  100,
-			ImageInputAWCoinPerSecond: 100,
-			VideoInputAWCoinPerSecond: 120,
-			AudioInputAWCoinPerSecond: 100,
+			TargetResolution:             "4k",
+			DefaultDurationSeconds:       5,
+			DefaultFramesPerSecond:       24,
+			AmountAWCoinPerSecond:        100,
+			TextInputAWCoinPerSecond:     100,
+			ImageInputAWCoinPerSecond:    100,
+			VideoInputAWCoinPerSecond:    120,
+			AudioInputAWCoinPerSecond:    100,
+			DisplayAmountAWCoinPerSecond: &display4K,
 		},
 		"720p": {
-			TargetResolution:          "720p",
-			DefaultDurationSeconds:    5,
-			DefaultFramesPerSecond:    24,
-			AmountAWCoinPerSecond:     20.1,
-			TextInputAWCoinPerSecond:  20.1,
-			ImageInputAWCoinPerSecond: 20.1,
-			VideoInputAWCoinPerSecond: 30,
-			AudioInputAWCoinPerSecond: 20.1,
+			TargetResolution:             "720p",
+			DefaultDurationSeconds:       5,
+			DefaultFramesPerSecond:       24,
+			AmountAWCoinPerSecond:        20.1,
+			TextInputAWCoinPerSecond:     20.1,
+			ImageInputAWCoinPerSecond:    20.1,
+			VideoInputAWCoinPerSecond:    30,
+			AudioInputAWCoinPerSecond:    20.1,
+			DisplayAmountAWCoinPerSecond: &display720P,
 		},
 	}}
 
 	require.Equal(t, float64(101), TaskAWCoinPrice(pricing))
 }
 
-func TestAtomicCatalogRejectsLegacySeedancePriceVariants(t *testing.T) {
+func TestAtomicCatalogPrefersExplicitDisplayPricesAndKeepsBYOKSeparate(t *testing.T) {
+	displayAmount := float64(4620)
+	byokAmount := float64(600)
+	displayVideoAmount := float64(12770)
+	byokVideoAmount := float64(1670)
+	catalog := AtomicCatalog{
+		SchemaVersion: 1,
+		Revision:      "revision-display-pricing",
+		AWCoinRate:    AtomicAWCoinRate{RMBPerAWCoin: 0.01, USDPerAWCoin: 0.001},
+		Capabilities: []AtomicCapability{{
+			ID: "AP Seedance", AdapterCode: "seedance",
+			Execution: AtomicExecution{Protocol: "seedance_official", Path: "/api/v3/contents/generations/tasks"},
+			Pricing: AtomicPricing{
+				PricingModel: "per_second", Currency: "awcoin", PricingBasis: "display", Enabled: true,
+				ByResolution: map[string]constant.AIPDDSeedanceResolutionPricing{
+					"720p": {
+						TargetResolution:                 "720p",
+						DefaultDurationSeconds:           5,
+						DefaultFramesPerSecond:           24,
+						AmountAWCoinPerSecond:            600,
+						DisplayAmountAWCoinPerSecond:     &displayAmount,
+						BYOKAmountAWCoinPerSecond:        &byokAmount,
+						TextInputAWCoinPerSecond:         600,
+						ImageInputAWCoinPerSecond:        600,
+						VideoInputAWCoinPerSecond:        1670,
+						DisplayVideoInputAWCoinPerSecond: &displayVideoAmount,
+						BYOKVideoInputAWCoinPerSecond:    &byokVideoAmount,
+						AudioInputAWCoinPerSecond:        600,
+					},
+				},
+			},
+		}},
+	}
+
+	require.NoError(t, catalog.Validate())
+	require.Equal(t, float64(23100), TaskAWCoinPrice(catalog.Capabilities[0].Pricing))
+	runtimeCapabilities := catalog.RuntimeCapabilities()
+	require.Len(t, runtimeCapabilities, 1)
+	resolution := runtimeCapabilities[0].SeedancePricing.ByResolution["720p"]
+	require.Equal(t, float64(4620), resolution.AmountAWCoinPerSecond)
+	require.Equal(t, float64(4620), resolution.TextInputAWCoinPerSecond)
+	require.Equal(t, float64(12770), resolution.VideoInputAWCoinPerSecond)
+	require.Equal(t, float64(600), *resolution.BYOKAmountAWCoinPerSecond)
+	require.Equal(t, float64(1670), *resolution.BYOKVideoInputAWCoinPerSecond)
+}
+
+func TestAtomicCatalogDoesNotFallbackWhenExplicitDisplayPriceIsInvalid(t *testing.T) {
+	zero := float64(0)
+	displayVideoAmount := float64(12770)
+	catalog := AtomicCatalog{
+		SchemaVersion: 1,
+		Revision:      "revision-invalid-display-pricing",
+		AWCoinRate:    AtomicAWCoinRate{RMBPerAWCoin: 0.01, USDPerAWCoin: 0.001},
+		Capabilities: []AtomicCapability{{
+			ID: "AP Seedance", AdapterCode: "seedance",
+			Execution: AtomicExecution{Protocol: "seedance_official", Path: "/api/v3/contents/generations/tasks"},
+			Pricing: AtomicPricing{
+				PricingModel: "per_second", Currency: "awcoin", PricingBasis: "display", Enabled: true,
+				ByResolution: map[string]constant.AIPDDSeedanceResolutionPricing{
+					"720p": {
+						TargetResolution:                 "720p",
+						DefaultDurationSeconds:           5,
+						DefaultFramesPerSecond:           24,
+						AmountAWCoinPerSecond:            600,
+						DisplayAmountAWCoinPerSecond:     &zero,
+						VideoInputAWCoinPerSecond:        1670,
+						DisplayVideoInputAWCoinPerSecond: &displayVideoAmount,
+					},
+				},
+			},
+		}},
+	}
+
+	err := catalog.Validate()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "displayAmountAwcoinPerSecond")
+}
+
+func TestAtomicCatalogRejectsLegacySeedancePricingContract(t *testing.T) {
 	catalog := AtomicCatalog{
 		SchemaVersion: 1,
 		Revision:      "revision-legacy",
@@ -85,5 +167,47 @@ func TestAtomicCatalogRejectsLegacySeedancePriceVariants(t *testing.T) {
 
 	err := catalog.Validate()
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "amountAwcoinPerSecond")
+	require.Contains(t, err.Error(), "pricingBasis")
+}
+
+func TestAtomicCatalogMapsPerUnitSecondToDurationBilling(t *testing.T) {
+	catalog := AtomicCatalog{
+		SchemaVersion: 1,
+		Revision:      "revision-duration",
+		AWCoinRate:    AtomicAWCoinRate{RMBPerAWCoin: 0.0001, USDPerAWCoin: 0.00001},
+		Capabilities: []AtomicCapability{{
+			ID: "aipdd_ltx_2.3", AdapterCode: "comfyui",
+			Execution: AtomicExecution{Protocol: "shared_task", Path: "/shared-tasks/tasks"},
+			Pricing: AtomicPricing{
+				PricingModel: "per_unit", Currency: "awcoin", Enabled: true,
+				ChargeConfig: map[string]any{"unit": "second", "amount": float64(1800)},
+			},
+		}},
+	}
+
+	require.NoError(t, catalog.Validate())
+	runtimeCapabilities := catalog.RuntimeCapabilities()
+	require.Len(t, runtimeCapabilities, 1)
+	require.Equal(t, constant.AIPDDBillingTypeDurationSeconds, runtimeCapabilities[0].BillingType)
+	require.Equal(t, float64(1800), runtimeCapabilities[0].TaskCost)
+}
+
+func TestAtomicCatalogRejectsUnsupportedPerUnitChargeUnit(t *testing.T) {
+	catalog := AtomicCatalog{
+		SchemaVersion: 1,
+		Revision:      "revision-invalid-duration",
+		AWCoinRate:    AtomicAWCoinRate{RMBPerAWCoin: 0.0001, USDPerAWCoin: 0.00001},
+		Capabilities: []AtomicCapability{{
+			ID: "unsupported-unit", AdapterCode: "comfyui",
+			Execution: AtomicExecution{Protocol: "shared_task", Path: "/shared-tasks/tasks"},
+			Pricing: AtomicPricing{
+				PricingModel: "per_unit", Currency: "awcoin", Enabled: true,
+				ChargeConfig: map[string]any{"unit": "minute", "amount": float64(1800)},
+			},
+		}},
+	}
+
+	err := catalog.Validate()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "unsupported charge unit")
 }

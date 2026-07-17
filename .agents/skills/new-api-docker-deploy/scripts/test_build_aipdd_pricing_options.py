@@ -14,14 +14,11 @@ MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)
 
 
-def resolution(name: str, amount: float, video: float, *, image: float | None = None) -> dict:
+def resolution(name: str, amount: float, video: float) -> dict:
     return {
         "targetResolution": name,
-        "amountAwcoinPerSecond": amount,
-        "textInputAwcoinPerSecond": amount,
-        "imageInputAwcoinPerSecond": amount if image is None else image,
-        "audioInputAwcoinPerSecond": amount,
-        "videoInputAwcoinPerSecond": video,
+        "displayAmountAwcoinPerSecond": amount,
+        "displayVideoInputAwcoinPerSecond": video,
         "defaultDurationSeconds": 5,
         "defaultFramesPerSecond": 24,
     }
@@ -34,16 +31,30 @@ def seedance_capability(by_resolution: dict) -> dict:
         "pricing": {
             "pricingModel": "per_second",
             "currency": "awcoin",
+            "pricingBasis": "display",
             "enabled": True,
             "byResolution": by_resolution,
         },
     }
 
 
+def duration_capability(name: str = "aipdd_ltx_2.3", *, unit: str = "second", amount: float = 1800) -> dict:
+    return {
+        "id": name,
+        "adapterCode": "comfyui",
+        "pricing": {
+            "pricingModel": "per_unit",
+            "currency": "awcoin",
+            "enabled": True,
+            "chargeConfig": {"unit": unit, "amount": amount},
+        },
+    }
+
+
 class BuildAIPDDPricingOptionsTest(unittest.TestCase):
-    def test_resolution_task_pricing_uses_only_new_modality_fields(self) -> None:
+    def test_resolution_task_pricing_uses_only_display_fields(self) -> None:
         capability = seedance_capability({
-            "720p": resolution("720p", 10, 15, image=12),
+            "720p": resolution("720p", 10, 15),
             "1080p": resolution("1080p", 20, 25),
         })
 
@@ -54,7 +65,7 @@ class BuildAIPDDPricingOptionsTest(unittest.TestCase):
                 "unit": "second",
                 "by_resolution": {
                     "720p": {
-                        "no_reference_video_unit_price": 0.12,
+                        "no_reference_video_unit_price": 0.1,
                         "reference_video_policy": "custom",
                         "reference_video_unit_price": 0.15,
                     },
@@ -67,6 +78,41 @@ class BuildAIPDDPricingOptionsTest(unittest.TestCase):
             },
             pricing,
         )
+
+    def test_resolution_task_pricing_uses_display_fields_and_ignores_byok_fields(self) -> None:
+        item = resolution("720p", 600, 1670)
+        item.update({
+            "displayAmountAwcoinPerSecond": 4620,
+            "byokAmountAwcoinPerSecond": 600,
+            "displayVideoInputAwcoinPerSecond": 12770,
+            "byokVideoInputAwcoinPerSecond": 1670,
+        })
+        capability = seedance_capability({"720p": item})
+
+        pricing = MODULE.resolution_task_pricing(capability, Decimal("0.01"))
+
+        self.assertEqual(
+            {
+                "no_reference_video_unit_price": 46.2,
+                "reference_video_policy": "custom",
+                "reference_video_unit_price": 127.7,
+            },
+            pricing["by_resolution"]["720p"],
+        )
+
+    def test_resolution_task_pricing_rejects_legacy_catalog_fields(self) -> None:
+        capability = seedance_capability({
+            "720p": {
+                "targetResolution": "720p",
+                "amountAwcoinPerSecond": 10,
+                "videoInputAwcoinPerSecond": 15,
+                "defaultDurationSeconds": 5,
+                "defaultFramesPerSecond": 24,
+            },
+        })
+
+        with self.assertRaisesRegex(ValueError, "displayAmountAwcoinPerSecond"):
+            MODULE.resolution_task_pricing(capability, Decimal("0.01"))
 
     def test_resolution_keys_are_canonical_and_same_policy_omits_custom_price(self) -> None:
         capability = seedance_capability({
@@ -113,7 +159,7 @@ class BuildAIPDDPricingOptionsTest(unittest.TestCase):
             }
         })
 
-        with self.assertRaisesRegex(ValueError, "amountAwcoinPerSecond"):
+        with self.assertRaisesRegex(ValueError, "displayAmountAwcoinPerSecond"):
             MODULE.resolution_task_pricing(capability, Decimal("0.01"))
 
     def test_existing_model_price_is_never_used_as_a_fallback(self) -> None:
@@ -131,7 +177,7 @@ class BuildAIPDDPricingOptionsTest(unittest.TestCase):
         }
         current = {"ModelPrice": {"AP Seedance": 99}}
 
-        with self.assertRaisesRegex(ValueError, "amountAwcoinPerSecond"):
+        with self.assertRaisesRegex(ValueError, "displayAmountAwcoinPerSecond"):
             MODULE.build_updates(catalog, current, {"AP Seedance"})
 
     def test_plan_reports_strict_new_contract(self) -> None:
@@ -197,7 +243,48 @@ class BuildAIPDDPricingOptionsTest(unittest.TestCase):
             updates["billing_setting.task_pricing"]["AP Seedance"],
         )
         self.assertIn("by_resolution matrix", result["summary"]["task_pricing_contract"])
-        self.assertIn("no priceVariants", result["summary"]["task_pricing_contract"])
+        self.assertIn("requires explicit display prices", result["summary"]["task_pricing_contract"])
+        self.assertIn("rejects legacy catalog pricing", result["summary"]["task_pricing_contract"])
+        self.assertIn("no legacy ModelPrice fallback", result["summary"]["task_pricing_contract"])
+
+    def test_per_unit_second_model_uses_flat_task_pricing(self) -> None:
+        catalog = {
+            "revision": "revision-duration",
+            "awcoinRate": {"usdPerAwcoin": 0.01},
+            "capabilities": [duration_capability()],
+            "models": [],
+        }
+        result = MODULE.build_updates(
+            catalog,
+            {"ModelPrice": {"aipdd_ltx_2.3": 99}},
+            {"aipdd_ltx_2.3"},
+        )
+        updates = {item["key"]: json.loads(item["value"]) for item in result["updates"]}
+
+        self.assertNotIn("aipdd_ltx_2.3", updates["ModelPrice"])
+        self.assertEqual(
+            {
+                "unit": "second",
+                "no_reference_video_unit_price": 18,
+                "reference_video_policy": "same",
+            },
+            updates["billing_setting.task_pricing"]["aipdd_ltx_2.3"],
+        )
+        self.assertEqual(
+            "task_pricing",
+            updates["billing_setting.billing_mode"]["aipdd_ltx_2.3"],
+        )
+
+    def test_per_unit_non_second_model_is_rejected(self) -> None:
+        catalog = {
+            "revision": "revision-invalid-duration",
+            "awcoinRate": {"usdPerAwcoin": 0.01},
+            "capabilities": [duration_capability(unit="minute")],
+            "models": [],
+        }
+
+        with self.assertRaisesRegex(ValueError, "per-unit second"):
+            MODULE.build_updates(catalog, {}, set())
 
 
 if __name__ == "__main__":
