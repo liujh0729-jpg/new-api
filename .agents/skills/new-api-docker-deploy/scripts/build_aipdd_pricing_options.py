@@ -206,6 +206,8 @@ def resolution_task_pricing(
         }
         if policy == "custom":
             tier["reference_video_unit_price"] = json_number(reference_price)
+        if resolution == "480p":
+            tier["group_ratio_policy"] = "none"
         by_resolution[resolution] = tier
 
     return {
@@ -355,8 +357,8 @@ def build_updates(
             "per_call_models": sorted(per_call_models),
             "task_pricing_models": sorted(task_models),
             "tiered_expr_models": sorted(llm_names),
-            "task_pricing_contract": "Seedance by_resolution matrix requires explicit display prices and rejects legacy catalog pricing; per_unit/second tasks use flat USD/second task pricing; no legacy ModelPrice fallback",
-            "task_pricing_policy": "per-resolution Seedance display USD/second plus catalog per-unit duration USD/second; BYOK prices are informational only",
+            "task_pricing_contract": "Seedance by_resolution matrix requires explicit display prices, fixes 480p group ratio at 1, and rejects legacy catalog pricing; per_unit/second tasks use flat USD/second task pricing; no legacy ModelPrice fallback",
+            "task_pricing_policy": "per-resolution Seedance display USD/second with group_ratio_policy=none for 480p, plus catalog per-unit duration USD/second; BYOK prices are informational only",
         },
     }
 

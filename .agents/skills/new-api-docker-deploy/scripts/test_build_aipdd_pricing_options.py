@@ -100,6 +100,23 @@ class BuildAIPDDPricingOptionsTest(unittest.TestCase):
             pricing["by_resolution"]["720p"],
         )
 
+    def test_resolution_task_pricing_keeps_480p_at_native_group_ratio(self) -> None:
+        capability = seedance_capability({
+            "480p": resolution("480p", 8, 12),
+            "720p": resolution("720p", 10, 15),
+        })
+
+        pricing = MODULE.resolution_task_pricing(capability, Decimal("0.01"))
+
+        self.assertEqual(
+            "none",
+            pricing["by_resolution"]["480p"]["group_ratio_policy"],
+        )
+        self.assertNotIn(
+            "group_ratio_policy",
+            pricing["by_resolution"]["720p"],
+        )
+
     def test_resolution_task_pricing_rejects_legacy_catalog_fields(self) -> None:
         capability = seedance_capability({
             "720p": {
@@ -244,6 +261,7 @@ class BuildAIPDDPricingOptionsTest(unittest.TestCase):
         )
         self.assertIn("by_resolution matrix", result["summary"]["task_pricing_contract"])
         self.assertIn("requires explicit display prices", result["summary"]["task_pricing_contract"])
+        self.assertIn("fixes 480p group ratio at 1", result["summary"]["task_pricing_contract"])
         self.assertIn("rejects legacy catalog pricing", result["summary"]["task_pricing_contract"])
         self.assertIn("no legacy ModelPrice fallback", result["summary"]["task_pricing_contract"])
 

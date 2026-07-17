@@ -21,6 +21,7 @@ const (
 	ReferenceVideoPolicyDisabled = "disabled"
 	TaskPricingGroupRatioGlobal  = "global"
 	TaskPricingGroupRatioNone    = "none"
+	taskPricingNativeResolution  = "480p"
 
 	TaskPricingVariantNoReferenceVideo = "no_reference_video"
 	TaskPricingVariantReferenceVideo   = "reference_video"
@@ -465,7 +466,7 @@ func QuoteTaskPricing(
 		return TaskPricingQuote{}, fmt.Errorf("%w: calculated sale USD is not finite and positive", ErrInvalidTaskPricing)
 	}
 	appliedGroupRatio := groupRatio
-	if tier.GroupRatioPolicy == TaskPricingGroupRatioNone {
+	if effectiveTaskPricingGroupRatioPolicy(canonicalResolution, tier.GroupRatioPolicy) == TaskPricingGroupRatioNone {
 		appliedGroupRatio = 1
 	}
 	saleUSD := baseUSD * appliedGroupRatio
@@ -492,6 +493,21 @@ func QuoteTaskPricing(
 		HasReferenceVideo: hasReferenceVideo,
 		Resolution:        canonicalResolution,
 	}, nil
+}
+
+// effectiveTaskPricingGroupRatioPolicy keeps 480p at its native retail price
+// when an existing configuration does not yet carry an explicit policy. An
+// administrator can still opt 480p back into the selected group multiplier by
+// setting group_ratio_policy to "global". Other resolutions retain the legacy
+// default of using the selected group multiplier.
+func effectiveTaskPricingGroupRatioPolicy(resolution, configuredPolicy string) string {
+	if configuredPolicy != "" {
+		return configuredPolicy
+	}
+	if resolution == taskPricingNativeResolution {
+		return TaskPricingGroupRatioNone
+	}
+	return TaskPricingGroupRatioGlobal
 }
 
 func isFinitePositive(value float64) bool {

@@ -45,7 +45,8 @@
       "480p": {
         "no_reference_video_unit_price": 0.04,
         "reference_video_policy": "custom",
-        "reference_video_unit_price": 0.06
+        "reference_video_unit_price": 0.06,
+        "group_ratio_policy": "none"
       },
       "720p": {
         "no_reference_video_unit_price": 0.08,
@@ -68,6 +69,14 @@
 - 分辨率只执行 `trim + lowercase` 标准化，不把 `2k` 与 `1440p`、`4k` 与 `2160p` 自动互转。
 - 上游目录不支持请求分辨率时返回 `unsupported_resolution`。
 - 本地配置与上游能力没有任何有效交集时，该模型不会出现在公开价格和 Playground 有效模型列表中。
+
+### 2.4 480p 统一分组倍率
+
+- `480p` 是统一的原价档位：未显式配置 `group_ratio_policy` 时，后端实际报价和公开价格展示都按倍率 `1` 处理，不应用 VIP 分组折扣。
+- `720p`、`1080p`、`2k`、`4k` 等其他档位在策略缺失时继续应用当前请求所选分组的倍率。
+- 新建或通过部署价格重建生成的 `480p` 档位会显式保存 `"group_ratio_policy": "none"`，便于审计和跨版本读取。
+- 管理员以后如需让 `480p` 重新参与分组折扣，可以显式保存 `"group_ratio_policy": "global"`；显式值优先于默认规则。
+- 该规则按分辨率统一生效，不读取客户 ID 或用户所属分组，也不增加客户级例外配置。
 
 ---
 

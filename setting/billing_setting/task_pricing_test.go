@@ -347,7 +347,7 @@ func TestQuoteTaskPricingSelectsResolutionTier(t *testing.T) {
 	if err != nil {
 		t.Fatalf("QuoteTaskPricing(matrix) error = %v", err)
 	}
-	if quote.Resolution != "480p" || quote.UnitPriceUSD != 0.06 || quote.Quota != 225_000 {
+	if quote.Resolution != "480p" || quote.UnitPriceUSD != 0.06 || quote.GroupRatio != 1 || quote.Quota != 150_000 {
 		t.Fatalf("matrix quote = %#v", quote)
 	}
 
@@ -362,11 +362,8 @@ func TestQuoteTaskPricingSelectsResolutionTier(t *testing.T) {
 	}
 }
 
-func TestQuoteTaskPricingCanKeepNativePriceForResolution(t *testing.T) {
+func TestQuoteTaskPricingKeeps480pNativeByDefault(t *testing.T) {
 	cfg := validMatrixTaskPricing()
-	tier := cfg.ByResolution["480p"]
-	tier.GroupRatioPolicy = TaskPricingGroupRatioNone
-	cfg.ByResolution["480p"] = tier
 	installTaskPricingForTest(t, map[string]TaskPricingConfig{"matrix": cfg})
 
 	nativeQuote, err := QuoteTaskPricing("matrix", 5, "480p", 0.78, 500_000, false)
@@ -383,6 +380,52 @@ func TestQuoteTaskPricingCanKeepNativePriceForResolution(t *testing.T) {
 	}
 	if discountedQuote.GroupRatio != 0.78 || discountedQuote.SaleUSD != discountedQuote.BaseUSD*0.78 {
 		t.Fatalf("discounted resolution quote = %#v", discountedQuote)
+	}
+}
+
+func TestQuoteTaskPricingExplicitGlobalPolicyDiscounts480p(t *testing.T) {
+	cfg := validMatrixTaskPricing()
+	tier := cfg.ByResolution["480p"]
+	tier.GroupRatioPolicy = TaskPricingGroupRatioGlobal
+	cfg.ByResolution["480p"] = tier
+	installTaskPricingForTest(t, map[string]TaskPricingConfig{"matrix": cfg})
+
+	quote, err := QuoteTaskPricing("matrix", 5, "480p", 0.78, 500_000, false)
+	if err != nil {
+		t.Fatalf("QuoteTaskPricing(explicit global 480p) error = %v", err)
+	}
+	if quote.GroupRatio != 0.78 || quote.SaleUSD != quote.BaseUSD*0.78 {
+		t.Fatalf("explicit global 480p quote = %#v", quote)
+	}
+}
+
+func TestQuoteTaskPricingExplicitNoneKeepsAnyResolutionNative(t *testing.T) {
+	cfg := validMatrixTaskPricing()
+	tier := cfg.ByResolution["720p"]
+	tier.GroupRatioPolicy = TaskPricingGroupRatioNone
+	cfg.ByResolution["720p"] = tier
+	installTaskPricingForTest(t, map[string]TaskPricingConfig{"matrix": cfg})
+
+	quote, err := QuoteTaskPricing("matrix", 5, "720p", 0.78, 500_000, false)
+	if err != nil {
+		t.Fatalf("QuoteTaskPricing(explicit none 720p) error = %v", err)
+	}
+	if quote.GroupRatio != 1 || quote.SaleUSD != quote.BaseUSD {
+		t.Fatalf("explicit none 720p quote = %#v", quote)
+	}
+}
+
+func TestQuoteLegacyTaskPricingKeeps480pNativeByDefault(t *testing.T) {
+	installTaskPricingForTest(t, map[string]TaskPricingConfig{
+		"legacy": validTaskPricing(ReferenceVideoPolicySame),
+	})
+
+	quote, err := QuoteTaskPricing("legacy", 5, "480p", 0.78, 500_000, false)
+	if err != nil {
+		t.Fatalf("QuoteTaskPricing(legacy 480p) error = %v", err)
+	}
+	if quote.GroupRatio != 1 || quote.SaleUSD != quote.BaseUSD {
+		t.Fatalf("legacy 480p quote = %#v", quote)
 	}
 }
 

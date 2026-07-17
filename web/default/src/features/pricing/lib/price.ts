@@ -115,10 +115,18 @@ function formatTaskCurrency(
 }
 
 function taskTierGroupRatio(
-  tier: { group_ratio_policy?: 'global' | 'none' },
+  tier: {
+    resolution?: string
+    group_ratio_policy?: 'global' | 'none'
+  },
   ratio: number
 ): number {
-  return tier.group_ratio_policy === 'none' ? 1 : ratio
+  const keepsNativePrice =
+    tier.group_ratio_policy === 'none' ||
+    (tier.group_ratio_policy === undefined &&
+      tier.resolution !== undefined &&
+      tier.resolution.trim().toLowerCase() === '480p')
+  return keepsNativePrice ? 1 : ratio
 }
 
 /** Format authoritative local per-second task prices for list/detail views. */
