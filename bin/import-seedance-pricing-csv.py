@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Import Seedance task prices and fixed VIP groups from a retail CSV.
 
-The CSV's "对比原生价" is treated as RMB per the duration declared by
-"计费单位" (for example 条/5秒). It is converted to NewAPI's USD/second
-task-pricing base. VIP1..VIP5 use fixed global ratios. A resolution whose five
-tier cells are all 1 is marked to keep its native price for every group.
+The CSV's "对比原生价" is treated directly as RMB/second and converted only
+to NewAPI's USD/second task-pricing base. The "计费单位" column is retained for
+template compatibility but does not scale the price. VIP1..VIP5 use fixed
+global ratios. A resolution whose five tier cells are all 1 is marked to keep
+its native price for every group.
 
 The command is a dry run unless --apply is supplied. Authentication uses an
 in-memory cookie jar and an interactive password prompt; secrets are not saved.
@@ -119,16 +120,6 @@ def normalize_resolution(value: Any, row_number: int) -> str:
     return resolution
 
 
-def parse_duration_seconds(value: Any, row_number: int) -> Decimal:
-    text = str(value or "").strip()
-    matches = re.findall(r"(\d+(?:\.\d+)?)\s*秒", text, flags=re.IGNORECASE)
-    if len(matches) != 1:
-        raise ImportFailure(
-            f"第 {row_number} 行：无法从计费单位 {text!r} 唯一解析秒数"
-        )
-    return decimal_value(matches[0], f"第 {row_number} 行计费秒数", positive=True)
-
-
 def parse_video_variant(value: Any, row_number: int) -> bool:
     text = str(value or "").strip()
     if "不含视频" in text:
@@ -195,7 +186,6 @@ def build_task_pricing(
             raise ImportFailure(f"第 {index} 行：平台模型不能为空")
         resolution = normalize_resolution(row["输出规格"], index)
         has_reference_video = parse_video_variant(row["能力类型"], index)
-        duration = parse_duration_seconds(row["计费单位"], index)
         native_rmb = decimal_value(
             row["对比原生价"], f"第 {index} 行对比原生价", positive=True
         )
@@ -229,17 +219,11 @@ def build_task_pricing(
         record = records.setdefault(
             key,
             {
-                "duration": duration,
                 "group_ratio_policy": group_ratio_policy,
                 "prices_rmb": {},
                 "rows": [],
             },
         )
-        if record["duration"] != duration:
-            raise ImportFailure(
-                f"{model}/{resolution} 的计费单位秒数不一致："
-                f"{record['duration']} 与 {duration}"
-            )
         if record["group_ratio_policy"] != group_ratio_policy:
             raise ImportFailure(
                 f"{model}/{resolution} 的含视频和不含视频行对分组豁免定义不一致"
@@ -259,9 +243,8 @@ def build_task_pricing(
         if False not in prices or True not in prices:
             missing = "不含视频" if False not in prices else "输入含视频"
             raise ImportFailure(f"{model}/{resolution} 缺少{missing}价格行")
-        duration = record["duration"]
-        no_reference = prices[False] / duration / rmb_per_usd
-        reference = prices[True] / duration / rmb_per_usd
+        no_reference = prices[False] / rmb_per_usd
+        reference = prices[True] / rmb_per_usd
         tier: dict[str, Any] = {
             "no_reference_video_unit_price": json_number(no_reference),
             "reference_video_policy": "same" if reference == no_reference else "custom",
@@ -470,6 +453,7 @@ def print_summary(summary: dict[str, Any], rmb_per_usd: Decimal) -> None:
     print(f"分辨率档位数：{summary['resolution_tiers']}")
     print(f"CSV 数据行：{summary['source_rows']}")
     print(f"人民币/USD：{rmb_per_usd}")
+    print("价格口径：对比原生价按人民币/秒直接导入，不按计费单位换算")
     print("固定分组：" + ", ".join(f"{name}={ratio}" for name, ratio in GROUPS.items()))
     if summary["exempt_resolutions"]:
         print("保持原价：" + ", ".join(summary["exempt_resolutions"]))

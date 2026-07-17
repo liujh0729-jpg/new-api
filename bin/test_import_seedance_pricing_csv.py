@@ -35,7 +35,7 @@ def row(resolution: str, kind: str, native: str, ratios: list[str]) -> dict[str,
 
 
 class ImportSeedancePricingCSVTest(unittest.TestCase):
-    def test_builds_native_matrix_and_exempts_all_one_resolution(self) -> None:
+    def test_treats_native_prices_as_rmb_per_second_and_exempts_all_one_resolution(self) -> None:
         rows = [
             row("480P", "输入含视频+平超", "4", ["1", "1", "1", "1", "1"]),
             row("480P", "不含视频+平超", "3", ["1", "1", "1", "1", "1"]),
@@ -48,9 +48,28 @@ class ImportSeedancePricingCSVTest(unittest.TestCase):
         tiers = pricing["AP Seedance"]["by_resolution"]
         self.assertEqual("none", tiers["480p"]["group_ratio_policy"])
         self.assertNotIn("group_ratio_policy", tiers["720p"])
-        self.assertAlmostEqual(3 / 5 / 7.3, tiers["480p"]["no_reference_video_unit_price"])
-        self.assertAlmostEqual(4 / 5 / 7.3, tiers["480p"]["reference_video_unit_price"])
+        self.assertAlmostEqual(3 / 7.3, tiers["480p"]["no_reference_video_unit_price"])
+        self.assertAlmostEqual(4 / 7.3, tiers["480p"]["reference_video_unit_price"])
         self.assertEqual(["AP Seedance/480p"], summary["exempt_resolutions"])
+
+    def test_billing_unit_does_not_scale_per_second_prices(self) -> None:
+        one_second_rows = [
+            row("720p", "输入含视频", "6", [".78", ".8", ".85", ".9", ".95"]),
+            row("720p", "不含视频", "4", [".78", ".8", ".85", ".9", ".95"]),
+        ]
+        five_second_rows = [dict(item) for item in one_second_rows]
+        for item in one_second_rows:
+            item["计费单位"] = "条/1秒"
+        for item in five_second_rows:
+            item["计费单位"] = "条/5秒"
+
+        one_second, _ = MODULE.build_task_pricing(one_second_rows, Decimal("2"))
+        five_seconds, _ = MODULE.build_task_pricing(five_second_rows, Decimal("2"))
+
+        self.assertEqual(one_second, five_seconds)
+        tier = one_second["AP Seedance"]["by_resolution"]["720p"]
+        self.assertEqual(2, tier["no_reference_video_unit_price"])
+        self.assertEqual(3, tier["reference_video_unit_price"])
 
     def test_rejects_nonstandard_group_ratios(self) -> None:
         rows = [
