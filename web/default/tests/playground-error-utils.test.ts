@@ -24,6 +24,23 @@ const MODEL_NOT_OPEN_MESSAGE =
 const translate = (key: string) => `translated:${key}`
 
 describe('normalizePlaygroundError', () => {
+  test('translates structured resolution pricing errors', () => {
+    const error = {
+      response: {
+        data: {
+          code: 'resolution_price_not_configured',
+          message: 'task pricing resolution is not configured',
+        },
+      },
+    }
+
+    expect(normalizePlaygroundError(error, translate)).toEqual({
+      code: 'resolution_price_not_configured',
+      message:
+        'translated:The selected resolution is supported upstream but has no local selling price.',
+    })
+  })
+
   test('extracts ModelNotOpen from a wrapped task error', () => {
     const error = {
       response: {

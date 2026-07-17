@@ -4703,6 +4703,26 @@
     "Zero retention": "Zero retention",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "Pricing structure": "Pricing structure",
+    "One price for all resolutions": "One price for all resolutions",
+    "Pricing by resolution": "Pricing by resolution",
+    "Only resolutions supported upstream and configured here are available to users.": "Only resolutions supported upstream and configured here are available to users.",
+    "The same price applies to every resolution supported upstream.": "The same price applies to every resolution supported upstream.",
+    "Resolution price matrix": "Resolution price matrix",
+    "Catalog suggestions are active now; custom IDs remain saved as inactive tiers.": "Catalog suggestions are active now; custom IDs remain saved as inactive tiers.",
+    "Add resolution": "Add resolution",
+    "Resolution ID": "Resolution ID",
+    "Enter a canonical resolution ID": "Enter a canonical resolution ID",
+    "Remove resolution": "Remove resolution",
+    "No resolution tiers configured": "No resolution tiers configured",
+    "Add at least one unique resolution with valid positive prices.": "Add at least one unique resolution with valid positive prices.",
+    "Inactive tiers are saved but hidden from public pricing and Playground until upstream support appears.": "Inactive tiers are saved but hidden from public pricing and Playground until upstream support appears.",
+    "All resolutions": "All resolutions",
+    "resolution tiers": "resolution tiers",
+    "The selected resolution is not supported by the current upstream model.": "The selected resolution is not supported by the current upstream model.",
+    "The selected resolution is supported upstream but has no local selling price.": "The selected resolution is supported upstream but has no local selling price.",
+    "The request could not provide the resolution and duration required for task pricing.": "The request could not provide the resolution and duration required for task pricing.",
+    "Select a video resolution before submitting the request.": "Select a video resolution before submitting the request."
   }
 }

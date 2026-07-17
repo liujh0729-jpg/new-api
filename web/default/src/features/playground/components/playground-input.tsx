@@ -269,7 +269,13 @@ export function PlaygroundInput({
   const imageSizeOptions = getImageSizeOptionsForModel(modelValue)
   const videoDurationRange = getVideoDurationRangeForModel(modelValue)
   const videoSizeOptions = getLTXVideoSizeOptionsForModel(modelValue)
-  const videoResolutionOptions = getVideoResolutionOptionsForModel(modelValue)
+  const effectiveVideoResolutions = models.find(
+    (model) => model.value === modelValue
+  )?.video_resolutions
+  const videoResolutionOptions = getVideoResolutionOptionsForModel(
+    modelValue,
+    effectiveVideoResolutions
+  )
   const videoProcessingChainOptions =
     getSeedanceVideoProcessingChainOptionsForModel(modelValue)
   const videoResolutionMenuOptions = videoResolutionOptions.map(

@@ -35,6 +35,7 @@ type Pricing struct {
 	BillingMode            string                             `json:"billing_mode,omitempty"`
 	BillingExpr            string                             `json:"billing_expr,omitempty"`
 	TaskPricing            *billing_setting.TaskPricingConfig `json:"task_pricing,omitempty"`
+	TaskPricingResolutions []string                           `json:"task_pricing_resolutions,omitempty"`
 	PricingVersion         string                             `json:"pricing_version,omitempty"`
 }
 
@@ -47,12 +48,13 @@ type PricingVendor struct {
 }
 
 var (
-	pricingMap                      []Pricing
-	vendorsList                     []PricingVendor
-	supportedEndpointMap            map[string]common.EndpointInfo
-	lastGetPricingTime              time.Time
-	updatePricingLock               sync.Mutex
-	aipddSeedancePricingRequiredSet map[string]struct{}
+	pricingMap                        []Pricing
+	vendorsList                       []PricingVendor
+	supportedEndpointMap              map[string]common.EndpointInfo
+	lastGetPricingTime                time.Time
+	updatePricingLock                 sync.Mutex
+	aipddSeedancePricingRequiredSet   map[string]struct{}
+	aipddTaskPricingResolutionOptions map[string][]string
 
 	// 缓存映射：模型名 -> 启用分组 / 计费类型
 	modelEnableGroups     = make(map[string][]string)
@@ -69,7 +71,33 @@ func GetPricing() []Pricing {
 	updatePricingLock.Lock()
 	defer updatePricingLock.Unlock()
 	refreshPricingLocked()
-	return append([]Pricing(nil), pricingMap...)
+	cloned := make([]Pricing, len(pricingMap))
+	for index, pricing := range pricingMap {
+		cloned[index] = pricing
+		cloned[index].EnableGroup = append([]string(nil), pricing.EnableGroup...)
+		cloned[index].SupportedEndpointTypes = append([]constant.EndpointType(nil), pricing.SupportedEndpointTypes...)
+		cloned[index].TaskPricingResolutions = append([]string(nil), pricing.TaskPricingResolutions...)
+		if pricing.TaskPricing != nil {
+			taskPricing := *pricing.TaskPricing
+			if pricing.TaskPricing.ByResolution != nil {
+				taskPricing.ByResolution = make(map[string]billing_setting.TaskPricingTier, len(pricing.TaskPricing.ByResolution))
+				for resolution, tier := range pricing.TaskPricing.ByResolution {
+					taskPricing.ByResolution[resolution] = tier
+				}
+			}
+			cloned[index].TaskPricing = &taskPricing
+		}
+	}
+	return cloned
+}
+
+func GetTaskPricingResolutions(modelName string) []string {
+	for _, pricing := range GetPricing() {
+		if pricing.ModelName == modelName && pricing.BillingMode == billing_setting.BillingModeTaskPricing {
+			return append([]string(nil), pricing.TaskPricingResolutions...)
+		}
+	}
+	return nil
 }
 
 func refreshPricingLocked() {
@@ -88,6 +116,162 @@ func GetAIPDDSeedancePricingRequiredModels() []string {
 	defer updatePricingLock.Unlock()
 	required := getAIPDDSeedancePricingRequiredSetLocked()
 	return sortedPricingModelNames(required)
+}
+
+// GetTaskPricingResolutionOptions returns the current upstream-supported
+// resolution identifiers for each local/origin Seedance model. The returned
+// map and slices are isolated copies safe for callers to mutate.
+func GetTaskPricingResolutionOptions() map[string][]string {
+	updatePricingLock.Lock()
+	defer updatePricingLock.Unlock()
+	options := getTaskPricingResolutionOptionsLocked()
+	cloned := make(map[string][]string, len(options))
+	for modelName, resolutions := range options {
+		cloned[modelName] = append([]string(nil), resolutions...)
+	}
+	return cloned
+}
+
+func getTaskPricingResolutionOptionsLocked() map[string][]string {
+	if aipddTaskPricingResolutionOptions != nil {
+		return aipddTaskPricingResolutionOptions
+	}
+	aipddTaskPricingResolutionOptions = computeTaskPricingResolutionOptions()
+	return aipddTaskPricingResolutionOptions
+}
+
+func capabilityResolutionSet(capability constant.AIPDDCapability) map[string]struct{} {
+	if capability.SeedancePricing == nil {
+		return nil
+	}
+	resolutions := make(map[string]struct{}, len(capability.SeedancePricing.ByResolution))
+	for rawResolution := range capability.SeedancePricing.ByResolution {
+		resolution, err := billing_setting.NormalizeTaskPricingResolution(rawResolution)
+		if err == nil {
+			resolutions[resolution] = struct{}{}
+		}
+	}
+	return resolutions
+}
+
+func intersectResolutionSets(current, next map[string]struct{}) map[string]struct{} {
+	if current == nil {
+		cloned := make(map[string]struct{}, len(next))
+		for resolution := range next {
+			cloned[resolution] = struct{}{}
+		}
+		return cloned
+	}
+	for resolution := range current {
+		if _, ok := next[resolution]; !ok {
+			delete(current, resolution)
+		}
+	}
+	return current
+}
+
+func computeTaskPricingResolutionOptions() map[string][]string {
+	sets := make(map[string]map[string]struct{})
+	for _, capability := range constant.GetAIPDDCapabilities() {
+		modelName := strings.TrimSpace(capability.ModelName)
+		if modelName == "" || !constant.IsAIPDDSeedanceModel(modelName) {
+			continue
+		}
+		sets[modelName] = intersectResolutionSets(sets[modelName], capabilityResolutionSet(capability))
+	}
+
+	if DB != nil {
+		var rows []struct {
+			Model        string
+			ModelMapping *string
+		}
+		err := DB.Table("abilities").
+			Select("abilities.model, channels.model_mapping").
+			Joins("JOIN channels ON channels.id = abilities.channel_id").
+			Where("abilities.enabled = ? AND channels.status = ? AND channels.type = ?", true, common.ChannelStatusEnabled, constant.ChannelTypeAIPDD).
+			Scan(&rows).Error
+		if err != nil {
+			common.SysLog("failed to resolve AIPDD Seedance pricing resolutions: " + err.Error())
+		} else {
+			for _, row := range rows {
+				origin := strings.TrimSpace(row.Model)
+				if origin == "" {
+					continue
+				}
+				mapped := origin
+				if row.ModelMapping != nil && strings.TrimSpace(*row.ModelMapping) != "" {
+					var mapping map[string]string
+					if err := common.UnmarshalJsonStr(*row.ModelMapping, &mapping); err == nil {
+						mapped = finalPricingMappedModel(origin, mapping)
+					}
+				}
+				capability, ok := constant.GetAIPDDCapability(mapped)
+				if !ok || !constant.IsAIPDDSeedanceModel(capability.ModelName) {
+					continue
+				}
+				sets[origin] = intersectResolutionSets(sets[origin], capabilityResolutionSet(capability))
+			}
+		}
+	}
+
+	options := make(map[string][]string, len(sets))
+	for modelName, set := range sets {
+		resolutions := make([]string, 0, len(set))
+		for resolution := range set {
+			resolutions = append(resolutions, resolution)
+		}
+		sort.SliceStable(resolutions, func(left, right int) bool {
+			return billing_setting.TaskPricingResolutionLess(resolutions[left], resolutions[right])
+		})
+		options[modelName] = resolutions
+	}
+	return options
+}
+
+func effectiveTaskPricingResolutions(cfg billing_setting.TaskPricingConfig, supported []string) []string {
+	if len(supported) == 0 {
+		return nil
+	}
+	if len(cfg.ByResolution) == 0 {
+		return append([]string(nil), supported...)
+	}
+	configured := make(map[string]struct{}, len(cfg.ByResolution))
+	for _, resolution := range billing_setting.TaskPricingResolutionKeys(cfg) {
+		configured[resolution] = struct{}{}
+	}
+	effective := make([]string, 0, len(supported))
+	for _, resolution := range supported {
+		if _, ok := configured[resolution]; ok {
+			effective = append(effective, resolution)
+		}
+	}
+	return effective
+}
+
+func taskPricingMinimumUnitPrice(cfg billing_setting.TaskPricingConfig, activeResolutions []string) (float64, bool) {
+	prices := billing_setting.TaskPricingUnitPrices(cfg)
+	if len(cfg.ByResolution) > 0 {
+		prices = prices[:0]
+		for _, resolution := range activeResolutions {
+			tier, ok := cfg.ByResolution[resolution]
+			if !ok {
+				continue
+			}
+			prices = append(prices, tier.NoReferenceVideoUnitPrice)
+			if tier.ReferenceVideoPolicy == billing_setting.ReferenceVideoPolicySame {
+				prices = append(prices, tier.NoReferenceVideoUnitPrice)
+			} else if tier.ReferenceVideoPolicy == billing_setting.ReferenceVideoPolicyCustom {
+				prices = append(prices, tier.ReferenceVideoUnitPrice)
+			}
+		}
+	}
+	minimum := 0.0
+	for _, price := range prices {
+		if price > 0 && (minimum == 0 || price < minimum) {
+			minimum = price
+		}
+	}
+	return minimum, minimum > 0
 }
 
 // IsAIPDDSeedancePricingRequiredModel applies the same origin-level rule used
@@ -190,6 +374,7 @@ func InvalidatePricingCache() {
 	vendorsList = nil
 	lastGetPricingTime = time.Time{}
 	aipddSeedancePricingRequiredSet = nil
+	aipddTaskPricingResolutionOptions = nil
 }
 
 // GetVendors 返回当前定价接口使用到的供应商信息
@@ -394,6 +579,7 @@ func updatePricing() {
 
 	pricingMap = make([]Pricing, 0)
 	taskPricingRequiredModels := getAIPDDSeedancePricingRequiredSetLocked()
+	taskPricingResolutionOptions := getTaskPricingResolutionOptionsLocked()
 	for model, groups := range modelGroupsMap {
 		pricing := Pricing{
 			ModelName:              model,
@@ -418,13 +604,18 @@ func updatePricing() {
 			if !ok || billing_setting.ValidateTaskPricingConfig(taskPricing) != nil {
 				continue
 			}
+			activeResolutions := effectiveTaskPricingResolutions(taskPricing, taskPricingResolutionOptions[model])
+			if len(activeResolutions) == 0 {
+				continue
+			}
+			minimumPrice, ok := taskPricingMinimumUnitPrice(taskPricing, activeResolutions)
+			if !ok {
+				continue
+			}
 			pricing.BillingMode = billingMode
 			pricing.TaskPricing = &taskPricing
-			pricing.ModelPrice = taskPricing.NoReferenceVideoUnitPrice
-			if taskPricing.ReferenceVideoPolicy == billing_setting.ReferenceVideoPolicyCustom &&
-				taskPricing.ReferenceVideoUnitPrice < pricing.ModelPrice {
-				pricing.ModelPrice = taskPricing.ReferenceVideoUnitPrice
-			}
+			pricing.TaskPricingResolutions = activeResolutions
+			pricing.ModelPrice = minimumPrice
 			pricing.QuotaType = 1
 		} else {
 			if _, requiresTaskPricing := taskPricingRequiredModels[model]; requiresTaskPricing {

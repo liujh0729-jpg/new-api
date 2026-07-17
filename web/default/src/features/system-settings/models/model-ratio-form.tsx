@@ -56,6 +56,7 @@ type ModelRatioFormProps = {
   isSaving: boolean
   isResetting: boolean
   taskPricingRequiredModels: string
+  taskPricingResolutionOptions: string
 }
 
 export const ModelRatioForm = memo(function ModelRatioForm({
@@ -65,6 +66,7 @@ export const ModelRatioForm = memo(function ModelRatioForm({
   isSaving,
   isResetting,
   taskPricingRequiredModels,
+  taskPricingResolutionOptions,
 }: ModelRatioFormProps) {
   const { t } = useTranslation()
   const [editMode, setEditMode] = useState<'visual' | 'json'>('visual')
@@ -117,6 +119,7 @@ export const ModelRatioForm = memo(function ModelRatioForm({
               billingExpr={form.watch('BillingExpr')}
               taskPricing={form.watch('TaskPricing')}
               taskPricingRequiredModels={taskPricingRequiredModels}
+              taskPricingResolutionOptions={taskPricingResolutionOptions}
               onChange={(field, value) => {
                 const fieldMap: Record<string, keyof ModelFormValues> = {
                   'billing_setting.billing_mode': 'BillingMode',

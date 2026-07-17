@@ -16,7 +16,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-export { isValidTaskPricing } from '@/features/pricing/lib/model-helpers'
+export {
+  cloneTaskPricing,
+  getTaskPricingUnitPrices,
+  isValidTaskPricing,
+} from '@/features/pricing/lib/model-helpers'
 
 export function parseTaskPricingRequiredModels(value: string): string[] {
   try {
@@ -32,5 +36,37 @@ export function parseTaskPricingRequiredModels(value: string): string[] {
     )
   } catch {
     return []
+  }
+}
+
+export function parseTaskPricingResolutionOptions(
+  value: string
+): Record<string, string[]> {
+  try {
+    const parsed: unknown = JSON.parse(value || '{}')
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
+      return {}
+    return Object.fromEntries(
+      Object.entries(parsed)
+        .filter((entry): entry is [string, unknown[]] =>
+          Array.isArray(entry[1])
+        )
+        .map(([model, resolutions]) => [
+          model,
+          Array.from(
+            new Set(
+              resolutions
+                .filter(
+                  (resolution): resolution is string =>
+                    typeof resolution === 'string'
+                )
+                .map((resolution) => resolution.trim().toLowerCase())
+                .filter(Boolean)
+            )
+          ),
+        ])
+    )
+  } catch {
+    return {}
   }
 }

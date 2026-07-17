@@ -292,6 +292,7 @@ export interface PlaygroundConversationState {
 export interface ModelOption {
   label: string
   value: string
+  video_resolutions?: string[]
 }
 
 export interface GroupOption {

@@ -599,6 +599,7 @@ func RelayTask(c *gin.Context) {
 			task.PrivateData.BillingContext.Quantity = quote.Quantity
 			task.PrivateData.BillingContext.SaleUSD = quote.SaleUSD
 			task.PrivateData.BillingContext.HasReferenceVideo = quote.HasReferenceVideo
+			task.PrivateData.BillingContext.Resolution = quote.Resolution
 		}
 		task.PrivateData.AIPDDExecution = result.AIPDDExecution
 		task.Quota = result.Quota

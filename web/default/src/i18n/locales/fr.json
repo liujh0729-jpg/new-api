@@ -4703,6 +4703,26 @@
     "Zero retention": "Aucune rétention",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "Pricing structure": "Structure tarifaire",
+    "One price for all resolutions": "Un prix pour toutes les résolutions",
+    "Pricing by resolution": "Tarification par résolution",
+    "Only resolutions supported upstream and configured here are available to users.": "Seules les résolutions prises en charge en amont et tarifées ici sont proposées aux utilisateurs.",
+    "The same price applies to every resolution supported upstream.": "Le même prix s’applique à toutes les résolutions prises en charge en amont.",
+    "Resolution price matrix": "Matrice tarifaire par résolution",
+    "Catalog suggestions are active now; custom IDs remain saved as inactive tiers.": "Les suggestions du catalogue sont actives ; les identifiants personnalisés restent enregistrés comme paliers inactifs.",
+    "Add resolution": "Ajouter une résolution",
+    "Resolution ID": "ID de résolution",
+    "Enter a canonical resolution ID": "Saisissez un ID de résolution canonique",
+    "Remove resolution": "Supprimer la résolution",
+    "No resolution tiers configured": "Aucun palier de résolution configuré",
+    "Add at least one unique resolution with valid positive prices.": "Ajoutez au moins une résolution unique avec des prix positifs valides.",
+    "Inactive tiers are saved but hidden from public pricing and Playground until upstream support appears.": "Les paliers inactifs sont enregistrés, mais masqués des tarifs publics et du Playground jusqu’à leur prise en charge en amont.",
+    "All resolutions": "Toutes les résolutions",
+    "resolution tiers": "paliers de résolution",
+    "The selected resolution is not supported by the current upstream model.": "La résolution sélectionnée n’est pas prise en charge par le modèle en amont actuel.",
+    "The selected resolution is supported upstream but has no local selling price.": "La résolution sélectionnée est prise en charge en amont, mais aucun prix de vente local n’est configuré.",
+    "The request could not provide the resolution and duration required for task pricing.": "La requête n’a pas fourni la résolution et la durée nécessaires à la tarification de la tâche.",
+    "Select a video resolution before submitting the request.": "Sélectionnez une résolution vidéo avant d’envoyer la requête."
   }
 }

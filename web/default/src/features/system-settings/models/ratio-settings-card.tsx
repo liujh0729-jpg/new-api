@@ -25,11 +25,13 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { ConfirmDialog } from '@/components/confirm-dialog'
+import type { TaskPricing } from '@/features/pricing/types'
 import { resetModelRatios } from '../api'
 import { SettingsSection } from '../components/settings-section'
 import { useUpdateOption } from '../hooks/use-update-option'
 import { GroupRatioForm } from './group-ratio-form'
 import { ModelRatioForm } from './model-ratio-form'
+import { isValidTaskPricing } from './task-pricing-utils'
 import { ToolPriceSettings } from './tool-price-settings'
 import { UpstreamRatioSync } from './upstream-ratio-sync'
 import {
@@ -40,29 +42,9 @@ import {
 
 function isTaskPricingMap(value: unknown): boolean {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false
-  return Object.values(value).every((entry) => {
-    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
-      return false
-    }
-    const pricing = entry as Record<string, unknown>
-    const policy = pricing.reference_video_policy
-    const referencePrice = pricing.reference_video_unit_price
-    const optionalReferencePriceValid =
-      referencePrice === undefined ||
-      (typeof referencePrice === 'number' &&
-        Number.isFinite(referencePrice) &&
-        referencePrice >= 0)
-    return (
-      pricing.unit === 'second' &&
-      typeof pricing.no_reference_video_unit_price === 'number' &&
-      Number.isFinite(pricing.no_reference_video_unit_price) &&
-      pricing.no_reference_video_unit_price > 0 &&
-      (policy === 'same' || policy === 'custom' || policy === 'disabled') &&
-      optionalReferencePriceValid &&
-      (policy !== 'custom' ||
-        (typeof referencePrice === 'number' && referencePrice > 0))
-    )
-  })
+  return Object.values(value).every((entry) =>
+    isValidTaskPricing(entry as TaskPricing)
+  )
 }
 
 const modelSchema = z.object({
@@ -247,6 +229,7 @@ type RatioSettingsCardProps = {
   descriptionKey?: string
   visibleTabs?: RatioTabId[]
   taskPricingRequiredModels: string
+  taskPricingResolutionOptions: string
 }
 
 export function RatioSettingsCard({
@@ -257,6 +240,7 @@ export function RatioSettingsCard({
   descriptionKey = 'Configure model, caching, and group ratios used for billing',
   visibleTabs = ['models', 'groups', 'tool-prices', 'upstream-sync'],
   taskPricingRequiredModels,
+  taskPricingResolutionOptions,
 }: RatioSettingsCardProps) {
   const { t } = useTranslation()
   const updateOption = useUpdateOption()
@@ -512,6 +496,7 @@ export function RatioSettingsCard({
           isSaving={updateOption.isPending}
           isResetting={resetMutation.isPending}
           taskPricingRequiredModels={taskPricingRequiredModels}
+          taskPricingResolutionOptions={taskPricingResolutionOptions}
         />
       )
     }

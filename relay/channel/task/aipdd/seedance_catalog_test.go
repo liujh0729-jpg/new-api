@@ -39,6 +39,8 @@ func TestSeedanceCatalogBillingFactsMatrix(t *testing.T) {
 		{name: "playground metadata compatibility", body: `{"model":"AP Seedance","prompt":"hello","duration":5,"metadata":{"resolution":"1080p","content":[{"type":"video_url","role":"reference_video","video_url":{"url":"https://cdn.example.com/reference.mp4"}}]}}`, seconds: 5, hasReferenceVideo: true},
 		{name: "image and audio are not video", body: `{"model":"AP Seedance","resolution":"1080p","duration":5,"content":[{"type":"image_url","image_url":{"url":"https://cdn.example.com/reference.png"}},{"type":"audio","audio_url":"https://cdn.example.com/reference.mp3"}]}`, seconds: 5},
 		{name: "model default duration", body: `{"model":"AP Seedance","resolution":"1080p","content":[{"type":"text","text":"hello"}]}`, seconds: 5},
+		{name: "resolution catalog default duration", body: `{"model":"AP Seedance","resolution":"4k","content":[{"type":"text","text":"hello"}]}`, seconds: 7},
+		{name: "resolution catalog default fps", body: `{"model":"AP Seedance","resolution":"4k","frames":61,"content":[{"type":"text","text":"hello"}]}`, seconds: 61.0 / 30},
 	}
 
 	for _, test := range tests {
@@ -79,6 +81,31 @@ func TestSeedanceCatalogNormalizesPlaygroundPayloadForOfficialEndpoint(t *testin
 	require.True(t, ok)
 	require.Len(t, content, 1)
 	require.Equal(t, "image_url", content[0].(map[string]any)["type"])
+}
+
+func TestSeedanceRemixResolutionInheritanceAndOverride(t *testing.T) {
+	constant.SetAIPDDCapabilities([]constant.AIPDDCapability{seedanceTestCapability()})
+	t.Cleanup(constant.ResetAIPDDCapabilities)
+
+	t.Run("inherits original resolution when omitted", func(t *testing.T) {
+		ctx, info, adaptor := seedanceRequestContext(t, `{"model":"AP Seedance","prompt":"hello"}`)
+		info.Action = constant.TaskActionRemix
+		info.TaskPricingFacts = &relaycommon.TaskPricingFacts{Resolution: "720p", Quantity: 5}
+		require.Nil(t, adaptor.ValidateRequestAndSetAction(ctx, info))
+		payload, err := getSeedanceOfficialPayload(ctx)
+		require.NoError(t, err)
+		require.Equal(t, "720p", payload["resolution"])
+	})
+
+	t.Run("uses explicit remix resolution", func(t *testing.T) {
+		ctx, info, adaptor := seedanceRequestContext(t, `{"model":"AP Seedance","prompt":"hello","resolution":"1080p"}`)
+		info.Action = constant.TaskActionRemix
+		info.TaskPricingFacts = &relaycommon.TaskPricingFacts{Resolution: "720p", Quantity: 5}
+		require.Nil(t, adaptor.ValidateRequestAndSetAction(ctx, info))
+		payload, err := getSeedanceOfficialPayload(ctx)
+		require.NoError(t, err)
+		require.Equal(t, "1080p", payload["resolution"])
+	})
 }
 
 func TestSeedanceCatalogNormalizesStandardVideoRequest(t *testing.T) {
@@ -246,38 +273,17 @@ func TestSeedanceCatalogBillingFactsIgnoreCatalogPrices(t *testing.T) {
 	}
 }
 
-func TestSeedanceCatalogBillingFactsDoNotRequirePricingMetadata(t *testing.T) {
+func TestSeedanceCatalogRejectsMissingResolutionPricingMetadata(t *testing.T) {
 	capability := seedanceTestCapability()
 	capability.AdapterCode = "seedance"
 	capability.SeedancePricing = nil
 	constant.SetAIPDDCapabilities([]constant.AIPDDCapability{capability})
 	t.Cleanup(constant.ResetAIPDDCapabilities)
 
-	tests := []struct {
-		name    string
-		body    string
-		seconds float64
-	}{
-		{
-			name:    "fixed default fps",
-			body:    `{"model":"AP Seedance","resolution":"480p","frames":49,"content":[{"type":"text","text":"hello"}]}`,
-			seconds: 49.0 / 24,
-		},
-		{
-			name:    "fixed default duration",
-			body:    `{"model":"AP Seedance","resolution":"480p","content":[{"type":"text","text":"hello"}]}`,
-			seconds: 5,
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			ctx, info, adaptor := seedanceRequestContext(t, test.body)
-			require.Nil(t, adaptor.ValidateRequestAndSetAction(ctx, info))
-			facts := adaptor.EstimateBilling(ctx, info)
-			require.InDelta(t, test.seconds, facts["seconds"], 0.0000001)
-		})
-	}
+	ctx, info, adaptor := seedanceRequestContext(t, `{"model":"AP Seedance","resolution":"480p","content":[{"type":"text","text":"hello"}]}`)
+	taskErr := adaptor.ValidateRequestAndSetAction(ctx, info)
+	require.NotNil(t, taskErr)
+	require.Equal(t, "unsupported_resolution", taskErr.Code)
 }
 
 func TestSeedanceCatalogExecutionSnapshotContainsFactsNotUpstreamPrice(t *testing.T) {
@@ -287,6 +293,9 @@ func TestSeedanceCatalogExecutionSnapshotContainsFactsNotUpstreamPrice(t *testin
 	ctx, info, adaptor := seedanceRequestContext(t, `{"model":"AP Seedance","resolution":"1080p","duration":2.25,"content":[{"type":"video_url","video_url":{"url":"https://cdn.example.com/reference.mp4"}}]}`)
 	require.Nil(t, adaptor.ValidateRequestAndSetAction(ctx, info))
 	info.PriceData.OtherRatios = adaptor.EstimateBilling(ctx, info)
+	facts, taskErr := adaptor.EstimateTaskPricingFacts(ctx, info)
+	require.Nil(t, taskErr)
+	info.TaskPricingFacts = &facts
 
 	snapshot := adaptor.AIPDDTaskSnapshot(info)
 	require.NotNil(t, snapshot)
@@ -297,7 +306,7 @@ func TestSeedanceCatalogExecutionSnapshotContainsFactsNotUpstreamPrice(t *testin
 	require.True(t, snapshot.HasReferenceVideo)
 	require.Zero(t, snapshot.USDPerAWCoin)
 	require.Zero(t, snapshot.EstimatedAWCoin)
-	require.Empty(t, snapshot.Resolution)
+	require.Equal(t, "1080p", snapshot.Resolution)
 }
 
 func TestSeedanceOfficialBusinessErrorsUseHTTPStatus(t *testing.T) {
@@ -434,8 +443,8 @@ func seedanceTestCapabilityForModel(modelName string) constant.AIPDDCapability {
 			},
 			"4k": {
 				TargetResolution:          "4k",
-				DefaultDurationSeconds:    5,
-				DefaultFramesPerSecond:    24,
+				DefaultDurationSeconds:    7,
+				DefaultFramesPerSecond:    30,
 				AmountAWCoinPerSecond:     70,
 				TextInputAWCoinPerSecond:  70,
 				ImageInputAWCoinPerSecond: 70,

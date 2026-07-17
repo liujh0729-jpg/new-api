@@ -4703,6 +4703,26 @@
     "Zero retention": "Без хранения данных",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "Pricing structure": "Структура тарификации",
+    "One price for all resolutions": "Одна цена для всех разрешений",
+    "Pricing by resolution": "Цена по разрешению",
+    "Only resolutions supported upstream and configured here are available to users.": "Пользователям доступны только разрешения, поддерживаемые провайдером и настроенные здесь.",
+    "The same price applies to every resolution supported upstream.": "Одна цена применяется ко всем разрешениям, поддерживаемым провайдером.",
+    "Resolution price matrix": "Матрица цен по разрешениям",
+    "Catalog suggestions are active now; custom IDs remain saved as inactive tiers.": "Варианты из каталога активны; пользовательские ID сохраняются как неактивные уровни.",
+    "Add resolution": "Добавить разрешение",
+    "Resolution ID": "ID разрешения",
+    "Enter a canonical resolution ID": "Введите канонический ID разрешения",
+    "Remove resolution": "Удалить разрешение",
+    "No resolution tiers configured": "Уровни разрешения не настроены",
+    "Add at least one unique resolution with valid positive prices.": "Добавьте хотя бы одно уникальное разрешение с корректными положительными ценами.",
+    "Inactive tiers are saved but hidden from public pricing and Playground until upstream support appears.": "Неактивные уровни сохраняются, но скрыты в публичных ценах и Playground до появления поддержки у провайдера.",
+    "All resolutions": "Все разрешения",
+    "resolution tiers": "уровней разрешения",
+    "The selected resolution is not supported by the current upstream model.": "Выбранное разрешение не поддерживается текущей моделью провайдера.",
+    "The selected resolution is supported upstream but has no local selling price.": "Выбранное разрешение поддерживается провайдером, но локальная цена продажи не настроена.",
+    "The request could not provide the resolution and duration required for task pricing.": "В запросе не удалось получить разрешение и длительность, необходимые для тарификации задачи.",
+    "Select a video resolution before submitting the request.": "Выберите разрешение видео перед отправкой запроса."
   }
 }

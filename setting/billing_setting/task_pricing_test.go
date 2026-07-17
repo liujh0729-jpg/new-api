@@ -22,6 +22,27 @@ func validTaskPricing(policy string) TaskPricingConfig {
 	return cfg
 }
 
+func validMatrixTaskPricing() TaskPricingConfig {
+	return TaskPricingConfig{
+		Unit: TaskPricingUnitSecond,
+		ByResolution: map[string]TaskPricingTier{
+			"480p": {
+				NoReferenceVideoUnitPrice: 0.04,
+				ReferenceVideoPolicy:      ReferenceVideoPolicyCustom,
+				ReferenceVideoUnitPrice:   0.06,
+			},
+			"720p": {
+				NoReferenceVideoUnitPrice: 0.08,
+				ReferenceVideoPolicy:      ReferenceVideoPolicySame,
+			},
+			"4k": {
+				NoReferenceVideoUnitPrice: 0.5,
+				ReferenceVideoPolicy:      ReferenceVideoPolicyDisabled,
+			},
+		},
+	}
+}
+
 func installTaskPricingForTest(t *testing.T, configs map[string]TaskPricingConfig) {
 	t.Helper()
 	original := GetTaskPricingCopy()
@@ -96,7 +117,7 @@ func TestValidateAndParseTaskPricingMap(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseTaskPricingMapJSON() error = %v", err)
 	}
-	if got := parsed["AP Seedance"]; got != validTaskPricing(ReferenceVideoPolicyCustom) {
+	if got := parsed["AP Seedance"]; !reflect.DeepEqual(got, validTaskPricing(ReferenceVideoPolicyCustom)) {
 		t.Fatalf("parsed config = %#v", got)
 	}
 
@@ -110,6 +131,61 @@ func TestValidateAndParseTaskPricingMap(t *testing.T) {
 		if _, err := ParseTaskPricingMapJSON(raw); !errors.Is(err, ErrInvalidTaskPricing) {
 			t.Errorf("ParseTaskPricingMapJSON(%s) error = %v, want ErrInvalidTaskPricing", raw, err)
 		}
+	}
+}
+
+func TestTaskPricingMatrixValidationAndNormalization(t *testing.T) {
+	parsed, err := ParseTaskPricingMapJSON(`{
+		"matrix": {
+			"unit": "second",
+			"by_resolution": {
+				" 720P ": {"no_reference_video_unit_price": 0.08, "reference_video_policy": "same"},
+				"4K": {"no_reference_video_unit_price": 0.5, "reference_video_policy": "disabled"}
+			}
+		}
+	}`)
+	if err != nil {
+		t.Fatalf("ParseTaskPricingMapJSON(matrix) error = %v", err)
+	}
+	if got := TaskPricingResolutionKeys(parsed["matrix"]); !reflect.DeepEqual(got, []string{"720p", "4k"}) {
+		t.Fatalf("normalized resolution keys = %v", got)
+	}
+
+	invalid := []TaskPricingConfig{
+		{Unit: TaskPricingUnitSecond, ByResolution: map[string]TaskPricingTier{}},
+		{
+			Unit:                      TaskPricingUnitSecond,
+			NoReferenceVideoUnitPrice: 0.12,
+			ReferenceVideoPolicy:      ReferenceVideoPolicySame,
+			ByResolution:              validMatrixTaskPricing().ByResolution,
+		},
+	}
+	for index, cfg := range invalid {
+		if err := ValidateTaskPricingConfig(cfg); !errors.Is(err, ErrInvalidTaskPricing) {
+			t.Errorf("invalid matrix %d error = %v, want ErrInvalidTaskPricing", index, err)
+		}
+	}
+
+	if _, err := ParseTaskPricingMapJSON(`{"matrix":{"unit":"second","by_resolution":{"720P":{"no_reference_video_unit_price":0.08,"reference_video_policy":"same"},"720p":{"no_reference_video_unit_price":0.09,"reference_video_policy":"same"}}}}`); !errors.Is(err, ErrInvalidTaskPricing) {
+		t.Fatalf("normalized duplicate error = %v, want ErrInvalidTaskPricing", err)
+	}
+}
+
+func TestTaskPricingMatrixStoreDeepCopiesNestedTiers(t *testing.T) {
+	store := NewTaskPricingStore()
+	original := validMatrixTaskPricing()
+	store.replace(map[string]TaskPricingConfig{"matrix": original})
+
+	original.ByResolution["480p"] = TaskPricingTier{NoReferenceVideoUnitPrice: 99, ReferenceVideoPolicy: ReferenceVideoPolicySame}
+	got, ok := store.get("matrix")
+	if !ok || got.ByResolution["480p"].NoReferenceVideoUnitPrice != 0.04 {
+		t.Fatalf("store retained caller nested mutation: %#v", got)
+	}
+
+	got.ByResolution["480p"] = TaskPricingTier{NoReferenceVideoUnitPrice: 88, ReferenceVideoPolicy: ReferenceVideoPolicySame}
+	again, _ := store.get("matrix")
+	if again.ByResolution["480p"].NoReferenceVideoUnitPrice != 0.04 {
+		t.Fatalf("get returned shared nested map: %#v", again)
 	}
 }
 
@@ -162,7 +238,7 @@ func TestTaskPricingStoreWorksWithConfigManagerSerialization(t *testing.T) {
 	if err := settingconfig.UpdateConfigFromMap(&settings, map[string]string{TaskPricingField: raw}); err != nil {
 		t.Fatalf("UpdateConfigFromMap() error = %v", err)
 	}
-	if got, ok := settings.TaskPricing.get("model"); !ok || got != validTaskPricing(ReferenceVideoPolicySame) {
+	if got, ok := settings.TaskPricing.get("model"); !ok || !reflect.DeepEqual(got, validTaskPricing(ReferenceVideoPolicySame)) {
 		t.Fatalf("loaded config = %#v, %v", got, ok)
 	}
 
@@ -174,7 +250,7 @@ func TestTaskPricingStoreWorksWithConfigManagerSerialization(t *testing.T) {
 	if err != nil {
 		t.Fatalf("serialized task pricing error = %v", err)
 	}
-	if got := parsed["model"]; got != validTaskPricing(ReferenceVideoPolicySame) {
+	if got := parsed["model"]; !reflect.DeepEqual(got, validTaskPricing(ReferenceVideoPolicySame)) {
 		t.Fatalf("serialized config = %#v", got)
 	}
 }
@@ -225,7 +301,7 @@ func TestQuoteTaskPricingSelectsVariants(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			quote, err := QuoteTaskPricing(tt.model, 5, 1.5, 500_000, tt.hasReferenceVideo)
+			quote, err := QuoteTaskPricing(tt.model, 5, "", 1.5, 500_000, tt.hasReferenceVideo)
 			if err != nil {
 				t.Fatalf("QuoteTaskPricing() error = %v", err)
 			}
@@ -244,11 +320,35 @@ func TestQuoteTaskPricingSelectsVariants(t *testing.T) {
 		})
 	}
 
-	if _, err := QuoteTaskPricing("disabled", 5, 1, 500_000, true); !errors.Is(err, ErrReferenceVideoDisabled) {
+	if _, err := QuoteTaskPricing("disabled", 5, "", 1, 500_000, true); !errors.Is(err, ErrReferenceVideoDisabled) {
 		t.Fatalf("disabled policy error = %v, want ErrReferenceVideoDisabled", err)
 	}
-	if _, err := QuoteTaskPricing("missing", 5, 1, 500_000, false); !errors.Is(err, ErrTaskPricingNotConfigured) {
+	if _, err := QuoteTaskPricing("missing", 5, "", 1, 500_000, false); !errors.Is(err, ErrTaskPricingNotConfigured) {
 		t.Fatalf("missing config error = %v, want ErrTaskPricingNotConfigured", err)
+	}
+}
+
+func TestQuoteTaskPricingSelectsResolutionTier(t *testing.T) {
+	installTaskPricingForTest(t, map[string]TaskPricingConfig{
+		"matrix": validMatrixTaskPricing(),
+	})
+
+	quote, err := QuoteTaskPricing("matrix", 5, " 480P ", 1.5, 500_000, true)
+	if err != nil {
+		t.Fatalf("QuoteTaskPricing(matrix) error = %v", err)
+	}
+	if quote.Resolution != "480p" || quote.UnitPriceUSD != 0.06 || quote.Quota != 225_000 {
+		t.Fatalf("matrix quote = %#v", quote)
+	}
+
+	if _, err := QuoteTaskPricing("matrix", 5, "", 1, 500_000, false); !errors.Is(err, ErrTaskPricingResolutionRequired) {
+		t.Fatalf("missing resolution error = %v", err)
+	}
+	if _, err := QuoteTaskPricing("matrix", 5, "1080p", 1, 500_000, false); !errors.Is(err, ErrTaskPricingResolutionNotConfigured) {
+		t.Fatalf("missing tier error = %v", err)
+	}
+	if _, err := QuoteTaskPricing("matrix", 5, "4k", 1, 500_000, true); !errors.Is(err, ErrReferenceVideoDisabled) {
+		t.Fatalf("disabled resolution error = %v", err)
 	}
 }
 
@@ -257,7 +357,7 @@ func TestQuoteTaskPricingAllowsZeroGroupRatio(t *testing.T) {
 		"model": validTaskPricing(ReferenceVideoPolicySame),
 	})
 
-	quote, err := QuoteTaskPricing("model", 5, 0, 500_000, false)
+	quote, err := QuoteTaskPricing("model", 5, "", 0, 500_000, false)
 	if err != nil {
 		t.Fatalf("QuoteTaskPricing() error = %v", err)
 	}
@@ -275,7 +375,7 @@ func TestQuoteTaskPricingRoundsOnlyFinalQuota(t *testing.T) {
 		},
 	})
 
-	quote, err := QuoteTaskPricing("model", 3, 1, 1, false)
+	quote, err := QuoteTaskPricing("model", 3, "", 1, 1, false)
 	if err != nil {
 		t.Fatalf("QuoteTaskPricing() error = %v", err)
 	}
@@ -283,7 +383,7 @@ func TestQuoteTaskPricingRoundsOnlyFinalQuota(t *testing.T) {
 		t.Fatalf("Quota = %d, want one-shot round(0.49*3) = 1", quote.Quota)
 	}
 
-	halfQuote, err := QuoteTaskPricing("model", 1, 1, 0.5/0.49, false)
+	halfQuote, err := QuoteTaskPricing("model", 1, "", 1, 0.5/0.49, false)
 	if err != nil {
 		t.Fatalf("QuoteTaskPricing(half) error = %v", err)
 	}
@@ -310,11 +410,12 @@ func TestQuoteTaskPricingRejectsInvalidInputs(t *testing.T) {
 		{name: "infinite group ratio", quantity: 1, groupRatio: math.Inf(1), quotaPerUnit: 1},
 		{name: "zero quota per unit", quantity: 1, groupRatio: 1, quotaPerUnit: 0},
 		{name: "negative quota per unit", quantity: 1, groupRatio: 1, quotaPerUnit: -1},
+		{name: "quota integer overflow", quantity: math.MaxFloat64, groupRatio: 1, quotaPerUnit: 1},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if _, err := QuoteTaskPricing("model", tt.quantity, tt.groupRatio, tt.quotaPerUnit, false); !errors.Is(err, ErrInvalidTaskPricing) {
+			if _, err := QuoteTaskPricing("model", tt.quantity, "", tt.groupRatio, tt.quotaPerUnit, false); !errors.Is(err, ErrInvalidTaskPricing) {
 				t.Fatalf("QuoteTaskPricing() error = %v, want ErrInvalidTaskPricing", err)
 			}
 		})

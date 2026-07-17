@@ -72,6 +72,22 @@ const cases = [
 ] as const
 
 describe('Playground AP Seedance resolution options', () => {
+  test('prefers backend effective resolutions and supports a new 2k catalog tier', () => {
+    expect(
+      getVideoResolutionOptionsForModel('AP Seedance-2.0 标准版', [
+        '720p',
+        '2k',
+      ])
+    ).toEqual(['720p', '2k'])
+    expect(
+      normalizeVideoResolutionForModel(
+        'AP Seedance-2.0 标准版',
+        '1080p',
+        ['2k']
+      )
+    ).toBe('2k')
+  })
+
   for (const item of cases) {
     test(`${item.model} exposes its supported resolutions`, () => {
       expect(getVideoResolutionOptionsForModel(item.model)).toEqual(

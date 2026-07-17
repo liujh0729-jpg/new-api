@@ -493,37 +493,40 @@ function PriceSection(props: {
   }
 
   if (taskPriceInfo) {
-    const policy = props.model.task_pricing?.reference_video_policy
     return (
       <section>
         <SectionTitle>{t('Base Price')}</SectionTitle>
-        <div className='grid grid-cols-2 gap-2'>
-          <div className='bg-muted/20 rounded-lg border p-3'>
-            <div className='text-muted-foreground text-xs'>
-              {t('Without video input')}
-            </div>
-            <div className='text-foreground mt-1 font-mono text-base font-semibold tabular-nums'>
-              {taskPriceInfo.noReferencePrice}
-              <span className='text-muted-foreground/40 ml-1 text-xs font-normal'>
-                / {t('second')}
-              </span>
-            </div>
-          </div>
-          <div className='bg-muted/20 rounded-lg border p-3'>
-            <div className='text-muted-foreground text-xs'>
-              {t('With video input')}
-            </div>
-            <div className='text-foreground mt-1 font-mono text-base font-semibold tabular-nums'>
-              {policy === 'disabled'
-                ? t('Not supported')
-                : taskPriceInfo.referencePrice}
-              {policy !== 'disabled' && (
-                <span className='text-muted-foreground/40 ml-1 text-xs font-normal'>
-                  / {t('second')}
-                </span>
-              )}
-            </div>
-          </div>
+        <div className='overflow-hidden rounded-lg border'>
+          <Table>
+            <TableHeader>
+              <TableRow className='hover:bg-transparent'>
+                <TableHead>{t('Resolution')}</TableHead>
+                <TableHead className='text-right'>
+                  {t('Without video input')}
+                </TableHead>
+                <TableHead className='text-right'>
+                  {t('With video input')}
+                </TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {taskPriceInfo.rows.map((row) => (
+                <TableRow key={row.resolution || 'all'}>
+                  <TableCell className='font-medium'>
+                    {row.resolution || t('All resolutions')}
+                  </TableCell>
+                  <TableCell className='text-right font-mono'>
+                    {row.noReferencePrice} / {t('second')}
+                  </TableCell>
+                  <TableCell className='text-right font-mono'>
+                    {row.referenceVideoPolicy === 'disabled'
+                      ? t('Not supported')
+                      : `${row.referencePrice} / ${t('second')}`}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
         </div>
       </section>
     )
@@ -700,7 +703,6 @@ function GroupPricingSection(props: {
     'text-muted-foreground py-2 text-[10px] font-medium tracking-wider uppercase'
 
   if (isTaskPricing) {
-    const policy = props.model.task_pricing?.reference_video_policy
     return (
       <section>
         <SectionTitle>{t('Pricing by Group')}</SectionTitle>
@@ -710,6 +712,7 @@ function GroupPricingSection(props: {
             <TableHeader>
               <TableRow className='hover:bg-transparent'>
                 <TableHead className={thClass}>{t('Group')}</TableHead>
+                <TableHead className={thClass}>{t('Resolution')}</TableHead>
                 <TableHead className={thClass}>{t('Ratio')}</TableHead>
                 <TableHead className={`${thClass} text-right`}>
                   {t('Without video input')}
@@ -720,7 +723,7 @@ function GroupPricingSection(props: {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {availableGroups.map((group) => {
+              {availableGroups.flatMap((group) => {
                 const ratio = props.groupRatio[group] ?? 1
                 const info = getTaskPriceInfo(props.model, {
                   group,
@@ -729,26 +732,29 @@ function GroupPricingSection(props: {
                   usdExchangeRate: props.usdExchangeRate,
                   groupRatio: props.groupRatio,
                 })
-                return (
-                  <TableRow key={group}>
+                return (info?.rows || []).map((priceRow) => (
+                  <TableRow key={`${group}-${priceRow.resolution || 'all'}`}>
                     <TableCell className='py-2.5'>
                       <GroupBadge group={group} size='sm' />
+                    </TableCell>
+                    <TableCell className='py-2.5 font-medium'>
+                      {priceRow.resolution || t('All resolutions')}
                     </TableCell>
                     <TableCell className='text-muted-foreground py-2.5 font-mono text-xs'>
                       {ratio}x
                     </TableCell>
                     <TableCell className='py-2.5 text-right font-mono'>
-                      {info?.isFree ? t('Free') : info?.noReferencePrice}
+                      {info?.isFree ? t('Free') : priceRow.noReferencePrice}
                     </TableCell>
                     <TableCell className='py-2.5 text-right font-mono'>
-                      {policy === 'disabled'
+                      {priceRow.referenceVideoPolicy === 'disabled'
                         ? t('Not supported')
                         : info?.isFree
                           ? t('Free')
-                          : info?.referencePrice}
+                          : priceRow.referencePrice}
                     </TableCell>
                   </TableRow>
-                )
+                ))
               })}
             </TableBody>
           </Table>

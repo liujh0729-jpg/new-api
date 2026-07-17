@@ -30,12 +30,26 @@ export type PricingVendor = {
 
 export type ReferenceVideoPolicy = 'same' | 'custom' | 'disabled'
 
-export type TaskPricing = {
-  unit: 'second'
+export type TaskPricingTier = {
   no_reference_video_unit_price: number
   reference_video_policy: ReferenceVideoPolicy
   reference_video_unit_price?: number
 }
+
+export type LegacyTaskPricing = TaskPricingTier & {
+  unit: 'second'
+  by_resolution?: never
+}
+
+export type ResolutionTaskPricing = {
+  unit: 'second'
+  by_resolution: Record<string, TaskPricingTier>
+  no_reference_video_unit_price?: never
+  reference_video_policy?: never
+  reference_video_unit_price?: never
+}
+
+export type TaskPricing = LegacyTaskPricing | ResolutionTaskPricing
 
 export type PricingModel = {
   id: number
@@ -68,6 +82,8 @@ export type PricingModel = {
   pricing_version?: string
   /** Structured local task pricing. This is authoritative for task billing. */
   task_pricing?: TaskPricing
+  /** Upstream-supported resolution IDs that also have an effective local price. */
+  task_pricing_resolutions?: string[]
   /**
    * Optional model metadata fields. These are not yet returned by the backend
    * and are populated client-side from {@link inferModelMetadata}.

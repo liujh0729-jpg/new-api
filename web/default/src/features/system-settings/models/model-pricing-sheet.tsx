@@ -20,7 +20,7 @@ import { useEffect, useMemo, useState } from 'react'
 import * as z from 'zod'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { AlertTriangle, ChevronDown } from 'lucide-react'
+import { AlertTriangle, ChevronDown, Plus, Trash2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useSystemConfigStore } from '@/stores/system-config-store'
 import {
@@ -39,6 +39,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@/components/ui/collapsible'
+import { Combobox } from '@/components/ui/combobox'
 import {
   Field,
   FieldContent,
@@ -64,6 +65,14 @@ import {
   InputGroupInput,
 } from '@/components/ui/input-group'
 import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import {
   Sheet,
   SheetContent,
   SheetDescription,
@@ -72,12 +81,22 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet'
 import { Switch } from '@/components/ui/switch'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { combineBillingExpr } from '@/features/pricing/lib/billing-expr'
+import { normalizeTaskPricingResolution } from '@/features/pricing/lib/model-helpers'
 import type {
   ReferenceVideoPolicy,
   TaskPricing,
+  TaskPricingTier,
 } from '@/features/pricing/types'
 import { isValidTaskPricing } from './task-pricing-utils'
 import { TieredPricingEditor } from './tiered-pricing-editor'
@@ -131,6 +150,7 @@ type ModelPricingSheetProps = {
   onCancel?: () => void
   editData?: ModelRatioData | null
   selectedTargetCount?: number
+  taskPricingResolutionOptions?: Record<string, string[]>
 }
 
 type ModelPricingEditorPanelProps = Omit<
@@ -145,6 +165,35 @@ type PreviewRow = {
   label: string
   value: string
   multiline?: boolean
+}
+
+type TaskPricingVariant = 'legacy' | 'matrix'
+
+type TaskPricingTierDraft = {
+  id: number
+  resolution: string
+  noReferencePrice: string
+  referenceVideoPolicy: ReferenceVideoPolicy
+  referencePrice: string
+  original: Record<string, unknown>
+}
+
+let nextTaskPricingTierID = 1
+
+function createTaskPricingTierDraft(
+  resolution = '',
+  tier?: TaskPricingTier
+): TaskPricingTierDraft {
+  return {
+    id: nextTaskPricingTierID++,
+    resolution,
+    noReferencePrice: formatNumber(tier?.no_reference_video_unit_price),
+    referenceVideoPolicy: tier?.reference_video_policy || 'same',
+    referencePrice: formatNumber(tier?.reference_video_unit_price),
+    original: tier
+      ? (structuredClone(tier) as unknown as Record<string, unknown>)
+      : {},
+  }
 }
 
 const numericDraftRegex = /^(\d+(\.\d*)?|\.\d*)?$/
@@ -338,6 +387,8 @@ function buildPreviewRows(
   taskNoReferencePrice: string,
   referenceVideoPolicy: ReferenceVideoPolicy,
   taskReferencePrice: string,
+  taskPricingVariant: TaskPricingVariant,
+  taskPricingTiers: TaskPricingTierDraft[],
   t: (key: string) => string
 ): PreviewRow[] {
   if (mode === 'tiered_expr') {
@@ -366,6 +417,35 @@ function buildPreviewRows(
   }
 
   if (mode === 'task_pricing') {
+    if (taskPricingVariant === 'matrix') {
+      return [
+        { key: 'mode', label: 'BillingMode', value: 'task_pricing' },
+        ...taskPricingTiers.map((tier) => {
+          const noReferencePrice = toNumberOrNull(tier.noReferencePrice)
+          const referencePrice =
+            tier.referenceVideoPolicy === 'same'
+              ? noReferencePrice
+              : toNumberOrNull(tier.referencePrice)
+          const referencePreview =
+            tier.referenceVideoPolicy === 'disabled'
+              ? t('Not allowed')
+              : referencePrice !== null
+                ? formatDisplayBillingPrice(referencePrice * 5)
+                : '—'
+          return {
+            key: `resolution-${tier.id}`,
+            label:
+              normalizeTaskPricingResolution(tier.resolution) ||
+              t('Resolution'),
+            value: `${t('Without video input')} ${
+              noReferencePrice !== null
+                ? formatDisplayBillingPrice(noReferencePrice * 5)
+                : '—'
+            } · ${t('With video input')} ${referencePreview}`,
+          }
+        }),
+      ]
+    }
     const noReferencePrice = toNumberOrNull(taskNoReferencePrice)
     const referencePrice =
       referenceVideoPolicy === 'same'
@@ -471,6 +551,7 @@ export function ModelPricingSheet({
   onCancel,
   editData,
   selectedTargetCount = 0,
+  taskPricingResolutionOptions,
 }: ModelPricingSheetProps) {
   const { t } = useTranslation()
   const title = editData ? t('Edit model pricing') : t('Add model pricing')
@@ -487,6 +568,7 @@ export function ModelPricingSheet({
           onSave={onSave}
           editData={editData}
           selectedTargetCount={selectedTargetCount}
+          taskPricingResolutionOptions={taskPricingResolutionOptions}
           onCancel={() => {
             onCancel?.()
             onOpenChange(false)
@@ -502,6 +584,7 @@ export function ModelPricingEditorPanel({
   onSave,
   editData,
   selectedTargetCount = 0,
+  taskPricingResolutionOptions = {},
   onCancel,
   className,
 }: ModelPricingEditorPanelProps) {
@@ -521,6 +604,14 @@ export function ModelPricingEditorPanel({
   const [referenceVideoPolicy, setReferenceVideoPolicy] =
     useState<ReferenceVideoPolicy>('same')
   const [taskReferencePrice, setTaskReferencePrice] = useState('')
+  const [taskPricingVariant, setTaskPricingVariant] =
+    useState<TaskPricingVariant>('matrix')
+  const [taskPricingTiers, setTaskPricingTiers] = useState<
+    TaskPricingTierDraft[]
+  >([])
+  const [taskPricingSource, setTaskPricingSource] = useState<
+    Record<string, unknown>
+  >({})
   const [showTaskErrors, setShowTaskErrors] = useState(false)
   const [previewOpen, setPreviewOpen] = useState(true)
   const isEditMode = !!editData
@@ -567,14 +658,42 @@ export function ModelPricingEditorPanel({
       )
       setBillingExpr(editData.billingExpr || '')
       setRequestRuleExpr(editData.requestRuleExpr || '')
+      const editTaskPricing = editData.taskPricing
+      const usesMatrix =
+        !!editTaskPricing &&
+        'by_resolution' in editTaskPricing &&
+        !!editTaskPricing.by_resolution
+      setTaskPricingVariant(
+        editTaskPricing ? (usesMatrix ? 'matrix' : 'legacy') : 'matrix'
+      )
+      setTaskPricingSource(
+        editTaskPricing
+          ? (structuredClone(editTaskPricing) as unknown as Record<
+              string,
+              unknown
+            >)
+          : {}
+      )
+      setTaskPricingTiers(
+        usesMatrix
+          ? Object.entries(editTaskPricing.by_resolution).map(
+              ([resolution, tier]) =>
+                createTaskPricingTierDraft(resolution, tier)
+            )
+          : []
+      )
       setTaskNoReferencePrice(
-        formatNumber(editData.taskPricing?.no_reference_video_unit_price)
+        !usesMatrix
+          ? formatNumber(editTaskPricing?.no_reference_video_unit_price)
+          : ''
       )
       setReferenceVideoPolicy(
-        editData.taskPricing?.reference_video_policy || 'same'
+        !usesMatrix ? editTaskPricing?.reference_video_policy || 'same' : 'same'
       )
       setTaskReferencePrice(
-        formatNumber(editData.taskPricing?.reference_video_unit_price)
+        !usesMatrix
+          ? formatNumber(editTaskPricing?.reference_video_unit_price)
+          : ''
       )
     } else {
       form.reset({
@@ -594,6 +713,9 @@ export function ModelPricingEditorPanel({
       setTaskNoReferencePrice('')
       setReferenceVideoPolicy('same')
       setTaskReferencePrice('')
+      setTaskPricingVariant('matrix')
+      setTaskPricingTiers([])
+      setTaskPricingSource({})
     }
 
     setPromptPrice(nextLaneState.promptPrice)
@@ -738,6 +860,8 @@ export function ModelPricingEditorPanel({
       taskNoReferencePrice,
       referenceVideoPolicy,
       taskReferencePrice,
+      taskPricingVariant,
+      taskPricingTiers,
       t
     )
   }, [
@@ -750,6 +874,8 @@ export function ModelPricingEditorPanel({
     taskNoReferencePrice,
     referenceVideoPolicy,
     taskReferencePrice,
+    taskPricingVariant,
+    taskPricingTiers,
     t,
     watchedValues,
     currency,
@@ -765,6 +891,91 @@ export function ModelPricingEditorPanel({
     (showTaskErrors || taskNoReferencePrice !== '')
   const showReferencePriceError =
     !taskReferencePriceValid && (showTaskErrors || taskReferencePrice !== '')
+  const supportedTaskResolutions = useMemo(
+    () => taskPricingResolutionOptions[watchedValues.name.trim()] || [],
+    [taskPricingResolutionOptions, watchedValues.name]
+  )
+  const matrixValidation = useMemo(() => {
+    const invalidTierIDs = new Set<number>()
+    const seen = new Map<string, number>()
+    for (const tier of taskPricingTiers) {
+      const resolution = normalizeTaskPricingResolution(tier.resolution)
+      const noReferencePrice = toNumberOrNull(tier.noReferencePrice)
+      const referencePrice = toNumberOrNull(tier.referencePrice)
+      const duplicateID = seen.get(resolution)
+      if (
+        !resolution ||
+        resolution.length > 128 ||
+        noReferencePrice === null ||
+        noReferencePrice <= 0 ||
+        (tier.referenceVideoPolicy === 'custom' &&
+          (referencePrice === null || referencePrice <= 0))
+      ) {
+        invalidTierIDs.add(tier.id)
+      }
+      if (duplicateID !== undefined) {
+        invalidTierIDs.add(duplicateID)
+        invalidTierIDs.add(tier.id)
+      }
+      seen.set(resolution, tier.id)
+    }
+    return {
+      invalidTierIDs,
+      valid: taskPricingTiers.length > 0 && invalidTierIDs.size === 0,
+    }
+  }, [taskPricingTiers])
+
+  const updateTaskPricingTier = (
+    id: number,
+    patch: Partial<TaskPricingTierDraft>
+  ) => {
+    setTaskPricingTiers((tiers) =>
+      tiers.map((tier) => (tier.id === id ? { ...tier, ...patch } : tier))
+    )
+  }
+
+  const addTaskPricingTier = () => {
+    const used = new Set(
+      taskPricingTiers.map((tier) =>
+        normalizeTaskPricingResolution(tier.resolution)
+      )
+    )
+    const resolution =
+      supportedTaskResolutions.find((candidate) => !used.has(candidate)) || ''
+    setTaskPricingTiers((tiers) => [
+      ...tiers,
+      createTaskPricingTierDraft(resolution),
+    ])
+  }
+
+  const handleTaskPricingVariantChange = (variant: TaskPricingVariant) => {
+    if (variant === taskPricingVariant) return
+    if (variant === 'matrix' && taskPricingTiers.length === 0) {
+      const tier = createTaskPricingTierDraft(
+        supportedTaskResolutions[0] || '',
+        taskNoReferencePriceValid
+          ? {
+              no_reference_video_unit_price: Number(taskNoReferencePrice),
+              reference_video_policy: referenceVideoPolicy,
+              ...(referenceVideoPolicy === 'custom' && taskReferencePriceValid
+                ? {
+                    reference_video_unit_price: Number(taskReferencePrice),
+                  }
+                : {}),
+            }
+          : undefined
+      )
+      setTaskPricingTiers([tier])
+    }
+    if (variant === 'legacy' && taskPricingTiers[0]) {
+      const tier = taskPricingTiers[0]
+      setTaskNoReferencePrice(tier.noReferencePrice)
+      setReferenceVideoPolicy(tier.referenceVideoPolicy)
+      setTaskReferencePrice(tier.referencePrice)
+    }
+    setTaskPricingVariant(variant)
+    setShowTaskErrors(false)
+  }
 
   const warnings = useMemo(() => {
     const nextWarnings: string[] = []
@@ -826,7 +1037,9 @@ export function ModelPricingEditorPanel({
   const handleSubmit = (values: ModelPricingFormValues) => {
     if (
       pricingMode === 'task_pricing' &&
-      (!taskNoReferencePriceValid || !taskReferencePriceValid)
+      (taskPricingVariant === 'matrix'
+        ? !matrixValidation.valid
+        : !taskNoReferencePriceValid || !taskReferencePriceValid)
     ) {
       setShowTaskErrors(true)
       return
@@ -874,14 +1087,38 @@ export function ModelPricingEditorPanel({
     }
 
     if (pricingMode === 'task_pricing') {
-      data.taskPricing = {
-        unit: 'second',
-        no_reference_video_unit_price: Number(taskNoReferencePrice),
-        reference_video_policy: referenceVideoPolicy,
-        ...(referenceVideoPolicy === 'custom'
-          ? { reference_video_unit_price: Number(taskReferencePrice) }
-          : {}),
+      const nextPricing = structuredClone(taskPricingSource)
+      nextPricing.unit = 'second'
+      if (taskPricingVariant === 'matrix') {
+        delete nextPricing.no_reference_video_unit_price
+        delete nextPricing.reference_video_policy
+        delete nextPricing.reference_video_unit_price
+        nextPricing.by_resolution = Object.fromEntries(
+          taskPricingTiers.map((tier) => {
+            const nextTier = structuredClone(tier.original)
+            nextTier.no_reference_video_unit_price = Number(
+              tier.noReferencePrice
+            )
+            nextTier.reference_video_policy = tier.referenceVideoPolicy
+            if (tier.referenceVideoPolicy === 'custom') {
+              nextTier.reference_video_unit_price = Number(tier.referencePrice)
+            } else {
+              delete nextTier.reference_video_unit_price
+            }
+            return [normalizeTaskPricingResolution(tier.resolution), nextTier]
+          })
+        )
+      } else {
+        delete nextPricing.by_resolution
+        nextPricing.no_reference_video_unit_price = Number(taskNoReferencePrice)
+        nextPricing.reference_video_policy = referenceVideoPolicy
+        if (referenceVideoPolicy === 'custom') {
+          nextPricing.reference_video_unit_price = Number(taskReferencePrice)
+        } else {
+          delete nextPricing.reference_video_unit_price
+        }
       }
+      data.taskPricing = nextPricing as TaskPricing
     }
 
     onSave(data)
@@ -1044,100 +1281,376 @@ export function ModelPricingEditorPanel({
                   value='task_pricing'
                   className='flex flex-col gap-5'
                 >
-                  <FieldGroup>
-                    <Field
-                      data-invalid={showNoReferencePriceError || undefined}
+                  <Field>
+                    <FieldLabel>{t('Pricing structure')}</FieldLabel>
+                    <ToggleGroup
+                      value={[taskPricingVariant]}
+                      onValueChange={(values) => {
+                        const next = values.at(-1) as
+                          | TaskPricingVariant
+                          | undefined
+                        if (next) handleTaskPricingVariantChange(next)
+                      }}
+                      variant='outline'
+                      className='grid w-full grid-cols-2'
+                      aria-label={t('Pricing structure')}
                     >
-                      <FieldLabel>{t('Without video input')}</FieldLabel>
-                      <PriceInput
-                        value={taskNoReferencePrice}
-                        placeholder='0.12'
-                        suffix={t('per second')}
-                        invalid={showNoReferencePriceError}
-                        onChange={setTaskNoReferencePrice}
-                      />
-                      <FieldDescription>
-                        {t(
-                          'Local selling price for each requested output second when no video is provided.'
-                        )}
-                      </FieldDescription>
-                      {showNoReferencePriceError && (
-                        <FieldError>
-                          {t('The per-second price must be greater than 0.')}
-                        </FieldError>
-                      )}
-                    </Field>
+                      <ToggleGroupItem value='legacy'>
+                        {t('One price for all resolutions')}
+                      </ToggleGroupItem>
+                      <ToggleGroupItem value='matrix'>
+                        {t('Pricing by resolution')}
+                      </ToggleGroupItem>
+                    </ToggleGroup>
+                    <FieldDescription>
+                      {taskPricingVariant === 'matrix'
+                        ? t(
+                            'Only resolutions supported upstream and configured here are available to users.'
+                          )
+                        : t(
+                            'The same price applies to every resolution supported upstream.'
+                          )}
+                    </FieldDescription>
+                  </Field>
 
-                    <Field>
-                      <FieldLabel>{t('Video input rule')}</FieldLabel>
-                      <ToggleGroup
-                        value={[referenceVideoPolicy]}
-                        onValueChange={(values) => {
-                          const next = values.at(-1) as
-                            | ReferenceVideoPolicy
-                            | undefined
-                          if (next) setReferenceVideoPolicy(next)
-                        }}
-                        variant='outline'
-                        className='grid w-full grid-cols-3'
-                        aria-label={t('Video input rule')}
-                      >
-                        <ToggleGroupItem value='same'>
-                          {t('Same price')}
-                        </ToggleGroupItem>
-                        <ToggleGroupItem value='custom'>
-                          {t('Separate price')}
-                        </ToggleGroupItem>
-                        <ToggleGroupItem value='disabled'>
-                          {t('Not allowed')}
-                        </ToggleGroupItem>
-                      </ToggleGroup>
-                      <FieldDescription>
-                        {t(
-                          'New API detects video input automatically and applies this local rule.'
-                        )}
-                      </FieldDescription>
-                    </Field>
-
-                    {referenceVideoPolicy === 'custom' && (
+                  {taskPricingVariant === 'legacy' ? (
+                    <FieldGroup>
                       <Field
-                        data-invalid={showReferencePriceError || undefined}
+                        data-invalid={showNoReferencePriceError || undefined}
                       >
-                        <FieldLabel>{t('With video input')}</FieldLabel>
+                        <FieldLabel>{t('Without video input')}</FieldLabel>
                         <PriceInput
-                          value={taskReferencePrice}
-                          placeholder='0.18'
+                          value={taskNoReferencePrice}
+                          placeholder='0.12'
                           suffix={t('per second')}
-                          invalid={showReferencePriceError}
-                          onChange={setTaskReferencePrice}
+                          invalid={showNoReferencePriceError}
+                          onChange={setTaskNoReferencePrice}
                         />
                         <FieldDescription>
                           {t(
-                            'Local selling price for each requested output second when video input is present.'
+                            'Local selling price for each requested output second when no video is provided.'
                           )}
                         </FieldDescription>
-                        {showReferencePriceError && (
+                        {showNoReferencePriceError && (
                           <FieldError>
                             {t('The per-second price must be greater than 0.')}
                           </FieldError>
                         )}
                       </Field>
-                    )}
 
-                    <Field className='rounded-lg border p-3'>
-                      <FieldTitle>{t('5-second preview')}</FieldTitle>
-                      <FieldDescription>
-                        {taskNoReferencePriceValid
-                          ? `${t('Without video input')} ${formatDisplayBillingPrice(Number(taskNoReferencePrice) * 5)}`
-                          : `${t('Without video input')} —`}
-                        {referenceVideoPolicy === 'disabled'
-                          ? ` · ${t('With video input')} ${t('Not allowed')}`
-                          : taskReferencePriceValid
-                            ? ` · ${t('With video input')} ${formatDisplayBillingPrice(Number(referenceVideoPolicy === 'same' ? taskNoReferencePrice : taskReferencePrice) * 5)}`
-                            : ` · ${t('With video input')} —`}
-                      </FieldDescription>
-                    </Field>
-                  </FieldGroup>
+                      <Field>
+                        <FieldLabel>{t('Video input rule')}</FieldLabel>
+                        <ToggleGroup
+                          value={[referenceVideoPolicy]}
+                          onValueChange={(values) => {
+                            const next = values.at(-1) as
+                              | ReferenceVideoPolicy
+                              | undefined
+                            if (next) setReferenceVideoPolicy(next)
+                          }}
+                          variant='outline'
+                          className='grid w-full grid-cols-3'
+                          aria-label={t('Video input rule')}
+                        >
+                          <ToggleGroupItem value='same'>
+                            {t('Same price')}
+                          </ToggleGroupItem>
+                          <ToggleGroupItem value='custom'>
+                            {t('Separate price')}
+                          </ToggleGroupItem>
+                          <ToggleGroupItem value='disabled'>
+                            {t('Not allowed')}
+                          </ToggleGroupItem>
+                        </ToggleGroup>
+                        <FieldDescription>
+                          {t(
+                            'New API detects video input automatically and applies this local rule.'
+                          )}
+                        </FieldDescription>
+                      </Field>
+
+                      {referenceVideoPolicy === 'custom' && (
+                        <Field
+                          data-invalid={showReferencePriceError || undefined}
+                        >
+                          <FieldLabel>{t('With video input')}</FieldLabel>
+                          <PriceInput
+                            value={taskReferencePrice}
+                            placeholder='0.18'
+                            suffix={t('per second')}
+                            invalid={showReferencePriceError}
+                            onChange={setTaskReferencePrice}
+                          />
+                          <FieldDescription>
+                            {t(
+                              'Local selling price for each requested output second when video input is present.'
+                            )}
+                          </FieldDescription>
+                          {showReferencePriceError && (
+                            <FieldError>
+                              {t(
+                                'The per-second price must be greater than 0.'
+                              )}
+                            </FieldError>
+                          )}
+                        </Field>
+                      )}
+
+                      <Field className='rounded-lg border p-3'>
+                        <FieldTitle>{t('5-second preview')}</FieldTitle>
+                        <FieldDescription>
+                          {taskNoReferencePriceValid
+                            ? `${t('Without video input')} ${formatDisplayBillingPrice(Number(taskNoReferencePrice) * 5)}`
+                            : `${t('Without video input')} —`}
+                          {referenceVideoPolicy === 'disabled'
+                            ? ` · ${t('With video input')} ${t('Not allowed')}`
+                            : taskReferencePriceValid
+                              ? ` · ${t('With video input')} ${formatDisplayBillingPrice(Number(referenceVideoPolicy === 'same' ? taskNoReferencePrice : taskReferencePrice) * 5)}`
+                              : ` · ${t('With video input')} —`}
+                        </FieldDescription>
+                      </Field>
+                    </FieldGroup>
+                  ) : (
+                    <FieldGroup>
+                      <div className='flex items-center justify-between gap-3'>
+                        <div>
+                          <FieldTitle>
+                            {t('Resolution price matrix')}
+                          </FieldTitle>
+                          <FieldDescription>
+                            {t(
+                              'Catalog suggestions are active now; custom IDs remain saved as inactive tiers.'
+                            )}
+                          </FieldDescription>
+                        </div>
+                        <Button
+                          type='button'
+                          variant='outline'
+                          size='sm'
+                          onClick={addTaskPricingTier}
+                        >
+                          <Plus data-icon='inline-start' />
+                          {t('Add resolution')}
+                        </Button>
+                      </div>
+
+                      <div className='rounded-lg border'>
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead className='min-w-32'>
+                                {t('Resolution')}
+                              </TableHead>
+                              <TableHead className='min-w-52'>
+                                {t('Without video input')}
+                              </TableHead>
+                              <TableHead className='min-w-36'>
+                                {t('Video input rule')}
+                              </TableHead>
+                              <TableHead className='min-w-52'>
+                                {t('With video input')}
+                              </TableHead>
+                              <TableHead>{t('5-second preview')}</TableHead>
+                              <TableHead>{t('Status')}</TableHead>
+                              <TableHead className='w-10' />
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {taskPricingTiers.map((tier) => {
+                              const normalizedResolution =
+                                normalizeTaskPricingResolution(tier.resolution)
+                              const active =
+                                supportedTaskResolutions.includes(
+                                  normalizedResolution
+                                )
+                              const noReferencePrice = toNumberOrNull(
+                                tier.noReferencePrice
+                              )
+                              const referencePrice =
+                                tier.referenceVideoPolicy === 'same'
+                                  ? noReferencePrice
+                                  : toNumberOrNull(tier.referencePrice)
+                              const invalid =
+                                showTaskErrors &&
+                                matrixValidation.invalidTierIDs.has(tier.id)
+                              return (
+                                <TableRow key={tier.id}>
+                                  <TableCell>
+                                    <Combobox
+                                      options={supportedTaskResolutions.map(
+                                        (resolution) => ({
+                                          value: resolution,
+                                          label: resolution,
+                                        })
+                                      )}
+                                      value={tier.resolution}
+                                      onValueChange={(value) =>
+                                        updateTaskPricingTier(tier.id, {
+                                          resolution: value || '',
+                                        })
+                                      }
+                                      placeholder={t('Resolution ID')}
+                                      emptyText={t(
+                                        'Enter a canonical resolution ID'
+                                      )}
+                                      allowCustomValue
+                                      className={cn(
+                                        'w-32',
+                                        invalid && 'border-destructive'
+                                      )}
+                                    />
+                                  </TableCell>
+                                  <TableCell>
+                                    <PriceInput
+                                      value={tier.noReferencePrice}
+                                      placeholder='0.08'
+                                      suffix={t('per second')}
+                                      invalid={invalid}
+                                      onChange={(value) =>
+                                        updateTaskPricingTier(tier.id, {
+                                          noReferencePrice: value,
+                                        })
+                                      }
+                                    />
+                                  </TableCell>
+                                  <TableCell>
+                                    <Select
+                                      items={[
+                                        {
+                                          value: 'same',
+                                          label: t('Same price'),
+                                        },
+                                        {
+                                          value: 'custom',
+                                          label: t('Separate price'),
+                                        },
+                                        {
+                                          value: 'disabled',
+                                          label: t('Not allowed'),
+                                        },
+                                      ]}
+                                      value={tier.referenceVideoPolicy}
+                                      onValueChange={(value) =>
+                                        updateTaskPricingTier(tier.id, {
+                                          referenceVideoPolicy:
+                                            value as ReferenceVideoPolicy,
+                                        })
+                                      }
+                                    >
+                                      <SelectTrigger className='w-36'>
+                                        <SelectValue />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        <SelectGroup>
+                                          <SelectItem value='same'>
+                                            {t('Same price')}
+                                          </SelectItem>
+                                          <SelectItem value='custom'>
+                                            {t('Separate price')}
+                                          </SelectItem>
+                                          <SelectItem value='disabled'>
+                                            {t('Not allowed')}
+                                          </SelectItem>
+                                        </SelectGroup>
+                                      </SelectContent>
+                                    </Select>
+                                  </TableCell>
+                                  <TableCell>
+                                    {tier.referenceVideoPolicy === 'custom' ? (
+                                      <PriceInput
+                                        value={tier.referencePrice}
+                                        placeholder='0.12'
+                                        suffix={t('per second')}
+                                        invalid={invalid}
+                                        onChange={(value) =>
+                                          updateTaskPricingTier(tier.id, {
+                                            referencePrice: value,
+                                          })
+                                        }
+                                      />
+                                    ) : (
+                                      <span className='text-muted-foreground text-xs'>
+                                        {tier.referenceVideoPolicy === 'same'
+                                          ? t('Same price')
+                                          : t('Not allowed')}
+                                      </span>
+                                    )}
+                                  </TableCell>
+                                  <TableCell className='text-xs'>
+                                    <div>
+                                      {noReferencePrice !== null
+                                        ? formatDisplayBillingPrice(
+                                            noReferencePrice * 5
+                                          )
+                                        : '—'}
+                                    </div>
+                                    <div className='text-muted-foreground'>
+                                      {tier.referenceVideoPolicy === 'disabled'
+                                        ? t('Not allowed')
+                                        : referencePrice !== null
+                                          ? formatDisplayBillingPrice(
+                                              referencePrice * 5
+                                            )
+                                          : '—'}
+                                    </div>
+                                  </TableCell>
+                                  <TableCell>
+                                    <Badge
+                                      variant={active ? 'secondary' : 'outline'}
+                                    >
+                                      {active ? t('Active') : t('Inactive')}
+                                    </Badge>
+                                  </TableCell>
+                                  <TableCell>
+                                    <Button
+                                      type='button'
+                                      variant='ghost'
+                                      size='icon-sm'
+                                      aria-label={t('Remove resolution')}
+                                      onClick={() =>
+                                        setTaskPricingTiers((tiers) =>
+                                          tiers.filter(
+                                            (candidate) =>
+                                              candidate.id !== tier.id
+                                          )
+                                        )
+                                      }
+                                    >
+                                      <Trash2 />
+                                    </Button>
+                                  </TableCell>
+                                </TableRow>
+                              )
+                            })}
+                          </TableBody>
+                        </Table>
+                        {taskPricingTiers.length === 0 && (
+                          <div className='text-muted-foreground px-4 py-8 text-center text-sm'>
+                            {t('No resolution tiers configured')}
+                          </div>
+                        )}
+                      </div>
+                      {showTaskErrors && !matrixValidation.valid && (
+                        <FieldError>
+                          {t(
+                            'Add at least one unique resolution with valid positive prices.'
+                          )}
+                        </FieldError>
+                      )}
+                      {taskPricingTiers.some(
+                        (tier) =>
+                          !supportedTaskResolutions.includes(
+                            normalizeTaskPricingResolution(tier.resolution)
+                          )
+                      ) && (
+                        <FieldDescription>
+                          {t(
+                            'Inactive tiers are saved but hidden from public pricing and Playground until upstream support appears.'
+                          )}
+                        </FieldDescription>
+                      )}
+                    </FieldGroup>
+                  )}
                 </TabsContent>
 
                 <TabsContent

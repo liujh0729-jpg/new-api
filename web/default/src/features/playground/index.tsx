@@ -169,14 +169,18 @@ export function Playground() {
   useEffect(() => {
     if (config.mode !== 'video') return
 
+    const effectiveResolutions = models.find(
+      (model) => model.value === config.model
+    )?.video_resolutions
     const normalizedResolution = normalizeVideoResolutionForModel(
       config.model,
-      config.video_resolution
+      config.video_resolution,
+      effectiveResolutions
     )
     if (normalizedResolution !== config.video_resolution) {
       updateConfig('video_resolution', normalizedResolution)
     }
-  }, [config.mode, config.model, config.video_resolution, updateConfig])
+  }, [config.mode, config.model, config.video_resolution, models, updateConfig])
 
   useEffect(() => {
     if (config.mode !== 'video') return

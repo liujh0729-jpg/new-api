@@ -4703,6 +4703,26 @@
     "Zero retention": "零数据保留",
     "Zhipu": "智谱",
     "Zhipu V4": "智谱 V4",
-    "Zoom": "缩放"
+    "Zoom": "缩放",
+    "Pricing structure": "定价结构",
+    "One price for all resolutions": "所有分辨率统一价格",
+    "Pricing by resolution": "按分辨率定价",
+    "Only resolutions supported upstream and configured here are available to users.": "只有上游支持且已在此配置价格的分辨率才会对用户开放。",
+    "The same price applies to every resolution supported upstream.": "同一价格将应用于上游支持的所有分辨率。",
+    "Resolution price matrix": "分辨率价格矩阵",
+    "Catalog suggestions are active now; custom IDs remain saved as inactive tiers.": "目录建议项当前已激活；自定义 ID 会作为未激活档位继续保存。",
+    "Add resolution": "添加分辨率",
+    "Resolution ID": "分辨率 ID",
+    "Enter a canonical resolution ID": "输入规范分辨率 ID",
+    "Remove resolution": "移除分辨率",
+    "No resolution tiers configured": "尚未配置分辨率档位",
+    "Add at least one unique resolution with valid positive prices.": "请至少添加一个不重复的分辨率，并填写有效的正数价格。",
+    "Inactive tiers are saved but hidden from public pricing and Playground until upstream support appears.": "未激活档位会被保存，但在上游提供支持前不会出现在公开价格和 Playground 中。",
+    "All resolutions": "所有分辨率",
+    "resolution tiers": "个分辨率档位",
+    "The selected resolution is not supported by the current upstream model.": "当前上游模型不支持所选分辨率。",
+    "The selected resolution is supported upstream but has no local selling price.": "上游支持所选分辨率，但尚未配置本地售价。",
+    "The request could not provide the resolution and duration required for task pricing.": "请求未能提供任务定价所需的分辨率和时长信息。",
+    "Select a video resolution before submitting the request.": "请先选择视频分辨率再提交请求。"
   }
 }

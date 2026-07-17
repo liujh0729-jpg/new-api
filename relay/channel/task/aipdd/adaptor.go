@@ -19,6 +19,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/billing_setting"
 
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
@@ -171,9 +172,22 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		if err := common.UnmarshalBodyReusable(c, &raw); err != nil {
 			return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
 		}
+		if info.Action == constant.TaskActionRemix &&
+			info.TaskPricingFacts != nil &&
+			!seedanceRequestSpecifiesResolution(raw) {
+			raw["resolution"] = info.TaskPricingFacts.Resolution
+		}
 		payload, errorCode, err := normalizeAndValidateSeedanceOfficialPayload(raw)
 		if err != nil {
 			return service.TaskErrorWrapperLocal(err, errorCode, http.StatusBadRequest)
+		}
+		resolution := canonicalSeedanceResolution(payload["resolution"])
+		if _, ok := seedanceResolutionPricing(cfg, resolution); !ok {
+			return service.TaskErrorWrapperLocal(
+				fmt.Errorf("resolution %q is not supported by AIPDD model %s", resolution, cfg.ModelName),
+				"unsupported_resolution",
+				http.StatusBadRequest,
+			)
 		}
 		c.Set(seedanceOfficialPayloadContextKey, payload)
 	}
@@ -198,6 +212,21 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	return nil
 }
 
+func seedanceRequestSpecifiesResolution(raw map[string]any) bool {
+	if raw == nil {
+		return false
+	}
+	metadata, _ := raw["metadata"].(map[string]any)
+	if seedanceRequestValuePresent(raw["resolution"]) ||
+		seedanceRequestValuePresent(metadata["resolution"]) {
+		return true
+	}
+	return (seedanceRequestValuePresent(raw["width"]) &&
+		seedanceRequestValuePresent(raw["height"])) ||
+		(seedanceRequestValuePresent(metadata["width"]) &&
+			seedanceRequestValuePresent(metadata["height"]))
+}
+
 func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInfo) map[string]float64 {
 	req, err := relaycommon.GetTaskRequest(c)
 	if err != nil {
@@ -213,7 +242,11 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 		if err != nil {
 			return nil
 		}
-		ratios["seconds"] = seedanceBillingSeconds(raw)
+		pricing, ok := seedanceResolutionPricing(cfg, canonicalSeedanceResolution(raw["resolution"]))
+		if !ok {
+			return nil
+		}
+		ratios["seconds"] = seedanceBillingSeconds(raw, pricing)
 		if seedanceHasReferenceVideo(raw["content"]) {
 			ratios["has_reference_video"] = 1
 		}
@@ -239,6 +272,50 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 	return ratios
 }
 
+func (a *TaskAdaptor) EstimateTaskPricingFacts(c *gin.Context, info *relaycommon.RelayInfo) (relaycommon.TaskPricingFacts, *dto.TaskError) {
+	req, err := relaycommon.GetTaskRequest(c)
+	if err != nil {
+		return relaycommon.TaskPricingFacts{}, service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+	}
+	cfg, ok := a.resolveModelConfig(ginRequestContext(c), firstNonEmpty(info.UpstreamModelName, info.OriginModelName, req.Model))
+	if !ok || !isSeedanceExecutionConfig(cfg) {
+		return relaycommon.TaskPricingFacts{}, service.TaskErrorWrapperLocal(
+			fmt.Errorf("task pricing facts are unavailable for model %s", info.OriginModelName),
+			"task_pricing_facts_unavailable",
+			http.StatusBadRequest,
+		)
+	}
+	raw, err := getSeedanceOfficialPayload(c)
+	if err != nil {
+		return relaycommon.TaskPricingFacts{}, service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+	}
+	resolution, err := billing_setting.NormalizeTaskPricingResolution(anyToString(raw["resolution"]))
+	if err != nil {
+		return relaycommon.TaskPricingFacts{}, service.TaskErrorWrapperLocal(err, "missing_resolution", http.StatusBadRequest)
+	}
+	pricing, ok := seedanceResolutionPricing(cfg, resolution)
+	if !ok {
+		return relaycommon.TaskPricingFacts{}, service.TaskErrorWrapperLocal(
+			fmt.Errorf("resolution %q is not supported by AIPDD model %s", resolution, cfg.ModelName),
+			"unsupported_resolution",
+			http.StatusBadRequest,
+		)
+	}
+	quantity := seedanceBillingSeconds(raw, pricing)
+	if quantity <= 0 {
+		return relaycommon.TaskPricingFacts{}, service.TaskErrorWrapperLocal(
+			fmt.Errorf("invalid billing duration for model %s", info.OriginModelName),
+			"invalid_duration",
+			http.StatusBadRequest,
+		)
+	}
+	return relaycommon.TaskPricingFacts{
+		Quantity:          quantity,
+		Resolution:        resolution,
+		HasReferenceVideo: seedanceHasReferenceVideo(raw["content"]),
+	}, nil
+}
+
 func (a *TaskAdaptor) AIPDDTaskSnapshot(info *relaycommon.RelayInfo) *model.AIPDDTaskExecutionSnapshot {
 	cfg, ok := constant.GetAIPDDCapability(firstNonEmpty(info.UpstreamModelName, info.OriginModelName))
 	if !ok {
@@ -251,6 +328,15 @@ func (a *TaskAdaptor) AIPDDTaskSnapshot(info *relaycommon.RelayInfo) *model.AIPD
 	if ratios := info.PriceData.OtherRatios; ratios != nil {
 		snapshot.BillingSeconds = ratios["seconds"]
 		snapshot.HasReferenceVideo = ratios["has_reference_video"] > 0
+	}
+	if quote := info.TaskPricingQuote; quote != nil {
+		snapshot.BillingSeconds = quote.Quantity
+		snapshot.HasReferenceVideo = quote.HasReferenceVideo
+		snapshot.Resolution = quote.Resolution
+	} else if facts := info.TaskPricingFacts; facts != nil {
+		snapshot.BillingSeconds = facts.Quantity
+		snapshot.HasReferenceVideo = facts.HasReferenceVideo
+		snapshot.Resolution = facts.Resolution
 	}
 	return snapshot
 }
@@ -1083,6 +1169,19 @@ func canonicalSeedanceResolution(value any) string {
 	return strings.ToLower(strings.TrimSpace(anyToString(value)))
 }
 
+func seedanceResolutionPricing(cfg modelConfig, resolution string) (constant.AIPDDSeedanceResolutionPricing, bool) {
+	if cfg.SeedancePricing == nil {
+		return constant.AIPDDSeedanceResolutionPricing{}, false
+	}
+	canonical := canonicalSeedanceResolution(resolution)
+	for key, pricing := range cfg.SeedancePricing.ByResolution {
+		if canonicalSeedanceResolution(key) == canonical {
+			return pricing, true
+		}
+	}
+	return constant.AIPDDSeedanceResolutionPricing{}, false
+}
+
 func isSeedanceExecutionConfig(cfg modelConfig) bool {
 	return strings.EqualFold(strings.TrimSpace(cfg.AdapterCode), "seedance") ||
 		strings.EqualFold(strings.TrimSpace(cfg.ExecutionProtocol), "seedance_official") ||
@@ -1115,6 +1214,8 @@ func seedanceRequestDimensions(payload, metadata map[string]any) (int, int, bool
 func inferSeedanceResolution(width, height int) (string, error) {
 	shortEdge := min(width, height)
 	switch shortEdge {
+	case 480:
+		return "480p", nil
 	case 720:
 		return "720p", nil
 	case 1080:
@@ -1122,7 +1223,7 @@ func inferSeedanceResolution(width, height int) (string, error) {
 	case 2160:
 		return "4k", nil
 	default:
-		return "", fmt.Errorf("Seedance dimensions %dx%d do not map to 720p, 1080p, or 4k", width, height)
+		return "", fmt.Errorf("Seedance dimensions %dx%d do not map to 480p, 720p, 1080p, or 4k", width, height)
 	}
 }
 
@@ -1164,7 +1265,7 @@ func seedanceRequestValuePresent(value any) bool {
 	}
 }
 
-func seedanceBillingSeconds(raw map[string]any) float64 {
+func seedanceBillingSeconds(raw map[string]any, pricing constant.AIPDDSeedanceResolutionPricing) float64 {
 	if duration := positiveFloat(raw["duration"]); duration > 0 {
 		return duration
 	}
@@ -1177,9 +1278,15 @@ func seedanceBillingSeconds(raw map[string]any) float64 {
 			fps = positiveFloat(raw["frames_per_second"])
 		}
 		if fps <= 0 {
+			fps = pricing.DefaultFramesPerSecond
+		}
+		if fps <= 0 {
 			fps = 24
 		}
 		return frames / fps
+	}
+	if pricing.DefaultDurationSeconds > 0 {
+		return pricing.DefaultDurationSeconds
 	}
 	return 5
 }

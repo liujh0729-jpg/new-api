@@ -4703,6 +4703,26 @@
     "Zero retention": "Không lưu dữ liệu",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "Pricing structure": "Cấu trúc giá",
+    "One price for all resolutions": "Một giá cho mọi độ phân giải",
+    "Pricing by resolution": "Định giá theo độ phân giải",
+    "Only resolutions supported upstream and configured here are available to users.": "Người dùng chỉ thấy các độ phân giải được thượng nguồn hỗ trợ và đã định giá tại đây.",
+    "The same price applies to every resolution supported upstream.": "Cùng một mức giá áp dụng cho mọi độ phân giải được thượng nguồn hỗ trợ.",
+    "Resolution price matrix": "Ma trận giá theo độ phân giải",
+    "Catalog suggestions are active now; custom IDs remain saved as inactive tiers.": "Các gợi ý từ danh mục đang hoạt động; ID tùy chỉnh vẫn được lưu dưới dạng bậc chưa kích hoạt.",
+    "Add resolution": "Thêm độ phân giải",
+    "Resolution ID": "ID độ phân giải",
+    "Enter a canonical resolution ID": "Nhập ID độ phân giải chuẩn",
+    "Remove resolution": "Xóa độ phân giải",
+    "No resolution tiers configured": "Chưa cấu hình bậc độ phân giải",
+    "Add at least one unique resolution with valid positive prices.": "Hãy thêm ít nhất một độ phân giải duy nhất với mức giá dương hợp lệ.",
+    "Inactive tiers are saved but hidden from public pricing and Playground until upstream support appears.": "Các bậc chưa kích hoạt vẫn được lưu nhưng bị ẩn khỏi bảng giá công khai và Playground cho đến khi thượng nguồn hỗ trợ.",
+    "All resolutions": "Mọi độ phân giải",
+    "resolution tiers": "bậc độ phân giải",
+    "The selected resolution is not supported by the current upstream model.": "Mô hình thượng nguồn hiện tại không hỗ trợ độ phân giải đã chọn.",
+    "The selected resolution is supported upstream but has no local selling price.": "Thượng nguồn hỗ trợ độ phân giải đã chọn nhưng chưa có giá bán cục bộ.",
+    "The request could not provide the resolution and duration required for task pricing.": "Yêu cầu không cung cấp được độ phân giải và thời lượng cần thiết để định giá tác vụ.",
+    "Select a video resolution before submitting the request.": "Hãy chọn độ phân giải video trước khi gửi yêu cầu."
   }
 }

@@ -18,8 +18,20 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { formatBillingCurrencyFromUSD } from '@/lib/currency'
 import { QUOTA_TYPE_VALUES, TOKEN_UNIT_DIVISORS } from '../constants'
-import type { PricingModel, TokenUnit, PriceType } from '../types'
-import { isValidTaskPricing } from './model-helpers'
+import type {
+  PricingModel,
+  ReferenceVideoPolicy,
+  TokenUnit,
+  PriceType,
+} from '../types'
+import { getTaskPricingTiers, isValidTaskPricing } from './model-helpers'
+
+export type TaskPriceRow = {
+  resolution: string
+  noReferencePrice: string
+  referencePrice?: string
+  referenceVideoPolicy: ReferenceVideoPolicy
+}
 
 export type TaskPriceInfo = {
   startingPrice: string
@@ -27,6 +39,7 @@ export type TaskPriceInfo = {
   referencePrice?: string
   hasRange: boolean
   isFree: boolean
+  rows: TaskPriceRow[]
 }
 
 // ----------------------------------------------------------------------------
@@ -124,19 +137,28 @@ export function getTaskPriceInfo(
   const showWithRecharge = options.showWithRecharge ?? false
   const priceRate = options.priceRate ?? 1
   const usdExchangeRate = options.usdExchangeRate ?? 1
-  const noReferenceValue = pricing.no_reference_video_unit_price * ratio
-  const referenceValue =
-    pricing.reference_video_policy === 'same'
-      ? noReferenceValue
-      : pricing.reference_video_policy === 'custom' &&
-          Number.isFinite(pricing.reference_video_unit_price) &&
-          Number(pricing.reference_video_unit_price) > 0
-        ? Number(pricing.reference_video_unit_price) * ratio
+  const tiers = getTaskPricingTiers(pricing, model.task_pricing_resolutions)
+  if (tiers.length === 0) return null
+  const values = tiers.flatMap((tier) => {
+    const tierValues = [tier.no_reference_video_unit_price * ratio]
+    if (
+      tier.reference_video_policy === 'custom' &&
+      Number(tier.reference_video_unit_price) > 0
+    ) {
+      tierValues.push(Number(tier.reference_video_unit_price) * ratio)
+    }
+    return tierValues
+  })
+  const startingValue = Math.min(...values)
+  const firstTier = tiers[0]
+  const firstNoReferenceValue = firstTier.no_reference_video_unit_price * ratio
+  const firstReferenceValue =
+    firstTier.reference_video_policy === 'same'
+      ? firstNoReferenceValue
+      : firstTier.reference_video_policy === 'custom' &&
+          Number(firstTier.reference_video_unit_price) > 0
+        ? Number(firstTier.reference_video_unit_price) * ratio
         : undefined
-  const startingValue =
-    referenceValue === undefined
-      ? noReferenceValue
-      : Math.min(noReferenceValue, referenceValue)
 
   return {
     startingPrice: formatTaskCurrency(
@@ -146,24 +168,51 @@ export function getTaskPriceInfo(
       usdExchangeRate
     ),
     noReferencePrice: formatTaskCurrency(
-      noReferenceValue,
+      firstNoReferenceValue,
       showWithRecharge,
       priceRate,
       usdExchangeRate
     ),
     referencePrice:
-      referenceValue === undefined
+      firstReferenceValue === undefined
         ? undefined
         : formatTaskCurrency(
-            referenceValue,
+            firstReferenceValue,
             showWithRecharge,
             priceRate,
             usdExchangeRate
           ),
-    hasRange:
-      pricing.reference_video_policy === 'custom' &&
-      referenceValue !== undefined,
+    hasRange: new Set(values).size > 1,
     isFree: ratio === 0,
+    rows: tiers.map((tier) => {
+      const noReferenceValue = tier.no_reference_video_unit_price * ratio
+      const referenceValue =
+        tier.reference_video_policy === 'same'
+          ? noReferenceValue
+          : tier.reference_video_policy === 'custom' &&
+              Number(tier.reference_video_unit_price) > 0
+            ? Number(tier.reference_video_unit_price) * ratio
+            : undefined
+      return {
+        resolution: tier.resolution,
+        noReferencePrice: formatTaskCurrency(
+          noReferenceValue,
+          showWithRecharge,
+          priceRate,
+          usdExchangeRate
+        ),
+        referencePrice:
+          referenceValue === undefined
+            ? undefined
+            : formatTaskCurrency(
+                referenceValue,
+                showWithRecharge,
+                priceRate,
+                usdExchangeRate
+              ),
+        referenceVideoPolicy: tier.reference_video_policy,
+      }
+    }),
   }
 }
 

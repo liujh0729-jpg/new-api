@@ -75,12 +75,14 @@ func TestRelayTaskSubmitFreezesLocalTaskQuoteAcrossRetries(t *testing.T) {
 	require.Equal(t, billing_setting.TaskPricingUnitSecond, info.TaskPricingQuote.Unit)
 	require.Equal(t, 0.18, info.TaskPricingQuote.UnitPriceUSD)
 	require.Equal(t, 2.25, info.TaskPricingQuote.Quantity)
+	require.Equal(t, "1080p", info.TaskPricingQuote.Resolution)
 	require.Equal(t, 1.0, info.TaskPricingQuote.GroupRatio)
 	require.InDelta(t, 0.18*2.25, info.TaskPricingQuote.BaseUSD, 1e-12)
 	require.InDelta(t, 0.18*2.25, info.TaskPricingQuote.SaleUSD, 1e-12)
 	require.Equal(t, firstResult.Quota, info.TaskPricingQuote.Quota)
 	require.True(t, info.TaskPricingQuote.HasReferenceVideo)
 	require.NotNil(t, firstResult.AIPDDExecution)
+	require.Equal(t, "1080p", firstResult.AIPDDExecution.Resolution)
 	require.Zero(t, firstResult.AIPDDExecution.EstimatedAWCoin)
 	require.Zero(t, firstResult.AIPDDExecution.USDPerAWCoin)
 
@@ -135,6 +137,39 @@ func TestRelayTaskSubmitDisabledReferenceVideoStopsBeforeUpstream(t *testing.T) 
 	require.Equal(t, "reference_video_not_allowed", taskErr.Code)
 	require.Zero(t, upstreamCalls.Load())
 	require.Nil(t, info.Billing)
+}
+
+func TestRelayTaskSubmitRejectsSupportedResolutionWithoutLocalTier(t *testing.T) {
+	service.InitHttpClient()
+	restoreTaskPricingGlobals(t)
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1}`))
+	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
+		"billing_setting.billing_mode": `{"test-local-seedance":"task_pricing"}`,
+		"billing_setting.task_pricing": `{"test-local-seedance":{"unit":"second","by_resolution":{"720p":{"no_reference_video_unit_price":0.08,"reference_video_policy":"same"}}}}`,
+	}))
+	constant.SetAIPDDCapabilities(taskPricingTestCapabilities(0.001, 10))
+
+	var upstreamCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		upstreamCalls.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	ctx, _ := taskPricingRelayContext(server.URL, `{"model":"test-local-seedance","resolution":"1080p","duration":5,"content":[{"type":"text","text":"hello"}]}`)
+	info := &relaycommon.RelayInfo{
+		OriginModelName: testTaskPricingOriginModel,
+		UserGroup:       "default",
+		UsingGroup:      "default",
+		Billing:         &frozenQuoteBilling{},
+		TaskRelayInfo:   &relaycommon.TaskRelayInfo{},
+	}
+
+	result, taskErr := RelayTaskSubmit(ctx, info)
+	require.Nil(t, result)
+	require.NotNil(t, taskErr)
+	require.Equal(t, "resolution_price_not_configured", taskErr.Code)
+	require.Zero(t, upstreamCalls.Load())
 }
 
 func TestRelayTaskSubmitAllowsExplicitFreeGroup(t *testing.T) {

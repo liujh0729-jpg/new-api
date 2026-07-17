@@ -4703,6 +4703,26 @@
     "Zero retention": "データ保持なし",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V 4",
-    "Zoom": "ズーム"
+    "Zoom": "ズーム",
+    "Pricing structure": "料金体系",
+    "One price for all resolutions": "全解像度で同一料金",
+    "Pricing by resolution": "解像度別料金",
+    "Only resolutions supported upstream and configured here are available to users.": "上流で対応し、ここで料金を設定した解像度だけがユーザーに表示されます。",
+    "The same price applies to every resolution supported upstream.": "上流で対応するすべての解像度に同じ料金が適用されます。",
+    "Resolution price matrix": "解像度別料金マトリクス",
+    "Catalog suggestions are active now; custom IDs remain saved as inactive tiers.": "カタログの候補は有効です。カスタム ID は無効な料金段階として保存されます。",
+    "Add resolution": "解像度を追加",
+    "Resolution ID": "解像度 ID",
+    "Enter a canonical resolution ID": "正規の解像度 ID を入力",
+    "Remove resolution": "解像度を削除",
+    "No resolution tiers configured": "解像度の料金段階が設定されていません",
+    "Add at least one unique resolution with valid positive prices.": "重複しない解像度を1つ以上追加し、有効な正の料金を設定してください。",
+    "Inactive tiers are saved but hidden from public pricing and Playground until upstream support appears.": "無効な料金段階は保存されますが、上流が対応するまで公開料金と Playground には表示されません。",
+    "All resolutions": "すべての解像度",
+    "resolution tiers": "解像度の料金段階",
+    "The selected resolution is not supported by the current upstream model.": "選択した解像度は現在の上流モデルでサポートされていません。",
+    "The selected resolution is supported upstream but has no local selling price.": "選択した解像度は上流でサポートされていますが、ローカル販売価格が設定されていません。",
+    "The request could not provide the resolution and duration required for task pricing.": "リクエストからタスク料金に必要な解像度と時間を取得できませんでした。",
+    "Select a video resolution before submitting the request.": "リクエストを送信する前に動画の解像度を選択してください。"
   }
 }

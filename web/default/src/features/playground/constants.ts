@@ -475,8 +475,10 @@ export function getSeedanceVideoProcessingChainOptionsForModel(
 }
 
 export function getVideoResolutionOptionsForModel(
-  model: string
+  model: string,
+  effectiveResolutions?: readonly string[]
 ): readonly string[] {
+  if (effectiveResolutions?.length) return effectiveResolutions
   const processingChainOptions =
     getSeedanceVideoProcessingChainOptionsForModel(model)
   if (processingChainOptions.length > 0) {
@@ -553,9 +555,10 @@ export function normalizeVideoRatioForModel(
 
 export function normalizeVideoResolutionForModel(
   model: string,
-  resolution: string
+  resolution: string,
+  effectiveResolutions?: readonly string[]
 ): string {
-  const options = getVideoResolutionOptionsForModel(model)
+  const options = getVideoResolutionOptionsForModel(model, effectiveResolutions)
   if (options.includes(resolution)) return resolution
   if (options.includes(DEFAULT_VIDEO_RESOLUTION))
     return DEFAULT_VIDEO_RESOLUTION

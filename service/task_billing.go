@@ -54,6 +54,9 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo) {
 		other["quantity"] = quote.Quantity
 		other["sale_usd"] = quote.SaleUSD
 		other["has_reference_video"] = quote.HasReferenceVideo
+		if quote.Resolution != "" {
+			other["resolution"] = quote.Resolution
+		}
 	}
 	if info.PriceData.GroupRatioInfo.HasSpecialRatio {
 		other["user_group_ratio"] = info.PriceData.GroupRatioInfo.GroupSpecialRatio
@@ -145,6 +148,9 @@ func taskBillingOther(task *model.Task) map[string]interface{} {
 			other["quantity"] = bc.Quantity
 			other["sale_usd"] = bc.SaleUSD
 			other["has_reference_video"] = bc.HasReferenceVideo
+			if bc.Resolution != "" {
+				other["resolution"] = bc.Resolution
+			}
 		}
 		if len(bc.OtherRatios) > 0 {
 			for k, v := range bc.OtherRatios {

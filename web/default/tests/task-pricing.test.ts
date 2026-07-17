@@ -17,11 +17,18 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { describe, expect, test } from 'bun:test'
-import { isTaskPricingModel } from '../src/features/pricing/lib/model-helpers'
+import {
+  cloneTaskPricing,
+  compareTaskPricingResolutions,
+  isTaskPricingModel,
+  normalizeTaskPricingResolution,
+} from '../src/features/pricing/lib/model-helpers'
+import { sortModels } from '../src/features/pricing/lib/filters'
 import { getTaskPriceInfo } from '../src/features/pricing/lib/price'
 import {
   isValidTaskPricing,
   parseTaskPricingRequiredModels,
+  parseTaskPricingResolutionOptions,
 } from '../src/features/system-settings/models/task-pricing-utils'
 import type {
   PricingModel,
@@ -48,6 +55,32 @@ function createTaskModel(
       ...(referencePrice === undefined
         ? {}
         : { reference_video_unit_price: referencePrice }),
+    },
+  }
+}
+
+function createMatrixTaskModel(): PricingModel {
+  return {
+    ...createTaskModel('same'),
+    id: 2,
+    task_pricing_resolutions: ['480p', '720p'],
+    task_pricing: {
+      unit: 'second',
+      by_resolution: {
+        '480p': {
+          no_reference_video_unit_price: 0.04,
+          reference_video_policy: 'custom',
+          reference_video_unit_price: 0.06,
+        },
+        '720p': {
+          no_reference_video_unit_price: 0.08,
+          reference_video_policy: 'same',
+        },
+        '4k': {
+          no_reference_video_unit_price: 0.5,
+          reference_video_policy: 'disabled',
+        },
+      },
     },
   }
 }
@@ -84,6 +117,79 @@ describe('local task pricing display', () => {
     const unknown = createTaskModel('same').task_pricing!
     unknown.reference_video_policy = 'unknown' as ReferenceVideoPolicy
     expect(isValidTaskPricing(unknown)).toBe(false)
+  })
+
+  test('validates matrix pricing and keeps legacy fields mutually exclusive', () => {
+    const matrix = createMatrixTaskModel().task_pricing!
+    expect(isValidTaskPricing(matrix)).toBe(true)
+    expect(normalizeTaskPricingResolution(' 4K ')).toBe('4k')
+    expect(
+      ['4k', '1080p', '480p', '2k', '720p'].sort(
+        compareTaskPricingResolutions
+      )
+    ).toEqual(['480p', '720p', '1080p', '2k', '4k'])
+
+    expect(
+      isValidTaskPricing({
+        ...matrix,
+        no_reference_video_unit_price: 0.12,
+      } as never)
+    ).toBe(false)
+    expect(
+      isValidTaskPricing({ unit: 'second', by_resolution: {} })
+    ).toBe(false)
+    expect(
+      isValidTaskPricing({
+        unit: 'second',
+        by_resolution: {
+          ' 720P ': {
+            no_reference_video_unit_price: 0.08,
+            reference_video_policy: 'same',
+          },
+        },
+      })
+    ).toBe(false)
+  })
+
+  test('shows only active resolution tiers and uses their minimum price', () => {
+    const model = createMatrixTaskModel()
+    const info = getTaskPriceInfo(model, {
+      group: 'default',
+      groupRatio: model.group_ratio,
+    })
+
+    expect(info?.rows.map((row) => row.resolution)).toEqual(['480p', '720p'])
+    expect(info?.rows[0].noReferencePrice).toContain('0.04')
+    expect(info?.rows[0].referencePrice).toContain('0.06')
+    expect(info?.startingPrice).toContain('0.04')
+    expect(info?.hasRange).toBe(true)
+  })
+
+  test('sorts matrix task pricing by the lowest active tier', () => {
+    const matrix = createMatrixTaskModel()
+    const legacy = createTaskModel('same')
+    expect(sortModels([legacy, matrix], 'price-low').map((model) => model.id)).toEqual([
+      matrix.id,
+      legacy.id,
+    ])
+  })
+
+  test('deep clones matrix tiers and parses administrator resolution options', () => {
+    const pricing = createMatrixTaskModel().task_pricing!
+    const clone = cloneTaskPricing(pricing)
+    if ('by_resolution' in clone && clone.by_resolution) {
+      clone.by_resolution['480p'].no_reference_video_unit_price = 99
+    }
+    if ('by_resolution' in pricing && pricing.by_resolution) {
+      expect(pricing.by_resolution['480p'].no_reference_video_unit_price).toBe(
+        0.04
+      )
+    }
+    expect(
+      parseTaskPricingResolutionOptions(
+        '{"model":[" 720P ","720p","2K",7],"invalid":"4k"}'
+      )
+    ).toEqual({ model: ['720p', '2k'] })
   })
 
   test('uses two local prices for custom video input pricing', () => {

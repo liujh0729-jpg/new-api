@@ -116,6 +116,7 @@ const BILLING_SECTIONS = [
         toolPricesDefault={settings['tool_price_setting.prices']}
         visibleTabs={['models', 'tool-prices', 'upstream-sync']}
         taskPricingRequiredModels={settings.TaskPricingRequiredModels}
+        taskPricingResolutionOptions={settings.TaskPricingResolutionOptions}
       />
     ),
   },
@@ -132,6 +133,7 @@ const BILLING_SECTIONS = [
         toolPricesDefault={settings['tool_price_setting.prices']}
         visibleTabs={['groups']}
         taskPricingRequiredModels={settings.TaskPricingRequiredModels}
+        taskPricingResolutionOptions={settings.TaskPricingResolutionOptions}
       />
     ),
   },

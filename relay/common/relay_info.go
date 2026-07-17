@@ -60,6 +60,15 @@ type ResponsesUsageInfo struct {
 	BuiltInTools map[string]*BuildInToolInfo
 }
 
+// TaskPricingFacts is the provider-independent request shape used by
+// structured per-task pricing. String facts such as Resolution must not be
+// encoded into PriceData.OtherRatios, which is numeric and multiplicative.
+type TaskPricingFacts struct {
+	Quantity          float64
+	Resolution        string
+	HasReferenceVideo bool
+}
+
 type ChannelMeta struct {
 	ChannelType          int
 	ChannelId            int
@@ -162,6 +171,7 @@ type RelayInfo struct {
 	BillingRequestInput   *billingexpr.RequestInput
 	// TaskPricingQuote freezes request-metered local pricing across channel retries.
 	TaskPricingQuote *billing_setting.TaskPricingQuote
+	TaskPricingFacts *TaskPricingFacts
 
 	Request dto.Request
 

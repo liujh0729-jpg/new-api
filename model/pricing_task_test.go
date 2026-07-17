@@ -5,6 +5,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/config"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/stretchr/testify/require"
@@ -31,6 +32,9 @@ func TestPricingExposesStructuredTaskPricingAndHidesUnconfiguredSeedance(t *test
 		ModelName:    upstreamModelName,
 		AdapterCode:  "seedance",
 		EndpointType: constant.EndpointTypeOpenAIVideo,
+		SeedancePricing: &constant.AIPDDSeedancePricing{ByResolution: map[string]constant.AIPDDSeedanceResolutionPricing{
+			"720p": {TargetResolution: "720p"},
+		}},
 	}})
 	modelMapping := `{"local Seedance pricing alias":"AP Seedance pricing API test"}`
 	channel := Channel{
@@ -64,7 +68,39 @@ func TestPricingExposesStructuredTaskPricingAndHidesUnconfiguredSeedance(t *test
 	require.Equal(t, 0.18, configured.TaskPricing.NoReferenceVideoUnitPrice)
 	require.Equal(t, 0.12, configured.TaskPricing.ReferenceVideoUnitPrice)
 	require.Equal(t, 0.12, configured.ModelPrice, "compatibility model_price must be the lowest valid per-second price")
+	require.Equal(t, []string{"720p"}, configured.TaskPricingResolutions)
 	require.Equal(t, 1, configured.QuotaType)
+	require.Equal(t, []string{"720p"}, GetTaskPricingResolutionOptions()[modelName])
+
+	// Matrix pricing exposes only the catalog intersection and ignores cheaper
+	// inactive tiers when computing the public starting price.
+	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
+		"billing_setting.billing_mode": `{"local Seedance pricing alias":"task_pricing"}`,
+		"billing_setting.task_pricing": `{"local Seedance pricing alias":{"unit":"second","by_resolution":{"720p":{"no_reference_video_unit_price":0.08,"reference_video_policy":"custom","reference_video_unit_price":0.09},"4k":{"no_reference_video_unit_price":0.01,"reference_video_policy":"same"}}}}`,
+	}))
+	InvalidatePricingCache()
+	configured, ok = findPricingForTest(GetPricing(), modelName)
+	require.True(t, ok)
+	require.Equal(t, []string{"720p"}, configured.TaskPricingResolutions)
+	require.Equal(t, 0.08, configured.ModelPrice)
+	require.Contains(t, configured.TaskPricing.ByResolution, "4k", "inactive configured tiers must remain available to administrators")
+	configured.TaskPricing.ByResolution["720p"] = billing_setting.TaskPricingTier{
+		NoReferenceVideoUnitPrice: 99,
+		ReferenceVideoPolicy:      billing_setting.ReferenceVideoPolicySame,
+	}
+	again, foundAgain := findPricingForTest(GetPricing(), modelName)
+	require.True(t, foundAgain)
+	require.Equal(t, 0.08, again.TaskPricing.ByResolution["720p"].NoReferenceVideoUnitPrice)
+
+	// A valid matrix with no upstream intersection remains saved but is omitted
+	// from public pricing and Playground model details.
+	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
+		"billing_setting.billing_mode": `{"local Seedance pricing alias":"task_pricing"}`,
+		"billing_setting.task_pricing": `{"local Seedance pricing alias":{"unit":"second","by_resolution":{"4k":{"no_reference_video_unit_price":0.01,"reference_video_policy":"same"}}}}`,
+	}))
+	InvalidatePricingCache()
+	_, ok = findPricingForTest(GetPricing(), modelName)
+	require.False(t, ok)
 
 	// A legacy fixed ModelPrice is deliberately not a fallback for Seedance.
 	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{"local Seedance pricing alias":99}`))

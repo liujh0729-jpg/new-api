@@ -135,6 +135,7 @@ type TaskBillingContext struct {
 	Quantity          float64            `json:"quantity,omitempty"`
 	SaleUSD           float64            `json:"sale_usd,omitempty"`
 	HasReferenceVideo bool               `json:"has_reference_video,omitempty"`
+	Resolution        string             `json:"resolution,omitempty"`
 }
 
 // GetUpstreamTaskID 获取上游真实 task ID（用于与 provider 通信）

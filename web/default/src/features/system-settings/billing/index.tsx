@@ -25,6 +25,7 @@ import {
 
 const defaultBillingSettings: BillingSettings = {
   TaskPricingRequiredModels: '[]',
+  TaskPricingResolutionOptions: '{}',
   QuotaForNewUser: 0,
   PreConsumedQuota: 0,
   QuotaForInviter: 0,

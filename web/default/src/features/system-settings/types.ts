@@ -174,6 +174,7 @@ export type ModelSettings = {
 
 export type BillingSettings = {
   TaskPricingRequiredModels: string
+  TaskPricingResolutionOptions: string
   QuotaForNewUser: number
   PreConsumedQuota: number
   QuotaForInviter: number

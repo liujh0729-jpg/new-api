@@ -79,6 +79,15 @@ func buildTaskPricingRequiredModelsValue() string {
 	return string(jsonBytes)
 }
 
+func buildTaskPricingResolutionOptionsValue() string {
+	options := model.GetTaskPricingResolutionOptions()
+	jsonBytes, err := common.Marshal(options)
+	if err != nil {
+		return "{}"
+	}
+	return string(jsonBytes)
+}
+
 func GetOptions(c *gin.Context) {
 	var options []*model.Option
 	optionValues := make(map[string]string)
@@ -112,6 +121,10 @@ func GetOptions(c *gin.Context) {
 	options = append(options, &model.Option{
 		Key:   "TaskPricingRequiredModels",
 		Value: buildTaskPricingRequiredModelsValue(),
+	})
+	options = append(options, &model.Option{
+		Key:   "TaskPricingResolutionOptions",
+		Value: buildTaskPricingResolutionOptionsValue(),
 	})
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,

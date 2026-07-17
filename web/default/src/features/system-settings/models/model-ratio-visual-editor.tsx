@@ -69,8 +69,11 @@ import {
   type ModelRatioData,
 } from './model-pricing-sheet'
 import {
+  cloneTaskPricing,
+  getTaskPricingUnitPrices,
   isValidTaskPricing,
   parseTaskPricingRequiredModels,
+  parseTaskPricingResolutionOptions,
 } from './task-pricing-utils'
 
 type ModelRatioVisualEditorProps = {
@@ -86,6 +89,7 @@ type ModelRatioVisualEditorProps = {
   billingExpr: string
   taskPricing: string
   taskPricingRequiredModels: string
+  taskPricingResolutionOptions: string
   onChange: (field: string, value: string) => void
 }
 
@@ -178,17 +182,11 @@ const getPriceSummary = (row: ModelRow, t: (key: string) => string) => {
       : t('Unset price')
   }
   if (row.billingMode === 'task_pricing') {
-    const base = row.taskPricing?.no_reference_video_unit_price
-    if (!isValidTaskPricing(row.taskPricing) || !base) {
+    if (!isValidTaskPricing(row.taskPricing)) {
       return t('Price not configured')
     }
-    const reference = row.taskPricing?.reference_video_unit_price
-    const startingPrice =
-      row.taskPricing?.reference_video_policy === 'custom' &&
-      Number(reference) > 0
-        ? Math.min(base, Number(reference))
-        : base
-    return `${formatBillingPrice(startingPrice)} / ${t('second')}${row.taskPricing?.reference_video_policy === 'custom' ? ` ${t('and up')}` : ''}`
+    const prices = getTaskPricingUnitPrices(row.taskPricing)
+    return `${formatBillingPrice(Math.min(...prices))} / ${t('second')}${new Set(prices).size > 1 ? ` ${t('and up')}` : ''}`
   }
 
   const inputPrice = ratioToPrice(row.ratio)
@@ -223,12 +221,11 @@ const getPriceDetail = (row: ModelRow, t: (key: string) => string) => {
         'Configure a positive per-second price before this model can be used.'
       )
     }
-    if (row.taskPricing?.reference_video_policy === 'custom') {
-      return `${t('With video input')} ${formatBillingPrice(row.taskPricing.reference_video_unit_price)}`
-    }
-    return row.taskPricing?.reference_video_policy === 'disabled'
-      ? t('Video input not supported')
-      : t('Same price with or without video input')
+    const tierCount =
+      'by_resolution' in row.taskPricing && row.taskPricing.by_resolution
+        ? Object.keys(row.taskPricing.by_resolution).length
+        : 1
+    return `${tierCount} ${t('resolution tiers')}`
   }
 
   const inputPrice = ratioToPrice(row.ratio)
@@ -260,6 +257,7 @@ export const ModelRatioVisualEditor = memo(
     billingExpr,
     taskPricing,
     taskPricingRequiredModels,
+    taskPricingResolutionOptions,
     onChange,
   }: ModelRatioVisualEditorProps) {
     const { t } = useTranslation()
@@ -276,6 +274,10 @@ export const ModelRatioVisualEditor = memo(
       pageIndex: 0,
       pageSize: 20,
     })
+    const resolutionOptions = useMemo(
+      () => parseTaskPricingResolutionOptions(taskPricingResolutionOptions),
+      [taskPricingResolutionOptions]
+    )
     const [columnVisibility, setColumnVisibility] = useState<VisibilityState>(
       () => {
         const saved = localStorage.getItem(STORAGE_KEY)
@@ -900,7 +902,7 @@ export const ModelRatioVisualEditor = memo(
 
           if (data.billingMode === 'task_pricing' && data.taskPricing) {
             billingModeMap[name] = 'task_pricing'
-            taskPricingMap[name] = { ...data.taskPricing }
+            taskPricingMap[name] = cloneTaskPricing(data.taskPricing)
           } else if (data.billingMode === 'tiered_expr') {
             const combined = combineBillingExpr(
               data.billingExpr || '',
@@ -1125,6 +1127,7 @@ export const ModelRatioVisualEditor = memo(
                 onCancel={handleCancel}
                 editData={editData}
                 selectedTargetCount={selectedTargetCount}
+                taskPricingResolutionOptions={resolutionOptions}
                 className='sticky top-4 h-[calc(100vh-8rem)] min-h-[620px]'
               />
             ) : (
@@ -1163,6 +1166,7 @@ export const ModelRatioVisualEditor = memo(
             onCancel={handleCancel}
             editData={editData}
             selectedTargetCount={selectedTargetCount}
+            taskPricingResolutionOptions={resolutionOptions}
           />
         )}
       </div>
@@ -1184,6 +1188,8 @@ export const ModelRatioVisualEditor = memo(
       prevProps.taskPricing === nextProps.taskPricing &&
       prevProps.taskPricingRequiredModels ===
         nextProps.taskPricingRequiredModels &&
+      prevProps.taskPricingResolutionOptions ===
+        nextProps.taskPricingResolutionOptions &&
       prevProps.onChange === nextProps.onChange
     )
   }

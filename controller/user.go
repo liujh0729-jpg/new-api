@@ -544,6 +544,27 @@ func GetUserModels(c *gin.Context) {
 			}
 		}
 	}
+	if strings.EqualFold(strings.TrimSpace(c.Query("details")), "true") {
+		type userModelDetails struct {
+			Model            string   `json:"model"`
+			VideoResolutions []string `json:"video_resolutions,omitempty"`
+		}
+		details := make([]userModelDetails, 0, len(models))
+		for _, modelName := range models {
+			resolutions := model.GetTaskPricingResolutions(modelName)
+			if endpointType == constant.EndpointTypeOpenAIVideo &&
+				model.IsAIPDDSeedancePricingRequiredModel(modelName) && len(resolutions) == 0 {
+				continue
+			}
+			details = append(details, userModelDetails{Model: modelName, VideoResolutions: resolutions})
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"success": true,
+			"message": "",
+			"data":    details,
+		})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",

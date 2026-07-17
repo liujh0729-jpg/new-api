@@ -31,6 +31,16 @@ const UPSTREAM_MODEL_NOT_OPEN_MESSAGE =
   'The upstream account has not activated the selected model. Ask an administrator to enable it in the provider console, or switch to another available model.'
 const USER_QUOTA_INSUFFICIENT_MESSAGE =
   'Your account balance is insufficient. Please add credits and try again.'
+const TASK_PRICING_ERROR_MESSAGES: Record<string, string> = {
+  unsupported_resolution:
+    'The selected resolution is not supported by the current upstream model.',
+  resolution_price_not_configured:
+    'The selected resolution is supported upstream but has no local selling price.',
+  task_pricing_facts_unavailable:
+    'The request could not provide the resolution and duration required for task pricing.',
+  missing_resolution:
+    'Select a video resolution before submitting the request.',
+}
 
 const LOCAL_QUOTA_CODE_PARTS = [
   'insufficientuserquota',
@@ -239,6 +249,13 @@ export function normalizePlaygroundError(
   const extracted = extractPlaygroundErrorDetails(error)
   const code = extracted.code
   const message = extracted.message || fallback
+
+  if (code && TASK_PRICING_ERROR_MESSAGES[code]) {
+    return {
+      message: t(TASK_PRICING_ERROR_MESSAGES[code]),
+      code,
+    }
+  }
 
   if (isSeedancePrivacyError(code, message)) {
     return {

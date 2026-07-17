@@ -353,12 +353,14 @@ func TestRefundTaskQuota_PreservesTaskPricingSnapshotAndAuditFields(t *testing.T
 		Quantity:          2.25,
 		SaleUSD:           0.6075,
 		HasReferenceVideo: true,
+		Resolution:        "1080p",
 	}
 	task.PrivateData.AIPDDExecution = &model.AIPDDTaskExecutionSnapshot{
 		CatalogRevision:   "revision-1",
 		Protocol:          "seedance_official",
 		Endpoint:          "/api/v3/contents/generations/tasks",
 		BillingSeconds:    2.25,
+		Resolution:        "1080p",
 		HasReferenceVideo: true,
 	}
 	require.NoError(t, model.DB.Create(task).Error)
@@ -374,7 +376,9 @@ func TestRefundTaskQuota_PreservesTaskPricingSnapshotAndAuditFields(t *testing.T
 	require.Equal(t, 1.5, persisted.PrivateData.BillingContext.GroupRatio)
 	require.Equal(t, 0.6075, persisted.PrivateData.BillingContext.SaleUSD)
 	require.True(t, persisted.PrivateData.BillingContext.HasReferenceVideo)
+	require.Equal(t, "1080p", persisted.PrivateData.BillingContext.Resolution)
 	require.NotNil(t, persisted.PrivateData.AIPDDExecution)
+	require.Equal(t, "1080p", persisted.PrivateData.AIPDDExecution.Resolution)
 	require.Zero(t, persisted.PrivateData.AIPDDExecution.USDPerAWCoin)
 	require.Zero(t, persisted.PrivateData.AIPDDExecution.EstimatedAWCoin)
 
@@ -397,6 +401,7 @@ func TestRefundTaskQuota_PreservesTaskPricingSnapshotAndAuditFields(t *testing.T
 	assert.Equal(t, 1.5, other["group_ratio"])
 	assert.Equal(t, 0.6075, other["sale_usd"])
 	assert.Equal(t, true, other["has_reference_video"])
+	assert.Equal(t, "1080p", other["resolution"])
 	assert.Equal(t, true, other["is_model_mapped"])
 	assert.Equal(t, "AP Seedance upstream", other["upstream_model_name"])
 }

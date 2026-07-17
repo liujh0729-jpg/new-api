@@ -88,6 +88,13 @@ type ExactTaskBillingEstimator interface {
 	EstimateExactQuota(c *gin.Context, info *relaycommon.RelayInfo) (quota int, details map[string]float64, err error)
 }
 
+// TaskPricingFactsProvider is implemented by task adaptors that support the
+// structured local per-task pricing contract. It is optional so existing task
+// adaptors keep their current ratio-based billing behavior.
+type TaskPricingFactsProvider interface {
+	EstimateTaskPricingFacts(c *gin.Context, info *relaycommon.RelayInfo) (relaycommon.TaskPricingFacts, *dto.TaskError)
+}
+
 type AIPDDTaskSnapshotProvider interface {
 	AIPDDTaskSnapshot(info *relaycommon.RelayInfo) *model.AIPDDTaskExecutionSnapshot
 }

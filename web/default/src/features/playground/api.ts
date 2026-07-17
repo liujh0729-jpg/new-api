@@ -158,6 +158,7 @@ export async function getUserModels(
   const res = await api.get(API_ENDPOINTS.USER_MODELS, {
     params: {
       endpoint_type: endpointType,
+      ...(mode === 'video' ? { details: true } : {}),
     },
     skipErrorHandler: true,
   } as Record<string, unknown>)
@@ -167,10 +168,31 @@ export async function getUserModels(
     return []
   }
 
-  return data.data.map((model: string) => ({
-    label: model,
-    value: model,
-  }))
+  return data.data.flatMap((item: unknown) => {
+    if (typeof item === 'string') {
+      return [{ label: item, value: item }]
+    }
+    if (!item || typeof item !== 'object') return []
+    const detail = item as {
+      model?: unknown
+      video_resolutions?: unknown
+    }
+    if (typeof detail.model !== 'string') return []
+    return [
+      {
+        label: detail.model,
+        value: detail.model,
+        ...(Array.isArray(detail.video_resolutions)
+          ? {
+              video_resolutions: detail.video_resolutions.filter(
+                (resolution): resolution is string =>
+                  typeof resolution === 'string'
+              ),
+            }
+          : {}),
+      },
+    ]
+  })
 }
 
 /**

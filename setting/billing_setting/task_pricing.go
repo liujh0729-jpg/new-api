@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -20,22 +22,35 @@ const (
 
 	TaskPricingVariantNoReferenceVideo = "no_reference_video"
 	TaskPricingVariantReferenceVideo   = "reference_video"
+	maxTaskPricingResolutionLength     = 128
 )
 
 var (
-	ErrInvalidTaskPricing       = errors.New("invalid task pricing")
-	ErrTaskPricingNotConfigured = errors.New("task pricing is not configured")
-	ErrReferenceVideoDisabled   = errors.New("reference video input is disabled")
+	ErrInvalidTaskPricing                 = errors.New("invalid task pricing")
+	ErrTaskPricingNotConfigured           = errors.New("task pricing is not configured")
+	ErrReferenceVideoDisabled             = errors.New("reference video input is disabled")
+	ErrTaskPricingResolutionRequired      = errors.New("task pricing resolution is required")
+	ErrTaskPricingResolutionNotConfigured = errors.New("task pricing resolution is not configured")
 )
+
+// TaskPricingTier defines the local retail price for one output resolution.
+// It intentionally mirrors the legacy model-level variant fields so each
+// resolution can independently allow, disable, or customize video input.
+type TaskPricingTier struct {
+	NoReferenceVideoUnitPrice float64 `json:"no_reference_video_unit_price"`
+	ReferenceVideoPolicy      string  `json:"reference_video_policy"`
+	ReferenceVideoUnitPrice   float64 `json:"reference_video_unit_price,omitempty"`
+}
 
 // TaskPricingConfig defines the local retail price for a duration-based task.
 // Prices are stored in New API's USD base unit and are never sourced from the
 // upstream provider at quote time.
 type TaskPricingConfig struct {
-	Unit                      string  `json:"unit"`
-	NoReferenceVideoUnitPrice float64 `json:"no_reference_video_unit_price"`
-	ReferenceVideoPolicy      string  `json:"reference_video_policy"`
-	ReferenceVideoUnitPrice   float64 `json:"reference_video_unit_price,omitempty"`
+	Unit                      string                     `json:"unit"`
+	NoReferenceVideoUnitPrice float64                    `json:"no_reference_video_unit_price,omitempty"`
+	ReferenceVideoPolicy      string                     `json:"reference_video_policy,omitempty"`
+	ReferenceVideoUnitPrice   float64                    `json:"reference_video_unit_price,omitempty"`
+	ByResolution              map[string]TaskPricingTier `json:"by_resolution,omitempty"`
 }
 
 // TaskPricingQuote is an immutable result of selecting a local task-pricing
@@ -52,6 +67,7 @@ type TaskPricingQuote struct {
 	SaleUSD           float64 `json:"sale_usd"`
 	Quota             int     `json:"quota"`
 	HasReferenceVideo bool    `json:"has_reference_video"`
+	Resolution        string  `json:"resolution,omitempty"`
 }
 
 type taskPricingState struct {
@@ -92,7 +108,7 @@ func (s TaskPricingStore) get(model string) (TaskPricingConfig, bool) {
 	s.state.mu.RLock()
 	defer s.state.mu.RUnlock()
 	cfg, ok := s.state.values[model]
-	return cfg, ok
+	return cloneTaskPricingConfig(cfg), ok
 }
 
 func (s TaskPricingStore) copy() map[string]TaskPricingConfig {
@@ -116,7 +132,19 @@ func (s *TaskPricingStore) replace(configs map[string]TaskPricingConfig) {
 func cloneTaskPricingMap(configs map[string]TaskPricingConfig) map[string]TaskPricingConfig {
 	cloned := make(map[string]TaskPricingConfig, len(configs))
 	for model, cfg := range configs {
-		cloned[model] = cfg
+		cloned[model] = cloneTaskPricingConfig(cfg)
+	}
+	return cloned
+}
+
+func cloneTaskPricingConfig(cfg TaskPricingConfig) TaskPricingConfig {
+	if cfg.ByResolution == nil {
+		return cfg
+	}
+	cloned := cfg
+	cloned.ByResolution = make(map[string]TaskPricingTier, len(cfg.ByResolution))
+	for resolution, tier := range cfg.ByResolution {
+		cloned.ByResolution[resolution] = tier
 	}
 	return cloned
 }
@@ -129,10 +157,85 @@ func parseTaskPricingMap(data []byte) (map[string]TaskPricingConfig, error) {
 	if configs == nil {
 		return nil, fmt.Errorf("%w: task pricing must be a JSON object", ErrInvalidTaskPricing)
 	}
-	if err := ValidateTaskPricingMap(configs); err != nil {
+	normalized, err := normalizeTaskPricingMap(configs)
+	if err != nil {
 		return nil, err
 	}
-	return cloneTaskPricingMap(configs), nil
+	if err := ValidateTaskPricingMap(normalized); err != nil {
+		return nil, err
+	}
+	return cloneTaskPricingMap(normalized), nil
+}
+
+func normalizeTaskPricingMap(configs map[string]TaskPricingConfig) (map[string]TaskPricingConfig, error) {
+	normalized := make(map[string]TaskPricingConfig, len(configs))
+	for model, cfg := range configs {
+		cfg = cloneTaskPricingConfig(cfg)
+		if cfg.ByResolution != nil {
+			byResolution := make(map[string]TaskPricingTier, len(cfg.ByResolution))
+			for rawResolution, tier := range cfg.ByResolution {
+				resolution, err := NormalizeTaskPricingResolution(rawResolution)
+				if err != nil {
+					return nil, fmt.Errorf("model %q: %w", model, err)
+				}
+				if _, exists := byResolution[resolution]; exists {
+					return nil, fmt.Errorf("model %q: %w: duplicate resolution %q after normalization", model, ErrInvalidTaskPricing, resolution)
+				}
+				byResolution[resolution] = tier
+			}
+			cfg.ByResolution = byResolution
+		}
+		normalized[model] = cfg
+	}
+	return normalized, nil
+}
+
+// NormalizeTaskPricingResolution returns the provider-facing canonical
+// resolution identifier used for local price lookup. It deliberately does not
+// invent semantic aliases such as 2k=1440p or 4k=2160p.
+func NormalizeTaskPricingResolution(value string) (string, error) {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	if normalized == "" {
+		return "", fmt.Errorf("%w: resolution must be non-empty", ErrInvalidTaskPricing)
+	}
+	if len(normalized) > maxTaskPricingResolutionLength {
+		return "", fmt.Errorf("%w: resolution %q exceeds %d characters", ErrInvalidTaskPricing, normalized, maxTaskPricingResolutionLength)
+	}
+	return normalized, nil
+}
+
+// TaskPricingResolutionLess orders common p/k resolution identifiers by
+// effective scale without treating distinct provider identifiers as aliases.
+func TaskPricingResolutionLess(left, right string) bool {
+	leftValue, leftOK := taskPricingResolutionSortValue(left)
+	rightValue, rightOK := taskPricingResolutionSortValue(right)
+	if leftOK && rightOK && leftValue != rightValue {
+		return leftValue < rightValue
+	}
+	if leftOK != rightOK {
+		return leftOK
+	}
+	return strings.ToLower(left) < strings.ToLower(right)
+}
+
+func taskPricingResolutionSortValue(value string) (float64, bool) {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	if len(normalized) < 2 {
+		return 0, false
+	}
+	factor := 1.0
+	switch normalized[len(normalized)-1] {
+	case 'p':
+	case 'k':
+		factor = 1000
+	default:
+		return 0, false
+	}
+	number, err := strconv.ParseFloat(normalized[:len(normalized)-1], 64)
+	if err != nil || number <= 0 || math.IsNaN(number) || math.IsInf(number, 0) {
+		return 0, false
+	}
+	return number * factor, true
 }
 
 // ParseTaskPricingMapJSON decodes and validates the complete task-pricing
@@ -156,17 +259,49 @@ func ValidateTaskPricingConfig(cfg TaskPricingConfig) error {
 	if cfg.Unit != TaskPricingUnitSecond {
 		return fmt.Errorf("%w: unit must be %q", ErrInvalidTaskPricing, TaskPricingUnitSecond)
 	}
-	if !isFinitePositive(cfg.NoReferenceVideoUnitPrice) {
+	if cfg.ByResolution != nil {
+		if len(cfg.ByResolution) == 0 {
+			return fmt.Errorf("%w: by_resolution must contain at least one tier", ErrInvalidTaskPricing)
+		}
+		if cfg.NoReferenceVideoUnitPrice != 0 || cfg.ReferenceVideoPolicy != "" || cfg.ReferenceVideoUnitPrice != 0 {
+			return fmt.Errorf("%w: legacy price fields and by_resolution are mutually exclusive", ErrInvalidTaskPricing)
+		}
+		seen := make(map[string]struct{}, len(cfg.ByResolution))
+		for rawResolution, tier := range cfg.ByResolution {
+			resolution, err := NormalizeTaskPricingResolution(rawResolution)
+			if err != nil {
+				return err
+			}
+			if _, exists := seen[resolution]; exists {
+				return fmt.Errorf("%w: duplicate resolution %q after normalization", ErrInvalidTaskPricing, resolution)
+			}
+			seen[resolution] = struct{}{}
+			if err := validateTaskPricingTier(tier); err != nil {
+				return fmt.Errorf("resolution %q: %w", resolution, err)
+			}
+		}
+		return nil
+	}
+
+	return validateTaskPricingTier(TaskPricingTier{
+		NoReferenceVideoUnitPrice: cfg.NoReferenceVideoUnitPrice,
+		ReferenceVideoPolicy:      cfg.ReferenceVideoPolicy,
+		ReferenceVideoUnitPrice:   cfg.ReferenceVideoUnitPrice,
+	})
+}
+
+func validateTaskPricingTier(tier TaskPricingTier) error {
+	if !isFinitePositive(tier.NoReferenceVideoUnitPrice) {
 		return fmt.Errorf("%w: no_reference_video_unit_price must be finite and greater than 0", ErrInvalidTaskPricing)
 	}
 
-	switch cfg.ReferenceVideoPolicy {
+	switch tier.ReferenceVideoPolicy {
 	case ReferenceVideoPolicySame, ReferenceVideoPolicyDisabled:
-		if !isFiniteNonNegative(cfg.ReferenceVideoUnitPrice) {
+		if !isFiniteNonNegative(tier.ReferenceVideoUnitPrice) {
 			return fmt.Errorf("%w: reference_video_unit_price must be finite and non-negative", ErrInvalidTaskPricing)
 		}
 	case ReferenceVideoPolicyCustom:
-		if !isFinitePositive(cfg.ReferenceVideoUnitPrice) {
+		if !isFinitePositive(tier.ReferenceVideoUnitPrice) {
 			return fmt.Errorf("%w: reference_video_unit_price must be finite and greater than 0 for custom policy", ErrInvalidTaskPricing)
 		}
 	default:
@@ -179,6 +314,52 @@ func ValidateTaskPricingConfig(cfg TaskPricingConfig) error {
 		)
 	}
 	return nil
+}
+
+// TaskPricingResolutionKeys returns sorted canonical keys for a matrix config.
+// Legacy configs intentionally return nil because they apply to every
+// resolution supported by the selected upstream capability.
+func TaskPricingResolutionKeys(cfg TaskPricingConfig) []string {
+	if cfg.ByResolution == nil {
+		return nil
+	}
+	keys := make([]string, 0, len(cfg.ByResolution))
+	for rawResolution := range cfg.ByResolution {
+		resolution, err := NormalizeTaskPricingResolution(rawResolution)
+		if err == nil {
+			keys = append(keys, resolution)
+		}
+	}
+	sort.SliceStable(keys, func(left, right int) bool {
+		return TaskPricingResolutionLess(keys[left], keys[right])
+	})
+	return keys
+}
+
+// TaskPricingUnitPrices returns every billable per-second unit price in cfg.
+func TaskPricingUnitPrices(cfg TaskPricingConfig) []float64 {
+	prices := make([]float64, 0, max(2, len(cfg.ByResolution)*2))
+	appendTier := func(tier TaskPricingTier) {
+		prices = append(prices, tier.NoReferenceVideoUnitPrice)
+		switch tier.ReferenceVideoPolicy {
+		case ReferenceVideoPolicySame:
+			prices = append(prices, tier.NoReferenceVideoUnitPrice)
+		case ReferenceVideoPolicyCustom:
+			prices = append(prices, tier.ReferenceVideoUnitPrice)
+		}
+	}
+	if cfg.ByResolution == nil {
+		appendTier(TaskPricingTier{
+			NoReferenceVideoUnitPrice: cfg.NoReferenceVideoUnitPrice,
+			ReferenceVideoPolicy:      cfg.ReferenceVideoPolicy,
+			ReferenceVideoUnitPrice:   cfg.ReferenceVideoUnitPrice,
+		})
+		return prices
+	}
+	for _, tier := range cfg.ByResolution {
+		appendTier(tier)
+	}
+	return prices
 }
 
 // ValidateTaskPricingMap validates every model entry without mutating it.
@@ -199,6 +380,7 @@ func ValidateTaskPricingMap(configs map[string]TaskPricingConfig) error {
 func QuoteTaskPricing(
 	model string,
 	quantity float64,
+	resolution string,
 	groupRatio float64,
 	quotaPerUnit float64,
 	hasReferenceVideo bool,
@@ -220,16 +402,41 @@ func QuoteTaskPricing(
 		return TaskPricingQuote{}, fmt.Errorf("%w: quota per unit must be finite and greater than 0", ErrInvalidTaskPricing)
 	}
 
+	canonicalResolution := ""
+	if strings.TrimSpace(resolution) != "" {
+		var err error
+		canonicalResolution, err = NormalizeTaskPricingResolution(resolution)
+		if err != nil {
+			return TaskPricingQuote{}, fmt.Errorf("%w: %v", ErrTaskPricingResolutionRequired, err)
+		}
+	}
+
+	tier := TaskPricingTier{
+		NoReferenceVideoUnitPrice: cfg.NoReferenceVideoUnitPrice,
+		ReferenceVideoPolicy:      cfg.ReferenceVideoPolicy,
+		ReferenceVideoUnitPrice:   cfg.ReferenceVideoUnitPrice,
+	}
+	if cfg.ByResolution != nil {
+		if canonicalResolution == "" {
+			return TaskPricingQuote{}, fmt.Errorf("%w: model %q", ErrTaskPricingResolutionRequired, model)
+		}
+		var found bool
+		tier, found = cfg.ByResolution[canonicalResolution]
+		if !found {
+			return TaskPricingQuote{}, fmt.Errorf("%w: model %q resolution %q", ErrTaskPricingResolutionNotConfigured, model, canonicalResolution)
+		}
+	}
+
 	variant := TaskPricingVariantNoReferenceVideo
-	unitPrice := cfg.NoReferenceVideoUnitPrice
+	unitPrice := tier.NoReferenceVideoUnitPrice
 	if hasReferenceVideo {
 		variant = TaskPricingVariantReferenceVideo
-		switch cfg.ReferenceVideoPolicy {
+		switch tier.ReferenceVideoPolicy {
 		case ReferenceVideoPolicySame:
 			// The request remains the reference-video variant for logging, but
 			// it intentionally reuses the no-reference-video unit price.
 		case ReferenceVideoPolicyCustom:
-			unitPrice = cfg.ReferenceVideoUnitPrice
+			unitPrice = tier.ReferenceVideoUnitPrice
 		case ReferenceVideoPolicyDisabled:
 			return TaskPricingQuote{}, fmt.Errorf("%w: model %q", ErrReferenceVideoDisabled, model)
 		}
@@ -261,6 +468,7 @@ func QuoteTaskPricing(
 		SaleUSD:           saleUSD,
 		Quota:             billingexpr.QuotaRound(quotaValue),
 		HasReferenceVideo: hasReferenceVideo,
+		Resolution:        canonicalResolution,
 	}, nil
 }
 

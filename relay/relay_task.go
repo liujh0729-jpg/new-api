@@ -149,9 +149,17 @@ func ResolveOriginTask(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskErr
 	// 提取 remix 参数（时长、分辨率 → OtherRatios）
 	if info.Action == constant.TaskActionRemix {
 		if originTask.PrivateData.BillingContext != nil {
+			billingContext := originTask.PrivateData.BillingContext
 			// 新的 remix 逻辑：直接从原始任务的 BillingContext 中提取 OtherRatios（如果存在）
-			for s, f := range originTask.PrivateData.BillingContext.OtherRatios {
+			for s, f := range billingContext.OtherRatios {
 				info.PriceData.AddOtherRatio(s, f)
+			}
+			if billingContext.BillingMode == billing_setting.BillingModeTaskPricing {
+				info.TaskPricingFacts = &relaycommon.TaskPricingFacts{
+					Quantity:          billingContext.Quantity,
+					Resolution:        billingContext.Resolution,
+					HasReferenceVideo: billingContext.HasReferenceVideo,
+				}
 			}
 		} else {
 			// 旧的 remix 逻辑：直接从 task data 解析 seconds 和 size（如果存在）
@@ -285,17 +293,35 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	if taskPricingMode {
 		quote := info.TaskPricingQuote
 		if quote == nil {
+			factsProvider, ok := adaptor.(channel.TaskPricingFactsProvider)
+			if !ok {
+				return nil, service.TaskErrorWrapperLocal(
+					fmt.Errorf("task pricing facts are unavailable for model %s", info.OriginModelName),
+					"task_pricing_facts_unavailable",
+					http.StatusBadRequest,
+				)
+			}
+			facts, factsErr := factsProvider.EstimateTaskPricingFacts(c, info)
+			if factsErr != nil {
+				return nil, factsErr
+			}
+			info.TaskPricingFacts = &facts
 			resolved, quoteErr := billing_setting.QuoteTaskPricing(
 				info.OriginModelName,
-				info.PriceData.OtherRatios["seconds"],
+				facts.Quantity,
+				facts.Resolution,
 				info.PriceData.GroupRatioInfo.GroupRatio,
 				common.QuotaPerUnit,
-				info.PriceData.OtherRatios["has_reference_video"] > 0,
+				facts.HasReferenceVideo,
 			)
 			if quoteErr != nil {
 				code := "model_price_error"
 				if errors.Is(quoteErr, billing_setting.ErrReferenceVideoDisabled) {
 					code = "reference_video_not_allowed"
+				} else if errors.Is(quoteErr, billing_setting.ErrTaskPricingResolutionNotConfigured) {
+					code = "resolution_price_not_configured"
+				} else if errors.Is(quoteErr, billing_setting.ErrTaskPricingResolutionRequired) {
+					code = "missing_resolution"
 				}
 				return nil, service.TaskErrorWrapperLocal(quoteErr, code, http.StatusBadRequest)
 			}
