@@ -21,6 +21,13 @@ func EnsureAIPDDDefaults() error {
 		return err
 	}
 	if strings.TrimSpace(key) == "" || !isAIPDDCatalogSyncOnBootEnabled(key) {
+		revision, activated, err := activateAIPDDCatalogSnapshot(getAIPDDBaseURLFromEnv())
+		if err != nil {
+			return fmt.Errorf("AIPDD catalog snapshot activation failed: %w", err)
+		}
+		if activated {
+			common.SysLog("AIPDD runtime catalog restored from snapshot revision=" + revision)
+		}
 		return nil
 	}
 	timeoutSeconds := common.GetEnvOrDefault(aipddCatalogSyncTimeoutSecondsEnvName, 10)

@@ -64,6 +64,32 @@ func restoreAIPDDCatalogSnapshot(baseURL string, fetchErr error) (AIPDDCatalogSy
 	}, nil
 }
 
+// activateAIPDDCatalogSnapshot restores runtime-only capability metadata from
+// the last known good same-origin catalog. It deliberately performs no remote
+// request and no database write, so deployments can disable live catalog sync
+// without making persisted duration-priced models disappear after a restart.
+func activateAIPDDCatalogSnapshot(baseURL string) (string, bool, error) {
+	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	var snapshot AIPDDCatalogSnapshot
+	if err := DB.First(&snapshot, aipddCatalogSnapshotID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	if strings.TrimRight(snapshot.SourceBaseURL, "/") != baseURL {
+		return "", false, fmt.Errorf("snapshot belongs to a different AIPDD base URL")
+	}
+	catalog, err := aipddcatalog.UnmarshalAtomic([]byte(snapshot.Payload))
+	if err != nil {
+		return "", false, fmt.Errorf("snapshot is invalid: %w", err)
+	}
+	activateAIPDDCatalog(catalog)
+	InvalidatePricingCache()
+	ratio_setting.InvalidateExposedDataCache()
+	return catalog.Revision, true, nil
+}
+
 func applyAIPDDCatalog(catalog aipddcatalog.AtomicCatalog, baseURL, apiKey string) (AIPDDCatalogSyncResult, error) {
 	// FetchAtomic and UnmarshalAtomic already apply this filter, but keep the
 	// boundary defensive so a catalog assembled by another caller cannot

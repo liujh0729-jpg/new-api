@@ -8,6 +8,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/pkg/aipddcatalog"
 	"github.com/stretchr/testify/require"
 )
 
@@ -219,6 +220,90 @@ func TestEnsureAIPDDDefaultsSkipsWhenAtomicSyncDisabled(t *testing.T) {
 	var count int64
 	require.NoError(t, DB.Model(&Channel{}).Where("type = ?", constant.ChannelTypeAIPDD).Count(&count).Error)
 	require.Zero(t, count)
+}
+
+func TestEnsureAIPDDDefaultsRestoresRuntimeSnapshotWhenSyncDisabled(t *testing.T) {
+	truncateTables(t)
+	constant.ResetAIPDDCapabilities()
+	constant.ResetAIPDDOpenAIModels()
+	preserveAIPDDPricingRuntime(t)
+	t.Cleanup(func() {
+		constant.ResetAIPDDCapabilities()
+		constant.ResetAIPDDOpenAIModels()
+		InvalidatePricingCache()
+	})
+
+	const (
+		baseURL   = "https://aipdd.snapshot.test"
+		modelName = "AP Seedance snapshot test"
+	)
+	displayAmount := 40.0
+	displayVideoAmount := 60.0
+	catalog := aipddTestCatalog("snapshot-runtime-revision", "unused-task", "unused-llm")
+	catalog.Capabilities = []aipddcatalog.AtomicCapability{{
+		ID: modelName, Code: "seedance", Name: modelName, AdapterCode: "seedance",
+		EndpointType: "openai-video", TaskKind: "video_generation",
+		Execution: aipddcatalog.AtomicExecution{Protocol: "seedance_official", Path: "/api/v3/contents/generations/tasks"},
+		Pricing: aipddcatalog.AtomicPricing{
+			PricingModel: "per_second", Currency: "awcoin", PricingBasis: "display", Enabled: true,
+			ByResolution: map[string]constant.AIPDDSeedanceResolutionPricing{
+				"720p": {
+					TargetResolution:                 "720p",
+					DisplayAmountAWCoinPerSecond:     &displayAmount,
+					DisplayVideoInputAWCoinPerSecond: &displayVideoAmount,
+					DefaultDurationSeconds:           5,
+					DefaultFramesPerSecond:           24,
+				},
+			},
+		},
+	}}
+	catalog.Models = nil
+	_, err := applyAIPDDCatalog(catalog, baseURL, "sk-snapshot-test")
+	require.NoError(t, err)
+	require.NoError(t, UpdateOption(
+		"billing_setting.task_pricing",
+		`{"AP Seedance snapshot test":{"unit":"second","by_resolution":{"720p":{"no_reference_video_unit_price":0.08,"reference_video_policy":"custom","reference_video_unit_price":0.12}}}}`,
+	))
+	require.NoError(t, UpdateOption(
+		"billing_setting.billing_mode",
+		`{"AP Seedance snapshot test":"task_pricing"}`,
+	))
+
+	var channelBefore Channel
+	require.NoError(t, DB.Where("type = ?", constant.ChannelTypeAIPDD).First(&channelBefore).Error)
+	var snapshotBefore AIPDDCatalogSnapshot
+	require.NoError(t, DB.First(&snapshotBefore, aipddCatalogSnapshotID).Error)
+	var abilityCountBefore int64
+	require.NoError(t, DB.Model(&Ability{}).Count(&abilityCountBefore).Error)
+
+	constant.ResetAIPDDCapabilities()
+	constant.ResetAIPDDOpenAIModels()
+	InvalidatePricingCache()
+	_, found := findPricingForTest(GetPricing(), modelName)
+	require.False(t, found, "compiled defaults do not contain dynamic Seedance metadata")
+
+	t.Setenv("AIPDD_API_KEY", "sk-snapshot-test")
+	t.Setenv("AIPDD_BASE_URL", baseURL)
+	t.Setenv("AIPDD_CATALOG_SYNC_ON_BOOT", "false")
+	require.NoError(t, EnsureAIPDDDefaults())
+
+	pricing, found := findPricingForTest(GetPricing(), modelName)
+	require.True(t, found)
+	require.Equal(t, "task_pricing", pricing.BillingMode)
+	require.Equal(t, []string{"720p"}, pricing.TaskPricingResolutions)
+	capability, found := constant.GetAIPDDCapability(modelName)
+	require.True(t, found)
+	require.Contains(t, capability.SeedancePricing.ByResolution, "720p")
+
+	var channelAfter Channel
+	require.NoError(t, DB.Where("type = ?", constant.ChannelTypeAIPDD).First(&channelAfter).Error)
+	var snapshotAfter AIPDDCatalogSnapshot
+	require.NoError(t, DB.First(&snapshotAfter, aipddCatalogSnapshotID).Error)
+	var abilityCountAfter int64
+	require.NoError(t, DB.Model(&Ability{}).Count(&abilityCountAfter).Error)
+	require.Equal(t, channelBefore, channelAfter)
+	require.Equal(t, snapshotBefore, snapshotAfter)
+	require.Equal(t, abilityCountBefore, abilityCountAfter)
 }
 
 func TestEnsureAIPDDDefaultsSyncsDynamicCatalogOnBoot(t *testing.T) {
