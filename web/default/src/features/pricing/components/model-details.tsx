@@ -724,7 +724,6 @@ function GroupPricingSection(props: {
             </TableHeader>
             <TableBody>
               {availableGroups.flatMap((group) => {
-                const ratio = props.groupRatio[group] ?? 1
                 const info = getTaskPriceInfo(props.model, {
                   group,
                   showWithRecharge: showRechargePrice,
@@ -741,7 +740,7 @@ function GroupPricingSection(props: {
                       {priceRow.resolution || t('All resolutions')}
                     </TableCell>
                     <TableCell className='text-muted-foreground py-2.5 font-mono text-xs'>
-                      {ratio}x
+                      {priceRow.effectiveGroupRatio}x
                     </TableCell>
                     <TableCell className='py-2.5 text-right font-mono'>
                       {info?.isFree ? t('Free') : priceRow.noReferencePrice}

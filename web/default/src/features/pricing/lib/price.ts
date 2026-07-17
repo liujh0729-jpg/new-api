@@ -28,6 +28,7 @@ import { getTaskPricingTiers, isValidTaskPricing } from './model-helpers'
 
 export type TaskPriceRow = {
   resolution: string
+  effectiveGroupRatio: number
   noReferencePrice: string
   referencePrice?: string
   referenceVideoPolicy: ReferenceVideoPolicy
@@ -214,6 +215,7 @@ export function getTaskPriceInfo(
             : undefined
       return {
         resolution: tier.resolution,
+        effectiveGroupRatio: tierRatio,
         noReferencePrice: formatTaskCurrency(
           noReferenceValue,
           showWithRecharge,

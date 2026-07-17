@@ -187,8 +187,10 @@ describe('local task pricing display', () => {
     })
 
     expect(info?.rows[0].resolution).toBe('480p')
+    expect(info?.rows[0].effectiveGroupRatio).toBe(1)
     expect(info?.rows[0].noReferencePrice).toContain('0.04')
     expect(info?.rows[1].resolution).toBe('720p')
+    expect(info?.rows[1].effectiveGroupRatio).toBe(0.78)
     expect(info?.rows[1].noReferencePrice).toContain('0.0624')
   })
 
@@ -205,6 +207,7 @@ describe('local task pricing display', () => {
     })
 
     expect(info?.rows[0].resolution).toBe('480p')
+    expect(info?.rows[0].effectiveGroupRatio).toBe(0.78)
     expect(info?.rows[0].noReferencePrice).toContain('0.0312')
     expect(info?.rows[0].referencePrice).toContain('0.0468')
   })
@@ -222,6 +225,7 @@ describe('local task pricing display', () => {
     })
 
     expect(info?.rows[1].resolution).toBe('720p')
+    expect(info?.rows[1].effectiveGroupRatio).toBe(1)
     expect(info?.rows[1].noReferencePrice).toContain('0.08')
   })
 
