@@ -234,6 +234,49 @@ func TestSeedanceCatalogValidationErrorsAreHTTP400(t *testing.T) {
 	})
 }
 
+func TestSeedanceCatalogRejectsUnsupportedFrameParametersBeforeBilling(t *testing.T) {
+	capability := seedanceTestCapability()
+	capability.WorkflowParamKeys = []string{
+		"content", "resolution", "ratio", "duration", "seed", "callback_url",
+		"return_last_frame", "service_tier", "generate_audio", "priority",
+	}
+	constant.SetAIPDDCapabilities([]constant.AIPDDCapability{capability})
+	t.Cleanup(constant.ResetAIPDDCapabilities)
+
+	tests := []struct {
+		name string
+		body string
+		code string
+	}{
+		{
+			name: "frames with fps",
+			body: `{"model":"AP Seedance","resolution":"720p","ratio":"16:9","frames":120,"fps":24,"content":[{"type":"text","text":"hello"}]}`,
+			code: "unsupported_frames",
+		},
+		{
+			name: "frames per second alias",
+			body: `{"model":"AP Seedance","resolution":"720p","ratio":"16:9","frames_per_second":24,"content":[{"type":"text","text":"hello"}]}`,
+			code: "unsupported_frame_rate",
+		},
+		{
+			name: "compact frames per second alias in metadata",
+			body: `{"model":"AP Seedance","resolution":"720p","ratio":"16:9","content":[{"type":"text","text":"hello"}],"metadata":{"framespersecond":24}}`,
+			code: "unsupported_frame_rate",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, info, adaptor := seedanceRequestContext(t, test.body)
+			taskErr := adaptor.ValidateRequestAndSetAction(ctx, info)
+			require.NotNil(t, taskErr)
+			require.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
+			require.Equal(t, test.code, taskErr.Code)
+			require.Contains(t, taskErr.Message, "duration")
+		})
+	}
+}
+
 func TestSeedanceCatalogBillingFactsIgnoreCatalogPrices(t *testing.T) {
 	models := []string{
 		"AP Seedance-2.0 VIP",

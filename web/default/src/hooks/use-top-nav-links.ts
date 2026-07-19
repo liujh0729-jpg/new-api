@@ -38,6 +38,12 @@ const DEFAULT_HEADER_NAV_MODULES = {
   about: true,
 }
 
+const INTERNAL_DOCS_PATH = '/docs'
+const LEGACY_DEFAULT_DOCS_LINKS = new Set([
+  'https://docs.newapi.pro',
+  'https://docs.newapi.pro/',
+])
+
 function parseAccessModule(
   raw: unknown,
   fallback: { enabled: boolean; requireAuth: boolean }
@@ -114,7 +120,8 @@ export function useTopNavLinks(): TopNavLink[] {
   }, [status?.HeaderNavModules])
 
   // Documentation link (may be external)
-  const docsLink: string | undefined = status?.docs_link as string | undefined
+  const docsLink =
+    typeof status?.docs_link === 'string' ? status.docs_link.trim() : ''
 
   const isAuthed = !!auth?.user
 
@@ -146,10 +153,18 @@ export function useTopNavLinks(): TopNavLink[] {
 
   // Docs (supports external links)
   if (modules?.docs !== false) {
-    if (docsLink) {
-      links.push({ title: t('Docs'), href: docsLink, external: true })
+    if (
+      !docsLink ||
+      docsLink === INTERNAL_DOCS_PATH ||
+      LEGACY_DEFAULT_DOCS_LINKS.has(docsLink)
+    ) {
+      links.push({ title: t('Docs'), href: INTERNAL_DOCS_PATH })
     } else {
-      links.push({ title: t('Docs'), href: '/docs' })
+      links.push({
+        title: t('Docs'),
+        href: docsLink,
+        external: !docsLink.startsWith('/'),
+      })
     }
   }
 

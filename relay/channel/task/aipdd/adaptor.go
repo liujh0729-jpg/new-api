@@ -182,6 +182,9 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		if err != nil {
 			return service.TaskErrorWrapperLocal(err, errorCode, http.StatusBadRequest)
 		}
+		if errorCode, err = validateSeedanceFrameParameters(payload, cfg); err != nil {
+			return service.TaskErrorWrapperLocal(err, errorCode, http.StatusBadRequest)
+		}
 		resolution := canonicalSeedanceResolution(payload["resolution"])
 		if _, ok := seedanceResolutionPricing(cfg, resolution); !ok {
 			return service.TaskErrorWrapperLocal(
@@ -1155,6 +1158,35 @@ func normalizeAndValidateSeedanceOfficialPayload(raw map[string]any) (map[string
 		payload["ratio"] = ratio
 	}
 	return payload, "", nil
+}
+
+func validateSeedanceFrameParameters(payload map[string]any, cfg modelConfig) (string, error) {
+	// An empty catalog parameter list belongs to legacy capabilities. Keep their
+	// historical behavior, while treating a populated live catalog as authoritative.
+	if len(cfg.WorkflowParamKeys) == 0 {
+		return "", nil
+	}
+	for _, key := range cfg.WorkflowParamKeys {
+		if strings.EqualFold(strings.TrimSpace(key), "frames") {
+			return "", nil
+		}
+	}
+	if seedanceRequestValuePresent(payload["frames"]) {
+		return "unsupported_frames", fmt.Errorf(
+			"frames is not supported by Seedance model %s; use duration in seconds instead",
+			cfg.ModelName,
+		)
+	}
+	for _, key := range []string{"fps", "framespersecond", "frames_per_second"} {
+		if seedanceRequestValuePresent(payload[key]) {
+			return "unsupported_frame_rate", fmt.Errorf(
+				"%s is not supported by Seedance model %s; use duration in seconds instead",
+				key,
+				cfg.ModelName,
+			)
+		}
+	}
+	return "", nil
 }
 
 func getSeedanceOfficialPayload(c *gin.Context) (map[string]any, error) {

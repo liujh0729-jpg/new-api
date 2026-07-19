@@ -2,9 +2,10 @@
 """Build an idempotent VIP group and AIPDD channel-group sync plan.
 
 This helper never reads or writes model pricing. It merges the fixed VIP1-VIP5
-ratios into GroupRatio, creates only missing UserUsableGroups descriptions, and
-appends the five groups to every supplied AIPDD channel while preserving the
-channel's existing group order.
+ratios into GroupRatio, keeps those VIP groups out of the global user-selectable
+map, links each same-name user group to its private price group, and appends the
+five groups to every supplied AIPDD channel while preserving the channel's
+existing group order.
 """
 
 from __future__ import annotations
@@ -26,14 +27,13 @@ VIP_GROUPS = OrderedDict(
         ("VIP5", 0.95),
     )
 )
-VIP_DESCRIPTIONS = {
-    "VIP1": "VIP1（78档）",
-    "VIP2": "VIP2（80档）",
-    "VIP3": "VIP3（85档）",
-    "VIP4": "VIP4（90档）",
-    "VIP5": "VIP5（95档）",
-}
-OPTION_KEYS = ("GroupRatio", "UserUsableGroups")
+SPECIAL_USABLE_GROUP_OPTION = "group_ratio_setting.group_special_usable_group"
+VIP_PRIVATE_RULE_KEY = "-:default"
+OPTION_KEYS = (
+    "GroupRatio",
+    "UserUsableGroups",
+    SPECIAL_USABLE_GROUP_OPTION,
+)
 CHANNEL_TYPE_AIPDD = 58
 MAX_CHANNEL_GROUP_LENGTH = 64
 
@@ -116,6 +116,28 @@ def validate_usable_groups(values: dict[str, Any]) -> None:
             )
 
 
+def validate_special_usable_groups(values: dict[str, Any]) -> None:
+    for user_group, rules in values.items():
+        if not isinstance(user_group, str) or not user_group.strip():
+            raise PlanError(
+                f"{SPECIAL_USABLE_GROUP_OPTION} contains an empty user group"
+            )
+        if not isinstance(rules, dict):
+            raise PlanError(
+                f"{SPECIAL_USABLE_GROUP_OPTION}[{user_group!r}] must be an object"
+            )
+        for rule, description in rules.items():
+            if not isinstance(rule, str) or not rule.strip():
+                raise PlanError(
+                    f"{SPECIAL_USABLE_GROUP_OPTION}[{user_group!r}] contains an empty rule"
+                )
+            if not isinstance(description, str):
+                raise PlanError(
+                    f"{SPECIAL_USABLE_GROUP_OPTION}[{user_group!r}]"
+                    f"[{rule!r}] description must be a string"
+                )
+
+
 def channel_items(response: Any) -> list[dict[str, Any]]:
     value = (
         response.get("data")
@@ -177,20 +199,33 @@ def build_plan(options_response: Any, channels_response: Any) -> dict[str, Any]:
         options.get("UserUsableGroups"),
         "UserUsableGroups",
     )
+    original_special = parse_option_map(
+        options.get(SPECIAL_USABLE_GROUP_OPTION),
+        SPECIAL_USABLE_GROUP_OPTION,
+    )
     validate_group_ratios(original_ratios)
     validate_usable_groups(original_usable)
+    validate_special_usable_groups(original_special)
 
     next_ratios = dict(original_ratios)
     next_ratios.update(VIP_GROUPS)
     next_usable = dict(original_usable)
-    for group, description in VIP_DESCRIPTIONS.items():
-        next_usable.setdefault(group, description)
+    for group in VIP_GROUPS:
+        next_usable.pop(group, None)
+    next_special = {
+        user_group: dict(rules)
+        for user_group, rules in original_special.items()
+    }
+    for group in VIP_GROUPS:
+        rules = next_special.setdefault(group, {})
+        rules.setdefault(VIP_PRIVATE_RULE_KEY, f"仅使用 {group}")
 
     option_updates: list[dict[str, str]] = []
     option_rollback: list[dict[str, str]] = []
     for key, original, updated in (
         ("GroupRatio", original_ratios, next_ratios),
         ("UserUsableGroups", original_usable, next_usable),
+        (SPECIAL_USABLE_GROUP_OPTION, original_special, next_special),
     ):
         if updated == original:
             continue
@@ -241,12 +276,16 @@ def build_plan(options_response: Any, channels_response: Any) -> dict[str, Any]:
         "channel_rollback": channel_rollback,
         "summary": {
             "fixed_groups": dict(VIP_GROUPS),
+            "private_user_groups": list(VIP_GROUPS),
+            "private_rule": VIP_PRIVATE_RULE_KEY,
             "option_updates": [item["key"] for item in option_updates],
             "channel_updates": len(channel_updates),
             "channel_count": len(channels),
             "contract": (
-                "merge fixed VIP groups and append AIPDD channel groups; "
-                "preserve unrelated groups, channels, keys, models, and model prices"
+                "merge fixed VIP groups, keep them out of global user-selectable "
+                "groups, link same-name user groups with a private default-removal "
+                "rule, and append AIPDD channel groups; preserve unrelated groups, "
+                "channels, keys, models, users, and model prices"
             ),
         },
     }

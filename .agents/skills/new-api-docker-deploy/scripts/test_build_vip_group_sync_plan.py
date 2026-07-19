@@ -26,12 +26,17 @@ def channel(channel_id: int, group: str, *, channel_type: int = 58) -> dict:
 class BuildVIPGroupSyncPlanTest(unittest.TestCase):
     def test_merges_fixed_groups_and_preserves_unrelated_values(self) -> None:
         group_ratio_raw = '{"default":1,"custom":1.2,"VIP1":0.5}'
-        usable_raw = '{"default":"默认分组","VIP1":"保留现有说明"}'
+        usable_raw = '{"default":"默认分组","custom":"自定义","VIP1":"旧的全局说明"}'
+        special_raw = '{"custom":{"+:extra":"额外分组"},"VIP1":{"-:default":"保留现有规则"}}'
         plan = MODULE.build_plan(
             {
                 "data": [
                     {"key": "GroupRatio", "value": group_ratio_raw},
                     {"key": "UserUsableGroups", "value": usable_raw},
+                    {
+                        "key": MODULE.SPECIAL_USABLE_GROUP_OPTION,
+                        "value": special_raw,
+                    },
                     {"key": "ModelPrice", "value": '{"must":"not-change"}'},
                 ]
             },
@@ -55,8 +60,15 @@ class BuildVIPGroupSyncPlanTest(unittest.TestCase):
             {"VIP1": 0.78, "VIP2": 0.8, "VIP3": 0.85, "VIP4": 0.9, "VIP5": 0.95},
             {name: updates["GroupRatio"][name] for name in MODULE.VIP_GROUPS},
         )
-        self.assertEqual("保留现有说明", updates["UserUsableGroups"]["VIP1"])
-        self.assertEqual("VIP2（80档）", updates["UserUsableGroups"]["VIP2"])
+        self.assertEqual(
+            {"default": "默认分组", "custom": "自定义"},
+            updates["UserUsableGroups"],
+        )
+        special = updates[MODULE.SPECIAL_USABLE_GROUP_OPTION]
+        self.assertEqual({"+:extra": "额外分组"}, special["custom"])
+        self.assertEqual("保留现有规则", special["VIP1"]["-:default"])
+        for group in MODULE.VIP_GROUPS:
+            self.assertIn("-:default", special[group])
         self.assertEqual(
             [
                 {
@@ -77,17 +89,22 @@ class BuildVIPGroupSyncPlanTest(unittest.TestCase):
             plan["channel_updates"],
         )
         self.assertEqual(
-            ["UserUsableGroups", "GroupRatio"],
+            [
+                MODULE.SPECIAL_USABLE_GROUP_OPTION,
+                "UserUsableGroups",
+                "GroupRatio",
+            ],
             [item["key"] for item in plan["option_rollback"]],
         )
         self.assertEqual(
-            usable_raw,
+            special_raw,
             plan["option_rollback"][0]["value"],
         )
         self.assertEqual(
-            group_ratio_raw,
+            usable_raw,
             plan["option_rollback"][1]["value"],
         )
+        self.assertEqual(group_ratio_raw, plan["option_rollback"][2]["value"])
         self.assertEqual(
             group_ratio_raw,
             plan["option_updates"][0]["previous_value"],
@@ -96,14 +113,31 @@ class BuildVIPGroupSyncPlanTest(unittest.TestCase):
             usable_raw,
             plan["option_updates"][1]["previous_value"],
         )
+        self.assertEqual(
+            special_raw,
+            plan["option_updates"][2]["previous_value"],
+        )
         self.assertNotIn("ModelPrice", json.dumps(plan, ensure_ascii=False))
         self.assertIn("preserve unrelated", plan["summary"]["contract"])
+        self.assertEqual(
+            list(MODULE.VIP_GROUPS),
+            plan["summary"]["private_user_groups"],
+        )
+        self.assertEqual("-:default", plan["summary"]["private_rule"])
 
     def test_already_synchronized_input_produces_no_writes(self) -> None:
+        private_rules = {
+            group: {"-:default": f"仅使用 {group}"}
+            for group in MODULE.VIP_GROUPS
+        }
         plan = MODULE.build_plan(
             {
                 "GroupRatio": json.dumps(dict(MODULE.VIP_GROUPS)),
-                "UserUsableGroups": json.dumps(MODULE.VIP_DESCRIPTIONS),
+                "UserUsableGroups": '{"default":"默认分组"}',
+                MODULE.SPECIAL_USABLE_GROUP_OPTION: json.dumps(
+                    private_rules,
+                    ensure_ascii=False,
+                ),
             },
             [
                 channel(1, "default,VIP1,VIP2,VIP3,VIP4,VIP5"),
@@ -134,6 +168,19 @@ class BuildVIPGroupSyncPlanTest(unittest.TestCase):
         with self.assertRaisesRegex(MODULE.PlanError, "description must be a string"):
             MODULE.build_plan(
                 {"UserUsableGroups": '{"broken":7}'},
+                [channel(1, "default")],
+            )
+        with self.assertRaisesRegex(MODULE.PlanError, "must be an object"):
+            MODULE.build_plan(
+                {MODULE.SPECIAL_USABLE_GROUP_OPTION: '{"VIP1":"broken"}'},
+                [channel(1, "default")],
+            )
+        with self.assertRaisesRegex(MODULE.PlanError, "description must be a string"):
+            MODULE.build_plan(
+                {
+                    MODULE.SPECIAL_USABLE_GROUP_OPTION:
+                        '{"VIP1":{"-:default":7}}'
+                },
                 [channel(1, "default")],
             )
 

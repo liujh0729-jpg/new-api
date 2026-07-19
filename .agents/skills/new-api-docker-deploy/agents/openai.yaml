@@ -1,4 +1,4 @@
 interface:
   display_name: "New API Docker Deploy"
   short_description: "Deploy New API with Docker Compose over SSH"
-  default_prompt: "Use $new-api-docker-deploy for a first deployment or safe ACR update of New API with PostgreSQL, Redis, AIPDD, optional authenticated model-price reconciliation, optional idempotent VIP1-VIP5 group synchronization, and an optional in-app domain setting."
+  default_prompt: "Use $new-api-docker-deploy for a first deployment or safe ACR update of New API with PostgreSQL, Redis, AIPDD, optional authenticated model-price reconciliation, optional private VIP1-VIP5 price/user-group synchronization, and an optional in-app domain setting."

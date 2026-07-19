@@ -269,12 +269,24 @@ Seedance 2.0 模型通过 `/v1/videos` 创建异步视频任务。常见模型 I
 | `model` | string | 是 | Seedance 2.0 模型 ID |
 | `prompt` | string | 与 `content` 二选一 | 文本提示词；未传 `content` 时会转换为文本内容 |
 | `content` | array | 与 `prompt` 二选一 | 多模态内容，可包含 `text`、`image_url`、`video_url`、`audio_url` |
-| `resolution` | string | 与 `width`/`height` 二选一 | `720p`、`1080p` 或 `4k` |
+| `resolution` | string | 与 `width`/`height` 二选一 | 常见值为 `480p`、`720p`、`1080p` 或 `4k`；以所选模型目录为准 |
 | `ratio` | string | 否 | 例如 `16:9`、`9:16`、`1:1`、`4:3`、`3:4` |
 | `width`、`height` | number | 否 | 未传 `resolution` 或 `ratio` 时用于自动推导 |
 | `duration` | number | 否 | 视频时长，单位为秒；不传时使用模型目录默认值 |
 | `generate_audio` | boolean | 否 | 是否生成音频 |
-| `seed`、`priority`、`service_tier`、`callback_url` | — | 否 | 任务控制参数，按服务方开放能力使用 |
+| `seed`、`priority`、`callback_url` | — | 否 | 任务控制参数，按服务方开放能力使用 |
+| `service_tier` | string | 否 | 平台档位选择；`default` 可省略 |
+
+当前 Seedance 2.0 官方接口按秒接收时长，不支持 `frames`、`fps`、`framespersecond` 或 `frames_per_second`。请使用 `duration`；传入上述帧数或帧率字段时，平台会在创建上游任务和扣费前返回 HTTP 400：
+
+```json
+{
+  "code": "unsupported_frames",
+  "message": "frames is not supported by Seedance model ...; use duration in seconds instead"
+}
+```
+
+参考视频必须可由公网直接读取，且每帧像素总数至少为 `409600`（宽度 × 高度）。例如 `480×836=401280`，不满足要求；建议使用至少 720p 的参考视频。该限制来自当前官方接口，平台无法放宽。
 
 最简单的文生视频请求：
 
@@ -312,6 +324,8 @@ curl "$BASE_URL/v1/videos" \
 ```
 
 当 `content` 非空时，平台优先使用 `content`；未传 `content` 时，平台根据 `prompt` 创建文本内容。提交成功后保存任务 ID，并按照[查询任务](#5-查询任务)轮询；视频查询响应格式与其他 AIPDD 视频模型相同。
+
+创建请求被官方接口拒绝时，平台会保留其错误码、参数位置和具体约束，便于调用方直接修正请求；认证信息和平台内部字段会被移除。此类失败不会创建成功任务，按正常结算流程不产生净费用。
 
 ## 4. 创建响应
 
@@ -469,6 +483,8 @@ curl "$BASE_URL/v1/audio/speech/$TASK_ID" \
 | 400 | `missing_model` | 未传 `model` |
 | 400 | `unsupported_model` | 模型不存在或未开放 |
 | 400 | `invalid_endpoint` | 模型与接口类型不匹配 |
+| 400 | `unsupported_frames` / `unsupported_frame_rate` | 当前 Seedance 2.0 官方接口不接受帧数或帧率字段，请改用 `duration` |
+| 400 | `InvalidParameter` | 官方接口返回的具体参数错误；读取 `message` 获取字段位置和约束 |
 | 400 | `model_price_error` | 模型价格未配置或请求参数不符合价格目录 |
 | 400 | `task_not_exist` | 任务不存在，或任务不属于当前 Token 用户 |
 | 401/403 | — | Token 无效、过期或无权限 |

@@ -22,18 +22,25 @@ import "testing"
 
 func TestTaskErrorFromUpstreamResponsePreservesOpenAIError(t *testing.T) {
 	taskErr := taskErrorFromUpstreamResponse(
-		[]byte(`{"error":{"code":"ModelNotOpen","message":"任务处理失败，请稍后重试","type":"Not Found"}}`),
-		404,
+		[]byte(`{"error":{"code":"InvalidParameter","message":"content[1] video pixel count must be at least 409600","type":"invalid_request_error"},"request_id":"req-seedance-1"}`),
+		400,
 	)
 
-	if taskErr.Code != "ModelNotOpen" {
-		t.Fatalf("expected upstream code ModelNotOpen, got %q", taskErr.Code)
+	if taskErr.Code != "InvalidParameter" {
+		t.Fatalf("expected upstream code InvalidParameter, got %q", taskErr.Code)
 	}
-	if taskErr.Message != "任务处理失败，请稍后重试" {
+	if taskErr.Message != "content[1] video pixel count must be at least 409600" {
 		t.Fatalf("expected upstream message to be preserved, got %q", taskErr.Message)
 	}
-	if taskErr.StatusCode != 404 {
-		t.Fatalf("expected status code 404, got %d", taskErr.StatusCode)
+	if taskErr.StatusCode != 400 {
+		t.Fatalf("expected status code 400, got %d", taskErr.StatusCode)
+	}
+	details, ok := taskErr.Data.(map[string]any)
+	if !ok {
+		t.Fatalf("expected structured upstream details, got %#v", taskErr.Data)
+	}
+	if details["type"] != "invalid_request_error" || details["request_id"] != "req-seedance-1" {
+		t.Fatalf("expected upstream type and request id to be preserved, got %#v", details)
 	}
 }
 

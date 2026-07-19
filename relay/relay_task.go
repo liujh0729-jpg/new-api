@@ -42,7 +42,31 @@ func taskErrorFromUpstreamResponse(responseBody []byte, statusCode int) *dto.Tas
 					code = upstreamCode
 				}
 			}
-			return service.TaskErrorWrapper(errors.New(upstreamError.Message), code, statusCode)
+			taskErr := service.TaskErrorWrapper(errors.New(upstreamError.Message), code, statusCode)
+			details := make(map[string]any, 3)
+			if errorType := strings.TrimSpace(upstreamError.Type); errorType != "" {
+				details["type"] = errorType
+			}
+			if param := strings.TrimSpace(upstreamError.Param); param != "" {
+				details["param"] = param
+			}
+			var requestIDs struct {
+				RequestID      string `json:"request_id"`
+				CamelRequestID string `json:"requestId"`
+			}
+			if err := common.Unmarshal(responseBody, &requestIDs); err == nil {
+				requestID := strings.TrimSpace(requestIDs.RequestID)
+				if requestID == "" {
+					requestID = strings.TrimSpace(requestIDs.CamelRequestID)
+				}
+				if requestID != "" {
+					details["request_id"] = requestID
+				}
+			}
+			if len(details) > 0 {
+				taskErr.Data = details
+			}
+			return taskErr
 		}
 	}
 
