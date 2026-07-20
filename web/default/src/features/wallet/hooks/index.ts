@@ -22,6 +22,7 @@ For commercial licensing, please contact support@quantumnous.com
 
 export * from './use-topup-info'
 export * from './use-payment'
+export * from './use-wechat-pay'
 export * from './use-affiliate'
 export * from './use-redemption'
 export * from './use-creem-payment'

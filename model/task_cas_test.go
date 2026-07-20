@@ -48,6 +48,8 @@ func TestMain(m *testing.M) {
 		&SubscriptionOrder{},
 		&UserSubscription{},
 		&AIPDDCatalogSnapshot{},
+		&WechatPayConfig{},
+		&WechatPayTestOrder{},
 	); err != nil {
 		panic("failed to migrate: " + err.Error())
 	}
@@ -72,6 +74,8 @@ func truncateTables(t *testing.T) {
 		DB.Exec("DELETE FROM subscription_plans")
 		DB.Exec("DELETE FROM user_subscriptions")
 		DB.Exec("DELETE FROM a_ip_dd_catalog_snapshots")
+		DB.Exec("DELETE FROM wechat_pay_test_orders")
+		DB.Exec("DELETE FROM wechat_pay_configs")
 	})
 }
 

@@ -5,8 +5,9 @@
 #   2. export REDIS_PASSWORD='change-this-redis-password'
 #   3. export AIPDD_API_KEY='change-this-aipdd-api-key'
 #   4. export SESSION_SECRET='change-this-random-session-secret'
-#   5. docker compose up -d
-#   6. Access at http://localhost:6070
+#   5. export CRYPTO_SECRET="$(openssl rand -hex 32)"  # Keep this value permanently
+#   6. docker compose up -d
+#   7. Access at http://localhost:6070
 #
 # Using MySQL instead of PostgreSQL:
 #   1. Comment out the postgres service and SQL_DSN line 15
@@ -40,6 +41,7 @@ services:
       - BATCH_UPDATE_ENABLED=true  # 是否启用批量更新 (Whether to enable batch update)
       - NODE_NAME=new-api-node-1  # 节点名称，用于审计日志中标识节点身份；多节点/容器部署时建议设置 (Node name used in audit logs; recommended when running multiple instances or in containers)
       - SESSION_SECRET=${SESSION_SECRET:?set SESSION_SECRET}
+      - CRYPTO_SECRET=${CRYPTO_SECRET:?set a permanent CRYPTO_SECRET}
 #      - STREAMING_TIMEOUT=300  # 流模式无响应超时时间，单位秒，默认120秒，如果出现空补全可以尝试改为更大值 （Streaming timeout in seconds, default is 120s. Increase if experiencing empty completions）
 #      - SYNC_FREQUENCY=60  # Uncomment if regular database syncing is needed
 #      - GOOGLE_ANALYTICS_ID=G-XXXXXXXXXX  # Google Analytics 的测量 ID (Google Analytics Measurement ID)

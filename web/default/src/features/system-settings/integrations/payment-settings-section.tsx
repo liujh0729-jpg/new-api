@@ -56,6 +56,7 @@ import {
   WaffoSettingsSection,
   type WaffoSettingsValues,
 } from './waffo-settings-section'
+import { WechatPaySettingsSection } from './wechat-pay-settings-section'
 
 const paymentSchema = z.object({
   PayAddress: z.string().refine((value) => {
@@ -811,6 +812,10 @@ export function PaymentSettingsSection({
                 : t('Save general settings')}
             </Button>
           </div>
+
+          <Separator />
+
+          <WechatPaySettingsSection />
 
           <Separator />
 

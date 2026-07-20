@@ -58,8 +58,10 @@ func InitEnv() {
 	}
 	if os.Getenv("CRYPTO_SECRET") != "" {
 		CryptoSecret = os.Getenv("CRYPTO_SECRET")
+		CryptoSecretConfigured = true
 	} else {
 		CryptoSecret = SessionSecret
+		CryptoSecretConfigured = false
 	}
 	if os.Getenv("SQLITE_PATH") != "" {
 		SQLitePath = os.Getenv("SQLITE_PATH")

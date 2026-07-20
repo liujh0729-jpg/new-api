@@ -108,6 +108,12 @@ func CriticalRateLimit() func(c *gin.Context) {
 	return defNext
 }
 
+// WechatPayNotifyRateLimit isolates payment notifications from the global API
+// limiter while still bounding unauthenticated signature-verification work.
+func WechatPayNotifyRateLimit() func(c *gin.Context) {
+	return rateLimitFactory(600, 60, "WPN")
+}
+
 func DownloadRateLimit() func(c *gin.Context) {
 	return rateLimitFactory(common.DownloadRateLimitNum, common.DownloadRateLimitDuration, "DW")
 }

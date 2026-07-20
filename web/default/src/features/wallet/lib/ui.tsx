@@ -93,6 +93,7 @@ export function getPaymentIcon(
         />
       )
     case PAYMENT_TYPES.WECHAT:
+    case PAYMENT_TYPES.WECHAT_NATIVE:
       return (
         <SiWechat
           className={className}

@@ -23,8 +23,28 @@ import (
 )
 
 func GetTopUpInfo(c *gin.Context) {
-	// 获取支付方式
-	payMethods := operation_setting.PayMethods
+	epayEnabled := isEpayTopUpEnabled()
+	wechatPayStatus := service.GetWechatPayConfigStatus()
+	wechatPayEnabled := wechatPayStatus.Enabled && wechatPayStatus.Ready && wechatPayStatus.VerifiedAt > 0
+	payMethods := make([]map[string]string, 0, len(operation_setting.PayMethods)+4)
+	if epayEnabled || !wechatPayEnabled {
+		for _, method := range operation_setting.PayMethods {
+			if wechatPayEnabled && !wechatPayStatus.ShowEpayWechat && method["type"] == "wxpay" {
+				continue
+			}
+			methodCopy := make(map[string]string, len(method))
+			for key, value := range method {
+				methodCopy[key] = value
+			}
+			payMethods = append(payMethods, methodCopy)
+		}
+	}
+	if wechatPayEnabled {
+		payMethods = append(payMethods, map[string]string{
+			"name": "微信支付（官方）", "type": model.PaymentMethodWechatNative,
+			"min_topup": strconv.FormatInt(getMinTopup(), 10),
+		})
+	}
 
 	// 如果启用了 Stripe 支付，添加到支付方法列表
 	if isStripeTopUpEnabled() {
@@ -91,7 +111,8 @@ func GetTopUpInfo(c *gin.Context) {
 	}
 
 	data := gin.H{
-		"enable_online_topup":        isEpayTopUpEnabled(),
+		"enable_online_topup":        epayEnabled || wechatPayEnabled,
+		"enable_wechatpay_topup":     wechatPayEnabled,
 		"enable_stripe_topup":        isStripeTopUpEnabled(),
 		"enable_creem_topup":         isCreemTopUpEnabled(),
 		"enable_waffo_topup":         enableWaffo,
@@ -138,7 +159,7 @@ func GetEpayClient() *epay.Client {
 	return withUrl
 }
 
-func getPayMoney(amount int64, group string) float64 {
+func getPayMoneyDecimal(amount int64, group string) decimal.Decimal {
 	dAmount := decimal.NewFromInt(amount)
 	// 充值金额以“展示类型”为准：
 	// - USD/CNY: 前端传 amount 为金额单位；TOKENS: 前端传 tokens，需要换成 USD 金额
@@ -165,7 +186,27 @@ func getPayMoney(amount int64, group string) float64 {
 
 	payMoney := dAmount.Mul(dPrice).Mul(dTopupGroupRatio).Mul(dDiscount)
 
-	return payMoney.InexactFloat64()
+	return payMoney
+}
+
+func getPayMoney(amount int64, group string) float64 {
+	return getPayMoneyDecimal(amount, group).InexactFloat64()
+}
+
+func getPayMoneyCents(amount int64, group string) int64 {
+	cents := getPayMoneyDecimal(amount, group).Round(2).Mul(decimal.NewFromInt(100))
+	maxInt64 := int64(^uint64(0) >> 1)
+	if cents.LessThan(decimal.NewFromInt(1)) || cents.GreaterThan(decimal.NewFromInt(maxInt64)) {
+		return 0
+	}
+	return cents.IntPart()
+}
+
+func normalizeTopUpAmount(amount int64) int64 {
+	if operation_setting.GetQuotaDisplayType() != operation_setting.QuotaDisplayTypeTokens {
+		return amount
+	}
+	return decimal.NewFromInt(amount).Div(decimal.NewFromFloat(common.QuotaPerUnit)).IntPart()
 }
 
 func getMinTopup() int64 {
@@ -231,12 +272,7 @@ func RequestEpay(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "拉起支付失败"})
 		return
 	}
-	amount := req.Amount
-	if operation_setting.GetQuotaDisplayType() == operation_setting.QuotaDisplayTypeTokens {
-		dAmount := decimal.NewFromInt(int64(amount))
-		dQuotaPerUnit := decimal.NewFromFloat(common.QuotaPerUnit)
-		amount = dAmount.Div(dQuotaPerUnit).IntPart()
-	}
+	amount := normalizeTopUpAmount(req.Amount)
 	topUp := &model.TopUp{
 		UserId:          id,
 		Amount:          amount,

@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import type { WechatPayOrderView } from '@/types/wechat-pay'
 import { api } from '@/lib/api'
 import type {
   RedemptionRequest,
@@ -106,6 +107,31 @@ export async function requestPayment(
     ...res.data,
     url: res.data.url || (res as unknown as { url?: string }).url,
   }
+}
+
+export async function requestWechatPayNative(
+  request: PaymentRequest
+): Promise<WechatPayOrderView> {
+  const res = await api.post('/api/user/wechat-pay/native', request, {
+    skipBusinessError: true,
+  } as Record<string, unknown>)
+  if (!res.data?.success || !res.data?.data) {
+    throw new Error(res.data?.message || 'Payment request failed')
+  }
+  return res.data.data as WechatPayOrderView
+}
+
+export async function getWechatPayNativeOrder(
+  tradeNo: string
+): Promise<WechatPayOrderView> {
+  const res = await api.get(
+    `/api/user/wechat-pay/order/${encodeURIComponent(tradeNo)}`,
+    { skipBusinessError: true } as Record<string, unknown>
+  )
+  if (!res.data?.success || !res.data?.data) {
+    throw new Error(res.data?.message || 'Failed to query payment status')
+  }
+  return res.data.data as WechatPayOrderView
 }
 
 /**

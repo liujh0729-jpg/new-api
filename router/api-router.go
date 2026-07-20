@@ -12,6 +12,14 @@ import (
 )
 
 func SetApiRouter(router *gin.Engine) {
+	// 微信支付回调绕过普通 API 全局限流，由控制器执行严格的请求体限制与签名校验。
+	router.POST(
+		"/api/wechat-pay/notify",
+		middleware.RouteTag("wechatpay-notify"),
+		middleware.WechatPayNotifyRateLimit(),
+		controller.WechatPayNotify,
+	)
+
 	apiRouter := router.Group("/api")
 	apiRouter.Use(middleware.RouteTag("api"))
 	apiRouter.Use(gzip.Gzip(gzip.DefaultCompression))
@@ -94,6 +102,8 @@ func SetApiRouter(router *gin.Engine) {
 				selfRoute.GET("/topup/self", controller.GetUserTopUps)
 				selfRoute.POST("/topup", middleware.CriticalRateLimit(), controller.TopUp)
 				selfRoute.POST("/pay", middleware.CriticalRateLimit(), controller.RequestEpay)
+				selfRoute.POST("/wechat-pay/native", middleware.CriticalRateLimit(), controller.CreateWechatPayNativeOrder)
+				selfRoute.GET("/wechat-pay/order/:trade_no", controller.GetWechatPayNativeOrder)
 				selfRoute.POST("/amount", controller.RequestAmount)
 				selfRoute.POST("/stripe/pay", middleware.CriticalRateLimit(), controller.RequestStripePay)
 				selfRoute.POST("/stripe/amount", controller.RequestStripeAmount)
@@ -185,6 +195,14 @@ func SetApiRouter(router *gin.Engine) {
 			optionRoute.DELETE("/channel_affinity_cache", controller.ClearChannelAffinityCache)
 			optionRoute.POST("/rest_model_ratio", controller.ResetModelRatio)
 			optionRoute.POST("/migrate_console_setting", controller.MigrateConsoleSetting) // 用于迁移检测的旧键，下个版本会删除
+		}
+		wechatPayConfigRoute := apiRouter.Group("/wechat-pay/config")
+		wechatPayConfigRoute.Use(middleware.RootAuth())
+		{
+			wechatPayConfigRoute.GET("", controller.GetWechatPayConfig)
+			wechatPayConfigRoute.PUT("", middleware.CriticalRateLimit(), middleware.SecureVerificationRequired(), controller.UpdateWechatPayConfig)
+			wechatPayConfigRoute.POST("/test", middleware.CriticalRateLimit(), middleware.SecureVerificationRequired(), controller.CreateWechatPayTestOrder)
+			wechatPayConfigRoute.GET("/test/:trade_no", controller.GetWechatPayTestOrder)
 		}
 
 		// Custom OAuth provider management (root only)

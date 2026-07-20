@@ -5,6 +5,7 @@ COPY web/default/package.json .
 COPY web/default/bun.lock .
 RUN bun install
 COPY ./web/default .
+COPY ./docs/aipdd-user-guide.zh_CN.md /docs/aipdd-user-guide.zh_CN.md
 COPY ./VERSION .
 RUN DISABLE_ESLINT_PLUGIN='true' VITE_REACT_APP_VERSION=$(cat VERSION) bun run build
 
