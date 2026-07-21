@@ -91,7 +91,7 @@ func UpdateWechatPayConfig(c *gin.Context) {
 	}
 	if credentialsNeedReplacement {
 		plain = service.WechatPayPlainConfig{
-			AppId: record.AppId, MchId: record.MchId,
+			AppId: record.AppId, MchId: record.MchId, VerificationMode: record.VerificationMode,
 			WechatPayPublicKeyId: record.WechatPayPublicKeyId,
 			ShowEpayWechat:       record.ShowEpayWechat,
 		}
@@ -104,6 +104,9 @@ func UpdateWechatPayConfig(c *gin.Context) {
 	}
 	if value, exists := c.GetPostForm("api_v3_key"); exists && strings.TrimSpace(value) != "" {
 		plain.ApiV3Key = value
+	}
+	if value, exists := c.GetPostForm("verification_mode"); exists {
+		plain.VerificationMode = value
 	}
 	if value, exists := c.GetPostForm("wechatpay_public_key_id"); exists {
 		plain.WechatPayPublicKeyId = value

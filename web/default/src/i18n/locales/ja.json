@@ -4781,6 +4781,17 @@
     "The selected resolution is not supported by the current upstream model.": "選択した解像度は現在の上流モデルでサポートされていません。",
     "The selected resolution is supported upstream but has no local selling price.": "選択した解像度は上流でサポートされていますが、ローカル販売価格が設定されていません。",
     "The request could not provide the resolution and duration required for task pricing.": "リクエストからタスク料金に必要な解像度と時間を取得できませんでした。",
-    "Select a video resolution before submitting the request.": "リクエストを送信する前に動画の解像度を選択してください。"
+    "Select a video resolution before submitting the request.": "リクエストを送信する前に動画の解像度を選択してください。",
+    "APIv3 and verification": "APIv3 と検証",
+    "Enter the APIv3 key.": "APIv3 キーを入力してください。",
+    "Complete the WeChat Pay public key ID and public key file.": "WeChat Pay 公開鍵 ID と公開鍵ファイルを指定してください。",
+    "Platform certificate": "プラットフォーム証明書",
+    "Platform certificates are managed automatically": "プラットフォーム証明書は自動管理されます",
+    "The server downloads and refreshes WeChat Pay platform certificates automatically. You do not need to switch verification modes in the merchant platform.": "サーバーが WeChat Pay プラットフォーム証明書を自動的にダウンロード・更新します。加盟店プラットフォームで検証方式を切り替える必要はありません。",
+    "Use the existing platform certificate verification mode.": "既存のプラットフォーム証明書による検証方式を使用します。",
+    "Use the newer WeChat Pay public key verification mode.": "新しい WeChat Pay 公開鍵による検証方式を使用します。",
+    "Verification method": "検証方式",
+    "WeChat Pay public key": "WeChat Pay 公開鍵",
+    "Selected file: {{fileName}}": "選択したファイル：{{fileName}}"
   }
 }

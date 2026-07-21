@@ -16,6 +16,7 @@ type WechatPayConfig struct {
 	Scope                          string `json:"-" gorm:"type:varchar(32);uniqueIndex;not null"`
 	Enabled                        bool   `json:"enabled"`
 	ShowEpayWechat                 bool   `json:"show_epay_wechat"`
+	VerificationMode               string `json:"verification_mode" gorm:"type:varchar(32);not null;default:public_key"`
 	AppId                          string `json:"appid" gorm:"type:varchar(32);not null"`
 	MchId                          string `json:"mchid" gorm:"type:varchar(32);not null"`
 	MerchantCertificateSerial      string `json:"merchant_certificate_serial" gorm:"type:varchar(128);not null"`

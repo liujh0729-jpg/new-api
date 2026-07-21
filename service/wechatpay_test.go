@@ -76,6 +76,7 @@ func makeWechatPayCredentialSet(t *testing.T) WechatPayPlainConfig {
 	require.NoError(t, err)
 
 	return WechatPayPlainConfig{
+		VerificationMode:     WechatPayVerificationModePublicKey,
 		AppId:                "wx1234567890abcdef",
 		MchId:                "1234567890",
 		ApiV3Key:             "0123456789abcdef0123456789abcdef",
@@ -94,6 +95,29 @@ func TestValidateWechatPayPlainConfig(t *testing.T) {
 	assert.NotEmpty(t, validation.MerchantCertificateSerial)
 	assert.Len(t, validation.MerchantCertificateFingerprint, 64)
 	assert.Len(t, validation.WechatPayPublicKeyFingerprint, 64)
+}
+
+func TestValidateWechatPayPlainConfigSupportsPlatformCertificateMode(t *testing.T) {
+	config := makeWechatPayCredentialSet(t)
+	config.VerificationMode = WechatPayVerificationModePlatformCertificate
+	config.WechatPayPublicKeyId = ""
+	config.WechatPayPublicKey = ""
+
+	validation, err := ValidateWechatPayPlainConfig(config)
+	require.NoError(t, err)
+	assert.NotEmpty(t, validation.MerchantCertificateSerial)
+	assert.Empty(t, validation.WechatPayPublicKeyFingerprint)
+	assert.Nil(t, validation.WechatPayPublicKey)
+}
+
+func TestValidateWechatPayPlainConfigRequiresPublicKeyInPublicKeyMode(t *testing.T) {
+	config := makeWechatPayCredentialSet(t)
+	config.WechatPayPublicKeyId = ""
+	config.WechatPayPublicKey = ""
+
+	_, err := ValidateWechatPayPlainConfig(config)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "公钥 ID")
 }
 
 func TestValidateWechatPayPlainConfigRejectsInvalidApiV3Key(t *testing.T) {
@@ -161,4 +185,30 @@ func TestSaveWechatPayConfigurationCanReplaceUnreadableCredentials(t *testing.T)
 	_, plain, err := LoadWechatPayPlainConfig()
 	require.NoError(t, err)
 	assert.Equal(t, config.ApiV3Key, plain.ApiV3Key)
+}
+
+func TestSaveWechatPayConfigurationStoresPlatformCertificateMode(t *testing.T) {
+	setupWechatPayConfigTestDB(t)
+	useWechatPayCryptoSecretForTest(t, "0123456789abcdef0123456789abcdef")
+	config := makeWechatPayCredentialSet(t)
+	config.VerificationMode = WechatPayVerificationModePlatformCertificate
+
+	record, err := SaveWechatPayConfiguration(config)
+	require.NoError(t, err)
+	assert.Equal(t, WechatPayVerificationModePlatformCertificate, record.VerificationMode)
+	assert.Empty(t, record.WechatPayPublicKeyId)
+	assert.Empty(t, record.WechatPayPublicKeyEncrypted)
+	assert.Empty(t, record.WechatPayPublicKeyFingerprint)
+
+	_, plain, err := LoadWechatPayPlainConfig()
+	require.NoError(t, err)
+	assert.Equal(t, WechatPayVerificationModePlatformCertificate, plain.VerificationMode)
+	assert.Empty(t, plain.WechatPayPublicKeyId)
+	assert.Empty(t, plain.WechatPayPublicKey)
+
+	status := GetWechatPayConfigStatus()
+	assert.Equal(t, WechatPayVerificationModePlatformCertificate, status.VerificationMode)
+	assert.False(t, status.HasWechatPayPublicKey)
+	assert.True(t, status.Ready)
+	assert.Empty(t, status.Error)
 }

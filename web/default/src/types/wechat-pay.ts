@@ -18,6 +18,8 @@ For commercial licensing, please contact support@quantumnous.com
 */
 export type WechatPayOrderStatus = 'pending' | 'success' | 'expired' | 'failed'
 
+export type WechatPayVerificationMode = 'platform_certificate' | 'public_key'
+
 export interface WechatPayOrderView {
   trade_no: string
   code_url: string
@@ -32,6 +34,7 @@ export interface WechatPayConfigStatus {
   ready: boolean
   enabled: boolean
   show_epay_wechat: boolean
+  verification_mode: WechatPayVerificationMode
   crypto_secret_configured: boolean
   appid?: string
   mchid?: string

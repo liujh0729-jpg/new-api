@@ -4781,6 +4781,17 @@
     "The selected resolution is not supported by the current upstream model.": "The selected resolution is not supported by the current upstream model.",
     "The selected resolution is supported upstream but has no local selling price.": "The selected resolution is supported upstream but has no local selling price.",
     "The request could not provide the resolution and duration required for task pricing.": "The request could not provide the resolution and duration required for task pricing.",
-    "Select a video resolution before submitting the request.": "Select a video resolution before submitting the request."
+    "Select a video resolution before submitting the request.": "Select a video resolution before submitting the request.",
+    "APIv3 and verification": "APIv3 and verification",
+    "Enter the APIv3 key.": "Enter the APIv3 key.",
+    "Complete the WeChat Pay public key ID and public key file.": "Complete the WeChat Pay public key ID and public key file.",
+    "Platform certificate": "Platform certificate",
+    "Platform certificates are managed automatically": "Platform certificates are managed automatically",
+    "The server downloads and refreshes WeChat Pay platform certificates automatically. You do not need to switch verification modes in the merchant platform.": "The server downloads and refreshes WeChat Pay platform certificates automatically. You do not need to switch verification modes in the merchant platform.",
+    "Use the existing platform certificate verification mode.": "Use the existing platform certificate verification mode.",
+    "Use the newer WeChat Pay public key verification mode.": "Use the newer WeChat Pay public key verification mode.",
+    "Verification method": "Verification method",
+    "WeChat Pay public key": "WeChat Pay public key",
+    "Selected file: {{fileName}}": "Selected file: {{fileName}}"
   }
 }

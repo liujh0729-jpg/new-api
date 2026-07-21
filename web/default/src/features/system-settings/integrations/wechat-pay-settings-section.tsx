@@ -20,6 +20,7 @@ import * as React from 'react'
 import type {
   WechatPayConfigStatus,
   WechatPayOrderView,
+  WechatPayVerificationMode,
 } from '@/types/wechat-pay'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -47,6 +48,7 @@ import { Input } from '@/components/ui/input'
 import { Progress } from '@/components/ui/progress'
 import { Spinner } from '@/components/ui/spinner'
 import { Switch } from '@/components/ui/switch'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { WechatPayQrDialog } from '@/components/payment/wechat-pay-qr-dialog'
 import {
   SecureVerificationDialog,
@@ -56,7 +58,7 @@ import {
 const steps = [
   'Merchant identity',
   'Merchant certificate',
-  'APIv3 and WeChat Pay public key',
+  'APIv3 and verification',
   'Validate and enable',
 ] as const
 
@@ -99,6 +101,8 @@ export function WechatPaySettingsSection() {
   const [appid, setAppid] = React.useState('')
   const [mchid, setMchid] = React.useState('')
   const [apiV3Key, setApiV3Key] = React.useState('')
+  const [verificationMode, setVerificationMode] =
+    React.useState<WechatPayVerificationMode>('platform_certificate')
   const [publicKeyId, setPublicKeyId] = React.useState('')
   const [merchantCertificate, setMerchantCertificate] =
     React.useState<File | null>(null)
@@ -122,6 +126,7 @@ export function WechatPaySettingsSection() {
     if (!initializedRef.current) {
       setAppid(next.appid || '')
       setMchid(next.mchid || '')
+      setVerificationMode(next.verification_mode || 'platform_certificate')
       setPublicKeyId(next.wechatpay_public_key_id || '')
       setEnabled(next.enabled)
       setShowEpayWechat(next.show_epay_wechat)
@@ -149,14 +154,21 @@ export function WechatPaySettingsSection() {
       toast.error(t('Upload both apiclient_cert.pem and apiclient_key.pem.'))
       return false
     }
-    if (
-      step === 2 &&
-      ((!status?.has_api_v3_key && !apiV3Key.trim()) ||
-        !publicKeyId.trim() ||
-        (!status?.has_wechatpay_public_key && !wechatPayPublicKey))
-    ) {
-      toast.error(t('Complete the APIv3 key and WeChat Pay public key fields.'))
-      return false
+    if (step === 2) {
+      if (!status?.has_api_v3_key && !apiV3Key.trim()) {
+        toast.error(t('Enter the APIv3 key.'))
+        return false
+      }
+      if (
+        verificationMode === 'public_key' &&
+        (!publicKeyId.trim() ||
+          (!status?.has_wechatpay_public_key && !wechatPayPublicKey))
+      ) {
+        toast.error(
+          t('Complete the WeChat Pay public key ID and public key file.')
+        )
+        return false
+      }
     }
     return true
   }
@@ -169,7 +181,10 @@ export function WechatPaySettingsSection() {
       form.set('mchid', mchid.trim())
       form.set('enabled', String(enabled))
       form.set('show_epay_wechat', String(showEpayWechat))
-      form.set('wechatpay_public_key_id', publicKeyId.trim())
+      form.set('verification_mode', verificationMode)
+      if (verificationMode === 'public_key') {
+        form.set('wechatpay_public_key_id', publicKeyId.trim())
+      }
       if (apiV3Key.trim()) form.set('api_v3_key', apiV3Key.trim())
       if (merchantCertificate) {
         form.set('merchant_certificate', merchantCertificate)
@@ -177,7 +192,7 @@ export function WechatPaySettingsSection() {
       if (merchantPrivateKey) {
         form.set('merchant_private_key', merchantPrivateKey)
       }
-      if (wechatPayPublicKey) {
+      if (verificationMode === 'public_key' && wechatPayPublicKey) {
         form.set('wechatpay_public_key', wechatPayPublicKey)
       }
       const response = await api.put('/api/wechat-pay/config', form, {
@@ -194,6 +209,8 @@ export function WechatPaySettingsSection() {
       setWechatPayPublicKey(null)
       const next = response.data.data as WechatPayConfigStatus
       setStatus(next)
+      setVerificationMode(next.verification_mode || 'platform_certificate')
+      setPublicKeyId(next.wechatpay_public_key_id || '')
       setEnabled(next.enabled)
       setShowEpayWechat(next.show_epay_wechat)
       toast.success(t('WeChat Pay configuration saved and validated.'))
@@ -361,13 +378,17 @@ export function WechatPaySettingsSection() {
                   }
                 />
                 <FieldDescription>
-                  {status?.has_merchant_certificate
-                    ? t(
-                        'A merchant certificate is stored. Upload a file only to rotate it.'
-                      )
-                    : t(
-                        'Upload the merchant API certificate downloaded with your certificate package.'
-                      )}
+                  {merchantCertificate
+                    ? t('Selected file: {{fileName}}', {
+                        fileName: merchantCertificate.name,
+                      })
+                    : status?.has_merchant_certificate
+                      ? t(
+                          'A merchant certificate is stored. Upload a file only to rotate it.'
+                        )
+                      : t(
+                          'Upload the merchant API certificate downloaded with your certificate package.'
+                        )}
                 </FieldDescription>
               </Field>
               <Field>
@@ -383,13 +404,17 @@ export function WechatPaySettingsSection() {
                   }
                 />
                 <FieldDescription>
-                  {status?.has_merchant_private_key
-                    ? t(
-                        'A merchant private key is encrypted and stored. Upload only to rotate it.'
-                      )
-                    : t(
-                        'The private key is encrypted before it is written to the database.'
-                      )}
+                  {merchantPrivateKey
+                    ? t('Selected file: {{fileName}}', {
+                        fileName: merchantPrivateKey.name,
+                      })
+                    : status?.has_merchant_private_key
+                      ? t(
+                          'A merchant private key is encrypted and stored. Upload only to rotate it.'
+                        )
+                      : t(
+                          'The private key is encrypted before it is written to the database.'
+                        )}
                 </FieldDescription>
               </Field>
             </FieldGroup>
@@ -415,39 +440,90 @@ export function WechatPaySettingsSection() {
                 />
               </Field>
               <Field>
-                <FieldLabel htmlFor='wechatpay-public-key-id'>
-                  {t('WeChat Pay public key ID')}
-                </FieldLabel>
-                <Input
-                  id='wechatpay-public-key-id'
-                  value={publicKeyId}
-                  onChange={(event) => setPublicKeyId(event.target.value)}
-                  placeholder='PUB_KEY_ID_...'
-                  autoComplete='off'
-                />
-              </Field>
-              <Field>
-                <FieldLabel htmlFor='wechatpay-public-key'>
-                  pub_key.pem
-                </FieldLabel>
-                <Input
-                  id='wechatpay-public-key'
-                  type='file'
-                  accept='.pem,application/x-pem-file'
-                  onChange={(event) =>
-                    setWechatPayPublicKey(event.target.files?.[0] || null)
-                  }
-                />
+                <FieldLabel>{t('Verification method')}</FieldLabel>
+                <ToggleGroup
+                  value={[verificationMode]}
+                  onValueChange={(values) => {
+                    const next = values.at(-1) as
+                      | WechatPayVerificationMode
+                      | undefined
+                    if (next) setVerificationMode(next)
+                  }}
+                  variant='outline'
+                  className='grid w-full grid-cols-1 sm:grid-cols-2'
+                  aria-label={t('Verification method')}
+                >
+                  <ToggleGroupItem value='platform_certificate'>
+                    {t('Platform certificate')}
+                  </ToggleGroupItem>
+                  <ToggleGroupItem value='public_key'>
+                    {t('WeChat Pay public key')}
+                  </ToggleGroupItem>
+                </ToggleGroup>
                 <FieldDescription>
-                  {status?.has_wechatpay_public_key
+                  {verificationMode === 'platform_certificate'
                     ? t(
-                        'A WeChat Pay public key is stored. Upload only to rotate it.'
+                        'Use the existing platform certificate verification mode.'
                       )
                     : t(
-                        'Download this public key from Merchant Platform → API Security.'
+                        'Use the newer WeChat Pay public key verification mode.'
                       )}
                 </FieldDescription>
               </Field>
+
+              {verificationMode === 'platform_certificate' ? (
+                <Alert>
+                  <AlertTitle>
+                    {t('Platform certificates are managed automatically')}
+                  </AlertTitle>
+                  <AlertDescription>
+                    {t(
+                      'The server downloads and refreshes WeChat Pay platform certificates automatically. You do not need to switch verification modes in the merchant platform.'
+                    )}
+                  </AlertDescription>
+                </Alert>
+              ) : (
+                <>
+                  <Field>
+                    <FieldLabel htmlFor='wechatpay-public-key-id'>
+                      {t('WeChat Pay public key ID')}
+                    </FieldLabel>
+                    <Input
+                      id='wechatpay-public-key-id'
+                      value={publicKeyId}
+                      onChange={(event) => setPublicKeyId(event.target.value)}
+                      placeholder='PUB_KEY_ID_...'
+                      autoComplete='off'
+                    />
+                  </Field>
+                  <Field>
+                    <FieldLabel htmlFor='wechatpay-public-key'>
+                      pub_key.pem
+                    </FieldLabel>
+                    <Input
+                      id='wechatpay-public-key'
+                      type='file'
+                      accept='.pem,application/x-pem-file'
+                      onChange={(event) =>
+                        setWechatPayPublicKey(event.target.files?.[0] || null)
+                      }
+                    />
+                    <FieldDescription>
+                      {wechatPayPublicKey
+                        ? t('Selected file: {{fileName}}', {
+                            fileName: wechatPayPublicKey.name,
+                          })
+                        : status?.has_wechatpay_public_key
+                          ? t(
+                              'A WeChat Pay public key is stored. Upload only to rotate it.'
+                            )
+                          : t(
+                              'Download this public key from Merchant Platform → API Security.'
+                            )}
+                    </FieldDescription>
+                  </Field>
+                </>
+              )}
             </FieldGroup>
           )}
 
@@ -509,6 +585,16 @@ export function WechatPaySettingsSection() {
                     </span>
                     <p>
                       {status.verified_at ? t('Verified') : t('Awaiting test')}
+                    </p>
+                  </div>
+                  <div>
+                    <span className='text-muted-foreground'>
+                      {t('Verification method')}
+                    </span>
+                    <p>
+                      {verificationMode === 'platform_certificate'
+                        ? t('Platform certificate')
+                        : t('WeChat Pay public key')}
                     </p>
                   </div>
                 </div>

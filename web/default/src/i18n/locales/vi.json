@@ -4781,6 +4781,17 @@
     "The selected resolution is not supported by the current upstream model.": "Mô hình thượng nguồn hiện tại không hỗ trợ độ phân giải đã chọn.",
     "The selected resolution is supported upstream but has no local selling price.": "Thượng nguồn hỗ trợ độ phân giải đã chọn nhưng chưa có giá bán cục bộ.",
     "The request could not provide the resolution and duration required for task pricing.": "Yêu cầu không cung cấp được độ phân giải và thời lượng cần thiết để định giá tác vụ.",
-    "Select a video resolution before submitting the request.": "Hãy chọn độ phân giải video trước khi gửi yêu cầu."
+    "Select a video resolution before submitting the request.": "Hãy chọn độ phân giải video trước khi gửi yêu cầu.",
+    "APIv3 and verification": "APIv3 và xác minh",
+    "Enter the APIv3 key.": "Nhập khóa APIv3.",
+    "Complete the WeChat Pay public key ID and public key file.": "Điền ID khóa công khai WeChat Pay và tải lên tệp khóa công khai.",
+    "Platform certificate": "Chứng chỉ nền tảng",
+    "Platform certificates are managed automatically": "Chứng chỉ nền tảng được quản lý tự động",
+    "The server downloads and refreshes WeChat Pay platform certificates automatically. You do not need to switch verification modes in the merchant platform.": "Máy chủ tự động tải xuống và làm mới chứng chỉ nền tảng WeChat Pay. Bạn không cần chuyển phương thức xác minh trên nền tảng dành cho người bán.",
+    "Use the existing platform certificate verification mode.": "Sử dụng phương thức xác minh bằng chứng chỉ nền tảng hiện có.",
+    "Use the newer WeChat Pay public key verification mode.": "Sử dụng phương thức xác minh bằng khóa công khai WeChat Pay mới hơn.",
+    "Verification method": "Phương thức xác minh",
+    "WeChat Pay public key": "Khóa công khai WeChat Pay",
+    "Selected file: {{fileName}}": "Tệp đã chọn: {{fileName}}"
   }
 }

@@ -19,7 +19,9 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/wechatpay-apiv3/wechatpay-go/core"
+	"github.com/wechatpay-apiv3/wechatpay-go/core/auth"
 	"github.com/wechatpay-apiv3/wechatpay-go/core/auth/verifiers"
+	"github.com/wechatpay-apiv3/wechatpay-go/core/downloader"
 	"github.com/wechatpay-apiv3/wechatpay-go/core/notify"
 	"github.com/wechatpay-apiv3/wechatpay-go/core/option"
 	"github.com/wechatpay-apiv3/wechatpay-go/services/payments"
@@ -32,6 +34,9 @@ const (
 	WechatPayOrderLifetime        = 15 * time.Minute
 	WechatPayTestOrderLifetime    = 10 * time.Minute
 	WechatPayQueryIntervalSeconds = int64(10)
+
+	WechatPayVerificationModePlatformCertificate = "platform_certificate"
+	WechatPayVerificationModePublicKey           = "public_key"
 )
 
 var (
@@ -42,6 +47,7 @@ var (
 type WechatPayPlainConfig struct {
 	Enabled              bool
 	ShowEpayWechat       bool
+	VerificationMode     string
 	AppId                string
 	MchId                string
 	MerchantCertificate  string
@@ -64,6 +70,7 @@ type WechatPayConfigStatus struct {
 	Ready                          bool   `json:"ready"`
 	Enabled                        bool   `json:"enabled"`
 	ShowEpayWechat                 bool   `json:"show_epay_wechat"`
+	VerificationMode               string `json:"verification_mode"`
 	CryptoSecretConfigured         bool   `json:"crypto_secret_configured"`
 	AppId                          string `json:"appid,omitempty"`
 	MchId                          string `json:"mchid,omitempty"`
@@ -100,7 +107,27 @@ type WechatPayProcessResult struct {
 
 func normalizePem(value string) string {
 	value = strings.TrimPrefix(value, "\ufeff")
-	return strings.TrimSpace(strings.ReplaceAll(value, "\r\n", "\n")) + "\n"
+	value = strings.TrimSpace(strings.ReplaceAll(value, "\r\n", "\n"))
+	if value == "" {
+		return ""
+	}
+	return value + "\n"
+}
+
+func normalizeWechatPayVerificationMode(mode string, hasPublicKey bool) (string, error) {
+	mode = strings.TrimSpace(mode)
+	if mode == "" {
+		if hasPublicKey {
+			return WechatPayVerificationModePublicKey, nil
+		}
+		return WechatPayVerificationModePlatformCertificate, nil
+	}
+	switch mode {
+	case WechatPayVerificationModePlatformCertificate, WechatPayVerificationModePublicKey:
+		return mode, nil
+	default:
+		return "", errors.New("微信支付验签方式不正确")
+	}
 }
 
 func parseMerchantPrivateKey(value string) (*rsa.PrivateKey, error) {
@@ -160,6 +187,13 @@ func ValidateWechatPayPlainConfig(config WechatPayPlainConfig) (*WechatPayValida
 	config.MchId = strings.TrimSpace(config.MchId)
 	config.ApiV3Key = strings.TrimSpace(config.ApiV3Key)
 	config.WechatPayPublicKeyId = strings.TrimSpace(config.WechatPayPublicKeyId)
+	verificationMode, err := normalizeWechatPayVerificationMode(
+		config.VerificationMode,
+		config.WechatPayPublicKeyId != "" || strings.TrimSpace(config.WechatPayPublicKey) != "",
+	)
+	if err != nil {
+		return nil, err
+	}
 	if config.AppId == "" || len(config.AppId) > 32 || strings.ContainsAny(config.AppId, " \t\r\n") {
 		return nil, errors.New("AppID 格式不正确")
 	}
@@ -168,9 +202,6 @@ func ValidateWechatPayPlainConfig(config WechatPayPlainConfig) (*WechatPayValida
 	}
 	if len([]byte(config.ApiV3Key)) != 32 {
 		return nil, errors.New("APIv3 Key 必须正好是 32 个字节")
-	}
-	if !wechatPayPublicKeyIdPattern.MatchString(config.WechatPayPublicKeyId) {
-		return nil, errors.New("微信支付公钥 ID 格式不正确，应以 PUB_KEY_ID_ 开头")
 	}
 
 	certificate, err := utils.LoadCertificate(normalizePem(config.MerchantCertificate))
@@ -191,25 +222,31 @@ func ValidateWechatPayPlainConfig(config WechatPayPlainConfig) (*WechatPayValida
 	if certificatePublicKey.N.Cmp(privateKey.PublicKey.N) != 0 || certificatePublicKey.E != privateKey.PublicKey.E {
 		return nil, errors.New("apiclient_cert.pem 与 apiclient_key.pem 不匹配")
 	}
-	publicKey, err := parseWechatPayPublicKey(config.WechatPayPublicKey)
-	if err != nil {
-		return nil, err
-	}
 	merchantFingerprint, err := rsaPublicKeyFingerprint(certificatePublicKey)
 	if err != nil {
 		return nil, err
 	}
-	wechatFingerprint, err := rsaPublicKeyFingerprint(publicKey)
-	if err != nil {
-		return nil, err
-	}
-	return &WechatPayValidation{
+	validation := &WechatPayValidation{
 		MerchantCertificateSerial:      utils.GetCertificateSerialNumber(*certificate),
 		MerchantCertificateFingerprint: merchantFingerprint,
-		WechatPayPublicKeyFingerprint:  wechatFingerprint,
 		MerchantPrivateKey:             privateKey,
-		WechatPayPublicKey:             publicKey,
-	}, nil
+	}
+	if verificationMode == WechatPayVerificationModePublicKey {
+		if !wechatPayPublicKeyIdPattern.MatchString(config.WechatPayPublicKeyId) {
+			return nil, errors.New("微信支付公钥 ID 格式不正确，应以 PUB_KEY_ID_ 开头")
+		}
+		publicKey, parseErr := parseWechatPayPublicKey(config.WechatPayPublicKey)
+		if parseErr != nil {
+			return nil, parseErr
+		}
+		wechatFingerprint, fingerprintErr := rsaPublicKeyFingerprint(publicKey)
+		if fingerprintErr != nil {
+			return nil, fingerprintErr
+		}
+		validation.WechatPayPublicKeyFingerprint = wechatFingerprint
+		validation.WechatPayPublicKey = publicKey
+	}
+	return validation, nil
 }
 
 func decryptWechatPayConfig(record *model.WechatPayConfig) (WechatPayPlainConfig, error) {
@@ -228,12 +265,23 @@ func decryptWechatPayConfig(record *model.WechatPayConfig) (WechatPayPlainConfig
 	if err != nil {
 		return WechatPayPlainConfig{}, fmt.Errorf("解密 APIv3 Key 失败: %w", err)
 	}
-	wechatPayPublicKey, err := common.DecryptSensitiveValue(record.WechatPayPublicKeyEncrypted)
+	wechatPayPublicKey := ""
+	if record.WechatPayPublicKeyEncrypted != "" {
+		wechatPayPublicKey, err = common.DecryptSensitiveValue(record.WechatPayPublicKeyEncrypted)
+		if err != nil {
+			return WechatPayPlainConfig{}, fmt.Errorf("解密微信支付公钥失败: %w", err)
+		}
+	}
+	verificationMode, err := normalizeWechatPayVerificationMode(
+		record.VerificationMode,
+		record.WechatPayPublicKeyId != "" || record.WechatPayPublicKeyEncrypted != "",
+	)
 	if err != nil {
-		return WechatPayPlainConfig{}, fmt.Errorf("解密微信支付公钥失败: %w", err)
+		return WechatPayPlainConfig{}, err
 	}
 	return WechatPayPlainConfig{
-		Enabled: record.Enabled, ShowEpayWechat: record.ShowEpayWechat, AppId: record.AppId, MchId: record.MchId,
+		Enabled: record.Enabled, ShowEpayWechat: record.ShowEpayWechat, VerificationMode: verificationMode,
+		AppId: record.AppId, MchId: record.MchId,
 		MerchantCertificate: merchantCertificate, MerchantPrivateKey: merchantPrivateKey,
 		ApiV3Key: apiV3Key, WechatPayPublicKeyId: record.WechatPayPublicKeyId,
 		WechatPayPublicKey: wechatPayPublicKey,
@@ -272,6 +320,18 @@ func SaveWechatPayConfiguration(plain WechatPayPlainConfig) (*model.WechatPayCon
 	plain.MchId = strings.TrimSpace(plain.MchId)
 	plain.ApiV3Key = strings.TrimSpace(plain.ApiV3Key)
 	plain.WechatPayPublicKeyId = strings.TrimSpace(plain.WechatPayPublicKeyId)
+	verificationMode, err := normalizeWechatPayVerificationMode(
+		plain.VerificationMode,
+		plain.WechatPayPublicKeyId != "" || strings.TrimSpace(plain.WechatPayPublicKey) != "",
+	)
+	if err != nil {
+		return nil, err
+	}
+	plain.VerificationMode = verificationMode
+	if verificationMode == WechatPayVerificationModePlatformCertificate {
+		plain.WechatPayPublicKeyId = ""
+		plain.WechatPayPublicKey = ""
+	}
 	plain.MerchantCertificate = normalizePem(plain.MerchantCertificate)
 	plain.MerchantPrivateKey = normalizePem(plain.MerchantPrivateKey)
 	plain.WechatPayPublicKey = normalizePem(plain.WechatPayPublicKey)
@@ -289,7 +349,8 @@ func SaveWechatPayConfiguration(plain WechatPayPlainConfig) (*model.WechatPayCon
 	if loadErr != nil && existing == nil {
 		return nil, loadErr
 	}
-	materialChanged := existing == nil || loadErr != nil || existingPlain.AppId != plain.AppId || existingPlain.MchId != plain.MchId ||
+	materialChanged := existing == nil || loadErr != nil || existingPlain.VerificationMode != plain.VerificationMode ||
+		existingPlain.AppId != plain.AppId || existingPlain.MchId != plain.MchId ||
 		existingPlain.MerchantCertificate != plain.MerchantCertificate || existingPlain.MerchantPrivateKey != plain.MerchantPrivateKey ||
 		existingPlain.ApiV3Key != plain.ApiV3Key || existingPlain.WechatPayPublicKeyId != plain.WechatPayPublicKeyId ||
 		existingPlain.WechatPayPublicKey != plain.WechatPayPublicKey
@@ -318,9 +379,12 @@ func SaveWechatPayConfiguration(plain WechatPayPlainConfig) (*model.WechatPayCon
 	if err != nil {
 		return nil, err
 	}
-	wechatPayPublicKeyEncrypted, err := common.EncryptSensitiveValue(plain.WechatPayPublicKey)
-	if err != nil {
-		return nil, err
+	wechatPayPublicKeyEncrypted := ""
+	if plain.WechatPayPublicKey != "" {
+		wechatPayPublicKeyEncrypted, err = common.EncryptSensitiveValue(plain.WechatPayPublicKey)
+		if err != nil {
+			return nil, err
+		}
 	}
 	verifiedAt := int64(0)
 	createTime := int64(0)
@@ -331,7 +395,8 @@ func SaveWechatPayConfiguration(plain WechatPayPlainConfig) (*model.WechatPayCon
 		}
 	}
 	record := &model.WechatPayConfig{
-		Enabled: plain.Enabled, ShowEpayWechat: plain.ShowEpayWechat, AppId: plain.AppId, MchId: plain.MchId,
+		Enabled: plain.Enabled, ShowEpayWechat: plain.ShowEpayWechat, VerificationMode: plain.VerificationMode,
+		AppId: plain.AppId, MchId: plain.MchId,
 		MerchantCertificateSerial:      validation.MerchantCertificateSerial,
 		MerchantCertificateFingerprint: validation.MerchantCertificateFingerprint,
 		WechatPayPublicKeyId:           plain.WechatPayPublicKeyId,
@@ -345,11 +410,23 @@ func SaveWechatPayConfiguration(plain WechatPayPlainConfig) (*model.WechatPayCon
 	if err = model.SaveWechatPayConfig(record); err != nil {
 		return nil, err
 	}
+	if materialChanged {
+		manager := downloader.MgrInstance()
+		if existing != nil {
+			manager.RemoveDownloader(context.Background(), existing.MchId)
+		}
+		if existing == nil || existing.MchId != plain.MchId {
+			manager.RemoveDownloader(context.Background(), plain.MchId)
+		}
+	}
 	return record, nil
 }
 
 func GetWechatPayConfigStatus() WechatPayConfigStatus {
-	status := WechatPayConfigStatus{CryptoSecretConfigured: common.HasStableCryptoSecret()}
+	status := WechatPayConfigStatus{
+		CryptoSecretConfigured: common.HasStableCryptoSecret(),
+		VerificationMode:       WechatPayVerificationModePlatformCertificate,
+	}
 	callbackUrl, callbackErr := GetWechatPayCallbackUrl()
 	if callbackErr == nil {
 		status.CallbackUrl = callbackUrl
@@ -366,6 +443,12 @@ func GetWechatPayConfigStatus() WechatPayConfigStatus {
 	status.Configured = true
 	status.Enabled = record.Enabled
 	status.ShowEpayWechat = record.ShowEpayWechat
+	if storedMode, modeErr := normalizeWechatPayVerificationMode(
+		record.VerificationMode,
+		record.WechatPayPublicKeyId != "" || record.WechatPayPublicKeyEncrypted != "",
+	); modeErr == nil {
+		status.VerificationMode = storedMode
+	}
 	status.AppId = record.AppId
 	status.MchId = record.MchId
 	status.MerchantCertificateSerial = record.MerchantCertificateSerial
@@ -376,6 +459,7 @@ func GetWechatPayConfigStatus() WechatPayConfigStatus {
 		status.Error = err.Error()
 		return status
 	}
+	status.VerificationMode = plain.VerificationMode
 	status.HasMerchantCertificate = record.MerchantCertificateEncrypted != ""
 	status.HasMerchantPrivateKey = record.MerchantPrivateKeyEncrypted != ""
 	status.HasApiV3Key = record.ApiV3KeyEncrypted != ""
@@ -409,11 +493,29 @@ func NewWechatPayGateway(ctx context.Context, requireEnabled bool) (*WechatPayGa
 	if err != nil {
 		return nil, err
 	}
-	client, err := core.NewClient(ctx,
-		option.WithWechatPayPublicKeyAuthCipher(
+	var authCipherOption core.ClientOption
+	var notifyVerifier auth.Verifier
+	switch plain.VerificationMode {
+	case WechatPayVerificationModePlatformCertificate:
+		authCipherOption = option.WithWechatPayAutoAuthCipher(
+			plain.MchId, record.MerchantCertificateSerial, validation.MerchantPrivateKey, plain.ApiV3Key,
+		)
+		notifyVerifier = verifiers.NewSHA256WithRSAVerifier(
+			downloader.MgrInstance().GetCertificateVisitor(plain.MchId),
+		)
+	case WechatPayVerificationModePublicKey:
+		authCipherOption = option.WithWechatPayPublicKeyAuthCipher(
 			plain.MchId, record.MerchantCertificateSerial, validation.MerchantPrivateKey,
 			plain.WechatPayPublicKeyId, validation.WechatPayPublicKey,
-		),
+		)
+		notifyVerifier = verifiers.NewSHA256WithRSAPubkeyVerifier(
+			plain.WechatPayPublicKeyId, *validation.WechatPayPublicKey,
+		)
+	default:
+		return nil, errors.New("微信支付验签方式不正确")
+	}
+	client, err := core.NewClient(ctx,
+		authCipherOption,
 		option.WithHTTPClient(&http.Client{Timeout: 12 * time.Second}),
 	)
 	if err != nil {
@@ -421,7 +523,7 @@ func NewWechatPayGateway(ctx context.Context, requireEnabled bool) (*WechatPayGa
 	}
 	handler, err := notify.NewRSANotifyHandler(
 		plain.ApiV3Key,
-		verifiers.NewSHA256WithRSAPubkeyVerifier(plain.WechatPayPublicKeyId, *validation.WechatPayPublicKey),
+		notifyVerifier,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("初始化微信支付回调处理器失败: %w", err)

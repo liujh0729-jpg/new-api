@@ -4781,6 +4781,17 @@
     "The selected resolution is not supported by the current upstream model.": "La résolution sélectionnée n’est pas prise en charge par le modèle en amont actuel.",
     "The selected resolution is supported upstream but has no local selling price.": "La résolution sélectionnée est prise en charge en amont, mais aucun prix de vente local n’est configuré.",
     "The request could not provide the resolution and duration required for task pricing.": "La requête n’a pas fourni la résolution et la durée nécessaires à la tarification de la tâche.",
-    "Select a video resolution before submitting the request.": "Sélectionnez une résolution vidéo avant d’envoyer la requête."
+    "Select a video resolution before submitting the request.": "Sélectionnez une résolution vidéo avant d’envoyer la requête.",
+    "APIv3 and verification": "APIv3 et vérification",
+    "Enter the APIv3 key.": "Entrez la clé APIv3.",
+    "Complete the WeChat Pay public key ID and public key file.": "Renseignez l’ID de la clé publique WeChat Pay et chargez le fichier de clé publique.",
+    "Platform certificate": "Certificat de plateforme",
+    "Platform certificates are managed automatically": "Les certificats de plateforme sont gérés automatiquement",
+    "The server downloads and refreshes WeChat Pay platform certificates automatically. You do not need to switch verification modes in the merchant platform.": "Le serveur télécharge et actualise automatiquement les certificats de plateforme WeChat Pay. Il n’est pas nécessaire de changer de mode de vérification sur la plateforme marchande.",
+    "Use the existing platform certificate verification mode.": "Utiliser le mode de vérification existant par certificat de plateforme.",
+    "Use the newer WeChat Pay public key verification mode.": "Utiliser le mode de vérification plus récent par clé publique WeChat Pay.",
+    "Verification method": "Méthode de vérification",
+    "WeChat Pay public key": "Clé publique WeChat Pay",
+    "Selected file: {{fileName}}": "Fichier sélectionné : {{fileName}}"
   }
 }

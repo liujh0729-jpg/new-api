@@ -4781,6 +4781,17 @@
     "The selected resolution is not supported by the current upstream model.": "当前上游模型不支持所选分辨率。",
     "The selected resolution is supported upstream but has no local selling price.": "上游支持所选分辨率，但尚未配置本地售价。",
     "The request could not provide the resolution and duration required for task pricing.": "请求未能提供任务定价所需的分辨率和时长信息。",
-    "Select a video resolution before submitting the request.": "请先选择视频分辨率再提交请求。"
+    "Select a video resolution before submitting the request.": "请先选择视频分辨率再提交请求。",
+    "APIv3 and verification": "APIv3 与验签",
+    "Enter the APIv3 key.": "请输入 APIv3 Key。",
+    "Complete the WeChat Pay public key ID and public key file.": "请填写微信支付公钥 ID 并上传公钥文件。",
+    "Platform certificate": "平台证书",
+    "Platform certificates are managed automatically": "平台证书由系统自动管理",
+    "The server downloads and refreshes WeChat Pay platform certificates automatically. You do not need to switch verification modes in the merchant platform.": "服务器会自动下载并刷新微信支付平台证书，无需在商户平台切换验签方式。",
+    "Use the existing platform certificate verification mode.": "使用现有的平台证书验签方式。",
+    "Use the newer WeChat Pay public key verification mode.": "使用较新的微信支付公钥验签方式。",
+    "Verification method": "验签方式",
+    "WeChat Pay public key": "微信支付公钥",
+    "Selected file: {{fileName}}": "已选择文件：{{fileName}}"
   }
 }
