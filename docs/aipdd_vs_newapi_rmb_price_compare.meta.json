@@ -1,0 +1,29 @@
+{
+  "methodology": {
+    "primary_rmb": "AWCoin × rmbPerAwcoin(0.0001) × group_ratio",
+    "price_diff_basis": "比较 aipdd_awcoin vs newapi_awcoin（及对应 primary_rmb），不把站点7.3计入价差",
+    "site_ui_rmb_ref_only": "AWCoin × usdPerAwcoin_newapi(1.4758405e-05) × USDExchangeRate(7.3)，仅参考",
+    "not_used_for_conclusion": "站点汇率 7.3 造成的展示差不视为售价/成本不一致"
+  },
+  "aipdd_catalog_revision": "e277366c7ab0bd8af6f0b93e9ee4e6bfbc3115187faa7694c4291fc6bbae74b7",
+  "aipdd_rmb_per_awcoin": 0.0001,
+  "aipdd_usd_per_awcoin_catalog": 1.4756227e-05,
+  "newapi_synced_usd_per_awcoin": 1.4758405e-05,
+  "newapi_usd_exchange_rate_site": 7.3,
+  "newapi_quota_display_type": "CNY",
+  "group_ratio_default": 1.0,
+  "row_count": 47,
+  "category_counts": {
+    "Seedance": 26,
+    "异步任务": 9,
+    "LLM文本": 12
+  },
+  "awcoin_consistent_rows": 44,
+  "rmb_consistent_rows": 44,
+  "sources": [
+    "GET https://api.aipdd.work/v1/new-api/catalog",
+    "GET https://newapi.chonghuayunke.com/api/pricing",
+    "GET https://newapi.chonghuayunke.com/api/status",
+    "POST /v1/videos 实测 X-New-Api-Other-Ratios"
+  ]
+}

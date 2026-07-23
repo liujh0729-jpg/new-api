@@ -1,0 +1,48 @@
+﻿model,category,billing_model,scenario,unit,aipdd_awcoin,newapi_awcoin,awcoin_match,aipdd_rmb,newapi_rmb,rmb_match,site_ui_rmb_ref_only,measured_awcoin,measured_match,in_aipdd,in_newapi,group_ratio,note
+AP Seedance-2.0 VIP,Seedance,per_second,1080p/每秒,1.0s,13000,13000,一致,1.3,1.3,一致,1.400573,,,Y,Y,1.0,rate=13000.0 AW/s；主人民币=AWCoin×0.0001；site_ui 列仅供参考不参与结论
+AP Seedance-2.0 VIP,Seedance,per_second,1080p/默认5秒,5.0s,65000,65000,一致,6.5,6.5,一致,7.002863,,,Y,Y,1.0,rate=13000.0 AW/s；主人民币=AWCoin×0.0001；site_ui 列仅供参考不参与结论
+AP Seedance-2.0 VIP,Seedance,per_second,480p/不可用,N/A,,,,,,,,,,Y,Y,1.0,上游单价0；NewAPI 返回 unsupported_resolution。主口径不计价。
+AP Seedance-2.0 VIP,Seedance,per_second,4k/每秒,1.0s,49000,49000,一致,4.9,4.9,一致,5.279081,,,Y,Y,1.0,rate=49000.0 AW/s；主人民币=AWCoin×0.0001；site_ui 列仅供参考不参与结论
+AP Seedance-2.0 VIP,Seedance,per_second,4k/默认5秒,5.0s,245000,245000,一致,24.5,24.5,一致,26.395407,,,Y,Y,1.0,rate=49000.0 AW/s；主人民币=AWCoin×0.0001；site_ui 列仅供参考不参与结论
+AP Seedance-2.0 VIP,Seedance,per_second,720p/每秒,1.0s,7000,7000,一致,0.7,0.7,一致,0.754154,,,Y,Y,1.0,rate=7000.0 AW/s；主人民币=AWCoin×0.0001；site_ui 列仅供参考不参与结论
+AP Seedance-2.0 VIP,Seedance,per_second,720p/默认5秒,5.0s,35000,35000,一致,3.5,3.5,一致,3.770772,35000,一致,Y,Y,1.0,rate=7000.0 AW/s；主人民币=AWCoin×0.0001；site_ui 列仅供参考不参与结论
+AP Seedance-2.0 VIP,Seedance,per_second,720p/10秒,10.0s,70000,70000,一致,7.0,7.0,一致,7.541545,,,Y,Y,1.0,rate=7000.0 AW/s；主人民币=AWCoin×0.0001；site_ui 列仅供参考不参与结论
+AP Seedance-2.0 标准版,Seedance,per_second,1080p/每秒,1.0s,13000,13000,一致,1.3,1.3,一致,1.400573,,,Y,Y,1.0,rate=13000.0 AW/s；主人民币=AWCoin×0.0001；site_ui 列仅供参考不参与结论
+AP Seedance-2.0 标准版,Seedance,per_second,1080p/默认5秒,5.0s,65000,65000,一致,6.5,6.5,一致,7.002863,65000,一致,Y,Y,1.0,rate=13000.0 AW/s；主人民币=AWCoin×0.0001；site_ui 列仅供参考不参与结论
+AP Seedance-2.0 标准版,Seedance,per_second,480p/不可用,N/A,,,,,,,,,,Y,Y,1.0,上游单价0；NewAPI 返回 unsupported_resolution。主口径不计价。
+AP Seedance-2.0 标准版,Seedance,per_second,4k/每秒,1.0s,49000,49000,一致,4.9,4.9,一致,5.279081,,,Y,Y,1.0,rate=49000.0 AW/s；主人民币=AWCoin×0.0001；site_ui 列仅供参考不参与结论
+AP Seedance-2.0 标准版,Seedance,per_second,4k/默认5秒,5.0s,245000,245000,一致,24.5,24.5,一致,26.395407,245000,一致,Y,Y,1.0,rate=49000.0 AW/s；主人民币=AWCoin×0.0001；site_ui 列仅供参考不参与结论
+AP Seedance-2.0 标准版,Seedance,per_second,720p/每秒,1.0s,7000,7000,一致,0.7,0.7,一致,0.754154,,,Y,Y,1.0,rate=7000.0 AW/s；主人民币=AWCoin×0.0001；site_ui 列仅供参考不参与结论
+AP Seedance-2.0 标准版,Seedance,per_second,720p/默认5秒,5.0s,35000,35000,一致,3.5,3.5,一致,3.770772,35000,一致,Y,Y,1.0,rate=7000.0 AW/s；主人民币=AWCoin×0.0001；site_ui 列仅供参考不参与结论
+AP Seedance-2.0 标准版,Seedance,per_second,720p/10秒,10.0s,70000,70000,一致,7.0,7.0,一致,7.541545,70000,一致,Y,Y,1.0,rate=7000.0 AW/s；主人民币=AWCoin×0.0001；site_ui 列仅供参考不参与结论
+AP Seedance-2.0 轻量版,Seedance,per_second,1080p/每秒,1.0s,13000,13000,一致,1.3,1.3,一致,1.400573,,,Y,Y,1.0,rate=13000.0 AW/s；主人民币=AWCoin×0.0001；site_ui 列仅供参考不参与结论
+AP Seedance-2.0 轻量版,Seedance,per_second,1080p/默认5秒,5.0s,65000,65000,一致,6.5,6.5,一致,7.002863,,,Y,Y,1.0,rate=13000.0 AW/s；主人民币=AWCoin×0.0001；site_ui 列仅供参考不参与结论
+AP Seedance-2.0 轻量版,Seedance,per_second,480p/不可用,N/A,,,,,,,,,,Y,Y,1.0,上游单价0；NewAPI 返回 unsupported_resolution。主口径不计价。
+AP Seedance-2.0 轻量版,Seedance,per_second,720p/每秒,1.0s,7000,7000,一致,0.7,0.7,一致,0.754154,,,Y,Y,1.0,rate=7000.0 AW/s；主人民币=AWCoin×0.0001；site_ui 列仅供参考不参与结论
+AP Seedance-2.0 轻量版,Seedance,per_second,720p/默认5秒,5.0s,35000,35000,一致,3.5,3.5,一致,3.770772,,,Y,Y,1.0,rate=7000.0 AW/s；主人民币=AWCoin×0.0001；site_ui 列仅供参考不参与结论
+AP Seedance-2.0 轻量版,Seedance,per_second,720p/10秒,10.0s,70000,70000,一致,7.0,7.0,一致,7.541545,,,Y,Y,1.0,rate=7000.0 AW/s；主人民币=AWCoin×0.0001；site_ui 列仅供参考不参与结论
+AP Seedance-2.0 高性价比版,Seedance,per_second,1080p/每秒,1.0s,13000,13000,一致,1.3,1.3,一致,1.400573,,,Y,Y,1.0,rate=13000.0 AW/s；主人民币=AWCoin×0.0001；site_ui 列仅供参考不参与结论
+AP Seedance-2.0 高性价比版,Seedance,per_second,1080p/默认5秒,5.0s,65000,65000,一致,6.5,6.5,一致,7.002863,,,Y,Y,1.0,rate=13000.0 AW/s；主人民币=AWCoin×0.0001；site_ui 列仅供参考不参与结论
+AP Seedance-2.0 高性价比版,Seedance,per_second,4k/每秒,1.0s,49000,49000,一致,4.9,4.9,一致,5.279081,,,Y,Y,1.0,rate=49000.0 AW/s；主人民币=AWCoin×0.0001；site_ui 列仅供参考不参与结论
+AP Seedance-2.0 高性价比版,Seedance,per_second,4k/默认5秒,5.0s,245000,245000,一致,24.5,24.5,一致,26.395407,,,Y,Y,1.0,rate=49000.0 AW/s；主人民币=AWCoin×0.0001；site_ui 列仅供参考不参与结论
+FLUX-GGUF-T2I-V2,异步任务,per_call,单次调用,1次,300.0,300.0,一致,0.03,0.03,一致,0.032321,,标价吻合,Y,Y,1.0,adapter=comfyui；按次透传 AWCoin
+FLUX-GGUF-V2,异步任务,per_call,单次调用,1次,300.0,300.0,一致,0.03,0.03,一致,0.032321,,标价吻合,Y,Y,1.0,adapter=comfyui；按次透传 AWCoin
+aipdd_IndexTTS,异步任务,per_call,单次调用,1次,3000.0,3000.0,一致,0.3,0.3,一致,0.323209,,标价吻合,Y,Y,1.0,adapter=comfyui；按次透传 AWCoin
+aipdd_Wan2.2-Animater,异步任务,per_call,单次调用,1次,3200.0,3200.0,一致,0.32,0.32,一致,0.344756,,标价吻合,Y,Y,1.0,adapter=comfyui；按次透传 AWCoin
+aipdd_latentsync1.5,异步任务,per_call,单次调用,1次,3000.0,3000.0,一致,0.3,0.3,一致,0.323209,,标价吻合,Y,Y,1.0,adapter=comfyui；按次透传 AWCoin
+aipdd_ltx_2.3,异步任务,per_unit,单次调用,1次,1800.0,1800.0,一致,0.18,0.18,一致,0.193925,,标价吻合,Y,Y,1.0,adapter=comfyui；按次透传 AWCoin
+aipdd_ltx_2.3 (首尾帧),异步任务,per_unit,单次调用,1次,1800.0,1800.0,一致,0.18,0.18,一致,0.193925,,标价吻合,Y,Y,1.0,adapter=comfyui；按次透传 AWCoin
+aipdd_mimic_motion,异步任务,per_call,单次调用,1次,14000.0,14000.0,一致,1.4,1.4,一致,1.508309,,标价吻合,Y,Y,1.0,adapter=comfyui；按次透传 AWCoin
+aipdd_wan2.2_wanx,异步任务,per_call,单次调用,1次,3200.0,3200.0,一致,0.32,0.32,一致,0.344756,,标价吻合,Y,Y,1.0,adapter=comfyui；按次透传 AWCoin
+deepseek-r1:8b,LLM文本,per_token,输入/百万token,1M tokens,300.0,300.0,一致,0.03,0.03,一致,0.032321,,表达式吻合,Y,Y,1.0,"expr=tier(""aipdd"", p * 0.0044275215 + c * 0.008855043)"
+deepseek-r1:8b,LLM文本,per_token,输出/百万token,1M tokens,600.0,600.0,一致,0.06,0.06,一致,0.064642,,表达式吻合,Y,Y,1.0,"expr=tier(""aipdd"", p * 0.0044275215 + c * 0.008855043)"
+medgemma1.5:4b,LLM文本,per_token,输入/百万token,1M tokens,300.0,300.0,一致,0.03,0.03,一致,0.032321,,表达式吻合,Y,Y,1.0,"expr=tier(""aipdd"", p * 0.0044275215 + c * 0.008855043)"
+medgemma1.5:4b,LLM文本,per_token,输出/百万token,1M tokens,600.0,600.0,一致,0.06,0.06,一致,0.064642,,表达式吻合,Y,Y,1.0,"expr=tier(""aipdd"", p * 0.0044275215 + c * 0.008855043)"
+minicpm-v4.6:q4_K_M,LLM文本,per_token,输入/百万token,1M tokens,300.0,300.0,一致,0.03,0.03,一致,0.032321,,表达式吻合,Y,Y,1.0,"expr=tier(""aipdd"", p * 0.0044275215 + c * 0.008855043)"
+minicpm-v4.6:q4_K_M,LLM文本,per_token,输出/百万token,1M tokens,600.0,600.0,一致,0.06,0.06,一致,0.064642,,表达式吻合,Y,Y,1.0,"expr=tier(""aipdd"", p * 0.0044275215 + c * 0.008855043)"
+qwen2.5:0.5b,LLM文本,per_token,输入/百万token,1M tokens,100.0,100.0,一致,0.01,0.01,一致,0.010774,,表达式吻合,Y,Y,1.0,"expr=tier(""aipdd"", p * 0.0014758405 + c * 0.002951681)"
+qwen2.5:0.5b,LLM文本,per_token,输出/百万token,1M tokens,200.0,200.0,一致,0.02,0.02,一致,0.021547,,表达式吻合,Y,Y,1.0,"expr=tier(""aipdd"", p * 0.0014758405 + c * 0.002951681)"
+qwythos-9b,LLM文本,per_token,输入/百万token,1M tokens,600.0,600.0,一致,0.06,0.06,一致,0.064642,,表达式吻合,Y,Y,1.0,"expr=tier(""aipdd"", p * 0.008855043 + c * 0.017710086)"
+qwythos-9b,LLM文本,per_token,输出/百万token,1M tokens,1200.0,1200.0,一致,0.12,0.12,一致,0.129284,,表达式吻合,Y,Y,1.0,"expr=tier(""aipdd"", p * 0.008855043 + c * 0.017710086)"
+qwythos-9b-q8,LLM文本,per_token,输入/百万token,1M tokens,600.0,600.0,一致,0.06,0.06,一致,0.064642,,表达式吻合,Y,Y,1.0,"expr=tier(""aipdd"", p * 0.008855043 + c * 0.017710086)"
+qwythos-9b-q8,LLM文本,per_token,输出/百万token,1M tokens,1200.0,1200.0,一致,0.12,0.12,一致,0.129284,,表达式吻合,Y,Y,1.0,"expr=tier(""aipdd"", p * 0.008855043 + c * 0.017710086)"

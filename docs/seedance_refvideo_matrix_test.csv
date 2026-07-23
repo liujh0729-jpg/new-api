@@ -1,0 +1,21 @@
+﻿idx,model,resolution,duration,with_ref_video,http_code,task_id,aipdd_awcoin,has_reference_video_header,seconds,catalog_flat_expect_aw,aw_vs_flat,site_rmb_7_3,official_rmb_0_0001,elapsed_s,error,ratios_json
+1,AP Seedance-2.0 VIP,720p,5,N,200,task_dqPkgDum2oq60EUSvuhq0b0cWSB6uNah,35000,0,5,35000,same,3.7708,3.5,1.12,,"{""aipdd_awcoin"": 35000, ""has_reference_video"": 0, ""seconds"": 5}"
+2,AP Seedance-2.0 VIP,720p,5,Y,400,,,,,35000,n/a,,,20.82,"{""error"":{""code"":""InputVideoSensitiveContentDetected.PrivacyInformation"",""message"":""任务处理失败，请稍后重试"",""param"":"""",""type"":""BadRequest""}}",
+3,AP Seedance-2.0 VIP,1080p,5,N,200,task_hbLcWHDuQgzfZ7NFqdgwQdJYliaFfWmD,65000,0,5,65000,same,7.0029,6.5,1.12,,"{""aipdd_awcoin"": 65000, ""has_reference_video"": 0, ""seconds"": 5}"
+4,AP Seedance-2.0 VIP,1080p,5,Y,400,,,,,65000,n/a,,,15.43,"{""error"":{""code"":""InputVideoSensitiveContentDetected.PrivacyInformation"",""message"":""任务处理失败，请稍后重试"",""param"":"""",""type"":""BadRequest""}}",
+5,AP Seedance-2.0 VIP,4k,5,N,200,task_hq6O08jj3YQgGoJ0t0AwQaopCrQEHD0P,245000,0,5,245000,same,26.3954,24.5,1.37,,"{""aipdd_awcoin"": 245000, ""has_reference_video"": 0, ""seconds"": 5}"
+6,AP Seedance-2.0 VIP,4k,5,Y,400,,,,,245000,n/a,,,15.03,"{""error"":{""code"":""InputVideoSensitiveContentDetected.PrivacyInformation"",""message"":""任务处理失败，请稍后重试"",""param"":"""",""type"":""BadRequest""}}",
+7,AP Seedance-2.0 标准版,720p,5,N,200,task_BcB8do8q1lJyhj44RdstaAZ7ADrg7SCG,35000,0,5,35000,same,3.7708,3.5,2.32,,"{""aipdd_awcoin"": 35000, ""has_reference_video"": 0, ""seconds"": 5}"
+8,AP Seedance-2.0 标准版,720p,5,Y,400,,,,,35000,n/a,,,14.24,"{""error"":{""code"":""InputVideoSensitiveContentDetected.PrivacyInformation"",""message"":""任务处理失败，请稍后重试"",""param"":"""",""type"":""BadRequest""}}",
+9,AP Seedance-2.0 标准版,1080p,5,N,200,task_nJfHcYroPcqnSOpMW3nfXi0tsbPhjNRq,65000,0,5,65000,same,7.0029,6.5,1.12,,"{""aipdd_awcoin"": 65000, ""has_reference_video"": 0, ""seconds"": 5}"
+10,AP Seedance-2.0 标准版,1080p,5,Y,400,,,,,65000,n/a,,,16.55,"{""error"":{""code"":""InputVideoSensitiveContentDetected.PrivacyInformation"",""message"":""任务处理失败，请稍后重试"",""param"":"""",""type"":""BadRequest""}}",
+11,AP Seedance-2.0 标准版,4k,5,N,403,,,,,245000,n/a,,,0.9,"{""error"":{""code"":""AccountOverdueError"",""message"":""任务处理失败，请稍后重试"",""param"":"""",""type"":""Forbidden""}}",
+12,AP Seedance-2.0 标准版,4k,5,Y,403,,,,,245000,n/a,,,1.55,"{""error"":{""code"":""AccountOverdueError"",""message"":""任务处理失败，请稍后重试"",""param"":"""",""type"":""Forbidden""}}",
+13,AP Seedance-2.0 轻量版,720p,5,N,403,,,,,35000,n/a,,,0.76,"{""error"":{""code"":""AccountOverdueError"",""message"":""任务处理失败，请稍后重试"",""param"":"""",""type"":""Forbidden""}}",
+14,AP Seedance-2.0 轻量版,720p,5,Y,403,,,,,35000,n/a,,,0.92,"{""error"":{""code"":""AccountOverdueError"",""message"":""任务处理失败，请稍后重试"",""param"":"""",""type"":""Forbidden""}}",
+15,AP Seedance-2.0 轻量版,1080p,5,N,403,,,,,65000,n/a,,,0.91,"{""error"":{""code"":""AccountOverdueError"",""message"":""任务处理失败，请稍后重试"",""param"":"""",""type"":""Forbidden""}}",
+16,AP Seedance-2.0 轻量版,1080p,5,Y,403,,,,,65000,n/a,,,1.44,"{""error"":{""code"":""AccountOverdueError"",""message"":""任务处理失败，请稍后重试"",""param"":"""",""type"":""Forbidden""}}",
+17,AP Seedance-2.0 高性价比版,1080p,5,N,403,,,,,65000,n/a,,,0.88,"{""error"":{""code"":""AccountOverdueError"",""message"":""任务处理失败，请稍后重试"",""param"":"""",""type"":""Forbidden""}}",
+18,AP Seedance-2.0 高性价比版,1080p,5,Y,403,,,,,65000,n/a,,,0.93,"{""error"":{""code"":""AccountOverdueError"",""message"":""任务处理失败，请稍后重试"",""param"":"""",""type"":""Forbidden""}}",
+19,AP Seedance-2.0 高性价比版,4k,5,N,403,,,,,245000,n/a,,,1.18,"{""error"":{""code"":""AccountOverdueError"",""message"":""任务处理失败，请稍后重试"",""param"":"""",""type"":""Forbidden""}}",
+20,AP Seedance-2.0 高性价比版,4k,5,Y,403,,,,,245000,n/a,,,0.9,"{""error"":{""code"":""AccountOverdueError"",""message"":""任务处理失败，请稍后重试"",""param"":"""",""type"":""Forbidden""}}",

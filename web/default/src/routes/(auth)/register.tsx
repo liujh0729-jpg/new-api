@@ -16,16 +16,20 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-// ============================================================================
-// Affiliate Functions
-// ============================================================================
+import { z } from 'zod'
+import { createFileRoute, redirect } from '@tanstack/react-router'
 
-/**
- * Generate affiliate registration link
- */
-export function generateAffiliateLink(affCode: string): string {
-  if (typeof window === 'undefined') return ''
-  const url = new URL('/sign-up', window.location.origin)
-  url.searchParams.set('aff', affCode)
-  return url.toString()
-}
+const searchSchema = z.object({
+  aff: z.string().optional(),
+})
+
+export const Route = createFileRoute('/(auth)/register')({
+  validateSearch: searchSchema,
+  beforeLoad: ({ search }) => {
+    throw redirect({
+      to: '/sign-up',
+      search: search.aff ? { aff: search.aff } : {},
+      replace: true,
+    })
+  },
+})

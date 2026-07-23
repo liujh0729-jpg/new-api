@@ -39,6 +39,8 @@ const DEFAULT_HEADER_NAV_MODULES = {
 }
 
 const INTERNAL_DOCS_PATH = '/docs'
+const DEFAULT_DOCS_LINK =
+  'https://aiworkin.feishu.cn/wiki/RZXkwDbzqi2auAkuF3EcJGWknVh?from=from_copylink'
 const LEGACY_DEFAULT_DOCS_LINKS = new Set([
   'https://docs.newapi.pro',
   'https://docs.newapi.pro/',
@@ -153,17 +155,18 @@ export function useTopNavLinks(): TopNavLink[] {
 
   // Docs (supports external links)
   if (modules?.docs !== false) {
-    if (
-      !docsLink ||
-      docsLink === INTERNAL_DOCS_PATH ||
-      LEGACY_DEFAULT_DOCS_LINKS.has(docsLink)
-    ) {
+    let href = docsLink
+    if (!href || LEGACY_DEFAULT_DOCS_LINKS.has(href)) {
+      href = DEFAULT_DOCS_LINK
+    }
+
+    if (href === INTERNAL_DOCS_PATH) {
       links.push({ title: t('Docs'), href: INTERNAL_DOCS_PATH })
     } else {
       links.push({
         title: t('Docs'),
-        href: docsLink,
-        external: !docsLink.startsWith('/'),
+        href,
+        external: !href.startsWith('/'),
       })
     }
   }

@@ -1,0 +1,14 @@
+﻿idx,model,resolution,duration,expect_ok,expect_awcoin,http_code,http_ok,aipdd_awcoin,awcoin_ok,seconds,site_rmb_7_3,official_rmb_0_0001,task_id,final_status,has_video_url,elapsed_s,error,ratios_json
+1,AP Seedance-2.0 VIP,480p,5,False,0,400,Y,,Y,,,,,,,0.23,model_price_error,
+2,AP Seedance-2.0 VIP,720p,5,True,35000,200,Y,35000,Y,5,3.7708,3.5,task_2nViXbxBywdhTjweveeDUa32EHJ4MAfr,in_progress,N,1.83,,"{""aipdd_awcoin"": 35000, ""has_reference_video"": 0, ""seconds"": 5}"
+3,AP Seedance-2.0 VIP,1080p,5,True,65000,200,Y,65000,Y,5,7.0029,6.5,task_wfpeN9AdABEAXEX9KOE3vznsDziKuUla,in_progress,N,1.16,,"{""aipdd_awcoin"": 65000, ""has_reference_video"": 0, ""seconds"": 5}"
+4,AP Seedance-2.0 VIP,4k,5,True,245000,200,Y,245000,Y,5,26.3954,24.5,task_vCIFVgwSPj2yxc4H4m9Xexu8nL8wVbyO,in_progress,N,4.44,,"{""aipdd_awcoin"": 245000, ""has_reference_video"": 0, ""seconds"": 5}"
+5,AP Seedance-2.0 标准版,480p,5,False,0,400,Y,,Y,,,,,,,0.23,model_price_error,
+6,AP Seedance-2.0 标准版,720p,5,True,35000,200,Y,35000,Y,5,3.7708,3.5,task_uY2PZHbl0jJioIwZh19noSXnpOcEWsrU,in_progress,N,2.23,,"{""aipdd_awcoin"": 35000, ""has_reference_video"": 0, ""seconds"": 5}"
+7,AP Seedance-2.0 标准版,1080p,5,True,65000,200,Y,65000,Y,5,7.0029,6.5,task_aUxfXLXEWnEcvuTJaduCxr0LbsZUAHMK,in_progress,N,1.39,,"{""aipdd_awcoin"": 65000, ""has_reference_video"": 0, ""seconds"": 5}"
+8,AP Seedance-2.0 标准版,4k,5,True,245000,200,Y,245000,Y,5,26.3954,24.5,task_jkdN3f7UJ6wNwdP9wVFRHpKQK3h4nQDw,in_progress,N,1.17,,"{""aipdd_awcoin"": 245000, ""has_reference_video"": 0, ""seconds"": 5}"
+9,AP Seedance-2.0 轻量版,480p,5,False,0,400,Y,,Y,,,,,,,0.26,model_price_error,
+10,AP Seedance-2.0 轻量版,720p,5,True,35000,200,Y,35000,Y,5,3.7708,3.5,task_XfWg0VKgD4Stn8JMnzKBHxqBjRqW0QJG,in_progress,N,1.38,,"{""aipdd_awcoin"": 35000, ""has_reference_video"": 0, ""seconds"": 5}"
+11,AP Seedance-2.0 轻量版,1080p,5,True,65000,200,Y,65000,Y,5,7.0029,6.5,task_8DbqfvylObWlUaoytPrmpk9Se0KGz3d2,in_progress,N,1.86,,"{""aipdd_awcoin"": 65000, ""has_reference_video"": 0, ""seconds"": 5}"
+12,AP Seedance-2.0 高性价比版,1080p,5,True,65000,200,Y,65000,Y,5,7.0029,6.5,task_sNN3My0u4zL6NinGVUIRvQVaPaQtXe7c,in_progress,N,1.19,,"{""aipdd_awcoin"": 65000, ""has_reference_video"": 0, ""seconds"": 5}"
+13,AP Seedance-2.0 高性价比版,4k,5,True,245000,200,Y,245000,Y,5,26.3954,24.5,task_HPlLgjvsyoFuQ1Xqu6Wqz6SNEXoU9KJA,in_progress,N,1.7,,"{""aipdd_awcoin"": 245000, ""has_reference_video"": 0, ""seconds"": 5}"
