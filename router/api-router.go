@@ -200,8 +200,8 @@ func SetApiRouter(router *gin.Engine) {
 		wechatPayConfigRoute.Use(middleware.RootAuth())
 		{
 			wechatPayConfigRoute.GET("", controller.GetWechatPayConfig)
-			wechatPayConfigRoute.PUT("", middleware.CriticalRateLimit(), middleware.SecureVerificationRequired(), controller.UpdateWechatPayConfig)
-			wechatPayConfigRoute.POST("/test", middleware.CriticalRateLimit(), middleware.SecureVerificationRequired(), controller.CreateWechatPayTestOrder)
+			wechatPayConfigRoute.PUT("", middleware.CriticalRateLimit(), controller.UpdateWechatPayConfig)
+			wechatPayConfigRoute.POST("/test", middleware.CriticalRateLimit(), controller.CreateWechatPayTestOrder)
 			wechatPayConfigRoute.GET("/test/:trade_no", controller.GetWechatPayTestOrder)
 		}
 

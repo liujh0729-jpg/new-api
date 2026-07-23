@@ -50,10 +50,6 @@ import { Spinner } from '@/components/ui/spinner'
 import { Switch } from '@/components/ui/switch'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { WechatPayQrDialog } from '@/components/payment/wechat-pay-qr-dialog'
-import {
-  SecureVerificationDialog,
-  useSecureVerification,
-} from '@/features/auth/secure-verification'
 
 const steps = [
   'Merchant identity',
@@ -117,8 +113,6 @@ export function WechatPaySettingsSection() {
   )
   const [testDialogOpen, setTestDialogOpen] = React.useState(false)
   const initializedRef = React.useRef(false)
-
-  const verification = useSecureVerification()
 
   const reload = React.useCallback(async () => {
     const next = await fetchWechatPayConfig()
@@ -220,19 +214,16 @@ export function WechatPaySettingsSection() {
     }
   }
 
-  const saveWithVerification = async () => {
+  const handleSave = async () => {
     if (!canContinue()) return
     try {
-      await verification.withVerification(save, {
-        title: t('Verify before saving payment credentials'),
-        description: t('Payment private keys are a sensitive system setting.'),
-      })
+      await save()
     } catch (error) {
       toast.error(errorMessage(error, t('Save failed')))
     }
   }
 
-  const createTest = async () => {
+  const handleCreateTest = async () => {
     setTesting(true)
     try {
       const response = await api.post('/api/wechat-pay/config/test', {}, {
@@ -246,20 +237,10 @@ export function WechatPaySettingsSection() {
       const order = response.data.data as WechatPayOrderView
       setTestOrder(order)
       setTestDialogOpen(true)
-      return order
-    } finally {
-      setTesting(false)
-    }
-  }
-
-  const testWithVerification = async () => {
-    try {
-      await verification.withVerification(createTest, {
-        title: t('Verify before creating a real test payment'),
-        description: t('The test creates a real ¥0.01 WeChat Pay order.'),
-      })
     } catch (error) {
       toast.error(errorMessage(error, t('Test payment failed')))
+    } finally {
+      setTesting(false)
     }
   }
 
@@ -631,7 +612,7 @@ export function WechatPaySettingsSection() {
                 type='button'
                 variant='outline'
                 disabled={!status.ready || testing || saving}
-                onClick={testWithVerification}
+                onClick={handleCreateTest}
               >
                 {testing && <Spinner data-icon='inline-start' />}
                 {t('Create ¥0.01 test')}
@@ -641,7 +622,7 @@ export function WechatPaySettingsSection() {
               <Button
                 type='button'
                 disabled={!status?.crypto_secret_configured || saving}
-                onClick={saveWithVerification}
+                onClick={handleSave}
               >
                 {saving && <Spinner data-icon='inline-start' />}
                 {t('Validate and save')}
@@ -658,19 +639,6 @@ export function WechatPaySettingsSection() {
         refreshOrder={fetchWechatPayTestOrder}
         testMode
         onPaid={reload}
-      />
-
-      <SecureVerificationDialog
-        open={verification.open}
-        onOpenChange={verification.setOpen}
-        methods={verification.methods}
-        state={verification.state}
-        onVerify={async (method, code) => {
-          await verification.executeVerification(method, code)
-        }}
-        onCancel={verification.cancel}
-        onCodeChange={verification.setCode}
-        onMethodChange={verification.switchMethod}
       />
     </>
   )
