@@ -4792,6 +4792,22 @@
     "Use the newer WeChat Pay public key verification mode.": "Sử dụng phương thức xác minh bằng khóa công khai WeChat Pay mới hơn.",
     "Verification method": "Phương thức xác minh",
     "WeChat Pay public key": "Khóa công khai WeChat Pay",
-    "Selected file: {{fileName}}": "Tệp đã chọn: {{fileName}}"
+    "Selected file: {{fileName}}": "Tệp đã chọn: {{fileName}}",
+    "Choose a payment method, then enter an amount": "Chọn phương thức thanh toán rồi nhập số tiền",
+    "Top-up amount must be a positive integer": "Số tiền nạp phải là số nguyên dương",
+    "Top-up amount must be an integer of at least {{amount}}": "Số tiền nạp phải là số nguyên không nhỏ hơn {{amount}}",
+    "Amount ({{unit}})": "Số tiền ({{unit}})",
+    "Minimum {{amount}}": "Tối thiểu {{amount}}",
+    "Unavailable": "Không khả dụng",
+    "Continue to payment": "Tiếp tục thanh toán",
+    "Credit Value": "Giá trị được cộng",
+    "Recharge price per 1 USD of credit": "Giá nạp cho mỗi 1 USD tín dụng",
+    "Renminbi price charged for each 1 USD of credited balance": "Giá nhân dân tệ tính cho mỗi 1 USD số dư được cộng",
+    "Minimum top-up in the current recharge unit": "Mức nạp tối thiểu theo đơn vị nạp hiện tại",
+    "Smallest integer amount users can enter for domestic payments": "Số nguyên nhỏ nhất người dùng có thể nhập cho thanh toán nội địa",
+    "CNY recharge preview": "Xem trước nạp tiền CNY",
+    "Minimum credited value: ¥{{credit}} · Estimated payment: ¥{{payment}}": "Giá trị cộng tối thiểu: ¥{{credit}} · Thanh toán dự kiến: ¥{{payment}}",
+    "Based on the default group without discounts.": "Tính theo nhóm mặc định và không áp dụng giảm giá.",
+    "The recharge price differs from the display exchange rate, so the credited value and payment amount will differ.": "Giá nạp khác tỷ giá hiển thị, vì vậy giá trị được cộng và số tiền thanh toán sẽ khác nhau."
   }
 }

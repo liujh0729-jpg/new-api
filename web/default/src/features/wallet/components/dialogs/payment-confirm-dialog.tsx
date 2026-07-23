@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { Loader2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { formatLocalCurrencyAmount } from '@/lib/currency'
+import { formatNumber } from '@/lib/format'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -32,7 +33,7 @@ import {
 import { Skeleton } from '@/components/ui/skeleton'
 import { DEFAULT_DISCOUNT_RATE } from '../../constants'
 import { formatCurrency, getPaymentIcon } from '../../lib'
-import type { PaymentMethod } from '../../types'
+import type { PaymentMethod, TopupAmountUnit } from '../../types'
 
 interface PaymentConfirmDialogProps {
   open: boolean
@@ -45,6 +46,8 @@ interface PaymentConfirmDialogProps {
   processing: boolean
   discountRate?: number
   usdExchangeRate?: number
+  amountUnit?: TopupAmountUnit
+  providerAmountUnit?: 'USD' | 'TOKENS'
 }
 
 export function PaymentConfirmDialog({
@@ -58,8 +61,12 @@ export function PaymentConfirmDialog({
   processing,
   discountRate = DEFAULT_DISCOUNT_RATE,
   usdExchangeRate = 1,
+  amountUnit,
+  providerAmountUnit = 'USD',
 }: PaymentConfirmDialogProps) {
   const { t } = useTranslation()
+  const effectiveAmountUnit =
+    amountUnit === 'PROVIDER' ? providerAmountUnit : amountUnit
   const hasDiscount = discountRate > 0 && discountRate < 1 && paymentAmount > 0
   const originalAmount = hasDiscount ? paymentAmount / discountRate : 0
   const discountAmount = hasDiscount ? originalAmount - paymentAmount : 0
@@ -79,14 +86,21 @@ export function PaymentConfirmDialog({
         <div className='space-y-3 py-3 sm:space-y-4 sm:py-4'>
           <div className='flex items-center justify-between'>
             <span className='text-muted-foreground text-sm'>
-              {t('Topup Amount')}
+              {t('Credit Value')}
             </span>
             <span className='text-lg font-semibold'>
-              {formatLocalCurrencyAmount(topupAmount * usdExchangeRate, {
-                digitsLarge: 2,
-                digitsSmall: 2,
-                abbreviate: false,
-              })}
+              {effectiveAmountUnit === 'TOKENS'
+                ? `${formatNumber(topupAmount)} ${t('Tokens')}`
+                : formatLocalCurrencyAmount(
+                    effectiveAmountUnit === 'CNY'
+                      ? topupAmount
+                      : topupAmount * usdExchangeRate,
+                    {
+                      digitsLarge: 2,
+                      digitsSmall: 2,
+                      abbreviate: false,
+                    }
+                  )}
             </span>
           </div>
 
@@ -99,11 +113,15 @@ export function PaymentConfirmDialog({
             ) : (
               <div className='flex items-baseline gap-2'>
                 <span className='text-2xl font-semibold'>
-                  {formatCurrency(paymentAmount)}
+                  {amountUnit === 'CNY'
+                    ? `¥${formatCurrency(paymentAmount)}`
+                    : formatCurrency(paymentAmount)}
                 </span>
                 {hasDiscount && (
                   <span className='text-muted-foreground text-sm line-through'>
-                    {formatCurrency(originalAmount)}
+                    {amountUnit === 'CNY'
+                      ? `¥${formatCurrency(originalAmount)}`
+                      : formatCurrency(originalAmount)}
                   </span>
                 )}
               </div>
@@ -115,7 +133,9 @@ export function PaymentConfirmDialog({
               <div className='flex items-center justify-between text-sm'>
                 <span className='text-muted-foreground'>{t('You save')}</span>
                 <span className='font-semibold text-green-600'>
-                  {formatCurrency(discountAmount)}
+                  {amountUnit === 'CNY'
+                    ? `¥${formatCurrency(discountAmount)}`
+                    : formatCurrency(discountAmount)}
                 </span>
               </div>
             </div>

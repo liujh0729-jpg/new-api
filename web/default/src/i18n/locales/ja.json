@@ -4792,6 +4792,22 @@
     "Use the newer WeChat Pay public key verification mode.": "新しい WeChat Pay 公開鍵による検証方式を使用します。",
     "Verification method": "検証方式",
     "WeChat Pay public key": "WeChat Pay 公開鍵",
-    "Selected file: {{fileName}}": "選択したファイル：{{fileName}}"
+    "Selected file: {{fileName}}": "選択したファイル：{{fileName}}",
+    "Choose a payment method, then enter an amount": "支払い方法を選択してから、チャージ金額を入力してください",
+    "Top-up amount must be a positive integer": "チャージ金額は正の整数で入力してください",
+    "Top-up amount must be an integer of at least {{amount}}": "チャージ金額は {{amount}} 以上の整数で入力してください",
+    "Amount ({{unit}})": "チャージ金額（{{unit}}）",
+    "Minimum {{amount}}": "最低 {{amount}}",
+    "Unavailable": "利用できません",
+    "Continue to payment": "支払いへ進む",
+    "Credit Value": "反映される価値",
+    "Recharge price per 1 USD of credit": "1 USD クレジットあたりのチャージ価格",
+    "Renminbi price charged for each 1 USD of credited balance": "1 USD の残高を反映するために請求する人民元価格",
+    "Minimum top-up in the current recharge unit": "現在のチャージ単位での最低チャージ額",
+    "Smallest integer amount users can enter for domestic payments": "国内決済で入力できる最小の整数金額",
+    "CNY recharge preview": "人民元チャージのプレビュー",
+    "Minimum credited value: ¥{{credit}} · Estimated payment: ¥{{payment}}": "最低反映価値：¥{{credit}} · 支払い見込み：¥{{payment}}",
+    "Based on the default group without discounts.": "デフォルトグループかつ割引なしで計算しています。",
+    "The recharge price differs from the display exchange rate, so the credited value and payment amount will differ.": "チャージ価格と表示為替レートが異なるため、反映される価値と支払い金額も異なります。"
   }
 }

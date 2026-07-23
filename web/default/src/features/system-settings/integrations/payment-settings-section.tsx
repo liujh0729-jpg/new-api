@@ -22,6 +22,8 @@ import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { Code2, Eye } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import { useSystemConfig } from '@/hooks/use-system-config'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import {
   Form,
@@ -66,8 +68,8 @@ const paymentSchema = z.object({
   }, 'Provide a valid callback URL starting with http:// or https://'),
   EpayId: z.string(),
   EpayKey: z.string(),
-  Price: z.coerce.number().min(0),
-  MinTopUp: z.coerce.number().min(0),
+  Price: z.coerce.number().positive(),
+  MinTopUp: z.coerce.number().int().min(1),
   CustomCallbackAddress: z.string().refine((value) => {
     const trimmed = value.trim()
     if (!trimmed) return true
@@ -138,6 +140,7 @@ export function PaymentSettingsSection({
   waffoPancakeDefaultValues,
 }: PaymentSettingsSectionProps) {
   const { t } = useTranslation()
+  const { currency } = useSystemConfig()
   const updateOption = useUpdateOption()
   const initialRef = React.useRef(defaultValues)
   const defaultsSignature = React.useMemo(
@@ -164,6 +167,22 @@ export function PaymentSettingsSection({
       CreemProducts: formatJsonForEditor(defaultValues.CreemProducts),
     },
   })
+  const price = Number(form.watch('Price'))
+  const minTopUp = Number(form.watch('MinTopUp'))
+  const isCnyMode = currency.quotaDisplayType === 'CNY'
+  const exchangeRate = currency.usdExchangeRate
+  const estimatedPayment =
+    isCnyMode &&
+    Number.isFinite(price) &&
+    Number.isFinite(minTopUp) &&
+    exchangeRate > 0
+      ? (minTopUp / exchangeRate) * price
+      : 0
+  const priceDiffersFromDisplayRate =
+    isCnyMode &&
+    Number.isFinite(price) &&
+    exchangeRate > 0 &&
+    Math.abs(price - exchangeRate) > 0.000001
 
   React.useEffect(() => {
     const parsedDefaults = JSON.parse(defaultsSignature) as PaymentFormValues
@@ -563,7 +582,6 @@ export function PaymentSettingsSection({
         'Configure recharge pricing and payment gateway integrations'
       )}
     >
-      {/* eslint-disable react-hooks/refs */}
       <Form {...form}>
         <form
           onSubmit={form.handleSubmit(onSubmit)}
@@ -584,12 +602,14 @@ export function PaymentSettingsSection({
                 name='Price'
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>{t('Price (local currency / USD)')}</FormLabel>
+                    <FormLabel>
+                      {t('Recharge price per 1 USD of credit')}
+                    </FormLabel>
                     <FormControl>
                       <Input
                         type='number'
                         step='0.01'
-                        min={0}
+                        min={0.01}
                         value={(field.value ?? 0) as number}
                         onChange={(event) =>
                           field.onChange(event.target.valueAsNumber)
@@ -598,7 +618,7 @@ export function PaymentSettingsSection({
                     </FormControl>
                     <FormDescription>
                       {t(
-                        'How much to charge for each US dollar of balance (Epay)'
+                        'Renminbi price charged for each 1 USD of credited balance'
                       )}
                     </FormDescription>
                     <FormMessage />
@@ -611,12 +631,14 @@ export function PaymentSettingsSection({
                 name='MinTopUp'
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>{t('Minimum top-up (USD)')}</FormLabel>
+                    <FormLabel>
+                      {t('Minimum top-up in the current recharge unit')}
+                    </FormLabel>
                     <FormControl>
                       <Input
                         type='number'
-                        step='0.01'
-                        min={0}
+                        step='1'
+                        min={1}
                         value={(field.value ?? 0) as number}
                         onChange={(event) =>
                           field.onChange(event.target.valueAsNumber)
@@ -624,13 +646,43 @@ export function PaymentSettingsSection({
                       />
                     </FormControl>
                     <FormDescription>
-                      {t('Smallest USD amount users can recharge (Epay)')}
+                      {t(
+                        'Smallest integer amount users can enter for domestic payments'
+                      )}
                     </FormDescription>
                     <FormMessage />
                   </FormItem>
                 )}
               />
             </div>
+
+            {isCnyMode && (
+              <Alert>
+                <AlertTitle>{t('CNY recharge preview')}</AlertTitle>
+                <AlertDescription>
+                  <p>
+                    {t(
+                      'Minimum credited value: ¥{{credit}} · Estimated payment: ¥{{payment}}',
+                      {
+                        credit:
+                          Number.isFinite(minTopUp) && minTopUp >= 1
+                            ? minTopUp
+                            : 1,
+                        payment: estimatedPayment.toFixed(2),
+                      }
+                    )}
+                  </p>
+                  <p>{t('Based on the default group without discounts.')}</p>
+                  {priceDiffersFromDisplayRate && (
+                    <p>
+                      {t(
+                        'The recharge price differs from the display exchange rate, so the credited value and payment amount will differ.'
+                      )}
+                    </p>
+                  )}
+                </AlertDescription>
+              </Alert>
+            )}
 
             <FormField
               control={form.control}
@@ -1314,7 +1366,6 @@ export function PaymentSettingsSection({
       <Separator />
 
       <WaffoPancakeSettingsSection defaultValues={waffoPancakeDefaultValues} />
-      {/* eslint-enable react-hooks/refs */}
     </SettingsSection>
   )
 }

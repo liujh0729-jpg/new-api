@@ -21,28 +21,39 @@ import type { WechatPayOrderView } from '@/types/wechat-pay'
 import i18next from 'i18next'
 import { toast } from 'sonner'
 import { requestWechatPayNative } from '../api'
+import type { TopupAmountUnit } from '../types'
 
 export function useWechatPay() {
   const [processing, setProcessing] = useState(false)
 
-  const createOrder = useCallback(async (amount: number) => {
-    setProcessing(true)
-    try {
-      return await requestWechatPayNative({
-        amount: Math.floor(amount),
-        payment_method: 'wechat_native',
-      })
-    } catch (error) {
-      toast.error(
-        error instanceof Error
-          ? error.message
-          : i18next.t('Payment request failed')
-      )
-      return null as WechatPayOrderView | null
-    } finally {
-      setProcessing(false)
-    }
-  }, [])
+  const createOrder = useCallback(
+    async (amount: number, amountUnit?: TopupAmountUnit) => {
+      if (!Number.isInteger(amount) || amount < 1) {
+        toast.error(i18next.t('Top-up amount must be a positive integer'))
+        return null as WechatPayOrderView | null
+      }
+      setProcessing(true)
+      try {
+        return await requestWechatPayNative({
+          amount,
+          payment_method: 'wechat_native',
+          ...(amountUnit && amountUnit !== 'PROVIDER'
+            ? { amount_unit: amountUnit }
+            : {}),
+        })
+      } catch (error) {
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : i18next.t('Payment request failed')
+        )
+        return null as WechatPayOrderView | null
+      } finally {
+        setProcessing(false)
+      }
+    },
+    []
+  )
 
   return { processing, createOrder }
 }

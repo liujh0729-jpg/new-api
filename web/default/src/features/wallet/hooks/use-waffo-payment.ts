@@ -49,11 +49,15 @@ export function useWaffoPayment() {
 
   const processWaffoPayment = useCallback(
     async (topupAmount: number, payMethodIndex?: number) => {
+      if (!Number.isInteger(topupAmount) || topupAmount < 1) {
+        toast.error(i18next.t('Top-up amount must be a positive integer'))
+        return false
+      }
       setProcessing(true)
 
       try {
         const response = await requestWaffoPayment({
-          amount: Math.floor(topupAmount),
+          amount: topupAmount,
           pay_method_index: payMethodIndex,
         })
 

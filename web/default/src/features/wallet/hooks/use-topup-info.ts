@@ -28,6 +28,7 @@ import type {
   PresetAmount,
   CreemProduct,
   PaymentMethod,
+  TopupAmountUnit,
   WaffoPayMethod,
 } from '../types'
 
@@ -65,6 +66,13 @@ function parsePaymentMethods(
       const rawMinTopup = Number(item.min_topup)
       const normalizedMinTopup = Number.isFinite(rawMinTopup) ? rawMinTopup : 0
       const type = typeof item.type === 'string' ? item.type : ''
+      const rawAmountUnit =
+        typeof item.amount_unit === 'string' ? item.amount_unit : ''
+      const amountUnit = ['USD', 'CNY', 'TOKENS', 'PROVIDER'].includes(
+        rawAmountUnit
+      )
+        ? (rawAmountUnit as TopupAmountUnit)
+        : undefined
 
       return {
         name: typeof item.name === 'string' ? item.name : '',
@@ -74,6 +82,7 @@ function parsePaymentMethods(
           type === 'stripe' && normalizedMinTopup <= 0
             ? stripeMinTopup
             : normalizedMinTopup,
+        amount_unit: amountUnit,
       }
     })
     .filter((item) => item.name && item.type && item.type !== 'waffo')

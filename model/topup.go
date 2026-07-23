@@ -15,9 +15,10 @@ type TopUp struct {
 	Id                    int     `json:"id"`
 	UserId                int     `json:"user_id" gorm:"index"`
 	Amount                int64   `json:"amount"`
+	AmountUnit            string  `json:"amount_unit,omitempty" gorm:"type:varchar(16)"`
 	Money                 float64 `json:"money"`
 	PaymentAmountCents    int64   `json:"payment_amount_cents,omitempty"`
-	QuotaToAdd            int64   `json:"-"`
+	QuotaToAdd            int64   `json:"quota_to_add,omitempty"`
 	Currency              string  `json:"currency,omitempty" gorm:"type:varchar(8)"`
 	TradeNo               string  `json:"trade_no" gorm:"unique;type:varchar(255);index"`
 	PaymentMethod         string  `json:"payment_method" gorm:"type:varchar(50)"`
@@ -48,8 +49,16 @@ const (
 	PaymentProviderWechatPay    = "wechatpay"
 )
 
+const (
+	TopUpAmountUnitUSD      = "USD"
+	TopUpAmountUnitCNY      = "CNY"
+	TopUpAmountUnitTokens   = "TOKENS"
+	TopUpAmountUnitProvider = "PROVIDER"
+)
+
 var (
 	ErrPaymentMethodMismatch = errors.New("payment method mismatch")
+	ErrPaymentAmountMismatch = errors.New("payment amount mismatch")
 	ErrTopUpNotFound         = errors.New("topup not found")
 	ErrTopUpStatusInvalid    = errors.New("topup status invalid")
 )
@@ -111,6 +120,81 @@ func UpdatePendingTopUpStatus(tradeNo string, expectedPaymentProvider string, ta
 		topUp.Status = targetStatus
 		return tx.Save(topUp).Error
 	})
+}
+
+// SettleEpayTopUp atomically settles an Epay order using the order-time quota
+// snapshot. Legacy orders without a snapshot retain the historical fallback.
+func SettleEpayTopUp(tradeNo string, paymentMethod string, paidCents int64) (*TopUp, int64, bool, error) {
+	if tradeNo == "" {
+		return nil, 0, false, ErrTopUpNotFound
+	}
+	if paidCents <= 0 {
+		return nil, 0, false, ErrPaymentAmountMismatch
+	}
+
+	var settledOrder *TopUp
+	var quotaToAdd int64
+	var newlySettled bool
+
+	refCol := "`trade_no`"
+	if common.UsingPostgreSQL {
+		refCol = `"trade_no"`
+	}
+
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		order := &TopUp{}
+		if err := tx.Set("gorm:query_option", "FOR UPDATE").Where(refCol+" = ?", tradeNo).First(order).Error; err != nil {
+			return ErrTopUpNotFound
+		}
+		if order.PaymentProvider != PaymentProviderEpay {
+			return ErrPaymentMethodMismatch
+		}
+		if order.PaymentAmountCents > 0 && order.PaymentAmountCents != paidCents {
+			return ErrPaymentAmountMismatch
+		}
+		if order.Status == common.TopUpStatusSuccess {
+			settledOrder = order
+			quotaToAdd = order.QuotaToAdd
+			return nil
+		}
+		if order.Status != common.TopUpStatusPending {
+			return ErrTopUpStatusInvalid
+		}
+
+		quotaToAdd = order.QuotaToAdd
+		if quotaToAdd <= 0 {
+			quotaToAdd = decimal.NewFromInt(order.Amount).
+				Mul(decimal.NewFromFloat(common.QuotaPerUnit)).
+				IntPart()
+		}
+		if quotaToAdd <= 0 {
+			return errors.New("无效的充值额度")
+		}
+
+		if err := tx.Model(&User{}).
+			Where("id = ?", order.UserId).
+			Update("quota", gorm.Expr("quota + ?", quotaToAdd)).Error; err != nil {
+			return err
+		}
+
+		if paymentMethod != "" {
+			order.PaymentMethod = paymentMethod
+		}
+		order.QuotaToAdd = quotaToAdd
+		order.CompleteTime = common.GetTimestamp()
+		order.Status = common.TopUpStatusSuccess
+		if err := tx.Save(order).Error; err != nil {
+			return err
+		}
+
+		newlySettled = true
+		settledOrder = order
+		return nil
+	})
+	if err != nil {
+		return nil, 0, false, err
+	}
+	return settledOrder, quotaToAdd, newlySettled, nil
 }
 
 func Recharge(referenceId string, customerId string, callerIp string) (err error) {
@@ -355,10 +439,9 @@ func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 			return errors.New("订单状态不是待支付，无法补单")
 		}
 
-		// 计算应充值额度：
-		// - Stripe 订单：Money 代表经分组倍率换算后的美元数量，直接 * QuotaPerUnit
-		// - 其他订单（如易支付）：Amount 为美元数量，* QuotaPerUnit
-		if topUp.PaymentProvider == PaymentProviderWechatPay {
+		// New orders snapshot the exact quota at creation time. Legacy orders
+		// retain provider-specific fallbacks for backward compatibility.
+		if topUp.QuotaToAdd > 0 {
 			quotaToAdd = int(topUp.QuotaToAdd)
 		} else if topUp.PaymentProvider == PaymentProviderStripe {
 			dQuotaPerUnit := decimal.NewFromFloat(common.QuotaPerUnit)

@@ -84,6 +84,8 @@ export interface CreemPaymentRequest {
 /**
  * Payment method configuration
  */
+export type TopupAmountUnit = 'USD' | 'CNY' | 'TOKENS' | 'PROVIDER'
+
 export interface PaymentMethod {
   /** Display name of payment method */
   name: string
@@ -93,6 +95,8 @@ export interface PaymentMethod {
   color?: string
   /** Minimum topup amount for this payment method */
   min_topup?: number
+  /** Unit expected by this payment method */
+  amount_unit?: TopupAmountUnit
   /** Optional icon URL provided by backend (preferred over built-in icons) */
   icon?: string
 }
@@ -175,6 +179,8 @@ export interface PaymentRequest {
   amount: number
   /** Payment method identifier */
   payment_method: string
+  /** Explicit amount unit for domestic payment requests */
+  amount_unit?: TopupAmountUnit
 }
 
 /**
@@ -201,6 +207,8 @@ export interface WaffoPancakePaymentRequest {
 export interface AmountRequest {
   /** Topup amount to calculate */
   amount: number
+  /** Explicit amount unit for domestic payment requests */
+  amount_unit?: TopupAmountUnit
 }
 
 /**
@@ -250,6 +258,10 @@ export interface TopupRecord {
   user_id: number
   /** Topup amount (quota) */
   amount: number
+  /** Original unit used when the order was created */
+  amount_unit?: TopupAmountUnit
+  /** Exact quota credited from the order-time snapshot */
+  quota_to_add?: number
   /** Payment amount (actual money paid) */
   money: number
   /** Trade/order number */

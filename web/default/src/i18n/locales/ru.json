@@ -4792,6 +4792,22 @@
     "Use the newer WeChat Pay public key verification mode.": "Использовать новый способ проверки по открытому ключу WeChat Pay.",
     "Verification method": "Способ проверки",
     "WeChat Pay public key": "Открытый ключ WeChat Pay",
-    "Selected file: {{fileName}}": "Выбранный файл: {{fileName}}"
+    "Selected file: {{fileName}}": "Выбранный файл: {{fileName}}",
+    "Choose a payment method, then enter an amount": "Выберите способ оплаты, затем введите сумму",
+    "Top-up amount must be a positive integer": "Сумма пополнения должна быть положительным целым числом",
+    "Top-up amount must be an integer of at least {{amount}}": "Сумма пополнения должна быть целым числом не меньше {{amount}}",
+    "Amount ({{unit}})": "Сумма ({{unit}})",
+    "Minimum {{amount}}": "Минимум {{amount}}",
+    "Unavailable": "Недоступно",
+    "Continue to payment": "Перейти к оплате",
+    "Credit Value": "Зачисляемая стоимость",
+    "Recharge price per 1 USD of credit": "Цена пополнения за 1 USD баланса",
+    "Renminbi price charged for each 1 USD of credited balance": "Цена в юанях за каждый зачисленный 1 USD баланса",
+    "Minimum top-up in the current recharge unit": "Минимальное пополнение в текущей единице",
+    "Smallest integer amount users can enter for domestic payments": "Минимальная целая сумма для внутренних платежей",
+    "CNY recharge preview": "Предварительный расчёт пополнения в CNY",
+    "Minimum credited value: ¥{{credit}} · Estimated payment: ¥{{payment}}": "Минимальное зачисление: ¥{{credit}} · Ожидаемый платёж: ¥{{payment}}",
+    "Based on the default group without discounts.": "Расчёт для группы по умолчанию без скидок.",
+    "The recharge price differs from the display exchange rate, so the credited value and payment amount will differ.": "Цена пополнения отличается от отображаемого курса, поэтому зачисляемая стоимость и сумма платежа будут различаться."
   }
 }

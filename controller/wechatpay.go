@@ -14,9 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
-	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
-	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 )
 
@@ -26,8 +24,9 @@ const (
 )
 
 type wechatPayNativeRequest struct {
-	Amount        int64  `json:"amount"`
-	PaymentMethod string `json:"payment_method,omitempty"`
+	Amount        int64   `json:"amount"`
+	AmountUnit    *string `json:"amount_unit,omitempty"`
+	PaymentMethod string  `json:"payment_method,omitempty"`
 }
 
 func wechatPayError(c *gin.Context, status int, message string) {
@@ -172,19 +171,6 @@ func wechatPayOrderData(tradeNo string, codeUrl string, status string, amountCen
 	}
 }
 
-func calculateWechatPayQuotaToAdd(requestedAmount int64, normalizedAmount int64) (int64, error) {
-	quota := decimal.NewFromInt(normalizedAmount).Mul(decimal.NewFromFloat(common.QuotaPerUnit))
-	if operation_setting.GetQuotaDisplayType() == operation_setting.QuotaDisplayTypeTokens {
-		quota = decimal.NewFromInt(requestedAmount)
-	}
-	maxInt := int64(^uint(0) >> 1)
-	quotaToAdd := quota.IntPart()
-	if quotaToAdd <= 0 || quota.GreaterThan(decimal.NewFromInt(maxInt)) {
-		return 0, errors.New("充值额度无效")
-	}
-	return quotaToAdd, nil
-}
-
 func prepayWechatPayTestOrder(c *gin.Context, gateway *service.WechatPayGateway, order *model.WechatPayTestOrder) {
 	codeUrl, err := gateway.Prepay(
 		c.Request.Context(), order.TradeNo, order.PaymentAmountCents,
@@ -277,10 +263,6 @@ func CreateWechatPayNativeOrder(c *gin.Context) {
 		wechatPayError(c, http.StatusBadRequest, "支付方式不正确")
 		return
 	}
-	if request.Amount < getMinTopup() {
-		wechatPayError(c, http.StatusBadRequest, fmt.Sprintf("充值数量不能小于 %d", getMinTopup()))
-		return
-	}
 	gateway, err := service.NewWechatPayGateway(c.Request.Context(), true)
 	if err != nil {
 		wechatPayError(c, http.StatusServiceUnavailable, err.Error())
@@ -292,27 +274,19 @@ func CreateWechatPayNativeOrder(c *gin.Context) {
 		wechatPayError(c, http.StatusInternalServerError, "获取用户分组失败")
 		return
 	}
-	paymentAmountCents := getPayMoneyCents(request.Amount, group)
-	if paymentAmountCents < 1 {
-		wechatPayError(c, http.StatusBadRequest, "充值金额过低")
-		return
-	}
-	normalizedAmount := normalizeTopUpAmount(request.Amount)
-	if normalizedAmount <= 0 {
-		wechatPayError(c, http.StatusBadRequest, "充值额度无效")
-		return
-	}
-	quotaToAdd, err := calculateWechatPayQuotaToAdd(request.Amount, normalizedAmount)
+	quote, err := buildDomesticTopUpQuote(request.Amount, request.AmountUnit, group)
 	if err != nil {
 		wechatPayError(c, http.StatusBadRequest, err.Error())
 		return
 	}
+	paymentAmountCents := quote.PaymentAmountCents
+	quotaToAdd := quote.QuotaToAdd
 	now := common.GetTimestamp()
 	if err = model.ExpireStaleWechatPayOrders(now); err != nil {
 		wechatPayError(c, http.StatusInternalServerError, "清理过期微信支付订单失败")
 		return
 	}
-	order, err := model.FindReusableWechatPayTopUp(userId, normalizedAmount, paymentAmountCents, quotaToAdd, now)
+	order, err := model.FindReusableWechatPayTopUp(userId, request.Amount, paymentAmountCents, quotaToAdd, now)
 	if err != nil {
 		wechatPayError(c, http.StatusInternalServerError, "读取待支付订单失败")
 		return
@@ -323,7 +297,7 @@ func CreateWechatPayNativeOrder(c *gin.Context) {
 	}
 	if order == nil {
 		order = &model.TopUp{
-			UserId: userId, Amount: normalizedAmount,
+			UserId: userId, Amount: request.Amount, AmountUnit: quote.AmountUnit,
 			Money: float64(paymentAmountCents) / 100, PaymentAmountCents: paymentAmountCents, QuotaToAdd: quotaToAdd,
 			Currency: service.WechatPayCurrency, TradeNo: makeWechatPayTradeNo("WXU"),
 			PaymentMethod: model.PaymentMethodWechatNative, PaymentProvider: model.PaymentProviderWechatPay,

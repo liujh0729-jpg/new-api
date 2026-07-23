@@ -108,6 +108,7 @@ func (*CreemAdaptor) RequestPay(c *gin.Context, req *CreemPayRequest) {
 	topUp := &model.TopUp{
 		UserId:          id,
 		Amount:          selectedProduct.Quota, // 充值额度
+		AmountUnit:      model.TopUpAmountUnitProvider,
 		Money:           selectedProduct.Price, // 支付金额
 		TradeNo:         referenceId,
 		PaymentMethod:   model.PaymentMethodCreem,

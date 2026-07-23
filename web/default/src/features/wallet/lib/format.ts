@@ -79,13 +79,19 @@ export function calculatePresetPricing(
   presetValue: number,
   priceRatio: number,
   discount: number,
-  usdExchangeRate: number = 1
+  usdExchangeRate: number = 1,
+  amountUnit: 'USD' | 'CNY' | 'TOKENS' | 'PROVIDER' = 'USD'
 ) {
-  const originalPrice = presetValue * priceRatio
+  const creditUSD =
+    amountUnit === 'CNY' ? presetValue / usdExchangeRate : presetValue
+  const originalPrice = creditUSD * priceRatio
   const actualPrice = originalPrice * discount
   const savedAmount = originalPrice - actualPrice
   const hasDiscount = discount < 1.0
-  const displayValue = presetValue * usdExchangeRate
+  const displayValue =
+    amountUnit === 'CNY' || amountUnit === 'PROVIDER'
+      ? presetValue
+      : presetValue * usdExchangeRate
 
   return {
     displayValue,

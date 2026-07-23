@@ -1,6 +1,7 @@
 package model
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -213,6 +214,15 @@ func loadOptionsFromDatabase() {
 		if _, ok := deprecatedOptionKeys[option.Key]; ok {
 			continue
 		}
+		if err := validateOptionValue(option.Key, option.Value); err != nil && option.Key == "MinTopUp" {
+			common.SysLog("invalid MinTopUp repaired to 1: " + err.Error())
+			option.Value = "1"
+			if dbErr := DB.Model(&Option{}).
+				Where(&Option{Key: option.Key}).
+				Update("value", option.Value).Error; dbErr != nil {
+				common.SysLog("failed to persist repaired MinTopUp: " + dbErr.Error())
+			}
+		}
 		err := updateOptionMap(option.Key, option.Value)
 		if err != nil {
 			common.SysLog("failed to update option map: " + err.Error())
@@ -228,14 +238,24 @@ func SyncOptions(frequency int) {
 	}
 }
 
-func UpdateOption(key string, value string) error {
-	// Validate task-pricing before touching persistent state. This keeps direct
-	// callers (not only the HTTP controller) from saving a missing, zero, or
-	// otherwise malformed retail price that could be mistaken for a free model.
-	if key == "billing_setting.task_pricing" {
+func validateOptionValue(key string, value string) error {
+	switch key {
+	case "MinTopUp":
+		parsed, err := strconv.Atoi(strings.TrimSpace(value))
+		if err != nil || parsed < 1 {
+			return fmt.Errorf("MinTopUp must be an integer greater than or equal to 1")
+		}
+	case "billing_setting.task_pricing":
 		if _, err := billing_setting.ParseTaskPricingMapJSON(value); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func UpdateOption(key string, value string) error {
+	if err := validateOptionValue(key, value); err != nil {
+		return err
 	}
 	// Save to database first
 	option := Option{
@@ -257,6 +277,9 @@ func UpdateOption(key string, value string) error {
 }
 
 func updateOptionMap(key string, value string) (err error) {
+	if err := validateOptionValue(key, value); err != nil {
+		return err
+	}
 	common.OptionMapRWMutex.Lock()
 	defer common.OptionMapRWMutex.Unlock()
 	if common.OptionMap == nil {

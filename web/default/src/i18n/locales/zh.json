@@ -4792,6 +4792,22 @@
     "Use the newer WeChat Pay public key verification mode.": "使用较新的微信支付公钥验签方式。",
     "Verification method": "验签方式",
     "WeChat Pay public key": "微信支付公钥",
-    "Selected file: {{fileName}}": "已选择文件：{{fileName}}"
+    "Selected file: {{fileName}}": "已选择文件：{{fileName}}",
+    "Choose a payment method, then enter an amount": "请先选择支付方式，再输入充值金额",
+    "Top-up amount must be a positive integer": "充值金额必须为正整数",
+    "Top-up amount must be an integer of at least {{amount}}": "充值金额必须是不小于 {{amount}} 的整数",
+    "Amount ({{unit}})": "充值金额（{{unit}}）",
+    "Minimum {{amount}}": "最低 {{amount}}",
+    "Unavailable": "不可用",
+    "Continue to payment": "继续充值",
+    "Credit Value": "到账价值",
+    "Recharge price per 1 USD of credit": "充值售价：每 1 USD 额度的人民币价格",
+    "Renminbi price charged for each 1 USD of credited balance": "每到账 1 USD 额度所收取的人民币金额",
+    "Minimum top-up in the current recharge unit": "最低充值额度：当前充值单位下的整数额度",
+    "Smallest integer amount users can enter for domestic payments": "国内支付允许用户输入的最小整数金额",
+    "CNY recharge preview": "人民币充值预览",
+    "Minimum credited value: ¥{{credit}} · Estimated payment: ¥{{payment}}": "最低到账：¥{{credit}} · 预计实付：¥{{payment}}",
+    "Based on the default group without discounts.": "按默认分组且无折扣计算。",
+    "The recharge price differs from the display exchange rate, so the credited value and payment amount will differ.": "充值售价与展示汇率不同，因此到账价值和实付金额会不同。"
   }
 }
