@@ -109,15 +109,19 @@ type TaskPrivateData struct {
 }
 
 type AIPDDTaskExecutionSnapshot struct {
-	CatalogRevision   string  `json:"catalog_revision,omitempty"`
-	Protocol          string  `json:"protocol,omitempty"`
-	Endpoint          string  `json:"endpoint,omitempty"`
-	BaseURL           string  `json:"base_url,omitempty"`
-	USDPerAWCoin      float64 `json:"usd_per_awcoin,omitempty"`
-	EstimatedAWCoin   float64 `json:"estimated_awcoin,omitempty"`
-	BillingSeconds    float64 `json:"billing_seconds,omitempty"`
-	Resolution        string  `json:"resolution,omitempty"`
-	HasReferenceVideo bool    `json:"has_reference_video,omitempty"`
+	CatalogRevision   string                `json:"catalog_revision,omitempty"`
+	Protocol          string                `json:"protocol,omitempty"`
+	Endpoint          string                `json:"endpoint,omitempty"`
+	EndpointType      constant.EndpointType `json:"endpoint_type,omitempty"`
+	MediaType         string                `json:"media_type,omitempty"`
+	TaskKind          string                `json:"task_kind,omitempty"`
+	OutputModalities  []string              `json:"output_modalities,omitempty"`
+	BaseURL           string                `json:"base_url,omitempty"`
+	USDPerAWCoin      float64               `json:"usd_per_awcoin,omitempty"`
+	EstimatedAWCoin   float64               `json:"estimated_awcoin,omitempty"`
+	BillingSeconds    float64               `json:"billing_seconds,omitempty"`
+	Resolution        string                `json:"resolution,omitempty"`
+	HasReferenceVideo bool                  `json:"has_reference_video,omitempty"`
 }
 
 // TaskBillingContext 记录任务提交时的计费参数，以便轮询阶段可以重新计算额度。

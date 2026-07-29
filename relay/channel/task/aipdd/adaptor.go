@@ -338,7 +338,10 @@ func (a *TaskAdaptor) AIPDDTaskSnapshot(info *relaycommon.RelayInfo) *model.AIPD
 	}
 	snapshot := &model.AIPDDTaskExecutionSnapshot{
 		CatalogRevision: cfg.CatalogRevision, Protocol: cfg.ExecutionProtocol,
-		Endpoint: cfg.ExecutionPath, BaseURL: a.baseURL,
+		Endpoint: cfg.ExecutionPath, EndpointType: cfg.EndpointType,
+		MediaType: mediaTypeFromCapability(cfg), TaskKind: cfg.TaskKind,
+		OutputModalities: append([]string(nil), cfg.OutputModalities...),
+		BaseURL:          a.baseURL,
 	}
 	if ratios := info.PriceData.OtherRatios; ratios != nil {
 		snapshot.BillingSeconds = ratios["seconds"]
@@ -354,6 +357,24 @@ func (a *TaskAdaptor) AIPDDTaskSnapshot(info *relaycommon.RelayInfo) *model.AIPD
 		snapshot.Resolution = facts.Resolution
 	}
 	return snapshot
+}
+
+func mediaTypeFromCapability(cfg modelConfig) string {
+	switch cfg.EndpointType {
+	case constant.EndpointTypeImageGeneration:
+		return "image"
+	case constant.EndpointTypeOpenAIVideo:
+		return "video"
+	case constant.EndpointTypeAudioSpeech:
+		return "audio"
+	}
+	for _, modality := range cfg.OutputModalities {
+		switch strings.ToLower(strings.TrimSpace(modality)) {
+		case "image", "video", "audio":
+			return strings.ToLower(strings.TrimSpace(modality))
+		}
+	}
+	return ""
 }
 
 func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, error) {

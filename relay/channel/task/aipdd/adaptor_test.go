@@ -16,6 +16,42 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+func TestAIPDDTaskSnapshotPersistsImageMediaMetadata(t *testing.T) {
+	const modelName = "dynamic-image-to-image"
+	constant.SetAIPDDCapabilities([]constant.AIPDDCapability{
+		{
+			ModelName:        modelName,
+			TaskKind:         "image_to_image",
+			OutputModalities: []string{"image"},
+			EndpointType:     constant.EndpointTypeImageGeneration,
+		},
+	})
+	t.Cleanup(constant.ResetAIPDDCapabilities)
+
+	snapshot := (&TaskAdaptor{}).AIPDDTaskSnapshot(&relaycommon.RelayInfo{
+		OriginModelName: modelName,
+		ChannelMeta: &relaycommon.ChannelMeta{
+			UpstreamModelName: modelName,
+		},
+	})
+
+	if snapshot == nil {
+		t.Fatal("expected AIPDD execution snapshot")
+	}
+	if snapshot.EndpointType != constant.EndpointTypeImageGeneration {
+		t.Fatalf("unexpected endpoint type: %s", snapshot.EndpointType)
+	}
+	if snapshot.MediaType != "image" {
+		t.Fatalf("unexpected media type: %s", snapshot.MediaType)
+	}
+	if snapshot.TaskKind != "image_to_image" {
+		t.Fatalf("unexpected task kind: %s", snapshot.TaskKind)
+	}
+	if len(snapshot.OutputModalities) != 1 || snapshot.OutputModalities[0] != "image" {
+		t.Fatalf("unexpected output modalities: %#v", snapshot.OutputModalities)
+	}
+}
+
 func TestConvertToOpenAIVideoPreservesSeedanceOfficialFailure(t *testing.T) {
 	task := &model.Task{
 		TaskID:   "task_seedance_failure",

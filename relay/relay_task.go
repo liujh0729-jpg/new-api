@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	neturl "net/url"
+	"path"
 	"strconv"
 	"strings"
 
@@ -477,7 +479,8 @@ func recalcQuotaFromRatios(info *relaycommon.RelayInfo, ratios map[string]float6
 var fetchRespBuilders = map[int]func(c *gin.Context) (respBody []byte, taskResp *dto.TaskError){
 	relayconstant.RelayModeSunoFetchByID:  sunoFetchByIDRespBodyBuilder,
 	relayconstant.RelayModeSunoFetch:      sunoFetchRespBodyBuilder,
-	relayconstant.RelayModeVideoFetchByID: videoFetchByIDRespBodyBuilder,
+	relayconstant.RelayModeVideoFetchByID: taskFetchByIDRespBodyBuilder,
+	relayconstant.RelayModeTaskFetchByID:  taskFetchByIDRespBodyBuilder,
 }
 
 func RelayTaskFetch(c *gin.Context, relayMode int) (taskResp *dto.TaskError) {
@@ -555,7 +558,7 @@ func sunoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *dt
 	return
 }
 
-func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *dto.TaskError) {
+func taskFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *dto.TaskError) {
 	taskId := c.Param("task_id")
 	if taskId == "" {
 		taskId = c.GetString("task_id")
@@ -573,9 +576,10 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 	}
 
 	isOpenAIVideoAPI := strings.HasPrefix(c.Request.RequestURI, "/v1/videos/")
+	mediaInfo := resolveTaskMediaInfo(originTask, c.Request.URL.Path)
 
 	// Gemini/Vertex/AIPDD 支持实时查询：用户 fetch 时直接从上游拉取最新状态
-	if realtimeResp := tryRealtimeFetch(originTask, isOpenAIVideoAPI); len(realtimeResp) > 0 {
+	if realtimeResp := tryRealtimeFetch(originTask, isOpenAIVideoAPI, mediaInfo.MediaType); len(realtimeResp) > 0 {
 		respBody = realtimeResp
 		return
 	}
@@ -614,7 +618,7 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 // tryRealtimeFetch 尝试从上游实时拉取 Gemini/Vertex/AIPDD 任务状态。
 // 仅当渠道类型支持直接查询时触发；其他渠道或出错时返回 nil。
 // 当非 OpenAI Video API 时，还会构建自定义格式的响应体。
-func tryRealtimeFetch(task *model.Task, isOpenAIVideoAPI bool) []byte {
+func tryRealtimeFetch(task *model.Task, isOpenAIVideoAPI bool, mediaType string) []byte {
 	channelModel, err := model.GetChannelById(task.ChannelId, true)
 	if err != nil {
 		return nil
@@ -678,14 +682,7 @@ func tryRealtimeFetch(task *model.Task, isOpenAIVideoAPI bool) []byte {
 		// every Seedance failure with a generic "task failed" message.
 		task.FailReason = strings.TrimSpace(ti.Reason)
 	}
-	if strings.HasPrefix(ti.Url, "data:") {
-		// data: URI — kept in Data, not ResultURL
-	} else if ti.Url != "" {
-		task.PrivateData.ResultURL = ti.Url
-	} else if task.Status == model.TaskStatusSuccess {
-		// No URL from adaptor — construct proxy URL using public task ID
-		task.PrivateData.ResultURL = taskcommon.BuildProxyURL(task.TaskID)
-	}
+	applyTaskResultURL(task, ti.Url, mediaType)
 
 	if !snap.Equal(task.Snapshot()) {
 		_, _ = task.UpdateWithStatus(snap.Status)
@@ -696,28 +693,8 @@ func tryRealtimeFetch(task *model.Task, isOpenAIVideoAPI bool) []byte {
 		return nil
 	}
 
-	// 非 OpenAI Video API: 构建自定义格式响应
-	format := detectVideoFormat(body)
-	output := extractTaskOutputURLs(task)
-	var taskError any
-	if task.Status == model.TaskStatusFailure {
-		taskError = strings.TrimSpace(task.FailReason)
-		if taskError == "" {
-			taskError = strings.TrimSpace(ti.Reason)
-		}
-		if taskError == "" {
-			taskError = "AIPDD task failed"
-		}
-	}
-	out := map[string]any{
-		"error":    taskError,
-		"format":   format,
-		"metadata": map[string]any{"urls": output},
-		"output":   output,
-		"status":   mapTaskStatusToSimple(task.Status),
-		"task_id":  task.TaskID,
-		"url":      task.GetResultURL(),
-	}
+	// 非 OpenAI Video API: 按任务真实媒体类型构建自定义格式响应。
+	out := buildTaskFetchData(task, ti, body, mediaType)
 	respBody, _ := common.Marshal(dto.TaskResponse[any]{
 		Code: "success",
 		Data: out,
@@ -725,29 +702,322 @@ func tryRealtimeFetch(task *model.Task, isOpenAIVideoAPI bool) []byte {
 	return respBody
 }
 
-// detectVideoFormat 从 Gemini/Vertex 原始响应中探测视频格式
-func detectVideoFormat(rawBody []byte) string {
-	var raw map[string]any
-	if err := common.Unmarshal(rawBody, &raw); err != nil {
+func applyTaskResultURL(task *model.Task, upstreamURL, mediaType string) {
+	if task == nil {
+		return
+	}
+	upstreamURL = strings.TrimSpace(upstreamURL)
+	if strings.HasPrefix(upstreamURL, "data:") {
+		// data: URI is already retained in Data and should not be persisted as a
+		// proxy target.
+		return
+	}
+	if upstreamURL != "" {
+		task.PrivateData.ResultURL = upstreamURL
+		return
+	}
+	if task.Status == model.TaskStatusSuccess &&
+		mediaType == "video" &&
+		strings.TrimSpace(task.GetResultURL()) == "" {
+		// Only video tasks have a /v1/videos/{id}/content proxy endpoint.
+		task.PrivateData.ResultURL = taskcommon.BuildProxyURL(task.TaskID)
+	}
+}
+
+func buildTaskFetchData(task *model.Task, taskInfo *relaycommon.TaskInfo, rawBody []byte, mediaType string) map[string]any {
+	output := extractTaskOutputURLs(task)
+	var taskError any
+	if task.Status == model.TaskStatusFailure {
+		taskError = strings.TrimSpace(task.FailReason)
+		if taskError == "" && taskInfo != nil {
+			taskError = strings.TrimSpace(taskInfo.Reason)
+		}
+		if taskError == "" {
+			taskError = "AIPDD task failed"
+		}
+	}
+
+	resultURL := ""
+	if task.Status == model.TaskStatusSuccess && len(output) > 0 {
+		resultURL = output[0]
+	}
+	out := map[string]any{
+		"error":    taskError,
+		"metadata": map[string]any{"urls": output},
+		"output":   output,
+		"status":   mapTaskStatusToSimple(task.Status),
+		"task_id":  task.TaskID,
+		"url":      resultURL,
+	}
+	if task.Status == model.TaskStatusSuccess {
+		if format := detectTaskFormat(rawBody, output, mediaType); format != "" {
+			out["format"] = format
+		}
+	}
+	return out
+}
+
+func detectTaskFormat(rawBody []byte, output []string, mediaType string) string {
+	mediaType = normalizeTaskMediaType(mediaType)
+	if mediaType == "" {
+		return ""
+	}
+	var raw any
+	if len(rawBody) > 0 && common.Unmarshal(rawBody, &raw) == nil {
+		if format := detectFormatFromValue(raw, mediaType); format != "" {
+			return format
+		}
+	}
+	for _, value := range output {
+		if format := normalizeMediaFormat(value, mediaType); format != "" {
+			return format
+		}
+	}
+	if mediaType == "video" {
+		// Preserve the historical OpenAI-video fallback, but only for tasks
+		// positively identified as video and only after they succeed.
 		return "mp4"
 	}
-	respObj, ok := raw["response"].(map[string]any)
-	if !ok {
-		return "mp4"
+	return ""
+}
+
+func detectFormatFromValue(value any, mediaType string) string {
+	switch typed := value.(type) {
+	case string:
+		return normalizeMediaFormat(typed, mediaType)
+	case []any:
+		for _, item := range typed {
+			if format := detectFormatFromValue(item, mediaType); format != "" {
+				return format
+			}
+		}
+	case map[string]any:
+		for key, item := range typed {
+			normalizedKey := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(key), "_", ""))
+			switch normalizedKey {
+			case "mimetype", "contenttype", "format":
+				if format := detectFormatFromValue(item, mediaType); format != "" {
+					return format
+				}
+			}
+		}
+		for _, item := range typed {
+			if format := detectFormatFromValue(item, mediaType); format != "" {
+				return format
+			}
+		}
 	}
-	vids, ok := respObj["videos"].([]any)
-	if !ok || len(vids) == 0 {
-		return "mp4"
+	return ""
+}
+
+func normalizeMediaFormat(value, mediaType string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
 	}
-	v0, ok := vids[0].(map[string]any)
-	if !ok {
-		return "mp4"
+	lower := strings.ToLower(value)
+	if strings.HasPrefix(lower, "data:") {
+		if separator := strings.IndexByte(lower, ';'); separator >= 0 {
+			lower = strings.TrimPrefix(lower[:separator], "data:")
+		}
 	}
-	mt, ok := v0["mimeType"].(string)
-	if !ok || mt == "" || strings.Contains(mt, "mp4") {
-		return "mp4"
+	if parsed, err := neturl.Parse(value); err == nil {
+		if ext := strings.TrimPrefix(strings.ToLower(path.Ext(parsed.Path)), "."); ext != "" {
+			if normalized := normalizeMediaFormatToken(ext, mediaType); normalized != "" {
+				return normalized
+			}
+		}
+		for _, key := range []string{"content-type", "content_type", "mime-type", "mime_type"} {
+			if normalized := normalizeMediaFormatToken(parsed.Query().Get(key), mediaType); normalized != "" {
+				return normalized
+			}
+		}
 	}
-	return mt
+	return normalizeMediaFormatToken(lower, mediaType)
+}
+
+func normalizeMediaFormatToken(value, mediaType string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if separator := strings.IndexByte(value, ';'); separator >= 0 {
+		value = strings.TrimSpace(value[:separator])
+	}
+	if strings.Contains(value, "/") {
+		parts := strings.SplitN(value, "/", 2)
+		if parts[0] != mediaType {
+			return ""
+		}
+		value = parts[1]
+	}
+	value = strings.TrimPrefix(value, "x-")
+	switch mediaType {
+	case "image":
+		switch value {
+		case "jpg", "jpeg", "pjpeg":
+			return "jpeg"
+		case "png", "webp", "gif", "avif", "bmp", "tiff", "svg", "svg+xml":
+			return strings.TrimSuffix(value, "+xml")
+		}
+	case "video":
+		switch value {
+		case "quicktime":
+			return "mov"
+		case "mp4", "webm", "mov", "mkv", "avi", "m4v", "mpeg":
+			return value
+		}
+	case "audio":
+		switch value {
+		case "mpeg":
+			return "mp3"
+		case "mp3", "wav", "wave", "flac", "ogg", "opus", "aac", "m4a":
+			if value == "wave" {
+				return "wav"
+			}
+			return value
+		}
+	}
+	return ""
+}
+
+type taskMediaInfo struct {
+	EndpointType     constant.EndpointType
+	MediaType        string
+	TaskKind         string
+	OutputModalities []string
+}
+
+func resolveTaskMediaInfo(task *model.Task, requestPath string) taskMediaInfo {
+	info := taskMediaInfo{}
+	if task == nil {
+		return info
+	}
+
+	if snapshot := task.PrivateData.AIPDDExecution; snapshot != nil {
+		info.EndpointType = snapshot.EndpointType
+		info.MediaType = normalizeTaskMediaType(snapshot.MediaType)
+		info.TaskKind = strings.TrimSpace(snapshot.TaskKind)
+		info.OutputModalities = append([]string(nil), snapshot.OutputModalities...)
+	}
+
+	// The polling route is the strongest compatibility signal for old tasks
+	// whose execution snapshot predates endpoint/media persistence.
+	if info.EndpointType == "" {
+		info.EndpointType = endpointTypeFromTaskPath(requestPath)
+	}
+
+	for _, modelName := range []string{task.Properties.OriginModelName, task.Properties.UpstreamModelName} {
+		if strings.TrimSpace(modelName) == "" {
+			continue
+		}
+		capability, ok := constant.GetAIPDDCapability(modelName)
+		if !ok {
+			continue
+		}
+		if info.EndpointType == "" {
+			info.EndpointType = capability.EndpointType
+		}
+		if info.TaskKind == "" {
+			info.TaskKind = strings.TrimSpace(capability.TaskKind)
+		}
+		if len(info.OutputModalities) == 0 {
+			info.OutputModalities = append([]string(nil), capability.OutputModalities...)
+		}
+		break
+	}
+
+	if info.MediaType == "" {
+		info.MediaType = mediaTypeFromEndpoint(info.EndpointType)
+	}
+	if info.MediaType == "" {
+		info.MediaType = mediaTypeFromTaskKind(info.TaskKind)
+	}
+	if info.MediaType == "" {
+		for _, modality := range info.OutputModalities {
+			if mediaType := normalizeTaskMediaType(modality); mediaType != "" {
+				info.MediaType = mediaType
+				break
+			}
+		}
+	}
+	if info.EndpointType == "" {
+		info.EndpointType = endpointTypeFromMediaType(info.MediaType)
+	}
+	if len(info.OutputModalities) == 0 && info.MediaType != "" {
+		info.OutputModalities = []string{info.MediaType}
+	}
+	return info
+}
+
+func endpointTypeFromTaskPath(requestPath string) constant.EndpointType {
+	switch {
+	case strings.HasPrefix(requestPath, "/v1/images/generations/"),
+		strings.HasPrefix(requestPath, "/pg/images/generations/"):
+		return constant.EndpointTypeImageGeneration
+	case strings.HasPrefix(requestPath, "/v1/audio/speech/"),
+		strings.HasPrefix(requestPath, "/pg/audio/speech/"):
+		return constant.EndpointTypeAudioSpeech
+	case strings.HasPrefix(requestPath, "/v1/videos/"),
+		strings.HasPrefix(requestPath, "/v1/video/generations/"),
+		strings.HasPrefix(requestPath, "/pg/videos/"),
+		strings.HasPrefix(requestPath, "/pg/video/generations/"):
+		return constant.EndpointTypeOpenAIVideo
+	default:
+		return ""
+	}
+}
+
+func mediaTypeFromEndpoint(endpointType constant.EndpointType) string {
+	switch endpointType {
+	case constant.EndpointTypeImageGeneration:
+		return "image"
+	case constant.EndpointTypeOpenAIVideo:
+		return "video"
+	case constant.EndpointTypeAudioSpeech:
+		return "audio"
+	default:
+		return ""
+	}
+}
+
+func endpointTypeFromMediaType(mediaType string) constant.EndpointType {
+	switch normalizeTaskMediaType(mediaType) {
+	case "image":
+		return constant.EndpointTypeImageGeneration
+	case "video":
+		return constant.EndpointTypeOpenAIVideo
+	case "audio":
+		return constant.EndpointTypeAudioSpeech
+	default:
+		return ""
+	}
+}
+
+func mediaTypeFromTaskKind(taskKind string) string {
+	normalized := strings.NewReplacer("-", "_", " ", "_").Replace(strings.ToLower(strings.TrimSpace(taskKind)))
+	switch {
+	case strings.HasSuffix(normalized, "_to_image"), strings.Contains(normalized, "image_generation"):
+		return "image"
+	case strings.HasSuffix(normalized, "_to_video"), strings.Contains(normalized, "video_generation"):
+		return "video"
+	case strings.HasSuffix(normalized, "_to_speech"),
+		strings.Contains(normalized, "audio_generation"),
+		strings.Contains(normalized, "speech_generation"):
+		return "audio"
+	default:
+		return ""
+	}
+}
+
+func normalizeTaskMediaType(mediaType string) string {
+	switch strings.ToLower(strings.TrimSpace(mediaType)) {
+	case "image":
+		return "image"
+	case "video":
+		return "video"
+	case "audio":
+		return "audio"
+	default:
+		return ""
+	}
 }
 
 // mapTaskStatusToSimple 将内部 TaskStatus 映射为简化状态字符串
@@ -766,6 +1036,11 @@ func mapTaskStatusToSimple(status model.TaskStatus) string {
 
 func TaskModel2Dto(task *model.Task) *dto.TaskDto {
 	output := extractTaskOutputURLs(task)
+	mediaInfo := resolveTaskMediaInfo(task, "")
+	resultURL := ""
+	if task.Status == model.TaskStatusSuccess {
+		resultURL = task.GetResultURL()
+	}
 	var metadata map[string]any
 	if len(output) > 0 {
 		metadata = map[string]any{
@@ -774,28 +1049,32 @@ func TaskModel2Dto(task *model.Task) *dto.TaskDto {
 		}
 	}
 	return &dto.TaskDto{
-		ID:         task.ID,
-		CreatedAt:  task.CreatedAt,
-		UpdatedAt:  task.UpdatedAt,
-		TaskID:     task.TaskID,
-		Platform:   string(task.Platform),
-		UserId:     task.UserId,
-		Group:      task.Group,
-		ChannelId:  task.ChannelId,
-		Quota:      task.Quota,
-		Action:     task.Action,
-		Status:     string(task.Status),
-		FailReason: task.FailReason,
-		ResultURL:  task.GetResultURL(),
-		SubmitTime: task.SubmitTime,
-		StartTime:  task.StartTime,
-		FinishTime: task.FinishTime,
-		Progress:   task.Progress,
-		Properties: task.Properties,
-		Username:   task.Username,
-		Output:     output,
-		Metadata:   metadata,
-		Data:       task.Data,
+		ID:               task.ID,
+		CreatedAt:        task.CreatedAt,
+		UpdatedAt:        task.UpdatedAt,
+		TaskID:           task.TaskID,
+		Platform:         string(task.Platform),
+		UserId:           task.UserId,
+		Group:            task.Group,
+		ChannelId:        task.ChannelId,
+		Quota:            task.Quota,
+		Action:           task.Action,
+		Status:           string(task.Status),
+		FailReason:       task.FailReason,
+		ResultURL:        resultURL,
+		SubmitTime:       task.SubmitTime,
+		StartTime:        task.StartTime,
+		FinishTime:       task.FinishTime,
+		Progress:         task.Progress,
+		Properties:       task.Properties,
+		Username:         task.Username,
+		Output:           output,
+		Metadata:         metadata,
+		EndpointType:     string(mediaInfo.EndpointType),
+		MediaType:        mediaInfo.MediaType,
+		TaskKind:         mediaInfo.TaskKind,
+		OutputModalities: mediaInfo.OutputModalities,
+		Data:             task.Data,
 	}
 }
 

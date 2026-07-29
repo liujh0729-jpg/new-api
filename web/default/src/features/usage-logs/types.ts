@@ -247,6 +247,10 @@ export interface TaskLog {
   fail_reason?: string
   result_url?: string
   output?: string[]
+  endpoint_type?: string
+  media_type?: 'audio' | 'image' | 'video'
+  task_kind?: string
+  output_modalities?: string[]
   properties?:
     | string
     | {

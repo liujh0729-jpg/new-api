@@ -1,0 +1,14 @@
+package constant
+
+import (
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
+
+func TestPath2RelayModeUsesGenericFetchForNonVideoTasks(t *testing.T) {
+	require.Equal(t, RelayModeTaskFetchByID, Path2RelayMode("/v1/images/generations/task_image"))
+	require.Equal(t, RelayModeTaskFetchByID, Path2RelayMode("/pg/images/generations/task_image"))
+	require.Equal(t, RelayModeTaskFetchByID, Path2RelayMode("/v1/audio/speech/task_audio"))
+	require.Equal(t, RelayModeVideoFetchByID, Path2RelayMode("/v1/video/generations/task_video"))
+}

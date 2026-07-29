@@ -105,7 +105,7 @@ func SetRelayRouter(router *gin.Engine) {
 			controller.Playground(c, types.RelayFormatOpenAIImage)
 		})
 		playgroundRouter.GET("/images/generations/:task_id", func(c *gin.Context) {
-			c.Set("relay_mode", relayconstant.RelayModeVideoFetchByID)
+			c.Set("relay_mode", relayconstant.RelayModeTaskFetchByID)
 			controller.RelayTaskFetch(c)
 		})
 		playgroundRouter.POST("/video/generations", controller.PlaygroundVideo)
@@ -161,7 +161,7 @@ func SetRelayRouter(router *gin.Engine) {
 			relayOrAIPDDTask(c, types.RelayFormatOpenAIImage)
 		})
 		httpRouter.GET("/images/generations/:task_id", func(c *gin.Context) {
-			c.Set("relay_mode", relayconstant.RelayModeVideoFetchByID)
+			c.Set("relay_mode", relayconstant.RelayModeTaskFetchByID)
 			controller.RelayTaskFetch(c)
 		})
 		httpRouter.POST("/images/edits", func(c *gin.Context) {
@@ -184,7 +184,7 @@ func SetRelayRouter(router *gin.Engine) {
 			relayOrAIPDDTask(c, types.RelayFormatOpenAIAudio)
 		})
 		httpRouter.GET("/audio/speech/:task_id", func(c *gin.Context) {
-			c.Set("relay_mode", relayconstant.RelayModeVideoFetchByID)
+			c.Set("relay_mode", relayconstant.RelayModeTaskFetchByID)
 			controller.RelayTaskFetch(c)
 		})
 

@@ -42,10 +42,10 @@ import {
   createProgressColumn,
 } from './column-helpers'
 
-const AIPDD_TASK_META: Record<
-  string,
-  { label: string; mediaType: 'audio' | 'image' | 'video' }
-> = {
+type TaskMediaType = 'audio' | 'image' | 'video'
+type TaskMeta = { label: string; mediaType: TaskMediaType }
+
+const AIPDD_TASK_META: Record<string, TaskMeta> = {
   'aipdd-flux-gguf': { label: 'Image to Image', mediaType: 'image' },
   'aipdd-flux-gguf-t2i': { label: 'Text to Image', mediaType: 'image' },
   'aipdd-wan2.2-wanx': { label: 'Image to Video', mediaType: 'video' },
@@ -56,6 +56,25 @@ const AIPDD_TASK_META: Record<
   'aipdd-mimic-motion': { label: 'Motion Transfer Video', mediaType: 'video' },
   'aipdd-latentsync-1.5': { label: 'Lip Sync Video', mediaType: 'video' },
   'aipdd-indextts': { label: 'Text to Speech', mediaType: 'audio' },
+}
+
+const TASK_KIND_META: Record<string, TaskMeta> = {
+  image_to_image: { label: 'Image to Image', mediaType: 'image' },
+  text_to_image: { label: 'Text to Image', mediaType: 'image' },
+  image_to_video: { label: 'Image to Video', mediaType: 'video' },
+  text_to_video: { label: 'Text to Video', mediaType: 'video' },
+  first_last_frame_to_video: {
+    label: 'First/Last Frame to Video',
+    mediaType: 'video',
+  },
+  reference_to_video: { label: 'Reference Video', mediaType: 'video' },
+  text_to_speech: { label: 'Text to Speech', mediaType: 'audio' },
+}
+
+const ENDPOINT_MEDIA_TYPES: Record<string, TaskMediaType> = {
+  'image-generation': 'image',
+  'openai-video': 'video',
+  'audio-speech': 'audio',
 }
 
 function parseTaskData(data: unknown): unknown[] {
@@ -103,8 +122,59 @@ function getTaskModelName(log: TaskLog): string {
   ).toLowerCase()
 }
 
-function getAipddTaskMeta(log: TaskLog) {
-  return AIPDD_TASK_META[getTaskModelName(log)]
+function normalizeTaskMediaType(value: unknown): TaskMediaType | undefined {
+  return value === 'audio' || value === 'image' || value === 'video'
+    ? value
+    : undefined
+}
+
+function getPersistedTaskMediaType(log: TaskLog): TaskMediaType | undefined {
+  const directMediaType = normalizeTaskMediaType(log.media_type)
+  if (directMediaType) return directMediaType
+
+  const endpointMediaType = ENDPOINT_MEDIA_TYPES[log.endpoint_type || '']
+  if (endpointMediaType) return endpointMediaType
+
+  return log.output_modalities
+    ?.map(normalizeTaskMediaType)
+    .find((mediaType): mediaType is TaskMediaType => Boolean(mediaType))
+}
+
+function getAipddTaskMeta(log: TaskLog): TaskMeta | undefined {
+  const taskKind = (log.task_kind || '')
+    .trim()
+    .toLowerCase()
+    .replaceAll('-', '_')
+    .replaceAll(' ', '_')
+  const taskKindMeta = TASK_KIND_META[taskKind]
+  const modelMeta = AIPDD_TASK_META[getTaskModelName(log)]
+  const persistedMediaType = getPersistedTaskMediaType(log)
+
+  if (taskKindMeta) {
+    return {
+      ...taskKindMeta,
+      mediaType: persistedMediaType || taskKindMeta.mediaType,
+    }
+  }
+  if (modelMeta) {
+    return {
+      ...modelMeta,
+      mediaType: persistedMediaType || modelMeta.mediaType,
+    }
+  }
+  if (persistedMediaType === 'image') {
+    return { label: 'Image Generation', mediaType: 'image' }
+  }
+  if (persistedMediaType === 'audio') {
+    return { label: 'Text to Speech', mediaType: 'audio' }
+  }
+  if (persistedMediaType === 'video') {
+    return {
+      label: taskActionMapper.getLabel(log.action),
+      mediaType: 'video',
+    }
+  }
+  return undefined
 }
 
 function getTaskActionLabel(log: TaskLog): string {

@@ -52,6 +52,11 @@ const (
 	RelayModeGemini
 
 	RelayModeResponsesCompact
+
+	// RelayModeTaskFetchByID is used by non-video asynchronous task endpoints
+	// such as image generation and speech. Keep video fetches on their dedicated
+	// mode so response construction never has to infer every task as a video.
+	RelayModeTaskFetchByID
 )
 
 func Path2RelayMode(path string) int {
@@ -67,7 +72,7 @@ func Path2RelayMode(path string) int {
 	} else if strings.HasPrefix(path, "/v1/moderations") {
 		relayMode = RelayModeModerations
 	} else if strings.HasPrefix(path, "/v1/images/generations/") || strings.HasPrefix(path, "/pg/images/generations/") {
-		relayMode = RelayModeVideoFetchByID
+		relayMode = RelayModeTaskFetchByID
 	} else if strings.HasPrefix(path, "/v1/images/generations") || strings.HasPrefix(path, "/pg/images/generations") {
 		relayMode = RelayModeImagesGenerations
 	} else if strings.HasPrefix(path, "/v1/video/generations/") || strings.HasPrefix(path, "/pg/video/generations/") {
@@ -83,7 +88,7 @@ func Path2RelayMode(path string) int {
 	} else if strings.HasPrefix(path, "/v1/responses") {
 		relayMode = RelayModeResponses
 	} else if strings.HasPrefix(path, "/v1/audio/speech/") {
-		relayMode = RelayModeVideoFetchByID
+		relayMode = RelayModeTaskFetchByID
 	} else if strings.HasPrefix(path, "/v1/audio/speech") {
 		relayMode = RelayModeAudioSpeech
 	} else if strings.HasPrefix(path, "/v1/audio/transcriptions") {

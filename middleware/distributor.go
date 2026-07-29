@@ -273,10 +273,10 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 			c.Set("relay_mode", relayMode)
 		}
 	} else if c.Request.Method == http.MethodGet && (strings.HasPrefix(c.Request.URL.Path, "/v1/images/generations/") || strings.HasPrefix(c.Request.URL.Path, "/pg/images/generations/")) {
-		c.Set("relay_mode", relayconstant.RelayModeVideoFetchByID)
+		c.Set("relay_mode", relayconstant.RelayModeTaskFetchByID)
 		shouldSelectChannel = false
 	} else if c.Request.Method == http.MethodGet && strings.HasPrefix(c.Request.URL.Path, "/v1/audio/speech/") {
-		c.Set("relay_mode", relayconstant.RelayModeVideoFetchByID)
+		c.Set("relay_mode", relayconstant.RelayModeTaskFetchByID)
 		shouldSelectChannel = false
 	} else if strings.HasPrefix(c.Request.URL.Path, "/v1beta/models/") || strings.HasPrefix(c.Request.URL.Path, "/v1/models/") {
 		// Gemini API 路径处理: /v1beta/models/gemini-2.0-flash:generateContent
