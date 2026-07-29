@@ -2,7 +2,7 @@
 
 本文面向 API 用户，说明如何通过 NewAPI 调用 **AIPDD 渠道**已开放的模型。调用方只需要使用平台发放的 NewAPI Token，不需要也不应在客户端传递 AIPDD 上游 API Key。
 
-更新时间：2026-07-21。
+更新时间：2026-07-27。
 
 > 模型目录和价格可能由服务方动态调整。实际可用模型、参数约束和价格请以 `GET /v1/models` 与 `/api/pricing` 返回结果为准。
 
@@ -11,7 +11,8 @@
 | 类型 | 示例模型 | 响应方式 |
 | --- | --- | --- |
 | 文本（同步/流式） | AIPDD 目录中的 Ollama 模型（如 `qwen3:8b`） | `POST /v1/chat/completions` 直接返回 |
-| 图片（异步） | Flux 图生图 / 文生图 | 创建后轮询，`succeeded` 后取结果 |
+| 图片（同步） | 千问 `qwen-image` / `qwen-image-edit` 系列 | `POST /v1/images/generations` 或 `POST /v1/images/edits` 直接返回 |
+| 图片（异步） | Flux 图生图 / 文生图、AIPDD 千问单/双/三参考图编辑 | 创建后轮询，`succeeded` 后取结果 |
 | 视频（异步） | Wan2.2、LTX、MimicMotion、Latentsync、AP Seedance | 创建后轮询，`completed`（`/v1/videos`）或 `succeeded`（兼容路径）后取结果 |
 | 音频（异步） | IndexTTS | 创建后轮询，`succeeded` 后取结果 |
 
@@ -24,12 +25,20 @@ AIPDD 异步图片、视频、音频模型不能使用 `/v1/chat/completions` �
 1. 调用 `POST /v1/chat/completions`。
 2. 从 `choices[0].message.content` 读取结果（流式读 `choices[0].delta.content`）。
 
+千问同步图片模型（如 `qwen-image-2.0-pro`、`qwen-image-edit-plus`）：
+
+1. 调用 `POST /v1/images/generations` 或 `POST /v1/images/edits`。
+2. 从响应的 `data[0].url` 读取图片 URL，或在请求 `response_format` 为 `b64_json` 时读取 `data[0].b64_json`。
+3. 不需要调用查询接口轮询任务状态。
+
 异步任务模型：
 
 1. 调用创建接口提交任务。
 2. 保存响应中的 `id` 或 `task_id`（公开任务 ID，按字符串保存）。
 3. 每隔 5～15 秒调用对应查询接口。
 4. 状态为 `succeeded` 或 `completed` 后读取结果 URL；失败时读取 `error`。
+
+> 模型 ID 以 `aipdd_qwen_image_edit_` 开头的三种千问参考图编辑能力属于异步任务，使用 `/v1/images/generations` 创建和查询，不使用同步的 `/v1/images/edits` 调用方式。
 
 公共请求头：
 
@@ -57,6 +66,11 @@ curl "$BASE_URL/v1/models" \
 | 能力 | 模型名 | 创建接口 | 查询接口 | 必填输入 |
 | --- | --- | --- | --- | --- |
 | Ollama 文本 | 以 `/v1/models` 为准 | `POST /v1/chat/completions` | 无 | `messages` |
+| 千问文生图 | 以 `/v1/models` 为准（如 `qwen-image-2.0-pro`） | `POST /v1/images/generations` | 无 | `input.messages` 或 `prompt` |
+| 千问图像编辑 | 以 `/v1/models` 为准（如 `qwen-image-edit-plus`） | `POST /v1/images/edits` | 无 | `input.messages` 中的图片和文本 |
+| 千问单参考图编辑（异步） | `aipdd_qwen_image_edit_single_reference` | `POST /v1/images/generations` | `GET /v1/images/generations/{task_id}` | `image_1`、`prompt` |
+| 千问双参考图编辑（异步） | `aipdd_qwen_image_edit_dual_reference` | `POST /v1/images/generations` | `GET /v1/images/generations/{task_id}` | `image_1`、`image_2`、`prompt` |
+| 千问三参考图编辑（异步） | `aipdd_qwen_image_edit_triple_reference` | `POST /v1/images/generations` | `GET /v1/images/generations/{task_id}` | `image_1`、`image_2`、`image_3`、`prompt` |
 | Flux 图生图 | `aipdd-flux-gguf` | `POST /v1/images/generations` | `GET /v1/images/generations/{task_id}` | `image`、`prompt` |
 | Flux 文生图 | `aipdd-flux-gguf-t2i` | `POST /v1/images/generations` | `GET /v1/images/generations/{task_id}` | `prompt` |
 | Wan2.2 图生视频 | `aipdd-wan2.2-wanx` | `POST /v1/videos` | `GET /v1/videos/{task_id}` | `image`、`prompt` |
@@ -176,7 +190,181 @@ curl "$BASE_URL/v1/images/generations" \
   }'
 ```
 
-### 4.4 Wan2.2 图生视频
+### 4.4 千问文生图
+
+模型：千问 `qwen-image` 系列；具体可用模型以 `GET /v1/models` 返回结果为准。下面以 `qwen-image-2.0-pro` 为例。
+
+接口：`POST /v1/images/generations`
+
+千问图片模型使用同步返回，不需要保存任务 ID 或轮询。推荐使用百炼兼容的 `input.messages` 格式：
+
+| 参数 | 必填 | 说明 |
+| --- | --- | --- |
+| `model` | 是 | 当前开放的 `qwen-image` 系列模型 |
+| `input.messages` | 是 | 用户消息；文生图时 `content` 中放一个 `text` |
+| `parameters.n` | 否 | 生成数量 |
+| `parameters.size` | 否 | 图片尺寸，例如 `1328*1328` |
+| `parameters.negative_prompt` | 否 | 反向提示词 |
+| `parameters.prompt_extend` | 否 | 是否启用提示词扩展 |
+| `parameters.watermark` | 否 | 是否添加水印 |
+
+```bash
+curl "$BASE_URL/v1/images/generations" \
+  -H "Authorization: Bearer $NEW_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "qwen-image-2.0-pro",
+    "input": {
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {"text": "一只戴着黄色雨衣的猫，站在雨后的城市街道上，电影感"}
+          ]
+        }
+      ]
+    },
+    "parameters": {
+      "n": 1,
+      "size": "1328*1328",
+      "prompt_extend": true,
+      "watermark": false
+    }
+  }'
+```
+
+也可以使用简化的 OpenAI 风格请求：
+
+```bash
+curl "$BASE_URL/v1/images/generations" \
+  -H "Authorization: Bearer $NEW_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "qwen-image-2.0-pro",
+    "prompt": "一只戴着黄色雨衣的猫，站在雨后的城市街道上，电影感"
+  }'
+```
+
+### 4.5 千问图像编辑
+
+模型：千问 `qwen-image-edit` 系列；具体可用模型以 `GET /v1/models` 返回结果为准。下面以 `qwen-image-edit-plus` 为例。
+
+接口：`POST /v1/images/edits`
+
+图片使用公网 HTTPS URL，放在 `input.messages[].content[].image` 中；编辑指令放在同一条消息的 `text` 中。接口同步返回，不需要轮询。
+
+```bash
+curl "$BASE_URL/v1/images/edits" \
+  -H "Authorization: Bearer $NEW_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "qwen-image-edit-plus",
+    "input": {
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {"image": "https://example.com/input.png"},
+            {"text": "把图片背景改成安静的森林，并保持主体不变"}
+          ]
+        }
+      ]
+    },
+    "parameters": {
+      "n": 1,
+      "prompt_extend": true,
+      "watermark": false
+    }
+  }'
+```
+
+成功响应统一为 OpenAI 图片格式：
+
+```json
+{
+  "created": 1760000000,
+  "data": [
+    {
+      "url": "https://example.com/generated.png",
+      "b64_json": "",
+      "revised_prompt": ""
+    }
+  ]
+}
+```
+
+#### 4.5.1 AIPDD 千问单/双/三参考图编辑（异步）
+
+下列三个以 `aipdd_` 开头的模型由 AIPDD ComfyUI 工作流执行，与上面的同步 `qwen-image-edit` 系列不是同一种调用方式：
+
+| 模型 | 参考图字段 | 必填字段 |
+| --- | --- | --- |
+| `aipdd_qwen_image_edit_single_reference` | `image_1` | `image_1`、`prompt` |
+| `aipdd_qwen_image_edit_dual_reference` | `image_1`、`image_2` | `image_1`、`image_2`、`prompt` |
+| `aipdd_qwen_image_edit_triple_reference` | `image_1`、`image_2`、`image_3` | `image_1`、`image_2`、`image_3`、`prompt` |
+
+- 创建接口：`POST /v1/images/generations`
+- 查询接口：`GET /v1/images/generations/{task_id}`
+
+请求约束：
+
+- 每个 `image_N` 都传一条可由 NewAPI 和 AIPDD 节点访问的公网 HTTPS 图片 URL。
+- 推荐把 `image_1`、`image_2`、`image_3` 和 `prompt` 直接放在 JSON 顶层。
+- 多参考图不要改传通用 `images` 数组；请使用模型声明的精确编号字段，避免多张图片被错误映射。
+- 创建接口返回异步任务，必须保存 `id` 或 `task_id` 并轮询，不能直接读取 `data[0].url`。
+
+单参考图：
+
+```bash
+curl "$BASE_URL/v1/images/generations" \
+  -H "Authorization: Bearer $NEW_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "aipdd_qwen_image_edit_single_reference",
+    "image_1": "https://example.com/reference-a.png",
+    "prompt": "保持主体不变，把背景改成夜晚的霓虹城市"
+  }'
+```
+
+双参考图：
+
+```bash
+curl "$BASE_URL/v1/images/generations" \
+  -H "Authorization: Bearer $NEW_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "aipdd_qwen_image_edit_dual_reference",
+    "image_1": "https://example.com/reference-a.png",
+    "image_2": "https://example.com/reference-b.png",
+    "prompt": "融合两张参考图的主体和配色，生成一张完整海报"
+  }'
+```
+
+三参考图：
+
+```bash
+curl "$BASE_URL/v1/images/generations" \
+  -H "Authorization: Bearer $NEW_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "aipdd_qwen_image_edit_triple_reference",
+    "image_1": "https://example.com/reference-a.png",
+    "image_2": "https://example.com/reference-b.png",
+    "image_3": "https://example.com/reference-c.png",
+    "prompt": "融合三张参考图的主体、构图和色彩，生成一张统一风格的海报"
+  }'
+```
+
+创建成功后会返回 `queued` 状态的任务对象。轮询示例：
+
+```bash
+curl "$BASE_URL/v1/images/generations/$TASK_ID" \
+  -H "Authorization: Bearer $NEW_API_TOKEN"
+```
+
+状态变为 `succeeded` 后，优先从 `data.output[0]` 读取结果 URL；兼容读取位置还有 `data.url` 和 `data.metadata.urls[0]`。上游可用节点较少或 ComfyUI 正忙时，任务可能暂时保持 `queued`，建议每 5～15 秒轮询。
+
+### 4.6 Wan2.2 图生视频
 
 模型：`aipdd-wan2.2-wanx`  
 接口：`POST /v1/videos`
@@ -201,7 +389,7 @@ curl "$BASE_URL/v1/videos" \
 
 说明：当前默认按 **按次** 计费。请求里即使带了 `duration`/`seconds`，也不一定会作为上游工作流参数转发；是否按时长计费以同步后的模型目录 `billingType` 为准。
 
-### 4.5 Wan2.2 主体替换
+### 4.7 Wan2.2 主体替换
 
 模型：`aipdd-wan2.2-animater`  
 接口：`POST /v1/videos`
@@ -224,7 +412,7 @@ curl "$BASE_URL/v1/videos" \
   }'
 ```
 
-### 4.6 LTX 2.3 图生视频
+### 4.8 LTX 2.3 图生视频
 
 模型：`aipdd_ltx_2.3`  
 接口：`POST /v1/videos`
@@ -258,7 +446,7 @@ curl "$BASE_URL/v1/videos" \
   }'
 ```
 
-### 4.7 LTX 2.3 首尾帧视频
+### 4.9 LTX 2.3 首尾帧视频
 
 模型：`aipdd_ltx_2.3 (首尾帧)`  
 接口：`POST /v1/videos`
@@ -287,7 +475,7 @@ curl "$BASE_URL/v1/videos" \
   }'
 ```
 
-### 4.8 MimicMotion 动作迁移
+### 4.10 MimicMotion 动作迁移
 
 模型：`aipdd-mimic-motion`  
 接口：`POST /v1/videos`
@@ -308,7 +496,7 @@ curl "$BASE_URL/v1/videos" \
   }'
 ```
 
-### 4.9 Latentsync 对口型
+### 4.11 Latentsync 对口型
 
 模型：`aipdd-latentsync-1.5`  
 接口：`POST /v1/videos`
@@ -329,7 +517,7 @@ curl "$BASE_URL/v1/videos" \
   }'
 ```
 
-### 4.10 IndexTTS 声音复刻
+### 4.12 IndexTTS 声音复刻
 
 模型：`aipdd-indextts`  
 接口：`POST /v1/audio/speech`
@@ -351,7 +539,7 @@ curl "$BASE_URL/v1/audio/speech" \
   }'
 ```
 
-### 4.11 AP Seedance 2.0 视频
+### 4.13 AP Seedance 2.0 视频
 
 接口：`POST /v1/videos` 或 `POST /v1/video/generations`  
 查询：`GET /v1/videos/{task_id}`（兼容 `GET /v1/video/generations/{task_id}`）
@@ -361,7 +549,7 @@ curl "$BASE_URL/v1/audio/speech" \
 **OpenAI 风格（通用字段）与 Seedance 官方写法均支持。**  
 四个档位的请求字段集合相同；**唯一按档位变化的能力是 `resolution`**。
 
-#### 4.11.1 档位与可用分辨率
+#### 4.13.1 档位与可用分辨率
 
 模型名须与 `/v1/models` 完全匹配：
 
@@ -375,7 +563,7 @@ curl "$BASE_URL/v1/audio/speech" \
 > 实测同步价格目录中：`480p` 在 VIP / 标准版 / 轻量版均返回 `model_price_error`（HTTP 400），**当前不可用**。Playground 若仍展示 `480p`，以价格目录校验结果为准，不要按 UI 展示直接提交。  
 > 同步价格目录是分辨率能力的最终依据；**不会**因 `width`/`height` 能推导出 `4k` 就自动放行未定价档位，也**不会**自动降级。
 
-#### 4.11.2 公共可用参数
+#### 4.13.2 公共可用参数
 
 | 参数 | 必填 | 可用取值 / 约束 | 说明 |
 | --- | --- | --- | --- |
@@ -405,7 +593,7 @@ ratio:      根级 ratio > metadata.ratio > width/height 推导
 
 注意：部分 Seedance 档位不接受 `frames` / `frames_per_second` 推导时长，请直接传 `duration`。
 
-#### 4.11.3 `content` 项与参考素材
+#### 4.13.3 `content` 项与参考素材
 
 | `type` | 相关字段 | `role` 示例 | 约束 |
 | --- | --- | --- | --- |
@@ -413,6 +601,28 @@ ratio:      根级 ratio > metadata.ratio > width/height 推导
 | `image_url` | `image_url.url` | `reference_image`、`first_frame`、`last_frame` | 公网 HTTPS 图片 URL |
 | `video_url` | `video_url.url` | `reference_video` | 公网 HTTPS 视频 URL；含参考视频可能走不同价格变体 |
 | `audio_url` | `audio_url.url` | `reference_audio` | 公网 HTTPS 音频 URL；通常需同时有图或视频参考 |
+
+**重要：同一请求的 `content` 只能二选一，不可混用。**
+
+| 模式 | 允许的 `role` | 禁止同时出现 |
+| --- | --- | --- |
+| 参考素材模式 | `reference_image`、`reference_video`、`reference_audio` | `first_frame`、`last_frame` |
+| 首尾帧模式 | `first_frame`、`last_frame` | `reference_image`、`reference_video`、`reference_audio` |
+
+混用会返回上游 `400`，典型错误：
+
+```text
+The parameter `content` specified in the request is not valid:
+first/last frame content cannot be mixed with reference media content.
+```
+
+补充约束：
+
+1. 素材须为 **可被 NewAPI 与上游访问的公网 HTTPS URL**；任务接口不会自动上传本地文件，也不接受私有链接、内网地址、过期签名 URL。
+2. 参考视频单条建议时长约 **2～15.2 秒**；参考视频/音频总时长建议不超过 **15.2 秒**。超时会返回类似 `video duration ... must be less than or equal to 15.2` 的错误。
+3. 输出时长请直接传合法 `duration` / `seconds`；非法值会返回 `duration` 参数无效。
+4. 参考图/视频若被判定含真人，上游可能直接拒绝（如 `input image/video may contain real person`）。
+5. `Invalid video_url` 通常表示参考视频 URL 无效或不可访问，不是模型名错误。
 
 参考素材数量建议上限（与 Playground 校验一致）：
 
@@ -423,9 +633,7 @@ ratio:      根级 ratio > metadata.ratio > width/height 推导
 | 视频 | 3 |
 | 音频 | 3 |
 
-参考视频单条建议时长约 2～15.2 秒；参考视频/音频总时长建议不超过 15.2 秒。素材须为 **可被 NewAPI 与上游访问的公网 HTTPS URL**；任务接口不会自动上传本地文件。
-
-#### 4.11.4 调用示例
+#### 4.13.4 调用示例
 
 OpenAI 风格文生视频（标准版；`width`/`height` 会推导为 `resolution=720p`、`ratio=16:9`）：
 
@@ -443,7 +651,7 @@ curl "$BASE_URL/v1/videos" \
   }'
 ```
 
-Seedance 官方结构（VIP + 参考图）：
+参考素材模式（VIP + 参考图，推荐日常使用）：
 
 ```bash
 curl "$BASE_URL/v1/videos" \
@@ -464,6 +672,61 @@ curl "$BASE_URL/v1/videos" \
     ],
     "generate_audio": false
   }'
+```
+
+首尾帧模式（只使用 `first_frame` / `last_frame`，不要再带 `reference_*`）：
+
+```bash
+curl "$BASE_URL/v1/videos" \
+  -H "Authorization: Bearer $NEW_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "AP Seedance-2.0 轻量版",
+    "resolution": "1080p",
+    "ratio": "9:16",
+    "duration": 5,
+    "content": [
+      {"type": "text", "text": "从首帧平滑过渡到尾帧，动作自然"},
+      {
+        "type": "image_url",
+        "role": "first_frame",
+        "image_url": {"url": "https://example.com/first.png"}
+      },
+      {
+        "type": "image_url",
+        "role": "last_frame",
+        "image_url": {"url": "https://example.com/last.png"}
+      }
+    ]
+  }'
+```
+
+错误示例（会 400：首尾帧与参考素材混用）：
+
+```json
+{
+  "model": "AP Seedance-2.0 轻量版",
+  "resolution": "1080p",
+  "duration": 5,
+  "content": [
+    {"type": "text", "text": "..."},
+    {
+      "type": "image_url",
+      "role": "first_frame",
+      "image_url": {"url": "https://example.com/first.png"}
+    },
+    {
+      "type": "image_url",
+      "role": "reference_image",
+      "image_url": {"url": "https://example.com/ref.png"}
+    },
+    {
+      "type": "video_url",
+      "role": "reference_video",
+      "video_url": {"url": "https://example.com/ref.mp4"}
+    }
+  ]
+}
 ```
 
 轻量版（仅 `720p` / `1080p`）：
@@ -497,6 +760,9 @@ curl "$BASE_URL/v1/videos" \
 
 | 模型 | 推荐字段 | 兼容别名 |
 | --- | --- | --- |
+| `aipdd_qwen_image_edit_single_reference` | `image_1`、`prompt` | 无；请使用精确字段 |
+| `aipdd_qwen_image_edit_dual_reference` | `image_1`、`image_2`、`prompt` | 无；请使用精确字段 |
+| `aipdd_qwen_image_edit_triple_reference` | `image_1`、`image_2`、`image_3`、`prompt` | 无；请使用精确字段 |
 | `aipdd-flux-gguf` | `image` | `images`（取第一张） |
 | `aipdd-flux-gguf-t2i` | `prompt` | `text`、`input` |
 | `aipdd-wan2.2-wanx` | `image`、`prompt` | `images` |
@@ -650,10 +916,16 @@ OpenAI Video 风格：
 | `invalid_endpoint` | 模型与接口不匹配 | 图片 `/v1/images/generations`，视频 `/v1/videos`，音频 `/v1/audio/speech` |
 | `invalid_duration` | 时长不在允许范围 | LTX 用 1～20 秒；其他按时长计费模型看目录约束 |
 | `model_price_error` | 价格未配置或参数不符合价格目录 | 检查分辨率/时长/模型定价 |
-| `missing_content` / `missing_resolution` / `unsupported_resolution` / `unsupported_ratio` | Seedance 参数不完整或不受支持 | 按 [4.11](#411-ap-seedance-20-视频) 补全 `content`/`resolution`/`ratio` |
-| 参考视频含真人等敏感内容 | 上游隐私/审核错误 | 去掉参考视频或更换素材；可改文生视频 |
+| `image_1` / `image_2` / `image_3` 或 `prompt` 缺失 | 千问参考图工作流缺少必填字段 | 按模型要求补齐精确编号的图片字段与 `prompt` |
+| `comfyui_instance_busy` / `Task queue timed out because no device was available` | 上游 ComfyUI 实例繁忙或没有可用节点接单 | 稍后重新创建任务；避免高频重复提交 |
+| `missing_content` / `missing_resolution` / `unsupported_resolution` / `unsupported_ratio` | Seedance 参数不完整或不受支持 | 按 [4.13](#413-ap-seedance-20-视频) 补全 `content`/`resolution`/`ratio` |
+| `first/last frame content cannot be mixed with reference media content` | Seedance 在同一 `content` 中混用了首尾帧与参考素材 | 二选一：只用 `first_frame`/`last_frame`，或只用 `reference_*` |
+| `Invalid video_url` | 参考视频 URL 无效或不可访问 | 换公网 HTTPS 可直链视频；勿用本地路径/内网/过期签名 |
+| 参考视频时长 `> 15.2` 秒 | r2v 参考视频超限 | 将参考视频压到约 2～15.2 秒 |
+| `duration` 参数无效 | 输出时长不合法 | 直接传合法 `duration`/`seconds`（常见如 5） |
+| 参考视频/图片含真人等敏感内容 | 上游隐私/审核错误 | 去掉参考素材或更换非真人素材；可改文生视频 |
 | `timeline_data must be valid JSON` | 首尾帧 LTX 时间线非法 | 传合法 JSON 对象/数组 |
-| LTX 分辨率/帧率/时长错误 | 不在允许范围 | 见 [4.6](#46-ltx-23-图生视频) |
+| LTX 分辨率/帧率/时长错误 | 不在允许范围 | 见 [4.8](#48-ltx-23-图生视频) |
 | `task_not_exist` | 任务不存在或不属于当前用户 | 使用创建响应中的公开 `task_id` |
 | `429` | 限流或上游负载高 | 稍后重试 |
 | 一直 `queued` | 上游排队 | 继续低频轮询 |
@@ -727,6 +999,18 @@ curl "$BASE_URL/v1/images/generations" \
     "prompt": "a small red cube on a white background"
   }'
 
+# 千问三参考图编辑创建（异步）
+curl "$BASE_URL/v1/images/generations" \
+  -H "Authorization: Bearer $NEW_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "aipdd_qwen_image_edit_triple_reference",
+    "image_1": "https://example.com/reference-a.png",
+    "image_2": "https://example.com/reference-b.png",
+    "image_3": "https://example.com/reference-c.png",
+    "prompt": "combine all references into one cohesive poster"
+  }'
+
 # AP Seedance 创建（分辨率须匹配该档位价格目录）
 curl "$BASE_URL/v1/videos" \
   -H "Authorization: Bearer $NEW_API_TOKEN" \
@@ -740,7 +1024,7 @@ curl "$BASE_URL/v1/videos" \
   }'
 ```
 
-仓库提供用户视角 smoke test（默认覆盖 Flux / Wan / Animater / Mimic / Latentsync / IndexTTS；**不含** LTX 与 Seedance）：
+仓库提供用户视角 smoke test（默认覆盖 Flux / Wan / Animater / Mimic / Latentsync / IndexTTS；**不含** LTX、Seedance 与上述三个千问参考图模型）：
 
 ```bash
 node bin/aipdd-user-smoke-test.mjs \
