@@ -62,9 +62,9 @@ import {
 import { ModelGroupSelector } from '@/components/model-group-selector'
 import { uploadReferenceMedia } from '../api'
 import {
+  formatVideoResolutionLabel,
   getImageSizeOptionsForModel,
   getLTXVideoSizeOptionsForModel,
-  getSeedanceVideoProcessingChainOptionsForModel,
   getVideoDurationRangeForModel,
   getVideoRatioOptionsForModel,
   getVideoResolutionOptionsForModel,
@@ -276,19 +276,6 @@ export function PlaygroundInput({
     modelValue,
     effectiveVideoResolutions
   )
-  const videoProcessingChainOptions =
-    getSeedanceVideoProcessingChainOptionsForModel(modelValue)
-  const videoResolutionMenuOptions = videoResolutionOptions.map(
-    (resolution) => ({
-      resolution,
-      processingChain: videoProcessingChainOptions.find(
-        (option) => option.resolution === resolution
-      ),
-    })
-  )
-  const selectedVideoProcessingChain = videoResolutionMenuOptions.find(
-    (option) => option.resolution === videoResolution
-  )?.processingChain
   const usesVideoSizeOptions = videoSizeOptions.length > 0
   const normalizedVideoDuration = normalizeVideoDurationForModel(
     modelValue,
@@ -736,38 +723,26 @@ export function PlaygroundInput({
                       >
                         <MonitorIcon size={16} />
                         <span>
-                          {selectedVideoProcessingChain?.outputResolution ||
-                            videoResolution}
+                          {formatVideoResolutionLabel(videoResolution)}
                         </span>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align='start' className='min-w-56'>
                         <DropdownMenuGroup>
                           <DropdownMenuLabel>
-                            {videoProcessingChainOptions.length > 0
-                              ? t('Output and processing chain')
-                              : t('Resolution')}
+                            {t('Resolution')}
                           </DropdownMenuLabel>
                           <DropdownMenuRadioGroup
                             value={videoResolution}
                             onValueChange={onVideoResolutionChange}
                           >
-                            {videoResolutionMenuOptions.map(
-                              ({ resolution, processingChain }) => (
-                                <DropdownMenuRadioItem
-                                  key={resolution}
-                                  value={resolution}
-                                >
-                                  {processingChain ? (
-                                    <span>
-                                      {processingChain.sourceResolution} →{' '}
-                                      {processingChain.outputResolution}
-                                    </span>
-                                  ) : (
-                                    resolution
-                                  )}
-                                </DropdownMenuRadioItem>
-                              )
-                            )}
+                            {videoResolutionOptions.map((resolution) => (
+                              <DropdownMenuRadioItem
+                                key={resolution}
+                                value={resolution}
+                              >
+                                {formatVideoResolutionLabel(resolution)}
+                              </DropdownMenuRadioItem>
+                            ))}
                           </DropdownMenuRadioGroup>
                         </DropdownMenuGroup>
                       </DropdownMenuContent>

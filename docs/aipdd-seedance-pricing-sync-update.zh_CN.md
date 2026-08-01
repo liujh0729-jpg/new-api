@@ -1,6 +1,6 @@
 # AIPDD Seedance 定价同步与 480p 支持改造说明
 
-> **合同更正（2026-07-17）**：本文关于“目录价格随 API Key 的 PLATFORM/BYOK 身份切换”的设计已被取代，不再作为实现依据。`/v1/new-api/catalog` 现在以 `pricingBasis: "display"` 固定发布展示售价，权威字段为 `displayAmountAwcoinPerSecond` 和 `displayVideoInputAwcoinPerSecond`；BYOK 价格通过独立 `byok...` 字段返回。NewAPI 只接受该严格合同：缺少 `pricingBasis: "display"` 或任一展示价字段时立即拒绝同步，不读取旧目录价格字段，也不得将 `byok...` 用作展示售价。本文其余关于旧计费身份合同的内容仅保留为历史记录；480p 能力与执行链说明仍可参考。
+> **合同更正（2026-07-17）**：本文关于“目录价格随 API Key 的 PLATFORM/BYOK 身份切换”的设计已被取代，不再作为实现依据。`/v1/new-api/catalog` 现在以 `pricingBasis: "display"` 固定发布展示售价，权威字段为 `displayAmountAwcoinPerSecond` 和 `displayVideoInputAwcoinPerSecond`；BYOK 价格通过独立 `byok...` 字段返回。NewAPI 只接受该严格合同：缺少 `pricingBasis: "display"` 或任一展示价字段时立即拒绝同步，不读取旧目录价格字段，也不得将 `byok...` 用作展示售价。本文其余关于旧计费身份合同的内容仅保留为历史记录；480p 最终分辨率能力说明仍可参考。
 
 ## 1. 背景
 
@@ -9,7 +9,7 @@ AIPDD 的 Seedance 展示模型近期调整了计费和执行规则：
 - Seedance 价格按目标分辨率和是否包含参考视频精确匹配。
 - AIPDD API Key 可能对应 `PLATFORM` 或 `BYOK` 两种计费模式。
 - V171 将 BYOK 售价调整为“标准产品售价减 provider 成本”。
-- 480p→480p 不再视为无处理的原生直出，而是同分辨率质量增强链路。
+- 480p 作为独立的最终分辨率产品能力发布。
 
 NewAPI 当前已经可以从 AIPDD 的认证原子目录读取 Seedance 价格矩阵，并在任务创建时按分辨率、参考视频和时长精确预扣。此次改造不应在 NewAPI 内复制 AIPDD 的定价公式，而应继续将携带渠道 API Key 获取的 `/v1/new-api/catalog` 作为唯一价格事实源。
 
@@ -17,7 +17,7 @@ NewAPI 当前已经可以从 AIPDD 的认证原子目录读取 Seedance 价格�
 
 1. AIPDD 目录失败回退快照没有按 API Key 身份隔离。
 2. V171 生效后，BYOK 目录仍使用错误的 `enhancementOnly` 语义。
-3. 480p→480p 展示模型可能无法进入目录或未被 NewAPI 完整验证。
+3. 480p 最终分辨率档位可能无法进入目录或未被 NewAPI 完整验证。
 
 ---
 
@@ -274,28 +274,13 @@ type AIPDDSeedanceResolutionPricing struct {
 
 ---
 
-## 5. 问题三：Seedance 480p→480p 支持不完整
+## 5. 问题三：Seedance 480p 最终分辨率支持不完整
 
 ### 5.1 业务语义
 
-AIPDD 当前支持 480p→480p 展示模型，但它不是普通原生直出：
+AIPDD 当前支持 480p 最终分辨率档位。对下游目录和用户界面而言，它只应作为 `480p` 展示、选择和计费，不暴露上游内部处理细节。
 
-```text
-Seedance 本体输出 480p
-→ 质量增强
-→ 最终仍输出 480p
-```
-
-因此：
-
-```text
-sourceResolution = 480p
-targetResolution = 480p
-superResolutionLevel > 0
-存在 enhance step
-```
-
-NewAPI 不负责执行增强链路，只需要识别目录中存在 480p SKU、按 480p 价格计费并将请求转发给 AIPDD。
+NewAPI 只需要识别目录中存在 480p SKU、按 480p 价格计费并将请求转发给 AIPDD。
 
 ### 5.2 当前 NewAPI 后端能力
 
@@ -338,41 +323,19 @@ NewAPI 后端即可支持 480p。示例中的价格仅表示结构，真实数�
 
 ### 5.3 可能的实际阻塞点
 
-V171 将 480p→480p 改造成“同分辨率但包含增强步骤”的 offering。如果只执行数据库迁移，却没有同步部署 AIPDD Mapper 的特殊查询条件，480p offering 会被目录过滤掉。
+V171 将 480p 作为独立的最终分辨率 offering 发布。如果只执行数据库迁移，却没有同步部署 AIPDD Mapper 对该档位的查询支持，480p offering 会被目录过滤掉。
 
-旧查询通常只接受：
-
-```text
-sourceResolution == targetResolution 且没有 enhance step
-```
-
-或者：
-
-```text
-superResolutionLevel > 0
-且 sourceResolution != targetResolution
-且存在 enhance step
-```
-
-480p→480p 两个条件都不满足，因此必须显式允许：
-
-```text
-adapterCode = seedance
-且 sourceResolution = 480p
-且 targetResolution = 480p
-且 superResolutionLevel > 0
-且存在已启用 enhance step
-```
+上游查询应以最终分辨率能力作为对外契约，不向下游暴露或要求下游理解中间处理信息。
 
 V171 数据迁移和 `ModelOfferingMapper` 的 480p 特殊条件必须一起发布。
 
 ### 5.4 NewAPI 修改要求
 
 - 原子目录解析必须保留 `pricing.byResolution["480p"]`。
-- 不得因为 480p 的源分辨率和目标分辨率相同而在 NewAPI 侧过滤。
+- 不得在 NewAPI 侧过滤目录明确提供的 480p 最终分辨率档位。
 - `resolution: "480p"` 必须原样转发给 AIPDD。
 - 实际价格必须选择 480p 下匹配的 `hasReferenceVideo` 变体。
-- NewAPI 不得自行跳过、调用或模拟 AIPDD 的增强步骤。
+- NewAPI 不得自行推断或模拟 AIPDD 的内部处理过程。
 - 目录缺少 480p 时才返回 `unsupported_resolution`。
 - 上游新增 480p 后，NewAPI 必须通过目录同步立即获得该能力。
 
@@ -429,7 +392,7 @@ capabilities[].pricing.byResolution.480p
 ### 阶段一：完成 AIPDD 上游
 
 1. 发布 V171 数据迁移。
-2. 同步发布 `ModelOfferingMapper` 对 Seedance 480p→480p 增强 offering 的特殊查询支持。
+2. 同步发布 `ModelOfferingMapper` 对 Seedance 480p 最终分辨率 offering 的查询支持。
 3. 将 BYOK 目录语义改为：
 
 ```text
@@ -477,7 +440,7 @@ billingFormula = standardMinusProviderCost
 - [ ] 不匹配身份的快照不会被失败回退使用。
 - [ ] 多 Key 渠道不能混用不同计费身份。
 - [ ] NewAPI 任务快照记录目录 revision 和计费模式。
-- [ ] Seedance 480p→480p 出现在适用模型的认证目录中。
+- [ ] Seedance 480p 最终分辨率档位出现在适用模型的认证目录中。
 - [ ] NewAPI 可以提交、计费和查询 480p 任务。
 - [ ] Playground 分辨率选项与目录一致。
 - [ ] 所有新增测试通过。
