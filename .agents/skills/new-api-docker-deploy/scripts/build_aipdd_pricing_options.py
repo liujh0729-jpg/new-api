@@ -23,6 +23,9 @@ OPTION_KEYS = (
     "billing_setting.billing_mode",
 )
 
+# Read-only site options required for RMB-anchored USD conversion.
+RATE_OPTION_KEYS = ("USDExchangeRate",)
+
 
 def load_json(path: Path) -> Any:
     with path.open("r", encoding="utf-8") as handle:
@@ -43,16 +46,17 @@ def catalog_object(value: Any) -> dict[str, Any]:
 
 
 def option_values(value: Any) -> dict[str, Any]:
+    accepted = set(OPTION_KEYS) | set(RATE_OPTION_KEYS)
     if isinstance(value, dict) and "data" in value:
         value = value["data"]
     if isinstance(value, list):
         return {
             str(item.get("key")): item.get("value")
             for item in value
-            if isinstance(item, dict) and item.get("key") in OPTION_KEYS
+            if isinstance(item, dict) and item.get("key") in accepted
         }
     if isinstance(value, dict):
-        return {key: value.get(key) for key in OPTION_KEYS}
+        return {key: value.get(key) for key in accepted}
     raise ValueError("options must be GET /api/option/ output or an option map")
 
 
@@ -255,13 +259,30 @@ def duration_task_pricing(
     }
 
 
-def build_updates(
-    catalog: dict[str, Any], current: dict[str, Any], previous_models: set[str]
-) -> dict[str, Any]:
+def rmb_anchored_usd_per_awcoin(catalog: dict[str, Any], current: dict[str, Any]) -> Decimal:
+    """Return the USD/AWCoin factor that makes site display RMB equal AIPDD RMB.
+
+    storedUSD = AWCoin × rmbPerAwcoin ÷ siteUSDExchangeRate
+    displayRMB = storedUSD × siteUSDExchangeRate = AWCoin × rmbPerAwcoin
+    """
     rate_data = catalog.get("awcoinRate")
     if not isinstance(rate_data, dict):
         raise ValueError("catalog awcoinRate is missing")
-    usd_per_awcoin = decimal_value(rate_data.get("usdPerAwcoin"), "usdPerAwcoin", positive=True)
+    rmb_per_awcoin = decimal_value(
+        rate_data.get("rmbPerAwcoin"), "rmbPerAwcoin", positive=True
+    )
+    usd_exchange_rate = decimal_value(
+        current.get("USDExchangeRate"), "USDExchangeRate", positive=True
+    )
+    return rmb_per_awcoin / usd_exchange_rate
+
+
+def build_updates(
+    catalog: dict[str, Any], current: dict[str, Any], previous_models: set[str]
+) -> dict[str, Any]:
+    # RMB-anchored conversion: do not use catalog usdPerAwcoin (≈1/6.75), which
+    # would diverge from site display when USDExchangeRate is 7.3.
+    usd_per_awcoin = rmb_anchored_usd_per_awcoin(catalog, current)
 
     capabilities = catalog["capabilities"]
     llm_models = catalog["models"]
@@ -369,8 +390,9 @@ def build_updates(
             "per_call_models": sorted(per_call_models),
             "task_pricing_models": sorted(task_models),
             "tiered_expr_models": sorted(llm_names),
-            "task_pricing_contract": "Seedance by_resolution matrix requires suggested retail prices for New API sale, still requires AIPDD display settlement fields, fixes 480p group ratio at 1, and rejects legacy catalog pricing; per_unit/second tasks use flat USD/second task pricing; no legacy ModelPrice fallback",
-            "task_pricing_policy": "per-resolution Seedance suggested-retail USD/second with group_ratio_policy=none for 480p, plus catalog per-unit duration USD/second; display/BYOK prices are informational only",
+            "task_pricing_contract": "Seedance by_resolution matrix requires suggested retail prices for New API sale, still requires AIPDD display settlement fields, fixes 480p group ratio at 1, and rejects legacy catalog pricing; per_unit/second tasks use flat USD/second task pricing; all AIPDD prices convert as AWCoin × rmbPerAwcoin ÷ site USDExchangeRate so display RMB equals AIPDD suggested retail; no legacy ModelPrice fallback",
+            "task_pricing_policy": "RMB-anchored: stored USD = AWCoin × rmbPerAwcoin ÷ site USDExchangeRate (catalog usdPerAwcoin unused); per-resolution Seedance suggested-retail with group_ratio_policy=none for 480p, plus catalog per-unit duration; display/BYOK prices are informational only",
+            "price_conversion": "rmb_anchored",
         },
     }
 

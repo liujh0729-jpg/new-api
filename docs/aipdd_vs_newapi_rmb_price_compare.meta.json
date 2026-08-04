@@ -2,8 +2,9 @@
   "methodology": {
     "primary_rmb": "AWCoin × rmbPerAwcoin(0.0001) × group_ratio",
     "price_diff_basis": "比较 aipdd_awcoin vs newapi_awcoin（及对应 primary_rmb），不把站点7.3计入价差",
-    "site_ui_rmb_ref_only": "AWCoin × usdPerAwcoin_newapi(1.4758405e-05) × USDExchangeRate(7.3)，仅参考",
-    "not_used_for_conclusion": "站点汇率 7.3 造成的展示差不视为售价/成本不一致"
+    "site_ui_rmb_ref_only": "AWCoin × usdPerAwcoin_newapi(1.4758405e-05) × USDExchangeRate(7.3)，仅参考（历史口径）",
+    "not_used_for_conclusion": "站点汇率 7.3 造成的展示差不视为售价/成本不一致（历史口径）",
+    "import_note": "部署 skill 价格导入已改为 RMB 锚定：storedUSD = AWCoin × rmbPerAwcoin ÷ site USDExchangeRate，使展示 RMB = AWCoin × rmbPerAwcoin（AIPDD 权威建议零售价）；不再使用 catalog usdPerAwcoin 作为 New API 售价换算因子。本文件中的 site_ui_rmb_ref_only / not_used_for_conclusion 描述的是改动前的旧口径。"
   },
   "aipdd_catalog_revision": "e277366c7ab0bd8af6f0b93e9ee4e6bfbc3115187faa7694c4291fc6bbae74b7",
   "aipdd_rmb_per_awcoin": 0.0001,

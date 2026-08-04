@@ -266,6 +266,15 @@ def _validate_deployment(payload: dict[str, Any], stage: str) -> str:
         raise ValidationError("deployment-finish requires a terminal run.status")
     if stage == "deployment-finish" and not run.get("finishedAt"):
         raise ValidationError("deployment-finish requires run.finishedAt")
+    if run.get("mode") == "update":
+        release = payload.get("release")
+        if not isinstance(release, dict):
+            raise ValidationError("update mode requires release.previousImageDigest")
+        previous = release.get("previousImageDigest")
+        if not isinstance(previous, str) or not previous.startswith("sha256:"):
+            raise ValidationError(
+                "update mode requires release.previousImageDigest as sha256:..."
+            )
     return deployment_id
 
 

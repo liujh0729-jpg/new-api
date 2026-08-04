@@ -13,6 +13,27 @@ assert SPEC is not None and SPEC.loader is not None
 MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)
 
+# rmbPerAwcoin / USDExchangeRate = 0.073 / 7.3 = 0.01 — keeps expected USD
+# prices identical to the previous usdPerAwcoin=0.01 fixtures.
+RMB_PER_AWCOIN = 0.073
+USD_EXCHANGE_RATE = "7.3"
+USD_PER_AWCOIN = Decimal("0.01")
+
+
+def awcoin_rate(*, rmb: float | None = RMB_PER_AWCOIN, usd: float | None = 0.01) -> dict:
+    rate: dict = {}
+    if rmb is not None:
+        rate["rmbPerAwcoin"] = rmb
+    if usd is not None:
+        rate["usdPerAwcoin"] = usd
+    return rate
+
+
+def site_options(**extra: object) -> dict:
+    options: dict = {"USDExchangeRate": USD_EXCHANGE_RATE}
+    options.update(extra)
+    return options
+
 
 def resolution(
     name: str,
@@ -70,7 +91,7 @@ class BuildAIPDDPricingOptionsTest(unittest.TestCase):
             "1080p": resolution("1080p", 20, 25, display=3, display_video=4),
         })
 
-        pricing = MODULE.resolution_task_pricing(capability, Decimal("0.01"))
+        pricing = MODULE.resolution_task_pricing(capability, USD_PER_AWCOIN)
 
         self.assertEqual(
             {
@@ -99,7 +120,7 @@ class BuildAIPDDPricingOptionsTest(unittest.TestCase):
         })
         capability = seedance_capability({"720p": item})
 
-        pricing = MODULE.resolution_task_pricing(capability, Decimal("0.01"))
+        pricing = MODULE.resolution_task_pricing(capability, USD_PER_AWCOIN)
 
         self.assertEqual(
             {
@@ -116,7 +137,7 @@ class BuildAIPDDPricingOptionsTest(unittest.TestCase):
             "720p": resolution("720p", 10, 15),
         })
 
-        pricing = MODULE.resolution_task_pricing(capability, Decimal("0.01"))
+        pricing = MODULE.resolution_task_pricing(capability, USD_PER_AWCOIN)
 
         self.assertEqual(
             "none",
@@ -139,7 +160,7 @@ class BuildAIPDDPricingOptionsTest(unittest.TestCase):
         })
 
         with self.assertRaisesRegex(ValueError, "displayAmountAwcoinPerSecond"):
-            MODULE.resolution_task_pricing(capability, Decimal("0.01"))
+            MODULE.resolution_task_pricing(capability, USD_PER_AWCOIN)
 
     def test_resolution_task_pricing_rejects_missing_suggested_retail(self) -> None:
         capability = seedance_capability({
@@ -153,14 +174,14 @@ class BuildAIPDDPricingOptionsTest(unittest.TestCase):
         })
 
         with self.assertRaisesRegex(ValueError, "suggestedRetailAwcoinPerSecond"):
-            MODULE.resolution_task_pricing(capability, Decimal("0.01"))
+            MODULE.resolution_task_pricing(capability, USD_PER_AWCOIN)
 
     def test_resolution_keys_are_canonical_and_same_policy_omits_custom_price(self) -> None:
         capability = seedance_capability({
             " 4K ": resolution("4k", 30, 30),
         })
 
-        pricing = MODULE.resolution_task_pricing(capability, Decimal("0.01"))
+        pricing = MODULE.resolution_task_pricing(capability, USD_PER_AWCOIN)
 
         self.assertEqual(
             {
@@ -177,7 +198,7 @@ class BuildAIPDDPricingOptionsTest(unittest.TestCase):
         })
 
         with self.assertRaisesRegex(ValueError, "duplicate resolution"):
-            MODULE.resolution_task_pricing(capability, Decimal("0.01"))
+            MODULE.resolution_task_pricing(capability, USD_PER_AWCOIN)
 
     def test_non_string_target_resolution_is_rejected(self) -> None:
         capability = seedance_capability({
@@ -185,7 +206,7 @@ class BuildAIPDDPricingOptionsTest(unittest.TestCase):
         })
 
         with self.assertRaisesRegex(ValueError, "resolution key must be a string"):
-            MODULE.resolution_task_pricing(capability, Decimal("0.01"))
+            MODULE.resolution_task_pricing(capability, USD_PER_AWCOIN)
 
     def test_legacy_price_variants_are_rejected(self) -> None:
         capability = seedance_capability({
@@ -201,12 +222,12 @@ class BuildAIPDDPricingOptionsTest(unittest.TestCase):
         })
 
         with self.assertRaisesRegex(ValueError, "displayAmountAwcoinPerSecond"):
-            MODULE.resolution_task_pricing(capability, Decimal("0.01"))
+            MODULE.resolution_task_pricing(capability, USD_PER_AWCOIN)
 
     def test_existing_model_price_is_never_used_as_a_fallback(self) -> None:
         catalog = {
             "revision": "revision-new-contract",
-            "awcoinRate": {"usdPerAwcoin": 0.01},
+            "awcoinRate": awcoin_rate(),
             "capabilities": [seedance_capability({
                 "720p": {
                     "targetResolution": "720p",
@@ -216,7 +237,7 @@ class BuildAIPDDPricingOptionsTest(unittest.TestCase):
             })],
             "models": [],
         }
-        current = {"ModelPrice": {"AP Seedance": 99}}
+        current = site_options(ModelPrice={"AP Seedance": 99})
 
         with self.assertRaisesRegex(ValueError, "displayAmountAwcoinPerSecond"):
             MODULE.build_updates(catalog, current, {"AP Seedance"})
@@ -224,7 +245,7 @@ class BuildAIPDDPricingOptionsTest(unittest.TestCase):
     def test_plan_reports_strict_new_contract(self) -> None:
         catalog = {
             "revision": "revision-new-contract",
-            "awcoinRate": {"usdPerAwcoin": 0.01},
+            "awcoinRate": awcoin_rate(),
             "capabilities": [seedance_capability({
                 "720p": resolution("720p", 10, 15),
                 "1080p": resolution("1080p", 20, 25),
@@ -233,21 +254,23 @@ class BuildAIPDDPricingOptionsTest(unittest.TestCase):
         }
         result = MODULE.build_updates(
             catalog,
-            {
-                "ModelPrice": {"AP Seedance": 99},
-                "billing_setting.task_pricing": {
-                    "AP Seedance": {
-                        "unit": "second",
-                        "no_reference_video_unit_price": 99,
-                        "reference_video_policy": "same",
-                    },
-                    "unrelated-task": {
-                        "unit": "second",
-                        "no_reference_video_unit_price": 1,
-                        "reference_video_policy": "same",
+            site_options(
+                ModelPrice={"AP Seedance": 99},
+                **{
+                    "billing_setting.task_pricing": {
+                        "AP Seedance": {
+                            "unit": "second",
+                            "no_reference_video_unit_price": 99,
+                            "reference_video_policy": "same",
+                        },
+                        "unrelated-task": {
+                            "unit": "second",
+                            "no_reference_video_unit_price": 1,
+                            "reference_video_policy": "same",
+                        },
                     },
                 },
-            },
+            ),
             {"AP Seedance"},
         )
         updates = {item["key"]: json.loads(item["value"]) for item in result["updates"]}
@@ -289,17 +312,80 @@ class BuildAIPDDPricingOptionsTest(unittest.TestCase):
         self.assertIn("fixes 480p group ratio at 1", result["summary"]["task_pricing_contract"])
         self.assertIn("rejects legacy catalog pricing", result["summary"]["task_pricing_contract"])
         self.assertIn("no legacy ModelPrice fallback", result["summary"]["task_pricing_contract"])
+        self.assertIn("rmbPerAwcoin", result["summary"]["task_pricing_contract"])
+        self.assertEqual("rmb_anchored", result["summary"]["price_conversion"])
+        self.assertIn("RMB-anchored", result["summary"]["task_pricing_policy"])
+
+    def test_rmb_anchored_conversion_uses_rmb_per_awcoin_over_catalog_usd(self) -> None:
+        # Catalog usdPerAwcoin would yield 10 * 0.02 = 0.2; RMB-anchored must
+        # use 10 * (0.073 / 7.3) = 0.1 instead.
+        catalog = {
+            "revision": "revision-rmb-anchor",
+            "awcoinRate": awcoin_rate(rmb=0.073, usd=0.02),
+            "capabilities": [seedance_capability({
+                "720p": resolution("720p", 10, 15),
+            })],
+            "models": [],
+        }
+        result = MODULE.build_updates(catalog, site_options(), set())
+        updates = {item["key"]: json.loads(item["value"]) for item in result["updates"]}
+        tier = updates["billing_setting.task_pricing"]["AP Seedance"]["by_resolution"]["720p"]
+
+        self.assertEqual(0.1, tier["no_reference_video_unit_price"])
+        self.assertEqual(0.15, tier["reference_video_unit_price"])
+        # Display RMB must equal AWCoin × rmbPerAwcoin.
+        self.assertAlmostEqual(
+            tier["no_reference_video_unit_price"] * float(USD_EXCHANGE_RATE),
+            10 * RMB_PER_AWCOIN,
+            places=12,
+        )
+
+    def test_missing_rmb_per_awcoin_aborts(self) -> None:
+        catalog = {
+            "revision": "revision-missing-rmb",
+            "awcoinRate": awcoin_rate(rmb=None, usd=0.01),
+            "capabilities": [seedance_capability({
+                "720p": resolution("720p", 10, 15),
+            })],
+            "models": [],
+        }
+
+        with self.assertRaisesRegex(ValueError, "rmbPerAwcoin"):
+            MODULE.build_updates(catalog, site_options(), set())
+
+    def test_missing_usd_exchange_rate_aborts(self) -> None:
+        catalog = {
+            "revision": "revision-missing-rate",
+            "awcoinRate": awcoin_rate(),
+            "capabilities": [seedance_capability({
+                "720p": resolution("720p", 10, 15),
+            })],
+            "models": [],
+        }
+
+        with self.assertRaisesRegex(ValueError, "USDExchangeRate"):
+            MODULE.build_updates(catalog, {}, set())
+
+    def test_option_values_keeps_usd_exchange_rate(self) -> None:
+        values = MODULE.option_values([
+            {"key": "USDExchangeRate", "value": "7.3"},
+            {"key": "ModelPrice", "value": "{}"},
+            {"key": "ignored", "value": "x"},
+        ])
+        self.assertEqual("7.3", values["USDExchangeRate"])
+        self.assertEqual("{}", values["ModelPrice"])
+        self.assertNotIn("ignored", values)
 
     def test_per_unit_second_model_uses_flat_task_pricing(self) -> None:
         catalog = {
             "revision": "revision-duration",
-            "awcoinRate": {"usdPerAwcoin": 0.01},
+            "awcoinRate": awcoin_rate(),
             "capabilities": [duration_capability()],
             "models": [],
         }
         result = MODULE.build_updates(
             catalog,
-            {"ModelPrice": {"aipdd_ltx_2.3": 99}},
+            site_options(ModelPrice={"aipdd_ltx_2.3": 99}),
             {"aipdd_ltx_2.3"},
         )
         updates = {item["key"]: json.loads(item["value"]) for item in result["updates"]}
@@ -321,13 +407,13 @@ class BuildAIPDDPricingOptionsTest(unittest.TestCase):
     def test_per_unit_non_second_model_is_rejected(self) -> None:
         catalog = {
             "revision": "revision-invalid-duration",
-            "awcoinRate": {"usdPerAwcoin": 0.01},
+            "awcoinRate": awcoin_rate(),
             "capabilities": [duration_capability(unit="minute")],
             "models": [],
         }
 
         with self.assertRaisesRegex(ValueError, "per-unit second"):
-            MODULE.build_updates(catalog, {}, set())
+            MODULE.build_updates(catalog, site_options(), set())
 
 
 if __name__ == "__main__":

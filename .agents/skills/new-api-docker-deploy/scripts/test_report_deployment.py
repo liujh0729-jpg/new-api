@@ -133,6 +133,22 @@ class ReportDeploymentTest(unittest.TestCase):
         with self.assertRaisesRegex(MODULE.ValidationError, r"unknown field"):
             MODULE.shape_request("deployment-finish", finished)
 
+    def test_update_mode_requires_previous_image_digest(self) -> None:
+        payload = deployment_payload()
+        payload["run"]["mode"] = "update"
+        with self.assertRaisesRegex(MODULE.ValidationError, "previousImageDigest"):
+            MODULE.shape_request("deployment-start", payload)
+
+        payload["release"] = {"imageRef": "example/new-api:latest"}
+        with self.assertRaisesRegex(MODULE.ValidationError, "previousImageDigest"):
+            MODULE.shape_request("deployment-start", payload)
+
+        payload["release"] = {
+            "imageRef": "example/new-api:latest",
+            "previousImageDigest": "sha256:" + ("a" * 64),
+        }
+        MODULE.shape_request("deployment-start", payload)
+
     def test_dry_run_prints_redacted_shaped_request_without_key(self) -> None:
         payload = {
             "mode": "initial",
