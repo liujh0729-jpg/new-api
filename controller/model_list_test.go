@@ -405,6 +405,44 @@ func TestGetUserModelsExcludesAIPDDTaskModelsFromPlayground(t *testing.T) {
 	}
 }
 
+func TestGetUserModelsIncludesAIPDDTaskModelsWhenRequested(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	model.InvalidatePricingCache()
+
+	require.NoError(t, db.Create(&model.User{
+		Id:       1010,
+		Username: "token-models-user",
+		Password: "password",
+		Group:    "default",
+		Status:   common.UserStatusEnabled,
+	}).Error)
+	require.NoError(t, db.Create(&model.Channel{
+		Type:   constant.ChannelTypeAIPDD,
+		Key:    "aipdd-token-key",
+		Name:   "legacy-aipdd-token",
+		Status: common.ChannelStatusEnabled,
+		Group:  "default",
+	}).Error)
+
+	require.NoError(t, model.EnsureAIPDDChannelDefaults())
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/user/models?include_task_models=1", nil)
+	ctx.Set("id", 1010)
+
+	GetUserModels(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var payload userModelsResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
+	require.True(t, payload.Success)
+	require.NotEmpty(t, constant.AIPDDTaskModelList)
+	for _, modelName := range constant.AIPDDTaskModelList {
+		require.Contains(t, payload.Data, modelName)
+	}
+}
+
 func TestGetUserModelsIncludesImageToImageModelsForPlayground(t *testing.T) {
 	db := setupModelListControllerTestDB(t)
 	model.InvalidatePricingCache()

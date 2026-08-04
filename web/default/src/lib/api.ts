@@ -180,12 +180,19 @@ export async function getSelf() {
 }
 
 // Get user available models
-export async function getUserModels(): Promise<{
+// Pass includeTaskModels for API Key model limits so image/video/audio task models are included.
+export async function getUserModels(options?: {
+  includeTaskModels?: boolean
+}): Promise<{
   success: boolean
   message?: string
   data?: string[]
 }> {
-  const res = await api.get('/api/user/models')
+  const res = await api.get('/api/user/models', {
+    params: options?.includeTaskModels
+      ? { include_task_models: '1' }
+      : undefined,
+  })
   return res.data
 }
 

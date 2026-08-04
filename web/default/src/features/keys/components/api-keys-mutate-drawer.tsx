@@ -129,10 +129,10 @@ export function ApiKeysMutateDrawer({
   const tokenGroupLocked =
     status?.token_group_locked_to_user_group_enabled === true
 
-  // Fetch models
+  // Fetch models (include AIPDD task models for image/video/audio limits)
   const { data: modelsData } = useQuery({
-    queryKey: ['user-models'],
-    queryFn: getUserModels,
+    queryKey: ['user-models', 'include-task-models'],
+    queryFn: () => getUserModels({ includeTaskModels: true }),
     staleTime: 5 * 60 * 1000, // Cache for 5 minutes
   })
 

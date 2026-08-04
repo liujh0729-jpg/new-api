@@ -534,12 +534,16 @@ func GetUserModels(c *gin.Context) {
 	groups := service.GetUserUsableGroups(user.Group)
 	var models []string
 	endpointType := constant.EndpointType(strings.TrimSpace(c.Query("endpoint_type")))
+	includeTaskModels := strings.EqualFold(strings.TrimSpace(c.Query("include_task_models")), "true") ||
+		strings.TrimSpace(c.Query("include_task_models")) == "1"
 	if endpointType != "" {
 		model.GetPricing()
 	}
 	for group := range groups {
 		for _, g := range model.GetGroupEnabledModels(group) {
-			if endpointType == "" && constant.IsAIPDDTaskModel(g) {
+			// Default list excludes AIPDD task models (image/video/audio) for Playground.
+			// Token/API Key model limits pass include_task_models=1 to get the full set.
+			if endpointType == "" && !includeTaskModels && constant.IsAIPDDTaskModel(g) {
 				continue
 			}
 			if endpointType != "" && !modelSupportsEndpoint(g, endpointType) {
