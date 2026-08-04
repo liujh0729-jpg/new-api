@@ -14,11 +14,23 @@ MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)
 
 
-def resolution(name: str, amount: float, video: float) -> dict:
+def resolution(
+    name: str,
+    retail: float,
+    retail_video: float,
+    *,
+    display: float | None = None,
+    display_video: float | None = None,
+) -> dict:
+    # display* = AIPDD platform/channel settlement; suggestedRetail* = New API sale.
+    platform = display if display is not None else retail
+    platform_video = display_video if display_video is not None else retail_video
     return {
         "targetResolution": name,
-        "displayAmountAwcoinPerSecond": amount,
-        "displayVideoInputAwcoinPerSecond": video,
+        "displayAmountAwcoinPerSecond": platform,
+        "displayVideoInputAwcoinPerSecond": platform_video,
+        "suggestedRetailAwcoinPerSecond": retail,
+        "suggestedRetailVideoInputAwcoinPerSecond": retail_video,
         "defaultDurationSeconds": 5,
         "defaultFramesPerSecond": 24,
     }
@@ -52,10 +64,10 @@ def duration_capability(name: str = "aipdd_ltx_2.3", *, unit: str = "second", am
 
 
 class BuildAIPDDPricingOptionsTest(unittest.TestCase):
-    def test_resolution_task_pricing_uses_only_display_fields(self) -> None:
+    def test_resolution_task_pricing_uses_only_suggested_retail_fields(self) -> None:
         capability = seedance_capability({
-            "720p": resolution("720p", 10, 15),
-            "1080p": resolution("1080p", 20, 25),
+            "720p": resolution("720p", 10, 15, display=1, display_video=2),
+            "1080p": resolution("1080p", 20, 25, display=3, display_video=4),
         })
 
         pricing = MODULE.resolution_task_pricing(capability, Decimal("0.01"))
@@ -79,12 +91,10 @@ class BuildAIPDDPricingOptionsTest(unittest.TestCase):
             pricing,
         )
 
-    def test_resolution_task_pricing_uses_display_fields_and_ignores_byok_fields(self) -> None:
-        item = resolution("720p", 600, 1670)
+    def test_resolution_task_pricing_uses_suggested_retail_and_ignores_display_byok(self) -> None:
+        item = resolution("720p", 4620, 12770, display=600, display_video=1670)
         item.update({
-            "displayAmountAwcoinPerSecond": 4620,
             "byokAmountAwcoinPerSecond": 600,
-            "displayVideoInputAwcoinPerSecond": 12770,
             "byokVideoInputAwcoinPerSecond": 1670,
         })
         capability = seedance_capability({"720p": item})
@@ -129,6 +139,20 @@ class BuildAIPDDPricingOptionsTest(unittest.TestCase):
         })
 
         with self.assertRaisesRegex(ValueError, "displayAmountAwcoinPerSecond"):
+            MODULE.resolution_task_pricing(capability, Decimal("0.01"))
+
+    def test_resolution_task_pricing_rejects_missing_suggested_retail(self) -> None:
+        capability = seedance_capability({
+            "720p": {
+                "targetResolution": "720p",
+                "displayAmountAwcoinPerSecond": 10,
+                "displayVideoInputAwcoinPerSecond": 15,
+                "defaultDurationSeconds": 5,
+                "defaultFramesPerSecond": 24,
+            },
+        })
+
+        with self.assertRaisesRegex(ValueError, "suggestedRetailAwcoinPerSecond"):
             MODULE.resolution_task_pricing(capability, Decimal("0.01"))
 
     def test_resolution_keys_are_canonical_and_same_policy_omits_custom_price(self) -> None:
@@ -260,7 +284,8 @@ class BuildAIPDDPricingOptionsTest(unittest.TestCase):
             updates["billing_setting.task_pricing"]["AP Seedance"],
         )
         self.assertIn("by_resolution matrix", result["summary"]["task_pricing_contract"])
-        self.assertIn("requires explicit display prices", result["summary"]["task_pricing_contract"])
+        self.assertIn("suggested retail prices for New API sale", result["summary"]["task_pricing_contract"])
+        self.assertIn("AIPDD display settlement fields", result["summary"]["task_pricing_contract"])
         self.assertIn("fixes 480p group ratio at 1", result["summary"]["task_pricing_contract"])
         self.assertIn("rejects legacy catalog pricing", result["summary"]["task_pricing_contract"])
         self.assertIn("no legacy ModelPrice fallback", result["summary"]["task_pricing_contract"])

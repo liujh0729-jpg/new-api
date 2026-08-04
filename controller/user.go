@@ -216,7 +216,13 @@ func Register(c *gin.Context) {
 			UnlimitedQuota:     true,
 			ModelLimitsEnabled: false,
 		}
-		if setting.DefaultUseAutoGroup {
+		if setting.TokenGroupLockedToUserGroupEnabled {
+			token.Group = cleanUser.Group
+			if token.Group == "" {
+				token.Group = "default"
+			}
+			token.CrossGroupRetry = false
+		} else if setting.DefaultUseAutoGroup {
 			token.Group = "auto"
 		}
 		if err := token.Insert(); err != nil {

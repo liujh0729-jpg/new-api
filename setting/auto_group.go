@@ -10,6 +10,10 @@ var autoGroups = []string{
 
 var DefaultUseAutoGroup = false
 
+// TokenGroupLockedToUserGroupEnabled 开启后，API Key 分组锁定为用户自身分组：
+// 创建/更新时强制 Token.Group = User.Group，请求鉴权时以 User.Group 计费，并禁用 auto / 跨分组重试。
+var TokenGroupLockedToUserGroupEnabled = true
+
 func ContainsAutoGroup(group string) bool {
 	for _, autoGroup := range autoGroups {
 		if autoGroup == group {

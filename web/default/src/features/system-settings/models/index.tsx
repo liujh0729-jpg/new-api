@@ -61,6 +61,7 @@ const defaultModelSettings: ModelSettings = {
   GroupGroupRatio: '',
   AutoGroups: '',
   DefaultUseAutoGroup: false,
+  TokenGroupLockedToUserGroupEnabled: true,
   'group_ratio_setting.group_special_usable_group': '{}',
   'channel_affinity_setting.enabled': false,
   'channel_affinity_setting.switch_on_success': true,

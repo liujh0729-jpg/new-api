@@ -29,6 +29,31 @@ func GetUserGroups(c *gin.Context) {
 	userId := c.GetInt("id")
 	userGroup, _ = model.GetUserGroup(userId, false)
 	userUsableGroups := service.GetUserUsableGroups(userGroup)
+
+	// 锁定模式下仅返回用户自身分组，禁用 auto 与跨分组选择
+	if setting.TokenGroupLockedToUserGroupEnabled {
+		if userGroup == "" {
+			userGroup = "default"
+		}
+		desc := userUsableGroups[userGroup]
+		if desc == "" {
+			desc = setting.GetUsableGroupDescription(userGroup)
+		}
+		if desc == "" {
+			desc = "用户分组"
+		}
+		usableGroups[userGroup] = map[string]interface{}{
+			"ratio": service.GetUserGroupRatio(userGroup, userGroup),
+			"desc":  desc,
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"success": true,
+			"message": "",
+			"data":    usableGroups,
+		})
+		return
+	}
+
 	for groupName, _ := range ratio_setting.GetGroupRatioCopy() {
 		// UserUsableGroups contains the groups that the user can use
 		if desc, ok := userUsableGroups[groupName]; ok {

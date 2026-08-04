@@ -9,10 +9,35 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 
 	"github.com/gin-gonic/gin"
 )
+
+func resolveLockedTokenGroup(userId int) (string, error) {
+	userGroup, err := model.GetUserGroup(userId, false)
+	if err != nil {
+		return "", err
+	}
+	if userGroup == "" {
+		userGroup = "default"
+	}
+	return userGroup, nil
+}
+
+func applyTokenGroupLockToResponse(userId int, token *model.Token) *model.Token {
+	if token == nil || !setting.TokenGroupLockedToUserGroupEnabled {
+		return token
+	}
+	userGroup, err := resolveLockedTokenGroup(userId)
+	if err != nil {
+		return token
+	}
+	token.Group = userGroup
+	token.CrossGroupRetry = false
+	return token
+}
 
 func buildMaskedTokenResponse(token *model.Token) *model.Token {
 	if token == nil {
@@ -23,10 +48,11 @@ func buildMaskedTokenResponse(token *model.Token) *model.Token {
 	return &maskedToken
 }
 
-func buildMaskedTokenResponses(tokens []*model.Token) []*model.Token {
+func buildMaskedTokenResponses(userId int, tokens []*model.Token) []*model.Token {
 	maskedTokens := make([]*model.Token, 0, len(tokens))
 	for _, token := range tokens {
-		maskedTokens = append(maskedTokens, buildMaskedTokenResponse(token))
+		masked := buildMaskedTokenResponse(token)
+		maskedTokens = append(maskedTokens, applyTokenGroupLockToResponse(userId, masked))
 	}
 	return maskedTokens
 }
@@ -41,7 +67,7 @@ func GetAllTokens(c *gin.Context) {
 	}
 	total, _ := model.CountUserTokens(userId)
 	pageInfo.SetTotal(int(total))
-	pageInfo.SetItems(buildMaskedTokenResponses(tokens))
+	pageInfo.SetItems(buildMaskedTokenResponses(userId, tokens))
 	common.ApiSuccess(c, pageInfo)
 }
 
@@ -58,7 +84,7 @@ func SearchTokens(c *gin.Context) {
 		return
 	}
 	pageInfo.SetTotal(int(total))
-	pageInfo.SetItems(buildMaskedTokenResponses(tokens))
+	pageInfo.SetItems(buildMaskedTokenResponses(userId, tokens))
 	common.ApiSuccess(c, pageInfo)
 }
 
@@ -74,7 +100,7 @@ func GetToken(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	common.ApiSuccess(c, buildMaskedTokenResponse(token))
+	common.ApiSuccess(c, applyTokenGroupLockToResponse(userId, buildMaskedTokenResponse(token)))
 }
 
 func GetTokenKey(c *gin.Context) {
@@ -207,8 +233,19 @@ func AddToken(c *gin.Context) {
 		common.SysLog("failed to generate token key: " + err.Error())
 		return
 	}
+	userId := c.GetInt("id")
+	tokenGroup := token.Group
+	crossGroupRetry := token.CrossGroupRetry
+	if setting.TokenGroupLockedToUserGroupEnabled {
+		tokenGroup, err = resolveLockedTokenGroup(userId)
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		crossGroupRetry = false
+	}
 	cleanToken := model.Token{
-		UserId:             c.GetInt("id"),
+		UserId:             userId,
 		Name:               token.Name,
 		Key:                key,
 		CreatedTime:        common.GetTimestamp(),
@@ -219,8 +256,8 @@ func AddToken(c *gin.Context) {
 		ModelLimitsEnabled: token.ModelLimitsEnabled,
 		ModelLimits:        token.ModelLimits,
 		AllowIps:           token.AllowIps,
-		Group:              token.Group,
-		CrossGroupRetry:    token.CrossGroupRetry,
+		Group:              tokenGroup,
+		CrossGroupRetry:    crossGroupRetry,
 	}
 	err = cleanToken.Insert()
 	if err != nil {
@@ -299,6 +336,15 @@ func UpdateToken(c *gin.Context) {
 		cleanToken.AllowIps = token.AllowIps
 		cleanToken.Group = token.Group
 		cleanToken.CrossGroupRetry = token.CrossGroupRetry
+		if setting.TokenGroupLockedToUserGroupEnabled {
+			lockedGroup, lockErr := resolveLockedTokenGroup(userId)
+			if lockErr != nil {
+				common.ApiError(c, lockErr)
+				return
+			}
+			cleanToken.Group = lockedGroup
+			cleanToken.CrossGroupRetry = false
+		}
 	}
 	err = cleanToken.Update()
 	if err != nil {
@@ -308,7 +354,7 @@ func UpdateToken(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
-		"data":    buildMaskedTokenResponse(cleanToken),
+		"data":    applyTokenGroupLockToResponse(userId, buildMaskedTokenResponse(cleanToken)),
 	})
 }
 

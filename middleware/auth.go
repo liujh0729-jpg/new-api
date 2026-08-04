@@ -14,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
 
@@ -399,7 +400,12 @@ func TokenAuth() func(c *gin.Context) {
 
 		userGroup := userCache.Group
 		tokenGroup := token.Group
-		if tokenGroup != "" {
+		if setting.TokenGroupLockedToUserGroupEnabled {
+			// 锁定模式：始终以用户等级分组计费，忽略 Key 上保存的旧分组
+			if userGroup == "" {
+				userGroup = "default"
+			}
+		} else if tokenGroup != "" {
 			// check common.UserUsableGroups[userGroup]
 			if _, ok := service.GetUserUsableGroups(userGroup)[tokenGroup]; !ok {
 				abortWithOpenAiMessage(c, http.StatusForbidden, fmt.Sprintf("无权访问 %s 分组", tokenGroup))
@@ -419,6 +425,10 @@ func TokenAuth() func(c *gin.Context) {
 		err = SetupContextForToken(c, token, parts...)
 		if err != nil {
 			return
+		}
+		if setting.TokenGroupLockedToUserGroupEnabled {
+			common.SetContextKey(c, constant.ContextKeyTokenGroup, userGroup)
+			common.SetContextKey(c, constant.ContextKeyTokenCrossGroupRetry, false)
 		}
 		c.Next()
 	}

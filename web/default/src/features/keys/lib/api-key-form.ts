@@ -56,8 +56,19 @@ export const API_KEY_FORM_DEFAULT_VALUES: ApiKeyFormValues = {
 }
 
 export function getApiKeyFormDefaultValues(
-  defaultUseAutoGroup: boolean
+  defaultUseAutoGroup: boolean,
+  options?: {
+    tokenGroupLocked?: boolean
+    lockedGroup?: string
+  }
 ): ApiKeyFormValues {
+  if (options?.tokenGroupLocked) {
+    return {
+      ...API_KEY_FORM_DEFAULT_VALUES,
+      group: options.lockedGroup || DEFAULT_GROUP,
+      cross_group_retry: false,
+    }
+  }
   return {
     ...API_KEY_FORM_DEFAULT_VALUES,
     group: defaultUseAutoGroup ? 'auto' : DEFAULT_GROUP,

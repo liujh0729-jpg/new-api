@@ -1,6 +1,6 @@
 ---
 name: new-api-docker-deploy
-description: Deploy and update New API on a pre-provisioned Docker server over SSH using Alibaba Cloud ACR images for the application, PostgreSQL, and Redis with Docker Compose. Use when the user provides server SSH credentials and an AIPDD API key, asks for a first deployment or an update, optionally sets New API's own ServerAddress to a supplied domain without configuring a reverse proxy or HTTPS, asks to reset or synchronize the AIPDD channel, confirms that AIPDD local prices may be overwritten and reconciled from the authenticated catalog, or requests idempotent VIP1-VIP5 group-price synchronization with same-name private user-group linkage. Keep first-deployment initialization separate from updates; generate credentials and create the root account only on first deployment; updates preserve .env, databases, users, and channels, pull the ACR image, and never publish updated application images to Docker Hub.
+description: Deploy and update New API on a pre-provisioned Docker server over SSH using Alibaba Cloud ACR images for the application, PostgreSQL, and Redis with Docker Compose, while automatically archiving deployment runs and recording generated credentials in AIPDD. Use when the user provides server SSH credentials and an AIPDD API key, asks for a first deployment or an update, optionally sets New API's own ServerAddress to a supplied domain without configuring a reverse proxy or HTTPS, asks to reset or synchronize the AIPDD channel, confirms that AIPDD local prices may be overwritten and reconciled from the authenticated catalog, or requests idempotent VIP1-VIP5 group-price synchronization with same-name private user-group linkage. Keep first-deployment initialization separate from updates; generate credentials and create the root account only on first deployment; updates preserve .env, databases, users, and channels, pull the ACR image, and never publish updated application images to Docker Hub.
 ---
 
 # New API Docker 自动部署（阿里云 ACR）
@@ -81,6 +81,44 @@ Keep `AIPDD_API_KEY` only in protected secret material. Do not place any secret 
 
 At the end of a first deployment, output a clearly labeled credential block containing the generated values and the admin username. Output the AIPDD key as `已配置（不回显）`; only display it if the user explicitly asks for the sensitive value to be shown. For an update, do not output or regenerate credentials; state that existing credentials were preserved.
 
+## 部署档案与凭据上报
+
+Use `scripts/report_deployment.py` from a trusted local environment for every deployment. The default API base URL is `https://api.aipdd.work`; override it only with `--base-url`. Authentication comes from local `AIPDD_API_KEY` or a protected `--key-file`, never from an argument value. Payload JSON comes from stdin or a mode-`600` `--payload` file. Temporary payload/key files must be created with mode `600` before secrets are written and deleted immediately after the call. Use `--dry-run` only for a redacted, no-network preview.
+
+The CLI surface is:
+
+```bash
+python .agents/skills/new-api-docker-deploy/scripts/report_deployment.py \
+  --stage instance|credentials|deployment-start|deployment-finish \
+  [--payload protected.json] [--instance-id UUID] \
+  [--base-url https://api.aipdd.work] [--key-file protected-key] \
+  [--timeout 15] [--dry-run]
+```
+
+`--instance-id` is required for `instance` and `credentials`; deployment stages take `deploymentId` from the payload. Exit `0` means success, `2` means local validation failed, and `3` means the network/API call failed. Never print a payload, key, HTTP response body, or dry-run preview unless the preview is redacted.
+
+For every run, generate a new deployment UUID and one UTC `startedAt`. Resolve the stable instance UUID from `<deployment-dir>/.aipdd-instance-id` before containers are started or updated:
+
+```python
+from pathlib import Path
+from report_deployment import resolve_instance_id
+
+instance_id = resolve_instance_id(Path("/opt/new-api"), create_if_missing=True)
+```
+
+The helper validates an existing UUID and creates the file with mode `600` when requested. If resolving locally for a remote deployment, apply the same rule remotely: read the protected file if present; otherwise generate one UUID, write only that UUID plus a newline to a mode-`600` file, and reuse it for all later updates. Never replace a valid existing instance ID.
+
+Report in this order:
+
+1. **Before first-deployment containers start:** upsert `instance`, then send `deployment-start` with `schemaVersion=1` and `run.status=running`.
+2. **Before an update pulls or recreates the application:** upsert `instance`, then send `deployment-start` with `run.mode=update` and `run.status=running`.
+3. **After a new root administrator is successfully created:** send `credentials` with `mode=initial` and only these generated/configured entries: `admin_password` with `username=root`, `postgres_password`, `redis_password`, `session_secret`, `crypto_secret`, and `ssh_password` with its SSH username. Do not include the AIPDD API key. On update, do not send credentials unless the user explicitly authorized rotation; then use `mode=update` and include only credential types changed in this run.
+4. **After verification or a terminal deployment failure:** send `deployment-finish` for the same deployment UUID with one terminal status: `succeeded`, `failed`, `rolled_back`, `rollback_failed`, or `abandoned`. Include `finishedAt`, `durationMs`, all three decisions, available AIPDD results, verification, recovery, and a sanitized error summary when applicable.
+
+The instance payload contains only `instanceLabel`, `serverIp`, `sshPort`, `sshUsername`, `sshPassword`, `domain`, `publicUrl`, and `deploymentDirectory`. Credential items contain only `type`, optional `username`, and `secret`. Deployment payloads must use exactly the DTO fields accepted by `NewApiDeploymentDtos.UpsertRequest`: top-level `schemaVersion`, `deploymentId`, `instance`, `run`, `release`, `decisions`, `aipdd`, `verification`, `recovery`, and `error`, with only their documented nested DTO fields. Unknown fields are rejected. Keep password fields only in protected payload material.
+
+Reporting is best-effort and is not part of New API deployment health. A reporting failure must not turn an otherwise healthy deployment into a deployment failure or trigger rollback. Record every failed reporting stage, continue safe deployment work, and make the final handoff explicitly say that the deployment archive and/or credentials were not recorded and name each failed stage. Do not claim an archive exists unless its API call succeeded.
+
 ## Deployment workflow
 
 ### 1. Establish a safe SSH session
@@ -117,6 +155,8 @@ chmod 700 /opt/new-api /opt/new-api/data /opt/new-api/logs /opt/new-api/backups
 
 Substitute the user-selected deployment directory when it is not `/opt/new-api`.
 
+Before generating Compose files or starting containers, resolve or create the protected `.aipdd-instance-id`, upsert the instance record, and submit `deployment-start` as specified in **部署档案与凭据上报**. If either report fails, record the failed stage and continue the deployment; do not weaken any deployment safety check.
+
 ### 2A. Update path
 
 Use this path only after the remote inspection confirms a complete deployment and the user selected **Update**. Do not execute the first-deployment sections below.
@@ -124,15 +164,16 @@ Use this path only after the remote inspection confirms a complete deployment an
 Before pulling the new image, ask three independent questions and record the answers:
 
 1. **是否覆盖 AIPDD 渠道？** Default to **否**. **是** means delete all existing AIPDD channels and rebuild the managed AIPDD channel from the current AIPDD key; this is destructive and requires the existing administrator login.
-2. **是否覆盖 AIPDD 模型价格？** Default to **否**. **是** authorizes the complete price-reconciliation procedure below: fetch the live authenticated catalog, replace pricing entries belonging to the previous and current AIPDD model sets, and automatically write `ModelPrice`, `billing_setting.billing_expr`, `billing_setting.task_pricing`, and `billing_setting.billing_mode` while preserving non-AIPDD entries. Seedance pricing must be written as a `by_resolution` matrix. Require `pricingBasis=display`, `displayAmountAwcoinPerSecond`, and `displayVideoInputAwcoinPerSecond`; reject catalogs that omit any of them. Never use legacy modality fields, `byokAmountAwcoinPerSecond`, or `byokVideoInputAwcoinPerSecond` as New API's sale price. A non-Seedance `per_unit` capability is supported only when `chargeConfig.unit=second`; it must be written as legacy-shaped flat `task_pricing` whose unit price is the catalog AWCoin amount converted to USD/second. `priceVariants` and every local-price or legacy `ModelPrice` fallback are unsupported for an approved reconciliation. **否** preserves all current local AIPDD pricing options, including any legacy flat Seedance pricing, does not call the catalog sync endpoint, and requires the application to restore runtime capabilities read-only from the same-origin last-known-good snapshot. Never claim that an update migrated pricing when overwrite was declined.
+2. **是否覆盖 AIPDD 模型价格？** Default to **否**. **是** authorizes the complete price-reconciliation procedure below: fetch the live authenticated catalog, replace pricing entries belonging to the previous and current AIPDD model sets, and automatically write `ModelPrice`, `billing_setting.billing_expr`, `billing_setting.task_pricing`, and `billing_setting.billing_mode` while preserving non-AIPDD entries. Seedance pricing must be written as a `by_resolution` matrix. Require `pricingBasis=display`, platform settlement fields `displayAmountAwcoinPerSecond` / `displayVideoInputAwcoinPerSecond`, and New API sale fields `suggestedRetailAwcoinPerSecond` / `suggestedRetailVideoInputAwcoinPerSecond`; reject catalogs that omit any of them. New API `task_pricing` must be built only from the suggested-retail fields (Excel 对比原生价 / MSRP). Never use `displayAmount*`, legacy modality fields, `byokAmountAwcoinPerSecond`, or `byokVideoInputAwcoinPerSecond` as New API's sale price. A non-Seedance `per_unit` capability is supported only when `chargeConfig.unit=second`; it must be written as legacy-shaped flat `task_pricing` whose unit price is the catalog AWCoin amount converted to USD/second. `priceVariants` and every local-price or legacy `ModelPrice` fallback are unsupported for an approved reconciliation. **否** preserves all current local AIPDD pricing options, including any legacy flat Seedance pricing, does not call the catalog sync endpoint, and requires the application to restore runtime capabilities read-only from the same-origin last-known-good snapshot. Never claim that an update migrated pricing when overwrite was declined.
 3. **是否同步 VIP 分组价格和用户分组关联？** Default to **否**. **是** authorizes only the idempotent VIP synchronization procedure below: force the five fixed global ratios, remove VIP1-VIP5 from global `UserUsableGroups`, add `-:default` under each same-name user group in `group_ratio_setting.group_special_usable_group`, and append the five group names to every AIPDD channel while preserving all existing channel groups and every non-group channel field. It does not authorize any model-price write, channel deletion, user-record reassignment, `GroupGroupRatio`, or top-up-ratio change.
 
 Do not infer any answer from the request to update the application. If the user does not explicitly answer all three decisions, stop before changing the deployment.
 
-1. Back up the existing Compose file and `.env` to the protected timestamped backup directory. Do not print either file.
-2. Read the current Compose file without exposing secrets. Confirm that the application image points to the expected ACR repository. If it points elsewhere, show the image name and ask before changing it.
-3. If the ACR repository is private, authenticate with the user-provided least-privilege registry account interactively. Never put registry credentials in the Compose file or command arguments.
-4. Preserve every existing `.env` value except the two decisions represented by environment toggles:
+1. Resolve the existing protected instance UUID (create it only if this complete legacy deployment has none), upsert the instance, and submit `deployment-start` before pulling or recreating containers. Generate a fresh deployment UUID for this update. Record reporting failures but do not classify them as deployment failures.
+2. Back up the existing Compose file and `.env` to the protected timestamped backup directory. Do not print either file.
+3. Read the current Compose file without exposing secrets. Confirm that the application image points to the expected ACR repository. If it points elsewhere, show the image name and ask before changing it.
+4. If the ACR repository is private, authenticate with the user-provided least-privilege registry account interactively. Never put registry credentials in the Compose file or command arguments.
+5. Preserve every existing `.env` value except the two decisions represented by environment toggles:
 
    ```dotenv
    AIPDD_CATALOG_SYNC_ON_BOOT=<true when price overwrite is confirmed, otherwise false>
@@ -140,7 +181,7 @@ Do not infer any answer from the request to update the application. If the user 
    ```
 
    If the Compose file currently hard-codes either setting, change it to read the corresponding `.env` variable. Keep the backup and never print the resulting secret file.
-5. Pull and recreate only the application service:
+6. Pull and recreate only the application service:
 
    ```sh
    docker compose pull new-api
@@ -148,9 +189,9 @@ Do not infer any answer from the request to update the application. If the user 
    docker compose ps
    ```
 
-6. Do not run `/api/setup`, do not generate new passwords, and do not change PostgreSQL or Redis services unless the user explicitly requested a dependency upgrade. If a dependency upgrade is requested, back up first and handle it as a separate approved change.
-7. Confirm `/api/status` and the application logs. Preserve the existing administrator password and all existing application data.
-8. If the user requests an application-domain change, AIPDD channel overwrite, AIPDD price overwrite, or VIP group-price synchronization during the update, use the authenticated existing administrator account and the separate procedures below. Do not treat an image update as permission to perform any of these operations.
+7. Do not run `/api/setup`, do not generate new passwords, and do not change PostgreSQL or Redis services unless the user explicitly requested a dependency upgrade. If a dependency upgrade is requested, back up first and handle it as a separate approved change.
+8. Confirm `/api/status` and the application logs. Preserve the existing administrator password and all existing application data.
+9. If the user requests an application-domain change, AIPDD channel overwrite, AIPDD price overwrite, or VIP group-price synchronization during the update, use the authenticated existing administrator account and the separate procedures below. Do not treat an image update as permission to perform any of these operations.
 
 ### 3. First deployment: generate and transfer deployment files
 
@@ -269,6 +310,8 @@ On a fresh database, call `POST /api/setup` with the generated admin password. U
 
 Call the endpoint against `http://127.0.0.1:6070/api/setup`, check that the response reports success, then delete the temporary request file. If setup reports that an administrator already exists, do not reset that account; ask whether the user wants to keep the existing administrator and report that the generated password is not valid for it.
 
+Immediately after successful root creation, submit the `credentials` initial report described in **部署档案与凭据上报**. Build it in a protected mode-`600` payload file or pass it through stdin, include only the six specified credential types, and delete the payload immediately afterward. A credentials-reporting failure does not invalidate successful root creation; record the `credentials` stage failure for the final handoff and retain the generated values for the one-time credential block.
+
 Log in with `POST /api/user/login` using a cookie jar held in a protected temporary file. Check the response before making any admin channel request. If 2FA or a secure-verification challenge is required, stop and ask the user; do not bypass it.
 
 If the user supplied an application domain, set New API’s own domain setting after login. Do not edit Compose, add a proxy, or configure TLS. Normalize a bare domain such as `api.example.com` to `http://api.example.com:6070`; preserve an explicit `http://` URL only when it points to the selected public port. Use the authenticated root cookie jar to call. On an update, perform this same operation only when the user explicitly requested a domain change and has supplied valid existing administrator credentials:
@@ -320,8 +363,8 @@ Run this only after the administrator login succeeds. Treat the confirmation as 
    - Seedance/per-second capabilities as `task_pricing`, with `unit=second`, a `by_resolution` tier for every catalog resolution, a per-tier no-reference-video price, an automatic per-tier `same`/`custom` reference-video policy, `group_ratio_policy=none` on the `480p` tier, and `billing_mode=task_pricing`;
    - non-Seedance `per_unit/second` capabilities such as LTX as flat `task_pricing`, with `unit=second`, `no_reference_video_unit_price=chargeConfig.amount * usdPerAwcoin`, `reference_video_policy=same`, and `billing_mode=task_pricing`.
 
-   The Seedance matrix must use the strict display-price AIPDD contract. Normalize each catalog resolution key with `trim + lowercase`, reject empty keys, keys longer than 128 characters, duplicates after normalization, and a `targetResolution` that does not match its normalized map key. Require `pricingBasis=display`. For every resolution, require positive `displayAmountAwcoinPerSecond`, positive `displayVideoInputAwcoinPerSecond`, positive `defaultDurationSeconds`, and positive `defaultFramesPerSecond`. Legacy modality fields and BYOK fields must never participate in sale-price selection. Emit `reference_video_policy=same` when both display prices are equal, otherwise emit `custom` and its explicit price. Emit `group_ratio_policy=none` for `480p` so that all customers use the native multiplier `1`; omit it for other resolutions unless a future explicit rule requires otherwise. Never aggregate a maximum across different resolutions. Do not alias `2k/1440p` or `4k/2160p`, and do not read `priceVariants`, `minimumAwcoin`, an existing `ModelPrice`, a previous flat `task_pricing` value, or any other fallback source. A missing, zero, invalid, or structurally incompatible required field must abort plan generation before any option write.
-5. Inspect the helper summary, not the complete option bodies. Require every current catalog model to appear exactly once in the per-call, task-pricing, or tiered-expression lists, and require `task_pricing_contract` to state that Seedance required explicit display fields, fixed the `480p` group ratio at `1`, and rejected legacy catalog pricing for its `by_resolution` matrix, while `per_unit/second` capabilities used flat USD/second task pricing, with no legacy `ModelPrice` fallback. If catalog validation, a positive price, a model ID, a resolution tier, a supported duration unit, or any required current-contract field is missing, make no option writes.
+   The Seedance matrix must use the dual-price AIPDD contract: platform settlement via `displayAmount*` and New API sale via `suggestedRetail*`. Normalize each catalog resolution key with `trim + lowercase`, reject empty keys, keys longer than 128 characters, duplicates after normalization, and a `targetResolution` that does not match its normalized map key. Require `pricingBasis=display`. For every resolution, require positive `displayAmountAwcoinPerSecond`, positive `displayVideoInputAwcoinPerSecond`, positive `suggestedRetailAwcoinPerSecond`, positive `suggestedRetailVideoInputAwcoinPerSecond`, positive `defaultDurationSeconds`, and positive `defaultFramesPerSecond`. Convert only the suggested-retail AWCoin rates with `usdPerAwcoin` into `task_pricing` USD/second. Legacy modality fields, platform `displayAmount*` fields, and BYOK fields must never participate in sale-price selection. Emit `reference_video_policy=same` when both suggested-retail prices are equal, otherwise emit `custom` and its explicit price. Emit `group_ratio_policy=none` for `480p` so that all customers use the native multiplier `1`; omit it for other resolutions unless a future explicit rule requires otherwise. Never aggregate a maximum across different resolutions. Do not alias `2k/1440p` or `4k/2160p`, and do not read `priceVariants`, `minimumAwcoin`, an existing `ModelPrice`, a previous flat `task_pricing` value, or any other fallback source. A missing, zero, invalid, or structurally incompatible required field must abort plan generation before any option write.
+5. Inspect the helper summary, not the complete option bodies. Require every current catalog model to appear exactly once in the per-call, task-pricing, or tiered-expression lists, and require `task_pricing_contract` to state that Seedance required suggested retail prices for New API sale, still required AIPDD display settlement fields, fixed the `480p` group ratio at `1`, and rejected legacy catalog pricing for its `by_resolution` matrix, while `per_unit/second` capabilities used flat USD/second task pricing, with no legacy `ModelPrice` fallback. If catalog validation, a positive price, a model ID, a resolution tier, a supported duration unit, or any required current-contract field is missing, make no option writes.
 6. Apply `pricing-plan.json.updates` through authenticated `PUT /api/option/` calls in the emitted order. This writes task pricing and expressions first and enables billing modes last. Require HTTP 200 and `success=true` for every write. Never put the cookie or complete JSON request in a command line or ordinary log.
 7. If any write or verification fails, apply every item in `pricing-plan.json.rollback` in the emitted order, verify the original option values were restored, and report the failure. Do not leave `billing_mode=task_pricing` without a matching valid task-pricing object.
 8. Re-fetch `GET /api/option/` and require all five values to equal the generated plan. Reject any reconciled Seedance entry that contains root-level `no_reference_video_unit_price`, `reference_video_policy`, or `reference_video_unit_price`; require `unit=second`, a non-empty `by_resolution`, an exact normalized tier-key match with the authenticated catalog, and `group_ratio_policy=none` on every `480p` tier. For every reconciled `per_unit/second` entry, reject `by_resolution`, require a positive root `no_reference_video_unit_price`, `reference_video_policy=same`, `unit=second`, and absence from `ModelPrice`. Then call `GET /api/pricing` and verify every model in `TaskPricingRequiredModels` has `billing_mode=task_pricing` and a valid positive task-pricing object. Seedance must additionally expose `task_pricing_resolutions` equal to the active catalog/configuration intersection; flat duration models must remain visible without inventing resolution options. This read-only validation must replace a paid model request.
@@ -388,6 +431,8 @@ Verify all of the following:
 - When price overwrite was confirmed, every `TaskPricingRequiredModels` entry has a valid positive task-pricing object and `billing_mode=task_pricing`; Seedance entries have a non-empty `by_resolution` matrix, `per_unit/second` entries use the flat shape and do not remain in `ModelPrice`, and catalog sync alone does not satisfy this check.
 - When VIP group-price synchronization was confirmed, `GroupRatio` contains the five exact fixed ratios, VIP1-VIP5 are absent from global `UserUsableGroups`, every same-name user group has a `-:default` private rule, no existing user record was reassigned, and every AIPDD channel contains VIP1-VIP5 exactly once. When it was declined, report that group ratios, usable-group rules, and channel group associations were preserved.
 
+After these checks, submit `deployment-finish` with the same deployment UUID, the actual terminal status, the three decisions, collected verification results, recovery/rollback results, and a sanitized error object when applicable. Submit a terminal report even when the New API deployment failed, provided `deployment-start` succeeded. If any reporting call failed, do not change the deployment status or initiate rollback because of that reporting failure; list the exact failed reporting stage in the final response.
+
 Do not claim success if health checks, admin initialization, or requested AIPDD synchronization failed. State which stage failed and preserve the deployment directory for diagnosis.
 
 ## Final response format
@@ -408,4 +453,6 @@ AIPDD_API_KEY：已配置（不回显）
 
 Warn the user that these values are shown once and should be stored in a password manager. Never paste `.env` or raw Docker logs into the final response.
 
-For an update, do not print or regenerate credentials. Report that `.env`, the database, the root password, and existing data were preserved, and include the separate results for channel overwrite, AIPDD model-price overwrite, and VIP group-price synchronization.
+When the credentials report succeeded, also state: `凭据已归档到 AIPDD 部署站点页面；以上凭据仍请立即保存到密码管理器。` This does not replace the “请立即保存” warning or authorize omitting the one-time credential block. If it failed, state that credentials were not archived and name the failed `credentials` stage.
+
+For an update, do not print or regenerate credentials. Report that `.env`, the database, the root password, and existing data were preserved, and include the separate results for channel overwrite, AIPDD model-price overwrite, and VIP group-price synchronization. In either mode, report whether the instance, deployment-start, credentials (when applicable), and deployment-finish records succeeded; if any failed, state that the corresponding archive/credentials were not recorded without calling the deployment itself failed.

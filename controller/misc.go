@@ -86,7 +86,8 @@ func GetStatus(c *gin.Context) {
 		"chats":                         setting.Chats,
 		"demo_site_enabled":             operation_setting.DemoSiteEnabled,
 		"self_use_mode_enabled":         operation_setting.SelfUseModeEnabled,
-		"default_use_auto_group":        setting.DefaultUseAutoGroup,
+		"default_use_auto_group":                   setting.DefaultUseAutoGroup,
+		"token_group_locked_to_user_group_enabled": setting.TokenGroupLockedToUserGroupEnabled,
 
 		"usd_exchange_rate": operation_setting.USDExchangeRate,
 		"price":             operation_setting.Price,

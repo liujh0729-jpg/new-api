@@ -65,3 +65,112 @@ export async function fetchUpstreamRatios(request: FetchUpstreamRatiosRequest) {
   )
   return res.data
 }
+
+export type TaskPricingCSVSummary = {
+  models: string[]
+  resolution_tiers: number
+  source_rows: number
+  exempt_resolutions: string[]
+  groups?: Record<string, number>
+  rmb_per_usd?: string
+}
+
+export type TaskPricingCSVOptionUpdate = {
+  key: string
+  value: string
+}
+
+export type TaskPricingCSVPlan = {
+  generated_at: string
+  summary: TaskPricingCSVSummary
+  updates: TaskPricingCSVOptionUpdate[]
+  rollback: TaskPricingCSVOptionUpdate[]
+}
+
+export type TaskPricingCSVPlanResponse = {
+  success: boolean
+  message: string
+  data: TaskPricingCSVPlan
+}
+
+export type TaskPricingCSVImportResponse = {
+  success: boolean
+  message: string
+  data?: {
+    summary: TaskPricingCSVSummary
+    updated_keys: string[]
+    models_updated: string[]
+  }
+}
+
+async function downloadTaskPricingCSVBlob(
+  url: string,
+  fallbackFilename: string
+) {
+  const res = await api.get(url, {
+    responseType: 'blob',
+    skipBusinessError: true,
+    disableDuplicate: true,
+  } as Record<string, unknown>)
+
+  const blob = res.data as Blob
+  const contentType = String(res.headers['content-type'] || '')
+  if (contentType.includes('application/json') || blob.type.includes('json')) {
+    const text = await blob.text()
+    const parsed = JSON.parse(text) as { success?: boolean; message?: string }
+    throw new Error(parsed.message || 'Download failed')
+  }
+
+  const disposition = String(res.headers['content-disposition'] || '')
+  const filenameMatch = /filename\*?=(?:UTF-8''|")?([^\";]+)/i.exec(disposition)
+  const filename = filenameMatch
+    ? decodeURIComponent(filenameMatch[1].replace(/"/g, ''))
+    : fallbackFilename
+
+  const objectUrl = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = objectUrl
+  anchor.download = filename
+  anchor.click()
+  URL.revokeObjectURL(objectUrl)
+}
+
+export async function downloadTaskPricingCSVTemplate() {
+  await downloadTaskPricingCSVBlob(
+    '/api/option/task_pricing_csv/template',
+    'task-pricing-template.csv'
+  )
+}
+
+export async function exportTaskPricingCSV() {
+  await downloadTaskPricingCSVBlob(
+    '/api/option/task_pricing_csv/export',
+    'task-pricing-export.csv'
+  )
+}
+
+export async function previewTaskPricingCSV(file: File) {
+  const formData = new FormData()
+  formData.append('file', file)
+  const res = await api.post<TaskPricingCSVPlanResponse>(
+    '/api/option/task_pricing_csv/preview',
+    formData,
+    {
+      skipBusinessError: true,
+    } as Record<string, unknown>
+  )
+  return res.data
+}
+
+export async function importTaskPricingCSV(file: File) {
+  const formData = new FormData()
+  formData.append('file', file)
+  const res = await api.post<TaskPricingCSVImportResponse>(
+    '/api/option/task_pricing_csv/import',
+    formData,
+    {
+      skipBusinessError: true,
+    } as Record<string, unknown>
+  )
+  return res.data
+}

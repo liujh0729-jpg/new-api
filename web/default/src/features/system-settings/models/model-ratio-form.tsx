@@ -33,6 +33,7 @@ import {
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { ModelRatioVisualEditor } from './model-ratio-visual-editor'
+import { TaskPricingCsvImport } from './task-pricing-csv-import'
 
 type ModelFormValues = {
   ModelPrice: string
@@ -87,6 +88,8 @@ export const ModelRatioForm = memo(function ModelRatioForm({
 
   return (
     <div className='space-y-6'>
+      <TaskPricingCsvImport />
+
       <div className='flex justify-end'>
         <Button variant='outline' size='sm' onClick={toggleEditMode}>
           {editMode === 'visual' ? (

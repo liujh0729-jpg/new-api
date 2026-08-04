@@ -92,16 +92,18 @@ type AIPDDSeedanceResolutionPricing struct {
 	EnhancementType                  string   `json:"enhancementType"`
 	InputTypes                       []string `json:"inputTypes"`
 	AmountAWCoinPerSecond            float64  `json:"amountAwcoinPerSecond"`
-	DisplayAmountAWCoinPerSecond     *float64 `json:"displayAmountAwcoinPerSecond,omitempty"`
-	BYOKAmountAWCoinPerSecond        *float64 `json:"byokAmountAwcoinPerSecond,omitempty"`
-	TextInputAWCoinPerSecond         float64  `json:"textInputAwcoinPerSecond"`
-	ImageInputAWCoinPerSecond        float64  `json:"imageInputAwcoinPerSecond"`
-	VideoInputAWCoinPerSecond        float64  `json:"videoInputAwcoinPerSecond"`
-	DisplayVideoInputAWCoinPerSecond *float64 `json:"displayVideoInputAwcoinPerSecond,omitempty"`
-	BYOKVideoInputAWCoinPerSecond    *float64 `json:"byokVideoInputAwcoinPerSecond,omitempty"`
-	AudioInputAWCoinPerSecond        float64  `json:"audioInputAwcoinPerSecond"`
-	DefaultDurationSeconds           float64  `json:"defaultDurationSeconds"`
-	DefaultFramesPerSecond           float64  `json:"defaultFramesPerSecond"`
+	DisplayAmountAWCoinPerSecond               *float64 `json:"displayAmountAwcoinPerSecond,omitempty"`
+	BYOKAmountAWCoinPerSecond                  *float64 `json:"byokAmountAwcoinPerSecond,omitempty"`
+	SuggestedRetailAWCoinPerSecond             *float64 `json:"suggestedRetailAwcoinPerSecond,omitempty"`
+	TextInputAWCoinPerSecond                   float64  `json:"textInputAwcoinPerSecond"`
+	ImageInputAWCoinPerSecond                  float64  `json:"imageInputAwcoinPerSecond"`
+	VideoInputAWCoinPerSecond                  float64  `json:"videoInputAwcoinPerSecond"`
+	DisplayVideoInputAWCoinPerSecond           *float64 `json:"displayVideoInputAwcoinPerSecond,omitempty"`
+	BYOKVideoInputAWCoinPerSecond              *float64 `json:"byokVideoInputAwcoinPerSecond,omitempty"`
+	SuggestedRetailVideoInputAWCoinPerSecond   *float64 `json:"suggestedRetailVideoInputAwcoinPerSecond,omitempty"`
+	AudioInputAWCoinPerSecond                  float64  `json:"audioInputAwcoinPerSecond"`
+	DefaultDurationSeconds                     float64  `json:"defaultDurationSeconds"`
+	DefaultFramesPerSecond                     float64  `json:"defaultFramesPerSecond"`
 }
 
 type AIPDDSeedancePricing struct {

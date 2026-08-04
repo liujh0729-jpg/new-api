@@ -55,6 +55,7 @@ type GroupFormValues = {
   GroupGroupRatio: string
   AutoGroups: string
   DefaultUseAutoGroup: boolean
+  TokenGroupLockedToUserGroupEnabled: boolean
   GroupSpecialUsableGroup: string
 }
 
@@ -144,6 +145,31 @@ export const GroupRatioForm = memo(function GroupRatioForm({
                     <FormDescription>
                       {t(
                         'When enabled, newly created tokens start in the first auto group.'
+                      )}
+                    </FormDescription>
+                  </div>
+                  <FormControl>
+                    <Switch
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                    />
+                  </FormControl>
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name='TokenGroupLockedToUserGroupEnabled'
+              render={({ field }) => (
+                <FormItem className='flex flex-row items-center justify-between rounded-lg border p-4'>
+                  <div className='space-y-0.5'>
+                    <FormLabel className='text-base'>
+                      {t('Lock API Key to user group')}
+                    </FormLabel>
+                    <FormDescription>
+                      {t(
+                        'When enabled, API Keys always use the user account group for billing. Users cannot choose groups, and auto / cross-group retry are disabled.'
                       )}
                     </FormDescription>
                   </div>
@@ -292,6 +318,31 @@ export const GroupRatioForm = memo(function GroupRatioForm({
                     <FormDescription>
                       {t(
                         'When enabled, newly created tokens start in the first auto group.'
+                      )}
+                    </FormDescription>
+                  </div>
+                  <FormControl>
+                    <Switch
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                    />
+                  </FormControl>
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name='TokenGroupLockedToUserGroupEnabled'
+              render={({ field }) => (
+                <FormItem className='flex flex-row items-center justify-between rounded-lg border p-4'>
+                  <div className='space-y-0.5'>
+                    <FormLabel className='text-base'>
+                      {t('Lock API Key to user group')}
+                    </FormLabel>
+                    <FormDescription>
+                      {t(
+                        'When enabled, API Keys always use the user account group for billing. Users cannot choose groups, and auto / cross-group retry are disabled.'
                       )}
                     </FormDescription>
                   </div>

@@ -187,14 +187,26 @@ def resolution_task_pricing(
             f"{capability.get('id')}/{resolution}.defaultFramesPerSecond",
             positive=True,
         )
-        no_reference_rate = decimal_value(
+        # AIPDD still publishes platform display/settlement prices; New API sale
+        # prices must come from suggested retail (对比原生价 / MSRP).
+        decimal_value(
             item.get("displayAmountAwcoinPerSecond"),
             f"{capability.get('id')}/{resolution}.displayAmountAwcoinPerSecond",
             positive=True,
         )
-        video_rate = decimal_value(
+        decimal_value(
             item.get("displayVideoInputAwcoinPerSecond"),
             f"{capability.get('id')}/{resolution}.displayVideoInputAwcoinPerSecond",
+            positive=True,
+        )
+        no_reference_rate = decimal_value(
+            item.get("suggestedRetailAwcoinPerSecond"),
+            f"{capability.get('id')}/{resolution}.suggestedRetailAwcoinPerSecond",
+            positive=True,
+        )
+        video_rate = decimal_value(
+            item.get("suggestedRetailVideoInputAwcoinPerSecond"),
+            f"{capability.get('id')}/{resolution}.suggestedRetailVideoInputAwcoinPerSecond",
             positive=True,
         )
         no_reference_price = no_reference_rate * usd_per_awcoin
@@ -357,8 +369,8 @@ def build_updates(
             "per_call_models": sorted(per_call_models),
             "task_pricing_models": sorted(task_models),
             "tiered_expr_models": sorted(llm_names),
-            "task_pricing_contract": "Seedance by_resolution matrix requires explicit display prices, fixes 480p group ratio at 1, and rejects legacy catalog pricing; per_unit/second tasks use flat USD/second task pricing; no legacy ModelPrice fallback",
-            "task_pricing_policy": "per-resolution Seedance display USD/second with group_ratio_policy=none for 480p, plus catalog per-unit duration USD/second; BYOK prices are informational only",
+            "task_pricing_contract": "Seedance by_resolution matrix requires suggested retail prices for New API sale, still requires AIPDD display settlement fields, fixes 480p group ratio at 1, and rejects legacy catalog pricing; per_unit/second tasks use flat USD/second task pricing; no legacy ModelPrice fallback",
+            "task_pricing_policy": "per-resolution Seedance suggested-retail USD/second with group_ratio_policy=none for 480p, plus catalog per-unit duration USD/second; display/BYOK prices are informational only",
         },
     }
 

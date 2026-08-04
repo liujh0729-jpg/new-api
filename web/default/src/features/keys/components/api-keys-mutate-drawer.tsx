@@ -126,6 +126,8 @@ export function ApiKeysMutateDrawer({
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const defaultUseAutoGroup = status?.default_use_auto_group === true
+  const tokenGroupLocked =
+    status?.token_group_locked_to_user_group_enabled === true
 
   // Fetch models
   const { data: modelsData } = useQuery({
@@ -152,8 +154,11 @@ export function ApiKeysMutateDrawer({
     })
   )
 
-  // Add auto group if configured
-  if (!groups.some((g) => g.value === 'auto')) {
+  // Add auto group if configured (disabled in lock mode)
+  if (
+    !tokenGroupLocked &&
+    !groups.some((g) => g.value === 'auto')
+  ) {
     groups.unshift({
       value: 'auto',
       label: 'auto',
@@ -161,9 +166,20 @@ export function ApiKeysMutateDrawer({
     })
   }
 
+  const lockedGroupOption = tokenGroupLocked ? groups[0] : undefined
+  const lockedGroup = lockedGroupOption?.value || ''
+  const lockedRatio =
+    lockedGroupOption?.ratio !== undefined &&
+    lockedGroupOption?.ratio !== null
+      ? String(lockedGroupOption.ratio)
+      : undefined
+
   const form = useForm<ApiKeyFormValues>({
     resolver: zodResolver(apiKeyFormSchema),
-    defaultValues: getApiKeyFormDefaultValues(defaultUseAutoGroup),
+    defaultValues: getApiKeyFormDefaultValues(defaultUseAutoGroup, {
+      tokenGroupLocked,
+      lockedGroup,
+    }),
   })
 
   // Load existing data when updating
@@ -172,19 +188,44 @@ export function ApiKeysMutateDrawer({
       // For update, fetch fresh data
       getApiKey(currentRow.id).then((result) => {
         if (result.success && result.data) {
-          form.reset(transformApiKeyToFormDefaults(result.data))
+          const defaults = transformApiKeyToFormDefaults(result.data)
+          if (tokenGroupLocked) {
+            defaults.group = lockedGroup || defaults.group
+            defaults.cross_group_retry = false
+          }
+          form.reset(defaults)
         }
       })
     } else if (open && !isUpdate) {
       // For create, reset to defaults
-      form.reset(getApiKeyFormDefaultValues(defaultUseAutoGroup))
+      form.reset(
+        getApiKeyFormDefaultValues(defaultUseAutoGroup, {
+          tokenGroupLocked,
+          lockedGroup,
+        })
+      )
     }
-  }, [open, isUpdate, currentRow, form, defaultUseAutoGroup])
+  }, [
+    open,
+    isUpdate,
+    currentRow,
+    form,
+    defaultUseAutoGroup,
+    tokenGroupLocked,
+    lockedGroup,
+  ])
 
   const onSubmit = async (data: ApiKeyFormValues) => {
     setIsSubmitting(true)
     try {
-      const basePayload = transformFormDataToPayload(data)
+      const submitData = tokenGroupLocked
+        ? {
+            ...data,
+            group: lockedGroup || data.group || '',
+            cross_group_retry: false,
+          }
+        : data
+      const basePayload = transformFormDataToPayload(submitData)
 
       if (isUpdate && currentRow) {
         const result = await updateApiKey({
@@ -310,50 +351,74 @@ export function ApiKeysMutateDrawer({
                 )}
               />
 
-              <FormField
-                control={form.control}
-                name='group'
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>{t('Group')}</FormLabel>
-                    <FormControl>
-                      <ApiKeyGroupCombobox
-                        options={groups}
-                        value={field.value}
-                        onValueChange={field.onChange}
-                        placeholder={t('Select a group')}
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+              {tokenGroupLocked ? (
+                <FormItem>
+                  <FormLabel>{t('Billing tier')}</FormLabel>
+                  <div className='bg-muted/40 text-sm rounded-lg border px-3 py-2.5 sm:px-4 sm:py-3'>
+                    {lockedGroup
+                      ? t(
+                          'Current billing tier: {{group}} ({{ratio}}x)',
+                          {
+                            group: lockedGroup.toUpperCase(),
+                            ratio: lockedRatio ?? '1',
+                          }
+                        )
+                      : t('Billing tier follows your account group')}
+                  </div>
+                  <FormDescription>
+                    {t(
+                      'API Key group is locked to your account group and cannot be changed.'
+                    )}
+                  </FormDescription>
+                </FormItem>
+              ) : (
+                <>
+                  <FormField
+                    control={form.control}
+                    name='group'
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>{t('Group')}</FormLabel>
+                        <FormControl>
+                          <ApiKeyGroupCombobox
+                            options={groups}
+                            value={field.value}
+                            onValueChange={field.onChange}
+                            placeholder={t('Select a group')}
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
 
-              {selectedGroup === 'auto' && (
-                <FormField
-                  control={form.control}
-                  name='cross_group_retry'
-                  render={({ field }) => (
-                    <FormItem className='flex min-h-16 flex-row items-center justify-between gap-3 rounded-lg border px-3 py-2.5 sm:min-h-20 sm:gap-4 sm:px-4 sm:py-3'>
-                      <div className='space-y-0.5'>
-                        <FormLabel className='text-sm'>
-                          {t('Cross-group retry')}
-                        </FormLabel>
-                        <FormDescription className='line-clamp-2 text-xs sm:line-clamp-none'>
-                          {t(
-                            'When enabled, if channels in the current group fail, it will try channels in the next group in order.'
-                          )}
-                        </FormDescription>
-                      </div>
-                      <FormControl>
-                        <Switch
-                          checked={!!field.value}
-                          onCheckedChange={field.onChange}
-                        />
-                      </FormControl>
-                    </FormItem>
+                  {selectedGroup === 'auto' && (
+                    <FormField
+                      control={form.control}
+                      name='cross_group_retry'
+                      render={({ field }) => (
+                        <FormItem className='flex min-h-16 flex-row items-center justify-between gap-3 rounded-lg border px-3 py-2.5 sm:min-h-20 sm:gap-4 sm:px-4 sm:py-3'>
+                          <div className='space-y-0.5'>
+                            <FormLabel className='text-sm'>
+                              {t('Cross-group retry')}
+                            </FormLabel>
+                            <FormDescription className='line-clamp-2 text-xs sm:line-clamp-none'>
+                              {t(
+                                'When enabled, if channels in the current group fail, it will try channels in the next group in order.'
+                              )}
+                            </FormDescription>
+                          </div>
+                          <FormControl>
+                            <Switch
+                              checked={!!field.value}
+                              onCheckedChange={field.onChange}
+                            />
+                          </FormControl>
+                        </FormItem>
+                      )}
+                    />
                   )}
-                />
+                </>
               )}
 
               <FormField
