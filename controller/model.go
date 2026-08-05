@@ -9,6 +9,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/aipddcatalog"
 	"github.com/QuantumNous/new-api/relay"
 	"github.com/QuantumNous/new-api/relay/channel/ai360"
 	"github.com/QuantumNous/new-api/relay/channel/lingyiwanwu"
@@ -263,6 +264,11 @@ func ListModels(c *gin.Context, modelType int) {
 		}
 	}
 
+	// Hide only AIPDD models that the activated catalog marks unavailable or
+	// pricing-disabled. Non-AIPDD models and unknown IDs are unchanged. This
+	// does not affect /api/models/, RetrieveModel, or request routing.
+	userOpenAiModels = filterHiddenAIPDDModelsFromV1List(userOpenAiModels)
+
 	switch modelType {
 	case constant.ChannelTypeAnthropic:
 		useranthropicModels := make([]dto.AnthropicModel, len(userOpenAiModels))
@@ -299,6 +305,20 @@ func ListModels(c *gin.Context, modelType int) {
 			"object":  "list",
 		})
 	}
+}
+
+func filterHiddenAIPDDModelsFromV1List(models []dto.OpenAIModels) []dto.OpenAIModels {
+	if !aipddcatalog.HasV1ModelsListHiddenState() {
+		return models
+	}
+	filtered := make([]dto.OpenAIModels, 0, len(models))
+	for _, item := range models {
+		if aipddcatalog.IsHiddenFromV1ModelsList(item.Id) {
+			continue
+		}
+		filtered = append(filtered, item)
+	}
+	return filtered
 }
 
 func ChannelListModels(c *gin.Context) {

@@ -37,6 +37,7 @@ func TestSyncAIPDDCatalogFallsBackOnlyToSameOriginSnapshot(t *testing.T) {
 	t.Cleanup(func() {
 		constant.ResetAIPDDCapabilities()
 		constant.ResetAIPDDOpenAIModels()
+		aipddcatalog.ResetV1ModelsListHidden()
 	})
 	fail := false
 	catalog := aipddTestCatalog("revision-1", "task-a", "llm-a")
@@ -88,6 +89,7 @@ func TestApplyAIPDDCatalogReplacesModelsAndCleansOnlySeededCNChannels(t *testing
 	t.Cleanup(func() {
 		constant.ResetAIPDDCapabilities()
 		constant.ResetAIPDDOpenAIModels()
+		aipddcatalog.ResetV1ModelsListHidden()
 	})
 	require.NoError(t, EnsureCNProviderDefaults())
 	custom := Channel{Type: constant.ChannelTypeAli, Name: "用户自建阿里渠道", Key: "custom", Group: "default", Models: "custom-model", Status: 1}
@@ -161,6 +163,7 @@ func TestApplyAIPDDCatalogDoesNotCreatePricingOptions(t *testing.T) {
 	t.Cleanup(func() {
 		constant.ResetAIPDDCapabilities()
 		constant.ResetAIPDDOpenAIModels()
+		aipddcatalog.ResetV1ModelsListHidden()
 	})
 
 	displayAmount := 40.1
@@ -168,7 +171,7 @@ func TestApplyAIPDDCatalogDoesNotCreatePricingOptions(t *testing.T) {
 	catalog := aipddTestCatalog("seedance-price-revision", "task-model", "llm-model")
 	catalog.Capabilities = []aipddcatalog.AtomicCapability{{
 		ID: "AP Seedance", Code: "seedance", Name: "AP Seedance", AdapterCode: "seedance",
-		EndpointType: "openai-video", TaskKind: "video_generation",
+		EndpointType: "openai-video", TaskKind: "video_generation", Available: true,
 		Execution: aipddcatalog.AtomicExecution{Protocol: "seedance_official", Path: "/api/v3/contents/generations/tasks"},
 		Pricing: aipddcatalog.AtomicPricing{
 			PricingModel: "per_second", Currency: "awcoin", PricingBasis: "display", Enabled: true,
@@ -206,13 +209,88 @@ func TestApplyAIPDDCatalogDoesNotCreatePricingOptions(t *testing.T) {
 	require.Contains(t, capability.SeedancePricing.ByResolution, "1080p")
 }
 
+func TestApplyAIPDDCatalogKeepsDisabledModelsInDBAndChannel(t *testing.T) {
+	truncateTables(t)
+	t.Cleanup(func() {
+		constant.ResetAIPDDCapabilities()
+		constant.ResetAIPDDOpenAIModels()
+		aipddcatalog.ResetV1ModelsListHidden()
+	})
+
+	catalog := aipddTestCatalog("disabled-list-revision", "enabled-task", "enabled-llm")
+	catalog.Capabilities = append(catalog.Capabilities,
+		aipddcatalog.AtomicCapability{
+			ID: "unavailable-task", Code: "unavailable-task", Name: "unavailable-task",
+			AdapterCode: "comfyui", EndpointType: "image-generation", TaskKind: "text_to_image",
+			Available: false,
+			Execution: aipddcatalog.AtomicExecution{Protocol: "shared_task", Path: "/shared-tasks/tasks"},
+			Pricing: aipddcatalog.AtomicPricing{
+				PricingModel: "per_call", Currency: "awcoin", Enabled: true,
+				ChargeConfig: map[string]any{"amountAwcoin": float64(100)},
+			},
+		},
+		aipddcatalog.AtomicCapability{
+			ID: "pricing-disabled-task", Code: "pricing-disabled-task", Name: "pricing-disabled-task",
+			AdapterCode: "comfyui", EndpointType: "audio-speech", TaskKind: "text_to_speech",
+			Available: true,
+			Execution: aipddcatalog.AtomicExecution{Protocol: "shared_task", Path: "/shared-tasks/tasks"},
+			Pricing: aipddcatalog.AtomicPricing{
+				PricingModel: "per_call", Currency: "awcoin", Enabled: false,
+				ChargeConfig: map[string]any{"amountAwcoin": float64(100)},
+			},
+		},
+	)
+	catalog.Models = append(catalog.Models, aipddcatalog.AtomicModel{
+		ID: "unavailable-llm", Name: "unavailable-llm", Available: false,
+		Execution: aipddcatalog.AtomicExecution{Protocol: "openai", Path: "/v1/chat/completions"},
+		Pricing: aipddcatalog.AtomicPricing{
+			PricingModel: "per_token", Currency: "awcoin", Enabled: true,
+			PromptPerMillion: 10, CompletionPerMillion: 30,
+		},
+	})
+
+	_, err := applyAIPDDCatalog(catalog, "https://aipdd.example", "sk-test")
+	require.NoError(t, err)
+
+	require.ElementsMatch(t, []string{
+		"pricing-disabled-task",
+		"unavailable-llm",
+		"unavailable-task",
+	}, catalog.V1ModelsListHiddenNames())
+	require.True(t, aipddcatalog.HasV1ModelsListHiddenState())
+	require.True(t, aipddcatalog.IsHiddenFromV1ModelsList("unavailable-task"))
+	require.True(t, aipddcatalog.IsHiddenFromV1ModelsList("pricing-disabled-task"))
+	require.True(t, aipddcatalog.IsHiddenFromV1ModelsList("unavailable-llm"))
+	require.False(t, aipddcatalog.IsHiddenFromV1ModelsList("enabled-task"))
+	require.False(t, aipddcatalog.IsHiddenFromV1ModelsList("enabled-llm"))
+
+	// Sync still keeps disabled models in ModelNames / Channel / Ability / Model rows.
+	require.ElementsMatch(t, []string{
+		"enabled-llm", "enabled-task", "pricing-disabled-task", "unavailable-llm", "unavailable-task",
+	}, catalog.ModelNames())
+
+	var managed Channel
+	require.NoError(t, DB.Where("type = ? AND name = ?", constant.ChannelTypeAIPDD, "AIPDD").First(&managed).Error)
+	require.ElementsMatch(t, catalog.ModelNames(), managed.GetModels())
+
+	for _, modelName := range []string{"unavailable-task", "pricing-disabled-task", "unavailable-llm", "enabled-task", "enabled-llm"} {
+		var modelCount, abilityCount int64
+		require.NoError(t, DB.Model(&Model{}).Where("model_name = ?", modelName).Count(&modelCount).Error)
+		require.NoError(t, DB.Model(&Ability{}).Where("model = ? AND channel_id = ?", modelName, managed.Id).Count(&abilityCount).Error)
+		require.EqualValues(t, 1, modelCount, modelName)
+		require.EqualValues(t, 1, abilityCount, modelName)
+	}
+}
+
 func TestEnsureAIPDDOpenAIModelDefaultsDoesNotCreateLocalPricing(t *testing.T) {
 	truncateTables(t)
 	constant.ResetAIPDDCapabilities()
 	constant.ResetAIPDDOpenAIModels()
+	aipddcatalog.ResetV1ModelsListHidden()
 	t.Cleanup(func() {
 		constant.ResetAIPDDCapabilities()
 		constant.ResetAIPDDOpenAIModels()
+		aipddcatalog.ResetV1ModelsListHidden()
 	})
 
 	require.NoError(t, EnsureAIPDDOpenAIModelDefaults([]string{"aipdd-local-price-boundary-test"}))
@@ -263,7 +341,7 @@ func aipddTestCatalog(revision, taskModel, llmModel string) aipddcatalog.AtomicC
 		},
 		Capabilities: []aipddcatalog.AtomicCapability{{
 			ID: taskModel, Code: taskModel, Name: taskModel, AdapterCode: "comfyui",
-			EndpointType: "image-generation", TaskKind: "text_to_image",
+			EndpointType: "image-generation", TaskKind: "text_to_image", Available: true,
 			Execution: aipddcatalog.AtomicExecution{Protocol: "shared_task", Path: "/shared-tasks/tasks"},
 			Pricing: aipddcatalog.AtomicPricing{
 				PricingModel: "per_call", Currency: "awcoin", Enabled: true,
@@ -271,7 +349,7 @@ func aipddTestCatalog(revision, taskModel, llmModel string) aipddcatalog.AtomicC
 			},
 		}},
 		Models: []aipddcatalog.AtomicModel{{
-			ID: llmModel, Name: llmModel,
+			ID: llmModel, Name: llmModel, Available: true,
 			Execution: aipddcatalog.AtomicExecution{Protocol: "openai", Path: "/v1/chat/completions"},
 			Pricing: aipddcatalog.AtomicPricing{
 				PricingModel: "per_token", Currency: "awcoin", Enabled: true,

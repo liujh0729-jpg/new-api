@@ -12,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/aipddcatalog"
 	"github.com/QuantumNous/new-api/setting/config"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
@@ -720,4 +721,123 @@ func TestListModelsTokenLimitIncludesTieredBillingModel(t *testing.T) {
 	require.NotContains(t, ids, "zz-token-tiered-empty-expr-model")
 	require.NotContains(t, ids, "zz-token-tiered-missing-expr-model")
 	require.NotContains(t, ids, "zz-token-unpriced-model")
+}
+
+func TestListModelsHidesDisabledAIPDDCatalogModelsOnly(t *testing.T) {
+	originalSelfUse := operation_setting.SelfUseModeEnabled
+	operation_setting.SelfUseModeEnabled = true
+	t.Cleanup(func() {
+		operation_setting.SelfUseModeEnabled = originalSelfUse
+		aipddcatalog.ResetV1ModelsListHidden()
+	})
+	aipddcatalog.ResetV1ModelsListHidden()
+
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.Create(&model.User{
+		Id:       1101,
+		Username: "v1-models-aipdd-filter-user",
+		Password: "password",
+		Group:    "default",
+		Status:   common.UserStatusEnabled,
+	}).Error)
+
+	enabledTask := "aipdd-list-enabled-task"
+	unavailableTask := "aipdd-list-unavailable-task"
+	pricingDisabledTask := "aipdd-list-pricing-disabled-task"
+	nonAIPDD := "gpt-custom-open-model"
+	legacyMissing := "aipdd-list-legacy-missing"
+
+	require.NoError(t, db.Create(&[]model.Ability{
+		{Group: "default", Model: enabledTask, ChannelId: 1, Enabled: true},
+		{Group: "default", Model: unavailableTask, ChannelId: 1, Enabled: true},
+		{Group: "default", Model: pricingDisabledTask, ChannelId: 1, Enabled: true},
+		{Group: "default", Model: nonAIPDD, ChannelId: 2, Enabled: true},
+		{Group: "default", Model: legacyMissing, ChannelId: 1, Enabled: true},
+	}).Error)
+	require.NoError(t, db.Create(&[]model.Model{
+		{ModelName: enabledTask, Status: 1},
+		{ModelName: unavailableTask, Status: 1},
+		{ModelName: pricingDisabledTask, Status: 1},
+		{ModelName: nonAIPDD, Status: 1},
+		{ModelName: legacyMissing, Status: 1},
+	}).Error)
+
+	catalog := aipddcatalog.AtomicCatalog{
+		Capabilities: []aipddcatalog.AtomicCapability{
+			{ID: enabledTask, Available: true, Pricing: aipddcatalog.AtomicPricing{Enabled: true}},
+			{ID: unavailableTask, Available: false, Pricing: aipddcatalog.AtomicPricing{Enabled: true}},
+			{ID: pricingDisabledTask, Available: true, Pricing: aipddcatalog.AtomicPricing{Enabled: false}},
+		},
+	}
+	aipddcatalog.SetV1ModelsListHidden(catalog.V1ModelsListHiddenNames())
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	ctx.Set("id", 1101)
+	ListModels(ctx, constant.ChannelTypeOpenAI)
+
+	ids := decodeListModelsResponse(t, recorder)
+	require.Contains(t, ids, enabledTask)
+	require.Contains(t, ids, nonAIPDD)
+	require.Contains(t, ids, legacyMissing)
+	require.NotContains(t, ids, unavailableTask)
+	require.NotContains(t, ids, pricingDisabledTask)
+
+	adminRecorder := httptest.NewRecorder()
+	adminCtx, _ := gin.CreateTestContext(adminRecorder)
+	adminCtx.Request = httptest.NewRequest(http.MethodGet, "/api/models/?p=1&page_size=100", nil)
+	GetAllModelsMeta(adminCtx)
+	require.Equal(t, http.StatusOK, adminRecorder.Code)
+
+	var adminPayload struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Items []model.Model `json:"items"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(adminRecorder.Body.Bytes(), &adminPayload))
+	require.True(t, adminPayload.Success)
+	adminNames := make(map[string]struct{}, len(adminPayload.Data.Items))
+	for _, item := range adminPayload.Data.Items {
+		adminNames[item.ModelName] = struct{}{}
+	}
+	require.Contains(t, adminNames, unavailableTask)
+	require.Contains(t, adminNames, pricingDisabledTask)
+	require.Contains(t, adminNames, enabledTask)
+}
+
+func TestListModelsDoesNotFilterWhenAIPDDCatalogStateUnavailable(t *testing.T) {
+	originalSelfUse := operation_setting.SelfUseModeEnabled
+	operation_setting.SelfUseModeEnabled = true
+	t.Cleanup(func() {
+		operation_setting.SelfUseModeEnabled = originalSelfUse
+		aipddcatalog.ResetV1ModelsListHidden()
+	})
+	aipddcatalog.ResetV1ModelsListHidden()
+
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.Create(&model.User{
+		Id:       1102,
+		Username: "v1-models-no-catalog-user",
+		Password: "password",
+		Group:    "default",
+		Status:   common.UserStatusEnabled,
+	}).Error)
+	require.NoError(t, db.Create(&[]model.Ability{
+		{Group: "default", Model: "aipdd-would-be-hidden", ChannelId: 1, Enabled: true},
+		{Group: "default", Model: "gpt-custom-open-model", ChannelId: 2, Enabled: true},
+	}).Error)
+
+	require.False(t, aipddcatalog.HasV1ModelsListHiddenState())
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	ctx.Set("id", 1102)
+	ListModels(ctx, constant.ChannelTypeOpenAI)
+
+	ids := decodeListModelsResponse(t, recorder)
+	require.Contains(t, ids, "aipdd-would-be-hidden")
+	require.Contains(t, ids, "gpt-custom-open-model")
 }
