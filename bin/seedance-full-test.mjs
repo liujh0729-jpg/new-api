@@ -150,8 +150,8 @@ function validateConfig() {
   if (!(config.maxCostUsd > 0)) {
     throw new Error('--max-cost-usd must be positive.');
   }
-  if (config.maxCostUsd > 12) {
-    throw new Error('This audit enforces an absolute maximum of 12 USD.');
+  if (config.maxCostUsd > 30) {
+    throw new Error('This audit enforces an absolute maximum of 30 USD.');
   }
   if (!(config.timeoutSeconds > 0) || !(config.pollIntervalSeconds > 0)) {
     throw new Error('Timeout and poll interval must be positive.');
@@ -1413,7 +1413,7 @@ function printUsage() {
     '',
     '真实运行：',
     '  node bin/seedance-full-test.mjs --base-url http://14.103.100.4:6070 --allow-http',
-    '    --image-url "https://..." --audio-url "https://..." --max-cost-usd 12',
+    '    --image-url "https://..." --audio-url "https://..." --max-cost-usd 20',
     '',
     '安全检查：',
     '  node bin/seedance-full-test.mjs --list-cases',
@@ -1431,7 +1431,7 @@ function printUsage() {
     '  --groups default,VIP1          固定审计分组',
     '  --callback-url URL             可选的公网回调接收地址',
     '  --service-tier default         能力探测值；传入空值可省略',
-    '  --max-cost-usd 12              费用硬上限；超过 12 美元将被拒绝',
+    '  --max-cost-usd 20              费用硬上限；超过 30 美元将被拒绝',
     '  --timeout-seconds 1800         单任务轮询超时',
     '  --poll-interval-seconds 10     轮询间隔；仅重试 GET 请求',
     '  --concurrency 2                每个账号一个顺序执行器',

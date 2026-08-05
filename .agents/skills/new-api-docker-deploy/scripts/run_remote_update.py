@@ -18,6 +18,7 @@ import paramiko
 HOST = os.environ.get("DEPLOY_SSH_HOST", "")
 USER = os.environ.get("DEPLOY_SSH_USER", "root")
 SSH_PASSWORD = os.environ.get("DEPLOY_SSH_PASSWORD", "")
+SSH_KEY_FILE = os.environ.get("DEPLOY_SSH_KEY_FILE", "").strip()
 ADMIN_USER = os.environ.get("DEPLOY_ADMIN_USER", "root")
 ADMIN_PASSWORD = os.environ.get("DEPLOY_ADMIN_PASSWORD", "")
 DEPLOY_DIR = os.environ.get("DEPLOY_DIR", "/opt/new-api")
@@ -47,8 +48,10 @@ def die(msg: str, code: int = 1) -> None:
 def require_secrets() -> None:
     if not HOST:
         die("DEPLOY_SSH_HOST missing")
-    if not SSH_PASSWORD:
-        die("DEPLOY_SSH_PASSWORD missing")
+    if not SSH_PASSWORD and not SSH_KEY_FILE:
+        die("DEPLOY_SSH_PASSWORD or DEPLOY_SSH_KEY_FILE required")
+    if SSH_KEY_FILE and not Path(SSH_KEY_FILE).is_file():
+        die(f"DEPLOY_SSH_KEY_FILE not found: {SSH_KEY_FILE}")
     if CHANNEL_OVERWRITE or PRICE_OVERWRITE or VIP_SYNC:
         if not ADMIN_PASSWORD:
             die("DEPLOY_ADMIN_PASSWORD required for confirmed admin operations")
@@ -62,14 +65,21 @@ def connect() -> paramiko.SSHClient:
         client.set_missing_host_key_policy(paramiko.WarningPolicy())
     else:
         client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    client.connect(
-        hostname=HOST,
-        username=USER,
-        password=SSH_PASSWORD,
-        timeout=30,
-        allow_agent=False,
-        look_for_keys=False,
-    )
+    kwargs: dict[str, Any] = {
+        "hostname": HOST,
+        "username": USER,
+        "timeout": 30,
+        "allow_agent": False,
+        "look_for_keys": False,
+    }
+    if SSH_KEY_FILE:
+        kwargs["key_filename"] = SSH_KEY_FILE
+        if SSH_PASSWORD:
+            # Optional passphrase for encrypted private keys.
+            kwargs["passphrase"] = SSH_PASSWORD
+    else:
+        kwargs["password"] = SSH_PASSWORD
+    client.connect(**kwargs)
     return client
 
 
@@ -744,8 +754,14 @@ def reconcile_prices(
         "billing_setting.billing_expr",
         "billing_setting.task_pricing",
         "billing_setting.billing_mode",
+        # Required read-only for RMB-anchored conversion in build_aipdd_pricing_options.
+        "USDExchangeRate",
+        "DisplayInCurrencyEnabled",
+        "general_setting.quota_display_type",
     ]
     options_subset = {k: options_before.get(k) for k in interest_keys}
+    if not options_subset.get("USDExchangeRate"):
+        die("site USDExchangeRate missing; refusing RMB-anchored price overwrite")
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     backup_remote = f"{DEPLOY_DIR}/backups/pricing-{stamp}"
     run(client, f"mkdir -p {backup_remote} && chmod 700 {backup_remote}")
@@ -788,6 +804,14 @@ def reconcile_prices(
     write_local(models_path, json.dumps(model_list, ensure_ascii=False))
     plan_path = WORK_DIR / "pricing-plan.json"
 
+    # Ensure site display currency is RMB before writing sale prices.
+    if str(options_before.get("DisplayInCurrencyEnabled", "")).lower() != "true":
+        put_option(client, cookie, user_id, "DisplayInCurrencyEnabled", "true")
+        print("set DisplayInCurrencyEnabled=true")
+    if options_before.get("general_setting.quota_display_type") != "CNY":
+        put_option(client, cookie, user_id, "general_setting.quota_display_type", "CNY")
+        print("set general_setting.quota_display_type=CNY")
+
     import subprocess
 
     proc = subprocess.run(
@@ -817,10 +841,13 @@ def reconcile_prices(
         f"per_call={len(summary.get('per_call_models') or [])}",
         f"task={len(summary.get('task_pricing_models') or [])}",
         f"tiered={len(summary.get('tiered_expr_models') or [])}",
+        f"conversion={summary.get('price_conversion')}",
     )
     contract = summary.get("task_pricing_contract")
     if not contract:
         die("pricing plan missing task_pricing_contract")
+    if summary.get("price_conversion") != "rmb_anchored":
+        die("pricing plan is not RMB-anchored; refusing to write")
 
     updates = plan.get("updates") or []
     if not updates:
@@ -858,6 +885,12 @@ def reconcile_prices(
         actual = _norm_option(options_after.get(key))
         if expected != actual:
             die(f"option verify mismatch for {key}")
+    if str(options_after.get("DisplayInCurrencyEnabled", "")).lower() != "true":
+        die("DisplayInCurrencyEnabled is not true after price reconcile")
+    if options_after.get("general_setting.quota_display_type") != "CNY":
+        die("quota_display_type is not CNY after price reconcile")
+    if options_after.get("USDExchangeRate") != options_subset.get("USDExchangeRate"):
+        die("USDExchangeRate changed during price reconcile; refusing success")
 
     pricing = remote_http_json(
         client, "GET", "/api/pricing", cookie_file=cookie, user_id=user_id

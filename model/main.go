@@ -254,6 +254,10 @@ func migrateDB() error {
 	if err := migrateTokenModelLimitsToText(); err != nil {
 		return err
 	}
+	// SQLite cannot ALTER TABLE ... ADD COLUMN ... UNIQUE; add plain columns first.
+	if err := ensureSQLiteUniqueColumnsBeforeAutoMigrate(); err != nil {
+		return err
+	}
 
 	err := DB.AutoMigrate(
 		&Channel{},
@@ -308,6 +312,9 @@ func migrateDB() error {
 }
 
 func migrateDBFast() error {
+	if err := ensureSQLiteUniqueColumnsBeforeAutoMigrate(); err != nil {
+		return err
+	}
 
 	var wg sync.WaitGroup
 
@@ -398,6 +405,59 @@ func migrateLOGDB() error {
 type sqliteColumnDef struct {
 	Name string
 	DDL  string
+}
+
+// ensureSQLiteUniqueColumnsBeforeAutoMigrate adds columns that carry uniqueIndex
+// without the UNIQUE constraint inline. SQLite rejects
+// `ALTER TABLE ... ADD COLUMN ... UNIQUE`, which otherwise fatal-crashes startup
+// on existing deployments during AutoMigrate.
+func ensureSQLiteUniqueColumnsBeforeAutoMigrate() error {
+	if !common.UsingSQLite {
+		return nil
+	}
+	type colSpec struct {
+		model any
+		table string
+		column string
+		ddl    string
+		index  string
+	}
+	specs := []colSpec{
+		{&TopUp{}, "top_ups", "provider_transaction_id", "`provider_transaction_id` varchar(64)", "idx_top_ups_provider_transaction_id"},
+		{&WechatPayTestOrder{}, "wechat_pay_test_orders", "provider_transaction_id", "`provider_transaction_id` varchar(64)", "idx_wechat_pay_test_orders_provider_transaction_id"},
+		{&WechatPayTestOrder{}, "wechat_pay_test_orders", "notify_id", "`notify_id` varchar(64)", "idx_wechat_pay_test_orders_notify_id"},
+	}
+	for _, spec := range specs {
+		if !DB.Migrator().HasTable(spec.table) {
+			continue
+		}
+		if !DB.Migrator().HasColumn(spec.model, spec.column) {
+			if err := DB.Exec("ALTER TABLE `" + spec.table + "` ADD COLUMN " + spec.ddl).Error; err != nil {
+				return fmt.Errorf("sqlite add column %s.%s: %w", spec.table, spec.column, err)
+			}
+			common.SysLog(fmt.Sprintf("sqlite pre-added column %s.%s without UNIQUE", spec.table, spec.column))
+		}
+		if spec.index == "" {
+			continue
+		}
+		var idxCount int64
+		if err := DB.Raw(
+			`SELECT COUNT(1) FROM sqlite_master WHERE type='index' AND name=?`,
+			spec.index,
+		).Scan(&idxCount).Error; err != nil {
+			return err
+		}
+		if idxCount == 0 {
+			sql := fmt.Sprintf(
+				"CREATE UNIQUE INDEX IF NOT EXISTS `%s` ON `%s`(`%s`)",
+				spec.index, spec.table, spec.column,
+			)
+			if err := DB.Exec(sql).Error; err != nil {
+				return fmt.Errorf("sqlite create unique index %s: %w", spec.index, err)
+			}
+		}
+	}
+	return nil
 }
 
 func ensureSubscriptionPlanTableSQLite() error {

@@ -43,13 +43,26 @@ func GetAllTask(c *gin.Context) {
 }
 
 func GetUserTask(c *gin.Context) {
-	pageInfo := common.GetPageQuery(c)
+	respondUserTaskPage(c, c.GetInt("id"))
+}
 
+// GetTaskByKey 通过 API Key 分页查询当前令牌所属用户的任务记录。
+func GetTaskByKey(c *gin.Context) {
 	userId := c.GetInt("id")
+	if userId == 0 {
+		c.JSON(200, gin.H{
+			"success": false,
+			"message": "无效的令牌",
+		})
+		return
+	}
+	respondUserTaskPage(c, userId)
+}
 
+func respondUserTaskPage(c *gin.Context, userId int) {
+	pageInfo := common.GetPageQuery(c)
 	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
 	endTimestamp, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
-
 	queryParams := model.SyncTaskQueryParams{
 		Platform:       constant.TaskPlatform(c.Query("platform")),
 		TaskID:         c.Query("task_id"),

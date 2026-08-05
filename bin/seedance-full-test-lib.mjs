@@ -4,7 +4,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 
 export const DEFAULT_BASE_URL = 'http://localhost:6070';
-export const DEFAULT_MAX_COST_USD = 12;
+export const DEFAULT_MAX_COST_USD = 20;
 export const DEFAULT_TIMEOUT_SECONDS = 30 * 60;
 export const DEFAULT_POLL_INTERVAL_SECONDS = 10;
 export const REFERENCE_VIDEO_PLACEHOLDER = '{{REFERENCE_VIDEO}}';

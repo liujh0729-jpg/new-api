@@ -358,6 +358,10 @@ func SetApiRouter(router *gin.Engine) {
 			taskRoute.GET("/self", middleware.UserAuth(), controller.GetUserTask)
 			taskRoute.GET("/", middleware.AdminAuth(), controller.GetAllTask)
 		}
+		taskRoute.Use(middleware.CORS(), middleware.CriticalRateLimit())
+		{
+			taskRoute.GET("/token", middleware.TokenAuthReadOnly(), controller.GetTaskByKey)
+		}
 
 		vendorRoute := apiRouter.Group("/vendors")
 		vendorRoute.Use(middleware.AdminAuth())
