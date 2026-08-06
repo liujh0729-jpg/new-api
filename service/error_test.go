@@ -1,11 +1,34 @@
 package service
 
 import (
+	"errors"
+	"net/http"
 	"testing"
 
 	"github.com/QuantumNous/new-api/types"
 	"github.com/stretchr/testify/require"
 )
+
+func TestTaskErrorFromAPIError_MarksLocalError(t *testing.T) {
+	t.Parallel()
+
+	apiErr := types.NewErrorWithStatusCode(
+		errors.New("用户额度不足, 剩余额度: ¥1"),
+		types.ErrorCodeInsufficientUserQuota,
+		http.StatusForbidden,
+	)
+	taskErr := TaskErrorFromAPIError(apiErr)
+	require.NotNil(t, taskErr)
+	require.True(t, taskErr.LocalError)
+	require.Equal(t, string(types.ErrorCodeInsufficientUserQuota), taskErr.Code)
+	require.Equal(t, http.StatusForbidden, taskErr.StatusCode)
+	require.Contains(t, taskErr.Message, "用户额度不足")
+}
+
+func TestTaskErrorFromAPIError_Nil(t *testing.T) {
+	t.Parallel()
+	require.Nil(t, TaskErrorFromAPIError(nil))
+}
 
 func TestResetStatusCode(t *testing.T) {
 	t.Parallel()

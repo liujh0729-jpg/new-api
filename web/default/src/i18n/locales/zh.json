@@ -4182,7 +4182,6 @@
     "The request could not provide the resolution and duration required for task pricing.": "请求未能提供任务定价所需的分辨率和时长信息。",
     "The requested chat preset does not exist or has been removed.": "请求的聊天预设不存在或已被删除。",
     "The same price applies to every resolution supported upstream.": "同一价格将应用于上游支持的所有分辨率。",
-    "The selected model service is temporarily unavailable because its upstream balance is insufficient. Please try again later or contact an administrator.": "当前所选模型服务的上游余额不足，暂时无法完成生成。请稍后重试或联系管理员。",
     "The selected resolution is not supported by the current upstream model.": "当前上游模型不支持所选分辨率。",
     "The selected resolution is supported upstream but has no local selling price.": "上游支持所选分辨率，但尚未配置本地售价。",
     "The server downloads and refreshes WeChat Pay platform certificates automatically. You do not need to switch verification modes in the merchant platform.": "服务器会自动下载并刷新微信支付平台证书，无需在商户平台切换验签方式。",
@@ -4835,6 +4834,7 @@
     "Zero retention": "零数据保留",
     "Zhipu": "智谱",
     "Zhipu V4": "智谱 V4",
-    "Zoom": "缩放"
+    "Zoom": "缩放",
+    "Backend configuration has changed. Please contact the system administrator.": "后台配置变更请联系系统管理员"
   }
 }

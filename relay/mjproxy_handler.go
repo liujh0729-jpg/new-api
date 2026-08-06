@@ -247,6 +247,12 @@ func RelaySwapFace(c *gin.Context, info *relaycommon.RelayInfo) *dto.MidjourneyR
 		}
 	}()
 	midjResponse := &mjResp.Response
+	// Only persist billable quota when submit actually consumes (code==1).
+	// Otherwise later failure polling would refund / roll back used_quota incorrectly.
+	chargedQuota := 0
+	if midjResponse.Code == 1 {
+		chargedQuota = priceData.Quota
+	}
 	midjourneyTask := &model.Midjourney{
 		UserId:      info.UserId,
 		Code:        midjResponse.Code,
@@ -264,7 +270,7 @@ func RelaySwapFace(c *gin.Context, info *relaycommon.RelayInfo) *dto.MidjourneyR
 		Progress:    "0%",
 		FailReason:  "",
 		ChannelId:   c.GetInt("channel_id"),
-		Quota:       priceData.Quota,
+		Quota:       chargedQuota,
 	}
 	err = midjourneyTask.Insert()
 	if err != nil {
@@ -593,6 +599,12 @@ func RelayMidjourneySubmit(c *gin.Context, relayInfo *relaycommon.RelayInfo) *dt
 		//非1-提交成功,21-任务已存在和22-排队中，则记录错误原因
 		midjourneyTask.FailReason = midjResponse.Description
 		consumeQuota = false
+	}
+	// Quota on the task row is the refundable/consumed amount. Keep it 0 when
+	// this submit did not charge, so failure polling will not refund or roll
+	// back used_quota for never-consumed tasks (e.g. code 23 queue full).
+	if !consumeQuota {
+		midjourneyTask.Quota = 0
 	}
 
 	if midjResponse.Code == 21 { //21-任务已存在（处理中或者有结果了）

@@ -116,10 +116,33 @@ func appendStreamStatus(relayInfo *relaycommon.RelayInfo, other map[string]inter
 	other["stream_status"] = streamInfo
 }
 
+// resolvePreConsumedQuota returns the pre-consumed quota for log persistence.
+// Prefer the live BillingSession value (includes Reserve bumps); fall back to
+// FinalPreConsumedQuota. Always safe to call with a nil relayInfo.
+func resolvePreConsumedQuota(relayInfo *relaycommon.RelayInfo) int {
+	if relayInfo == nil {
+		return 0
+	}
+	if relayInfo.Billing != nil {
+		return relayInfo.Billing.GetPreConsumedQuota()
+	}
+	return relayInfo.FinalPreConsumedQuota
+}
+
+func appendPreConsumedQuota(relayInfo *relaycommon.RelayInfo, other map[string]interface{}) {
+	if relayInfo == nil || other == nil {
+		return
+	}
+	// Always write (including 0) so clients can distinguish "no pre-consume"
+	// from legacy logs that omit the field entirely.
+	other["pre_consumed_quota"] = resolvePreConsumedQuota(relayInfo)
+}
+
 func appendBillingInfo(relayInfo *relaycommon.RelayInfo, other map[string]interface{}) {
 	if relayInfo == nil || other == nil {
 		return
 	}
+	appendPreConsumedQuota(relayInfo, other)
 	// billing_source: "wallet" or "subscription"
 	if relayInfo.BillingSource != "" {
 		other["billing_source"] = relayInfo.BillingSource
@@ -262,6 +285,7 @@ func GenerateMjOtherInfo(relayInfo *relaycommon.RelayInfo, priceData types.Price
 		other["user_group_ratio"] = priceData.GroupRatioInfo.GroupSpecialRatio
 	}
 	appendRequestPath(nil, relayInfo, other)
+	appendPreConsumedQuota(relayInfo, other)
 	return other
 }
 

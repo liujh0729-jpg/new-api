@@ -974,6 +974,19 @@ func UpdateUserUsedQuotaAndRequestCount(id int, quota int) {
 	updateUserUsedQuotaAndRequestCount(id, quota, 1)
 }
 
+// UpdateUserUsedQuota adjusts the user's used_quota. delta may be negative for refund rollback.
+// Unlike UpdateUserUsedQuotaAndRequestCount, this does not change request_count.
+func UpdateUserUsedQuota(id int, delta int) {
+	if delta == 0 {
+		return
+	}
+	if common.BatchUpdateEnabled {
+		addNewRecord(BatchUpdateTypeUsedQuota, id, delta)
+		return
+	}
+	updateUserUsedQuota(id, delta)
+}
+
 func updateUserUsedQuotaAndRequestCount(id int, quota int, count int) {
 	err := DB.Model(&User{}).Where("id = ?", id).Updates(
 		map[string]interface{}{

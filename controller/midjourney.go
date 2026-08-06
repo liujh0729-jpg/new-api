@@ -169,6 +169,7 @@ func UpdateMidjourneyTaskBulk() {
 				if (task.Progress != "100%" && responseItem.FailReason != "") || (task.Progress == "100%" && task.Status == "FAILURE") {
 					logger.LogInfo(ctx, task.MjId+" 构建失败，"+task.FailReason)
 					task.Progress = "100%"
+					// task.Quota is only non-zero when submit actually charged the user.
 					if task.Quota != 0 {
 						shouldReturnQuota = true
 					}
@@ -180,6 +181,9 @@ func UpdateMidjourneyTaskBulk() {
 					err = model.IncreaseUserQuota(task.UserId, task.Quota, false)
 					if err != nil {
 						logger.LogError(ctx, "fail to increase user quota: "+err.Error())
+					} else {
+						model.UpdateUserUsedQuota(task.UserId, -task.Quota)
+						model.UpdateChannelUsedQuota(task.ChannelId, -task.Quota)
 					}
 					model.RecordTaskBillingLog(model.RecordTaskBillingLogParams{
 						UserId:    task.UserId,

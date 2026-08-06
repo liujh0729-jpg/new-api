@@ -4182,7 +4182,6 @@
     "The request could not provide the resolution and duration required for task pricing.": "リクエストからタスク料金に必要な解像度と時間を取得できませんでした。",
     "The requested chat preset does not exist or has been removed.": "要求されたチャットプリセットは存在しないか、削除されました。",
     "The same price applies to every resolution supported upstream.": "上流で対応するすべての解像度に同じ料金が適用されます。",
-    "The selected model service is temporarily unavailable because its upstream balance is insufficient. Please try again later or contact an administrator.": "選択したモデルサービスは上流の残高不足により一時的に利用できません。後でもう一度試すか、管理者に連絡してください。",
     "The selected resolution is not supported by the current upstream model.": "選択した解像度は現在の上流モデルでサポートされていません。",
     "The selected resolution is supported upstream but has no local selling price.": "選択した解像度は上流でサポートされていますが、ローカル販売価格が設定されていません。",
     "The server downloads and refreshes WeChat Pay platform certificates automatically. You do not need to switch verification modes in the merchant platform.": "サーバーが WeChat Pay プラットフォーム証明書を自動的にダウンロード・更新します。加盟店プラットフォームで検証方式を切り替える必要はありません。",
@@ -4835,6 +4834,7 @@
     "Zero retention": "データ保持なし",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V 4",
-    "Zoom": "ズーム"
+    "Zoom": "ズーム",
+    "Backend configuration has changed. Please contact the system administrator.": "バックエンド設定が変更されました。システム管理者にお問い合わせください。"
   }
 }

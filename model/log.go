@@ -208,6 +208,13 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 	logger.LogInfo(c, fmt.Sprintf("record consume log: userId=%d, params=%s", userId, common.GetJsonString(params)))
 	username := c.GetString("username")
 	requestId := c.GetString(common.RequestIdKey)
+	if params.Other == nil {
+		params.Other = make(map[string]interface{})
+	}
+	if _, ok := params.Other["actual_quota"]; !ok {
+		// Align with task delta-settlement logs: actual_quota mirrors the settled quota.
+		params.Other["actual_quota"] = params.Quota
+	}
 	otherStr := common.MapToJsonStr(params.Other)
 	// 判断是否需要记录 IP
 	needRecordIp := false

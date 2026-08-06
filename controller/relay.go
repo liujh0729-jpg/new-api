@@ -629,12 +629,76 @@ func isTaskPerCallBilling(relayInfo *relaycommon.RelayInfo) bool {
 	return common.StringsContains(constant.TaskPricePatches, relayInfo.OriginModelName) || relayInfo.PriceData.UsePrice
 }
 
-// respondTaskError 统一输出 Task 错误响应（含 429 限流提示改写）
+const (
+	taskUpstreamOverloadedMessage    = "当前分组上游负载已饱和，请稍后再试"
+	taskUpstreamConfigChangedMessage = "后台配置变更请联系系统管理员"
+)
+
+// respondTaskError 统一输出 Task 错误响应（含 429 / 上游余额不足等提示改写）。
+// 改写只影响返回给客户端的 Message；taskErr.Error 仍保留上游原文，供管理端错误日志排查。
 func respondTaskError(c *gin.Context, taskErr *dto.TaskError) {
 	if taskErr.StatusCode == http.StatusTooManyRequests {
-		taskErr.Message = "当前分组上游负载已饱和，请稍后再试"
+		taskErr.Message = taskUpstreamOverloadedMessage
+	} else if shouldMaskUpstreamBalanceTaskError(taskErr) {
+		taskErr.Message = taskUpstreamConfigChangedMessage
 	}
 	c.JSON(taskErr.StatusCode, taskErr)
+}
+
+// shouldMaskUpstreamBalanceTaskError 识别上游渠道账户余额/积分不足（非本站用户额度不足）。
+// 典型场景：AIPDD 返回 402 + 「余额不足…AWCoin…请充值后再创建任务」。
+func shouldMaskUpstreamBalanceTaskError(taskErr *dto.TaskError) bool {
+	if taskErr == nil || taskErr.LocalError {
+		return false
+	}
+	// Prefer structured local codes even if LocalError was not set by the producer.
+	code := strings.ToLower(strings.TrimSpace(taskErr.Code))
+	if code == string(types.ErrorCodeInsufficientUserQuota) ||
+		code == string(types.ErrorCodePreConsumeTokenQuotaFailed) ||
+		strings.Contains(code, "insufficient_user_quota") ||
+		strings.Contains(code, "pre_consume_token_quota") {
+		return false
+	}
+	if taskErr.StatusCode == http.StatusPaymentRequired {
+		return true
+	}
+
+	message := strings.TrimSpace(taskErr.Message)
+	if message == "" {
+		return false
+	}
+	lower := strings.ToLower(message)
+
+	// AIPDD / AWCoin 上游积分不足
+	if strings.Contains(lower, "awcoin") &&
+		(strings.Contains(message, "余额不足") ||
+			strings.Contains(lower, "insufficient") ||
+			strings.Contains(message, "请充值")) {
+		return true
+	}
+	if strings.Contains(message, "请充值后再创建任务") ||
+		strings.Contains(lower, "please recharge") ||
+		strings.Contains(lower, "please top up") {
+		return true
+	}
+
+	// 其它上游常见余额文案（排除本站本地额度提示）
+	if strings.Contains(message, "用户额度不足") ||
+		strings.Contains(message, "订阅额度不足") ||
+		strings.Contains(lower, "user quota is not enough") ||
+		strings.Contains(lower, "token quota is not enough") ||
+		strings.Contains(lower, "pre_consume") ||
+		strings.Contains(lower, "insufficient_user_quota") {
+		return false
+	}
+
+	return strings.Contains(lower, "insufficient account balance") ||
+		strings.Contains(lower, "account balance is insufficient") ||
+		strings.Contains(lower, "credit balance is too low") ||
+		strings.Contains(lower, "not enough credits") ||
+		strings.Contains(lower, "out of credit") ||
+		(strings.Contains(message, "余额不足") && !strings.Contains(message, "用户")) ||
+		strings.Contains(message, "余额已耗尽")
 }
 
 func shouldRetryTaskRelay(c *gin.Context, channelId int, taskErr *dto.TaskError, retryTimes int) bool {

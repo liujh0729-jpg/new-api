@@ -26,7 +26,7 @@ export interface PlaygroundErrorDetails {
 const SEEDANCE_PRIVACY_ERROR_MESSAGE =
   'Seedance rejected the reference media because it may contain a real person. Use text-only generation or replace the reference with non-real-person media.'
 const UPSTREAM_BALANCE_INSUFFICIENT_MESSAGE =
-  'The selected model service is temporarily unavailable because its upstream balance is insufficient. Please try again later or contact an administrator.'
+  'Backend configuration has changed. Please contact the system administrator.'
 const UPSTREAM_MODEL_NOT_OPEN_MESSAGE =
   'The upstream account has not activated the selected model. Ask an administrator to enable it in the provider console, or switch to another available model.'
 const USER_QUOTA_INSUFFICIENT_MESSAGE =

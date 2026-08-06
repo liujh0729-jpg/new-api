@@ -179,6 +179,9 @@ export interface LogOtherData {
   is_task?: boolean
   task_id?: string
   reason?: string
+  // Pre-consume vs settled quota (present on new consume logs; absent on legacy logs)
+  pre_consumed_quota?: number
+  actual_quota?: number
   // Subscription billing fields
   subscription_plan_id?: string
   subscription_plan_title?: string
