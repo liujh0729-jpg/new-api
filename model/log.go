@@ -66,10 +66,20 @@ func formatUserLogs(logs []*Log, startIdx int) {
 	}
 }
 
-func GetLogByTokenId(tokenId int) (logs []*Log, err error) {
-	err = LOG_DB.Model(&Log{}).Where("token_id = ?", tokenId).Order("id desc").Limit(common.MaxRecentItems).Find(&logs).Error
-	formatUserLogs(logs, 0)
-	return logs, err
+func GetLogByTokenId(tokenId int, startIdx int, num int) (logs []*Log, total int64, err error) {
+	tx := LOG_DB.Model(&Log{}).Where("token_id = ?", tokenId)
+	err = tx.Limit(logSearchCountLimit).Count(&total).Error
+	if err != nil {
+		common.SysError("failed to count token logs: " + err.Error())
+		return nil, 0, errors.New("查询日志失败")
+	}
+	err = tx.Order("id desc").Limit(num).Offset(startIdx).Find(&logs).Error
+	if err != nil {
+		common.SysError("failed to search token logs: " + err.Error())
+		return nil, 0, errors.New("查询日志失败")
+	}
+	formatUserLogs(logs, startIdx)
+	return logs, total, nil
 }
 
 func RecordLog(userId int, logType int, content string) {

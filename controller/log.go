@@ -78,19 +78,15 @@ func GetLogByKey(c *gin.Context) {
 		})
 		return
 	}
-	logs, err := model.GetLogByTokenId(tokenId)
+	pageInfo := common.GetPageQuery(c)
+	logs, total, err := model.GetLogByTokenId(tokenId, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
 	if err != nil {
-		c.JSON(200, gin.H{
-			"success": false,
-			"message": err.Error(),
-		})
+		common.ApiError(c, err)
 		return
 	}
-	c.JSON(200, gin.H{
-		"success": true,
-		"message": "",
-		"data":    logs,
-	})
+	pageInfo.SetTotal(int(total))
+	pageInfo.SetItems(logs)
+	common.ApiSuccess(c, pageInfo)
 }
 
 func GetLogsStat(c *gin.Context) {
