@@ -264,10 +264,10 @@ func UpdateVirtualCharacterMetadata(item *VirtualCharacter, name, description, t
 func MarkVirtualCharacterStorage(itemID int64, fileID string, assetID int64) error {
 	updates := map[string]any{"updated_at": time.Now().Unix()}
 	if strings.TrimSpace(fileID) != "" {
-		updates["aipdd_file_id"] = fileID
+		updates["a_ip_dd_file_id"] = fileID
 	}
 	if assetID > 0 {
-		updates["aipdd_asset_id"] = assetID
+		updates["a_ip_dd_asset_id"] = assetID
 	}
 	return DB.Model(&VirtualCharacter{}).Where("id = ?", itemID).Updates(updates).Error
 }
@@ -337,9 +337,9 @@ func RetryVirtualCharacterCleanup(itemID int64, attempts int, nextAt int64, last
 func CompleteVirtualCharacterCleanup(itemID int64) error {
 	return DB.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Model(&VirtualCharacter{}).Where("id = ?", itemID).Updates(map[string]any{
-			"status":          VirtualCharacterStatusFailed,
-			"aipdd_asset_id":  0,
-			"aipdd_file_id":   "",
+		"status":          VirtualCharacterStatusFailed,
+		"a_ip_dd_asset_id":  0,
+		"a_ip_dd_file_id":   "",
 			"cleanup_next_at": 0,
 			"last_error":      "",
 			"updated_at":      time.Now().Unix(),
