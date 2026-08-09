@@ -35,6 +35,7 @@ import {
   Settings,
   Image as ImageIcon,
   FileSpreadsheet,
+  UserRoundCog,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { WORKSPACE_IDS } from '@/components/layout/lib/workspace-registry'
@@ -66,6 +67,11 @@ export function useSidebarData(): SidebarData {
             title: t('Material Library'),
             url: '/materials',
             icon: ImageIcon,
+          },
+          {
+            title: t('Character Library'),
+            url: '/characters',
+            icon: UserRoundCog,
           },
           {
             title: t('Test Bench'),

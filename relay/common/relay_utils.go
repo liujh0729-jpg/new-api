@@ -188,6 +188,7 @@ func isKnownTaskField(field string) bool {
 	knownFields := map[string]bool{
 		"prompt":          true,
 		"model":           true,
+		"character_id":    true,
 		"mode":            true,
 		"client_task_id":  true,
 		"image":           true,

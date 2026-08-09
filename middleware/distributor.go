@@ -159,7 +159,11 @@ func Distribute() func(c *gin.Context) {
 		SetupContextForSelectedChannel(c, channel, modelRequest.Model)
 		c.Next()
 		if channel != nil && c.Writer != nil && c.Writer.Status() < http.StatusBadRequest {
-			service.RecordChannelAffinity(c, channel.Id)
+			selectedChannelID := common.GetContextKeyInt(c, constant.ContextKeyChannelId)
+			if selectedChannelID <= 0 {
+				selectedChannelID = channel.Id
+			}
+			service.RecordChannelAffinity(c, selectedChannelID)
 		}
 	}
 }

@@ -50,6 +50,9 @@ func TestMain(m *testing.M) {
 		&AIPDDCatalogSnapshot{},
 		&WechatPayConfig{},
 		&WechatPayTestOrder{},
+		&VirtualCharacter{},
+		&VirtualCharacterUserLimit{},
+		&VirtualCharacterTask{},
 	); err != nil {
 		panic("failed to migrate: " + err.Error())
 	}
@@ -76,6 +79,9 @@ func truncateTables(t *testing.T) {
 		DB.Exec("DELETE FROM a_ip_dd_catalog_snapshots")
 		DB.Exec("DELETE FROM wechat_pay_test_orders")
 		DB.Exec("DELETE FROM wechat_pay_configs")
+		DB.Exec("DELETE FROM virtual_character_tasks")
+		DB.Exec("DELETE FROM virtual_character_user_limits")
+		DB.Exec("DELETE FROM virtual_characters")
 	})
 }
 

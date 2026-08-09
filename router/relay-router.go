@@ -108,7 +108,7 @@ func SetRelayRouter(router *gin.Engine) {
 			c.Set("relay_mode", relayconstant.RelayModeTaskFetchByID)
 			controller.RelayTaskFetch(c)
 		})
-		playgroundRouter.POST("/video/generations", controller.PlaygroundVideo)
+		playgroundRouter.POST("/video/generations", middleware.BindVirtualCharacter(), controller.PlaygroundVideo)
 		playgroundRouter.GET("/video/generations/:task_id", func(c *gin.Context) {
 			c.Set("relay_mode", relayconstant.RelayModeVideoFetchByID)
 			controller.RelayTaskFetch(c)

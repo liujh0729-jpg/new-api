@@ -372,6 +372,32 @@ func SetApiRouter(router *gin.Engine) {
 			taskRoute.GET("/self", middleware.UserAuth(), controller.GetUserTask)
 			taskRoute.GET("/", middleware.AdminAuth(), controller.GetAllTask)
 		}
+
+		virtualCharacterAdminRoute := apiRouter.Group("/virtual-characters/admin")
+		virtualCharacterAdminRoute.Use(middleware.AdminAuth())
+		{
+			virtualCharacterAdminRoute.GET("", controller.AdminListVirtualCharacters)
+			virtualCharacterAdminRoute.POST("", controller.AdminCreateVirtualCharacter)
+			virtualCharacterAdminRoute.PUT("/:id", controller.AdminUpdateVirtualCharacter)
+			virtualCharacterAdminRoute.DELETE("/:id", controller.AdminDeleteVirtualCharacter)
+			virtualCharacterAdminRoute.POST("/import", controller.AdminImportVirtualCharacters)
+			virtualCharacterAdminRoute.GET("/settings", controller.AdminGetVirtualCharacterSettings)
+			virtualCharacterAdminRoute.PUT("/settings", controller.AdminUpdateVirtualCharacterSettings)
+			virtualCharacterAdminRoute.PUT("/users/:user_id/limit", controller.AdminSetVirtualCharacterUserLimit)
+		}
+
+		virtualCharacterRoute := apiRouter.Group("/virtual-characters")
+		virtualCharacterRoute.Use(middleware.TokenOrUserAuth())
+		{
+			virtualCharacterRoute.GET("", controller.ListVirtualCharacters)
+			virtualCharacterRoute.GET("/config", controller.GetVirtualCharacterConfig)
+			virtualCharacterRoute.POST("/upload", middleware.UserUploadRateLimit(), controller.UploadVirtualCharacter)
+			virtualCharacterRoute.GET("/tasks", controller.GetVirtualCharacterTaskHistory)
+			virtualCharacterRoute.GET("/:id/preview", controller.PreviewVirtualCharacter)
+			virtualCharacterRoute.GET("/:id", controller.GetVirtualCharacter)
+			virtualCharacterRoute.PUT("/:id", controller.UpdateVirtualCharacter)
+			virtualCharacterRoute.DELETE("/:id", controller.DeleteVirtualCharacter)
+		}
 		taskRoute.Use(middleware.CORS(), middleware.CriticalRateLimit())
 		{
 			taskRoute.GET("/token", middleware.TokenAuthReadOnly(), controller.GetTaskByKey)

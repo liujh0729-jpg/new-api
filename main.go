@@ -116,6 +116,9 @@ func main() {
 	// Durable AIPDD finance outbox delivery and inbox/cursor recovery.
 	service.StartAIPDDFinanceReconciliationTask()
 
+	// Virtual character task recovery, retention, and deferred private-source cleanup.
+	service.StartVirtualCharacterMaintenanceTask()
+
 	// Wire task polling adaptor factory (breaks service -> relay import cycle)
 	service.GetTaskAdaptorFunc = func(platform constant.TaskPlatform) service.TaskPollingAdaptor {
 		a := relay.GetTaskAdaptor(platform)

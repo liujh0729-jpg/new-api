@@ -39,6 +39,7 @@ import { Route as SetupIndexRouteImport } from './routes/setup/index'
 import { Route as authUserResetRouteImport } from './routes/(auth)/user/reset'
 import { Route as AuthenticatedAipddFinanceIndexRouteImport } from './routes/_authenticated/aipdd-finance/index'
 import { Route as AuthenticatedChannelsIndexRouteImport } from './routes/_authenticated/channels/index'
+import { Route as AuthenticatedCharactersIndexRouteImport } from './routes/_authenticated/characters/index'
 import { Route as AuthenticatedChatChatIdRouteImport } from './routes/_authenticated/chat/$chatId'
 import { Route as AuthenticatedDashboardIndexRouteImport } from './routes/_authenticated/dashboard/index'
 import { Route as AuthenticatedDashboardSectionRouteImport } from './routes/_authenticated/dashboard/$section'
@@ -222,6 +223,12 @@ const AuthenticatedChannelsIndexRoute =
   AuthenticatedChannelsIndexRouteImport.update({
     id: '/channels/',
     path: '/channels/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedCharactersIndexRoute =
+  AuthenticatedCharactersIndexRouteImport.update({
+    id: '/characters/',
+    path: '/characters/',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
 const AuthenticatedChatChatIdRoute = AuthenticatedChatChatIdRouteImport.update({
@@ -453,6 +460,7 @@ export interface FileRoutesByFullPath {
   '/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
   '/aipdd-finance/': typeof AuthenticatedAipddFinanceIndexRoute
   '/channels/': typeof AuthenticatedChannelsIndexRoute
+  '/characters/': typeof AuthenticatedCharactersIndexRoute
   '/dashboard/': typeof AuthenticatedDashboardIndexRoute
   '/keys/': typeof AuthenticatedKeysIndexRoute
   '/materials/': typeof AuthenticatedMaterialsIndexRoute
@@ -515,6 +523,7 @@ export interface FileRoutesByTo {
   '/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
   '/aipdd-finance': typeof AuthenticatedAipddFinanceIndexRoute
   '/channels': typeof AuthenticatedChannelsIndexRoute
+  '/characters': typeof AuthenticatedCharactersIndexRoute
   '/dashboard': typeof AuthenticatedDashboardIndexRoute
   '/keys': typeof AuthenticatedKeysIndexRoute
   '/materials': typeof AuthenticatedMaterialsIndexRoute
@@ -581,6 +590,7 @@ export interface FileRoutesById {
   '/_authenticated/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
   '/_authenticated/aipdd-finance/': typeof AuthenticatedAipddFinanceIndexRoute
   '/_authenticated/channels/': typeof AuthenticatedChannelsIndexRoute
+  '/_authenticated/characters/': typeof AuthenticatedCharactersIndexRoute
   '/_authenticated/dashboard/': typeof AuthenticatedDashboardIndexRoute
   '/_authenticated/keys/': typeof AuthenticatedKeysIndexRoute
   '/_authenticated/materials/': typeof AuthenticatedMaterialsIndexRoute
@@ -646,6 +656,7 @@ export interface FileRouteTypes {
     | '/usage-logs/$section'
     | '/aipdd-finance/'
     | '/channels/'
+    | '/characters/'
     | '/dashboard/'
     | '/keys/'
     | '/materials/'
@@ -708,6 +719,7 @@ export interface FileRouteTypes {
     | '/usage-logs/$section'
     | '/aipdd-finance'
     | '/channels'
+    | '/characters'
     | '/dashboard'
     | '/keys'
     | '/materials'
@@ -773,6 +785,7 @@ export interface FileRouteTypes {
     | '/_authenticated/usage-logs/$section'
     | '/_authenticated/aipdd-finance/'
     | '/_authenticated/channels/'
+    | '/_authenticated/characters/'
     | '/_authenticated/dashboard/'
     | '/_authenticated/keys/'
     | '/_authenticated/materials/'
@@ -1035,6 +1048,13 @@ declare module '@tanstack/react-router' {
       path: '/channels'
       fullPath: '/channels/'
       preLoaderRoute: typeof AuthenticatedChannelsIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/characters/': {
+      id: '/_authenticated/characters/'
+      path: '/characters'
+      fullPath: '/characters/'
+      preLoaderRoute: typeof AuthenticatedCharactersIndexRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/chat/$chatId': {
@@ -1364,6 +1384,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedUsageLogsSectionRoute: typeof AuthenticatedUsageLogsSectionRoute
   AuthenticatedAipddFinanceIndexRoute: typeof AuthenticatedAipddFinanceIndexRoute
   AuthenticatedChannelsIndexRoute: typeof AuthenticatedChannelsIndexRoute
+  AuthenticatedCharactersIndexRoute: typeof AuthenticatedCharactersIndexRoute
   AuthenticatedDashboardIndexRoute: typeof AuthenticatedDashboardIndexRoute
   AuthenticatedKeysIndexRoute: typeof AuthenticatedKeysIndexRoute
   AuthenticatedMaterialsIndexRoute: typeof AuthenticatedMaterialsIndexRoute
@@ -1389,6 +1410,7 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedUsageLogsSectionRoute: AuthenticatedUsageLogsSectionRoute,
   AuthenticatedAipddFinanceIndexRoute: AuthenticatedAipddFinanceIndexRoute,
   AuthenticatedChannelsIndexRoute: AuthenticatedChannelsIndexRoute,
+  AuthenticatedCharactersIndexRoute: AuthenticatedCharactersIndexRoute,
   AuthenticatedDashboardIndexRoute: AuthenticatedDashboardIndexRoute,
   AuthenticatedKeysIndexRoute: AuthenticatedKeysIndexRoute,
   AuthenticatedMaterialsIndexRoute: AuthenticatedMaterialsIndexRoute,

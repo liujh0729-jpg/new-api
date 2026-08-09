@@ -505,10 +505,47 @@ func RelayTask(c *gin.Context) {
 		return
 	}
 
+	var boundCharacter *model.VirtualCharacter
+	characterLinkCreated := false
+	characterTaskReady := false
+	if item, bound := middleware.GetBoundVirtualCharacter(c); bound {
+		boundCharacter = item
+		if taskID, exists := middleware.GetVirtualCharacterTaskID(c); exists {
+			relayInfo.PublicTaskID = taskID
+			characterLinkCreated = true
+		} else {
+			relayInfo.PublicTaskID = model.GenerateTaskID()
+		}
+		if locked, ok := c.Get(middleware.VirtualCharacterLockedChannelKey); ok {
+			relayInfo.LockedChannel = locked
+		}
+		if !characterLinkCreated {
+			link := &model.VirtualCharacterTask{
+				TaskID:         relayInfo.PublicTaskID,
+				UserID:         relayInfo.UserId,
+				CharacterID:    item.ID,
+				CharacterName:  item.Name,
+				CharacterScope: item.Scope,
+			}
+			if createErr := model.CreateVirtualCharacterTaskLink(link); createErr != nil {
+				respondTaskError(c, service.TaskErrorWrapperLocal(createErr, "character_task_link_failed", http.StatusInternalServerError))
+				return
+			}
+			characterLinkCreated = true
+		}
+		c.Set(middleware.VirtualCharacterTaskClaimedKey, true)
+	}
+
 	var result *relay.TaskSubmitResult
 	var taskErr *dto.TaskError
 	defer func() {
 		if taskErr != nil {
+			if characterLinkCreated {
+				_ = model.MarkVirtualCharacterTaskFailed(relayInfo.PublicTaskID, taskErr.Message)
+				if boundCharacter != nil && service.IsVirtualCharacterRealPersonRejection(taskErr.Message) {
+					_ = model.MarkVirtualCharacterBlocked(boundCharacter.ID, taskErr.Message)
+				}
+			}
 			if relayInfo.Billing != nil {
 				relayInfo.Billing.Refund(c)
 			} else if financeErr := service.RecordAIPDDFinanceSettlement(relayInfo, 0, "NOT_CHARGED"); financeErr != nil {
@@ -621,8 +658,26 @@ func RelayTask(c *gin.Context) {
 		task.Quota = result.Quota
 		task.Data = result.TaskData
 		task.Action = relayInfo.Action
+		if boundCharacter != nil {
+			task.Action = model.VirtualCharacterTaskAction
+			payload, marshalErr := common.Marshal(task)
+			if marshalErr != nil {
+				common.SysError("marshal virtual character task recovery payload: " + marshalErr.Error())
+			} else if readyErr := model.MarkVirtualCharacterTaskReady(task.TaskID, result.UpstreamTaskID, task.ChannelId, string(payload)); readyErr != nil {
+				common.SysError("mark virtual character task ready: " + readyErr.Error())
+			} else {
+				characterTaskReady = true
+			}
+		}
 		if insertErr := task.Insert(); insertErr != nil {
 			common.SysError("insert task error: " + insertErr.Error())
+			if boundCharacter != nil && !characterTaskReady {
+				// A ready link is recovered by the maintenance worker. If the
+				// recovery payload could not be recorded, surface the local gap.
+				_ = model.MarkVirtualCharacterTaskFailed(task.TaskID, insertErr.Error())
+			}
+		} else if boundCharacter != nil {
+			_ = model.MarkVirtualCharacterTaskActive(task.TaskID)
 		}
 	}
 

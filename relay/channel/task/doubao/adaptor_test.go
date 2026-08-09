@@ -233,3 +233,24 @@ func TestConvertToRequestPayloadPreservesReferenceRoles(t *testing.T) {
 		}
 	}
 }
+
+func TestConvertToRequestPayloadMarksImageListAsReferenceImages(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+	payload, err := adaptor.convertToRequestPayload(&relaycommon.TaskSubmitReq{
+		Model:  "doubao-seedance-2-0-260128",
+		Prompt: "让图片1中的角色挥手",
+		Images: []string{"asset://asset-character"},
+	})
+	if err != nil {
+		t.Fatalf("convertToRequestPayload returned error: %v", err)
+	}
+	if len(payload.Content) != 2 {
+		t.Fatalf("content length = %d, want 2; content=%#v", len(payload.Content), payload.Content)
+	}
+	if payload.Content[0].Role != "reference_image" {
+		t.Fatalf("image role = %q, want reference_image", payload.Content[0].Role)
+	}
+	if payload.Content[0].ImageURL == nil || payload.Content[0].ImageURL.URL != "asset://asset-character" {
+		t.Fatalf("unexpected image reference: %#v", payload.Content[0])
+	}
+}

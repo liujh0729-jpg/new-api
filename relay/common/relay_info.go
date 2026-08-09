@@ -700,6 +700,7 @@ type TaskRelayInfo struct {
 type TaskSubmitReq struct {
 	Prompt         string                 `json:"prompt"`
 	Model          string                 `json:"model,omitempty"`
+	CharacterID    *int64                 `json:"character_id,omitempty"`
 	Mode           string                 `json:"mode,omitempty"`
 	ClientTaskID   string                 `json:"client_task_id,omitempty"`
 	Image          string                 `json:"image,omitempty"`

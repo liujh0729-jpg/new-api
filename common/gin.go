@@ -105,6 +105,26 @@ func CleanupBodyStorage(c *gin.Context) {
 	}
 }
 
+// ReplaceRequestBody replaces both the HTTP request stream and the reusable
+// request-body cache. It is intended for narrowly scoped middleware that must
+// inject server-owned fields before provider validation and relay.
+func ReplaceRequestBody(c *gin.Context, payload []byte) error {
+	if c == nil || c.Request == nil {
+		return errors.New("request context is nil")
+	}
+	CleanupBodyStorage(c)
+	storage, err := CreateBodyStorage(payload)
+	if err != nil {
+		return err
+	}
+	c.Set(KeyBodyStorage, storage)
+	c.Set(KeyRequestBody, nil)
+	c.Request.Body = io.NopCloser(storage)
+	c.Request.ContentLength = int64(len(payload))
+	c.Request.Header.Set("Content-Length", fmt.Sprintf("%d", len(payload)))
+	return nil
+}
+
 func UnmarshalBodyReusable(c *gin.Context, v any) error {
 	storage, err := GetBodyStorage(c)
 	if err != nil {
