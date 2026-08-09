@@ -174,6 +174,8 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			newAPIError = service.NormalizeViolationFeeError(newAPIError)
 			if relayInfo.Billing != nil {
 				relayInfo.Billing.Refund(c)
+			} else if financeErr := service.RecordAIPDDFinanceSettlement(relayInfo, 0, "NOT_CHARGED"); financeErr != nil {
+				common.SysError("record failed AIPDD finance order error: " + financeErr.Error())
 			}
 			service.ChargeViolationFeeIfNeeded(c, relayInfo, newAPIError)
 		}
@@ -198,6 +200,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 
 		addUsedChannel(c, channel.Id)
+		if financeErr := service.PrepareAIPDDFinanceAttempt(c, relayInfo); financeErr != nil {
+			newAPIError = types.NewError(financeErr, types.ErrorCodeQueryDataError)
+			break
+		}
 		bodyStorage, bodyErr := common.GetBodyStorage(c)
 		if bodyErr != nil {
 			// Ensure consistent 413 for oversized bodies even when error occurs later (e.g., retry path)
@@ -502,8 +508,12 @@ func RelayTask(c *gin.Context) {
 	var result *relay.TaskSubmitResult
 	var taskErr *dto.TaskError
 	defer func() {
-		if taskErr != nil && relayInfo.Billing != nil {
-			relayInfo.Billing.Refund(c)
+		if taskErr != nil {
+			if relayInfo.Billing != nil {
+				relayInfo.Billing.Refund(c)
+			} else if financeErr := service.RecordAIPDDFinanceSettlement(relayInfo, 0, "NOT_CHARGED"); financeErr != nil {
+				common.SysError("record failed AIPDD task finance order error: " + financeErr.Error())
+			}
 		}
 	}()
 
@@ -515,6 +525,7 @@ func RelayTask(c *gin.Context) {
 	}
 
 	for ; retryParam.GetRetry() <= common.RetryTimes; retryParam.IncreaseRetry() {
+		relayInfo.RetryIndex = retryParam.GetRetry()
 		var channel *model.Channel
 
 		if lockedCh, ok := relayInfo.LockedChannel.(*model.Channel); ok && lockedCh != nil {
@@ -536,6 +547,10 @@ func RelayTask(c *gin.Context) {
 		}
 
 		addUsedChannel(c, channel.Id)
+		if financeErr := service.PrepareAIPDDFinanceAttempt(c, relayInfo); financeErr != nil {
+			taskErr = service.TaskErrorWrapperLocal(financeErr, "prepare_aipdd_finance_failed", http.StatusInternalServerError)
+			break
+		}
 		bodyStorage, bodyErr := common.GetBodyStorage(c)
 		if bodyErr != nil {
 			if common.IsRequestBodyTooLargeError(bodyErr) || errors.Is(bodyErr, common.ErrRequestBodyTooLarge) {
@@ -602,6 +617,7 @@ func RelayTask(c *gin.Context) {
 			task.PrivateData.BillingContext.Resolution = quote.Resolution
 		}
 		task.PrivateData.AIPDDExecution = result.AIPDDExecution
+		task.PrivateData.AIPDDFinance = relayInfo.AIPDDFinance
 		task.Quota = result.Quota
 		task.Data = result.TaskData
 		task.Action = relayInfo.Action

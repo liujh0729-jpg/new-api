@@ -36,6 +36,7 @@ services:
 #      - SQL_DSN=root:${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD}@tcp(mysql:3306)/new-api  # Point to the mysql service, uncomment if using MySQL
       - REDIS_CONN_STRING=redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD}@redis:6379
       - AIPDD_API_KEY=${AIPDD_API_KEY:?set AIPDD_API_KEY}
+      - AIPDD_INSTANCE_ID=${AIPDD_INSTANCE_ID:-}
       - TZ=Asia/Shanghai
       - ERROR_LOG_ENABLED=true # 是否启用错误日志记录 (Whether to enable error log recording)
       - BATCH_UPDATE_ENABLED=true  # 是否启用批量更新 (Whether to enable batch update)

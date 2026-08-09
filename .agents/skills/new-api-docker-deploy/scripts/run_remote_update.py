@@ -951,6 +951,254 @@ def capture_duration_models(client: paramiko.SSHClient) -> list[str]:
     return sorted(set(names))
 
 
+def _parse_option_map(value: Any) -> dict[str, Any]:
+    if value is None or value == "":
+        return {}
+    if isinstance(value, str):
+        return json.loads(value)
+    if isinstance(value, dict):
+        return value
+    die(f"unexpected option map type: {type(value).__name__}")
+    return {}
+
+
+def get_channel(
+    client: paramiko.SSHClient, cookie: str, user_id: int, channel_id: int
+) -> dict[str, Any]:
+    data = remote_http_json(
+        client,
+        "GET",
+        f"/api/channel/{channel_id}",
+        cookie_file=cookie,
+        user_id=user_id,
+    )
+    if not data.get("success"):
+        die(f"GET channel {channel_id} failed: {data.get('message')}")
+    payload = data.get("data")
+    if not isinstance(payload, dict):
+        die(f"GET channel {channel_id} returned unexpected shape")
+    return payload
+
+
+def put_channel(
+    client: paramiko.SSHClient, cookie: str, user_id: int, body: dict[str, Any]
+) -> None:
+    data = remote_http_json(
+        client, "PUT", "/api/channel/", body, cookie_file=cookie, user_id=user_id
+    )
+    if str(data.get("_http_code")) != "200" or not data.get("success"):
+        die(
+            f"PUT channel {body.get('id')} failed: "
+            f"HTTP {data.get('_http_code')} {data.get('message')}"
+        )
+
+
+def sync_vip_groups(
+    client: paramiko.SSHClient, cookie: str, user_id: int
+) -> dict[str, Any]:
+    """Idempotently synchronize VIP1-VIP5 ratios, private rules, and AIPDD groups."""
+    print("=== synchronize VIP group prices ===")
+    interest_keys = [
+        "GroupRatio",
+        "UserUsableGroups",
+        "group_ratio_setting.group_special_usable_group",
+    ]
+    options_before = fetch_options(client, cookie, user_id)
+    options_subset = {k: options_before.get(k) for k in interest_keys}
+    channels = list_aipdd_channels(client, cookie, user_id)
+    if not channels:
+        die("No AIPDD channel for VIP group synchronization")
+
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    backup_remote = f"{DEPLOY_DIR}/backups/vip-groups-{stamp}"
+    run(client, f"mkdir -p {backup_remote} && chmod 700 {backup_remote}")
+    redacted_channels = []
+    for ch in channels:
+        redacted_channels.append(
+            {
+                "id": ch.get("id"),
+                "name": ch.get("name"),
+                "type": ch.get("type"),
+                "group": ch.get("group", ""),
+            }
+        )
+    sftp_write(
+        client,
+        f"{backup_remote}/options-before.json",
+        json.dumps(options_subset, ensure_ascii=False),
+    )
+    sftp_write(
+        client,
+        f"{backup_remote}/aipdd-channels-before.json",
+        json.dumps({"items": redacted_channels}, ensure_ascii=False),
+    )
+    print(f"vip backup at {backup_remote}")
+
+    options_path = WORK_DIR / "vip-options-before.json"
+    channels_path = WORK_DIR / "vip-aipdd-channels-before.json"
+    plan_path = WORK_DIR / "vip-group-plan.json"
+    write_local(
+        options_path,
+        json.dumps(
+            {"data": [{"key": k, "value": v} for k, v in options_subset.items()]},
+            ensure_ascii=False,
+        ),
+    )
+    write_local(channels_path, json.dumps({"items": redacted_channels}, ensure_ascii=False))
+
+    import subprocess
+
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT_DIR / "build_vip_group_sync_plan.py"),
+            "--options",
+            str(options_path),
+            "--channels",
+            str(channels_path),
+            "--output",
+            str(plan_path),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    if proc.returncode != 0:
+        die(f"build_vip_group_sync_plan failed: {proc.stderr[:800] or proc.stdout[:800]}")
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    summary = plan.get("summary") or {}
+    fixed = summary.get("fixed_groups") or {}
+    expected_fixed = {
+        "VIP1": 0.78,
+        "VIP2": 0.80,
+        "VIP3": 0.85,
+        "VIP4": 0.90,
+        "VIP5": 0.95,
+    }
+    if fixed != expected_fixed:
+        die(f"VIP plan fixed_groups mismatch: {fixed}")
+    if summary.get("private_user_groups") != ["VIP1", "VIP2", "VIP3", "VIP4", "VIP5"]:
+        die("VIP plan private_user_groups mismatch")
+    if summary.get("private_rule") != "-:default":
+        die("VIP plan private_rule mismatch")
+    contract = summary.get("contract") or ""
+    if "private" not in contract or "preserve" not in contract:
+        die("VIP plan contract missing required language")
+    allowed_option_keys = {
+        "GroupRatio",
+        "UserUsableGroups",
+        "group_ratio_setting.group_special_usable_group",
+    }
+    for item in plan.get("option_updates") or []:
+        if item.get("key") not in allowed_option_keys:
+            die(f"VIP plan contains unauthorized option key: {item.get('key')}")
+    for item in plan.get("channel_updates") or []:
+        if item.get("type") != 58:
+            die(f"VIP plan channel update has non-AIPDD type: {item.get('type')}")
+
+    print(
+        "vip plan summary:",
+        f"option_updates={summary.get('option_updates')}",
+        f"channel_updates={summary.get('channel_updates')}",
+        f"channel_count={summary.get('channel_count')}",
+    )
+
+    applied_options: list[dict[str, str]] = []
+    applied_channels: list[dict[str, Any]] = []
+    try:
+        for item in plan.get("option_updates") or []:
+            key = item["key"]
+            current = fetch_options(client, cookie, user_id).get(key)
+            if _parse_option_map(current) != _parse_option_map(item["previous_value"]):
+                die(f"option {key} changed after plan generation; regenerate required")
+            print(f"writing option {key}")
+            put_option(client, cookie, user_id, key, item["value"])
+            applied_options.append(item)
+
+        for item in plan.get("channel_updates") or []:
+            cid = int(item["id"])
+            latest = get_channel(client, cookie, user_id, cid)
+            if latest.get("id") != cid or latest.get("type") != 58:
+                die(f"channel {cid} identity/type changed before VIP write")
+            if latest.get("group", "") != item["previous_group"]:
+                die(f"channel {cid} group changed after plan generation; regenerate required")
+            body = dict(latest)
+            body["group"] = item["group"]
+            # Keep redacted empty key; backend intentionally ignores key updates here.
+            if "key" not in body:
+                body["key"] = ""
+            print(f"updating channel id={cid} groups")
+            put_channel(client, cookie, user_id, body)
+            verify = get_channel(client, cookie, user_id, cid)
+            if verify.get("group", "") != item["group"]:
+                die(f"channel {cid} group verify mismatch after VIP write")
+            applied_channels.append(item)
+    except SystemExit:
+        print("VIP sync failed; attempting rollback")
+        for item in reversed(applied_channels):
+            try:
+                latest = get_channel(client, cookie, user_id, int(item["id"]))
+                if latest.get("group", "") != item["group"]:
+                    print(f"ROLLBACK_SKIP channel {item['id']}: group drifted")
+                    continue
+                body = dict(latest)
+                body["group"] = item["previous_group"]
+                if "key" not in body:
+                    body["key"] = ""
+                put_channel(client, cookie, user_id, body)
+            except SystemExit as rb_exc:
+                print(f"ROLLBACK_FAIL channel {item['id']}: {rb_exc}")
+        for item in reversed(applied_options):
+            try:
+                put_option(client, cookie, user_id, item["key"], item["previous_value"])
+            except SystemExit as rb_exc:
+                print(f"ROLLBACK_FAIL option {item['key']}: {rb_exc}")
+        raise
+
+    options_after = fetch_options(client, cookie, user_id)
+    for item in plan.get("option_updates") or []:
+        key = item["key"]
+        if _parse_option_map(options_after.get(key)) != _parse_option_map(item["value"]):
+            die(f"VIP option verify mismatch for {key}")
+    # Even on no-op plans, require the five fixed ratios and private-rule contract.
+    ratios = _parse_option_map(options_after.get("GroupRatio"))
+    for name, ratio in expected_fixed.items():
+        if ratios.get(name) != ratio:
+            die(f"GroupRatio[{name}] is {ratios.get(name)!r}, expected {ratio}")
+    usable = _parse_option_map(options_after.get("UserUsableGroups"))
+    for name in expected_fixed:
+        if name in usable:
+            die(f"{name} still present in global UserUsableGroups")
+    special = _parse_option_map(
+        options_after.get("group_ratio_setting.group_special_usable_group")
+    )
+    for name in expected_fixed:
+        rules = special.get(name)
+        if not isinstance(rules, dict) or "-:default" not in rules:
+            die(f"missing private -:default rule for {name}")
+
+    channels_after = list_aipdd_channels(client, cookie, user_id)
+    for ch in channels_after:
+        groups = [g.strip() for g in str(ch.get("group", "")).split(",") if g.strip()]
+        for name in expected_fixed:
+            if groups.count(name) != 1:
+                die(
+                    f"channel {ch.get('id')} must contain {name} exactly once; "
+                    f"got {groups.count(name)}"
+                )
+
+    noop = not (plan.get("option_updates") or plan.get("channel_updates"))
+    print(
+        "VIP synchronization verified:",
+        f"changed_channels={len(applied_channels)}",
+        f"noop={noop}",
+    )
+    return {
+        "vipChangedChannelCount": len(applied_channels),
+        "vipSynchronizationNoop": noop,
+    }
+
+
 def main() -> None:
     require_secrets()
     ensure_work_dir()
@@ -1053,7 +1301,8 @@ def main() -> None:
                 die(f"duration models missing after update without price overwrite: {missing}")
 
         if VIP_SYNC:
-            die("VIP sync requested but not implemented in this runner invocation path")
+            vip_result = sync_vip_groups(client, cookie, user_id)
+            aipdd_result = {**aipdd_result, **vip_result}
 
         _, ps, _ = run(client, f"cd {DEPLOY_DIR} && docker compose ps")
         verification = {

@@ -16,6 +16,21 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+func TestBuildRequestHeaderIncludesFinanceIdentity(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/tasks", nil)
+	info := &relaycommon.RelayInfo{AIPDDFinance: &relaycommon.AIPDDFinanceContext{
+		InstanceID: "instance-id", PlatformOrderID: "order-id", AttemptID: "attempt-id",
+		NewAPIUserID: "12", NewAPITokenID: "34",
+	}}
+	adaptor := &TaskAdaptor{apiKey: "aipdd-key"}
+	if err := adaptor.BuildRequestHeader(nil, req, info); err != nil {
+		t.Fatalf("BuildRequestHeader: %v", err)
+	}
+	if req.Header.Get("X-AIPDD-Order-ID") != "order-id" || req.Header.Get("X-AIPDD-Instance-ID") != "instance-id" {
+		t.Fatalf("finance identity headers missing: %#v", req.Header)
+	}
+}
+
 func TestAIPDDTaskSnapshotPersistsImageMediaMetadata(t *testing.T) {
 	const modelName = "dynamic-image-to-image"
 	constant.SetAIPDDCapabilities([]constant.AIPDDCapability{

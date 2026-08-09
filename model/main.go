@@ -289,6 +289,12 @@ func migrateDB() error {
 		&UserOAuthBinding{},
 		&PerfMetric{},
 		&AIPDDCatalogSnapshot{},
+		&AIPDDFinanceOrder{},
+		&AIPDDFinanceMovement{},
+		&AIPDDFinanceInbox{},
+		&AIPDDFinanceOutbox{},
+		&AIPDDFinanceCursor{},
+		&AIPDDFinanceExportJob{},
 	)
 	if err != nil {
 		return err
@@ -351,6 +357,12 @@ func migrateDBFast() error {
 		{&UserOAuthBinding{}, "UserOAuthBinding"},
 		{&PerfMetric{}, "PerfMetric"},
 		{&AIPDDCatalogSnapshot{}, "AIPDDCatalogSnapshot"},
+		{&AIPDDFinanceOrder{}, "AIPDDFinanceOrder"},
+		{&AIPDDFinanceMovement{}, "AIPDDFinanceMovement"},
+		{&AIPDDFinanceInbox{}, "AIPDDFinanceInbox"},
+		{&AIPDDFinanceOutbox{}, "AIPDDFinanceOutbox"},
+		{&AIPDDFinanceCursor{}, "AIPDDFinanceCursor"},
+		{&AIPDDFinanceExportJob{}, "AIPDDFinanceExportJob"},
 	}
 	// 动态计算migration数量，确保errChan缓冲区足够大
 	errChan := make(chan error, len(migrations))
@@ -416,8 +428,8 @@ func ensureSQLiteUniqueColumnsBeforeAutoMigrate() error {
 		return nil
 	}
 	type colSpec struct {
-		model any
-		table string
+		model  any
+		table  string
 		column string
 		ddl    string
 		index  string

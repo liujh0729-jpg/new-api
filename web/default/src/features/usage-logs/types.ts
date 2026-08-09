@@ -92,6 +92,7 @@ export interface ChannelAffinityInfo {
 }
 
 export interface LogOtherData {
+  channel_type?: number
   admin_info?: {
     is_multi_key?: boolean
     multi_key_index?: number

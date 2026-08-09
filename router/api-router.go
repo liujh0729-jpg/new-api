@@ -322,6 +322,20 @@ func SetApiRouter(router *gin.Engine) {
 		logRoute.GET("/self/stat", middleware.UserAuth(), controller.GetLogsSelfStat)
 		logRoute.GET("/channel_affinity_usage_cache", middleware.AdminAuth(), controller.GetChannelAffinityUsageCacheStats)
 		logRoute.GET("/search", middleware.AdminAuth(), controller.SearchAllLogs)
+
+		financeRoute := apiRouter.Group("/aipdd-finance")
+		financeRoute.Use(middleware.AdminAuth())
+		{
+			financeRoute.GET("/summary", controller.AdminGetAIPDDFinanceSummary)
+			financeRoute.GET("/orders", controller.AdminListAIPDDFinanceOrders)
+			financeRoute.GET("/orders/:id", controller.AdminGetAIPDDFinanceOrder)
+			financeRoute.GET("/sync-status", controller.AdminGetAIPDDFinanceSyncStatus)
+			financeRoute.POST("/sync/retry", controller.AdminRetryAIPDDFinanceSync)
+			financeRoute.POST("/exports", controller.AdminCreateAIPDDFinanceExport)
+			financeRoute.GET("/exports", controller.AdminListAIPDDFinanceExports)
+			financeRoute.GET("/exports/:id", controller.AdminGetAIPDDFinanceExport)
+			financeRoute.GET("/exports/:id/download", controller.AdminDownloadAIPDDFinanceExport)
+		}
 		logRoute.GET("/self", middleware.UserAuth(), controller.GetUserLogs)
 		logRoute.GET("/self/search", middleware.UserAuth(), middleware.SearchRateLimit(), controller.SearchUserLogs)
 

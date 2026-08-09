@@ -194,6 +194,7 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, header *http.Header, info *
 	}
 	if info.ChannelType == constant.ChannelTypeAIPDD {
 		header.Set("X-API-Key", info.ApiKey)
+		setAIPDDFinanceHeaders(header, info)
 		return nil
 	}
 	if info.RelayMode == relayconstant.RelayModeRealtime {
@@ -228,6 +229,18 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, header *http.Header, info *
 		}
 	}
 	return nil
+}
+
+func setAIPDDFinanceHeaders(header *http.Header, info *relaycommon.RelayInfo) {
+	if info == nil || info.AIPDDFinance == nil {
+		return
+	}
+	finance := info.AIPDDFinance
+	header.Set("X-AIPDD-Instance-ID", finance.InstanceID)
+	header.Set("X-AIPDD-Order-ID", finance.PlatformOrderID)
+	header.Set("X-AIPDD-Attempt-ID", finance.AttemptID)
+	header.Set("X-AIPDD-NewAPI-User-ID", finance.NewAPIUserID)
+	header.Set("X-AIPDD-NewAPI-Token-ID", finance.NewAPITokenID)
 }
 
 func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.GeneralOpenAIRequest) (any, error) {

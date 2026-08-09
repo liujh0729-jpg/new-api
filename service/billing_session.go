@@ -81,12 +81,32 @@ func (s *BillingSession) Settle(actualQuota int) error {
 // Refund 退还所有预扣费，幂等安全，异步执行。
 func (s *BillingSession) Refund(c *gin.Context) {
 	s.mu.Lock()
-	if s.settled || s.refunded || !s.needsRefundLocked() {
+	if s.settled || s.refunded {
 		s.mu.Unlock()
+		return
+	}
+	if !s.needsRefundLocked() {
+		// Trusted/zero-quota requests can fail after the finance order is created
+		// without changing either the funding source or token quota. Close those
+		// orders explicitly instead of leaving their local billing state PENDING.
+		// A funding write with an uncertain outcome must never enter this branch.
+		notCharged := !s.fundingSettled && s.preConsumedQuota == 0 &&
+			s.tokenConsumed == 0 && s.extraReserved == 0
+		if notCharged {
+			s.settled = true
+		}
+		financeInfo := s.relayInfo
+		s.mu.Unlock()
+		if notCharged {
+			if err := RecordAIPDDFinanceSettlement(financeInfo, 0, "NOT_CHARGED"); err != nil {
+				common.SysLog("record AIPDD finance not-charged settlement failed: " + err.Error())
+			}
+		}
 		return
 	}
 	s.refunded = true
 	s.mu.Unlock()
+	MarkAIPDDFinanceRefundPending(s.relayInfo)
 
 	logger.LogInfo(c, fmt.Sprintf("用户 %d 请求失败, 返还预扣费（token_quota=%s, funding=%s）",
 		s.relayInfo.UserId,
@@ -102,21 +122,31 @@ func (s *BillingSession) Refund(c *gin.Context) {
 	extraReserved := s.extraReserved
 	subscriptionId := s.relayInfo.SubscriptionId
 	funding := s.funding
+	financeInfo := s.relayInfo
 
 	gopool.Go(func() {
+		refundSucceeded := true
 		// 1) 退还资金来源
 		if err := funding.Refund(); err != nil {
 			common.SysLog("error refunding billing source: " + err.Error())
+			refundSucceeded = false
 		}
 		if extraReserved > 0 && funding.Source() == BillingSourceSubscription && subscriptionId > 0 {
 			if err := model.PostConsumeUserSubscriptionDelta(subscriptionId, -int64(extraReserved)); err != nil {
 				common.SysLog("error refunding subscription extra reserved quota: " + err.Error())
+				refundSucceeded = false
 			}
 		}
 		// 2) 退还令牌额度
 		if tokenConsumed > 0 && !isPlayground {
 			if err := model.IncreaseTokenQuota(tokenId, tokenKey, tokenConsumed); err != nil {
 				common.SysLog("error refunding token quota: " + err.Error())
+				refundSucceeded = false
+			}
+		}
+		if refundSucceeded {
+			if err := RecordAIPDDFinanceSettlement(financeInfo, 0, "REFUNDED"); err != nil {
+				common.SysLog("record AIPDD finance refund failed: " + err.Error())
 			}
 		}
 	})

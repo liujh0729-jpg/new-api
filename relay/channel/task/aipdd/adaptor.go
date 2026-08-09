@@ -385,11 +385,19 @@ func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, erro
 	return a.baseURL + normalizeExecutionPath(cfg.ExecutionPath), nil
 }
 
-func (a *TaskAdaptor) BuildRequestHeader(_ *gin.Context, req *http.Request, _ *relaycommon.RelayInfo) error {
+func (a *TaskAdaptor) BuildRequestHeader(_ *gin.Context, req *http.Request, info *relaycommon.RelayInfo) error {
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-API-Key", a.apiKey)
 	req.Header.Set("Authorization", "Bearer "+a.apiKey)
+	if info != nil && info.AIPDDFinance != nil {
+		finance := info.AIPDDFinance
+		req.Header.Set("X-AIPDD-Instance-ID", finance.InstanceID)
+		req.Header.Set("X-AIPDD-Order-ID", finance.PlatformOrderID)
+		req.Header.Set("X-AIPDD-Attempt-ID", finance.AttemptID)
+		req.Header.Set("X-AIPDD-NewAPI-User-ID", finance.NewAPIUserID)
+		req.Header.Set("X-AIPDD-NewAPI-Token-ID", finance.NewAPITokenID)
+	}
 	return nil
 }
 

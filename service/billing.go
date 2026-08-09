@@ -54,7 +54,11 @@ func SettleBilling(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, actualQuo
 			))
 		}
 
+		if err := BeginAIPDDFinanceSettlement(relayInfo, actualQuota); err != nil {
+			return err
+		}
 		if err := relayInfo.Billing.Settle(actualQuota); err != nil {
+			MarkAIPDDFinanceSettlementReviewRequired(relayInfo)
 			return err
 		}
 
@@ -66,13 +70,25 @@ func SettleBilling(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, actualQuo
 				checkAndSendQuotaNotify(relayInfo, actualQuota-preConsumed, preConsumed)
 			}
 		}
+		if err := RecordAIPDDFinanceSettlement(relayInfo, actualQuota, "CHARGED"); err != nil {
+			logger.LogError(ctx, "record AIPDD finance settlement failed: "+err.Error())
+		}
 		return nil
 	}
 
 	// 回退：无 BillingSession 时使用旧路径
+	if err := BeginAIPDDFinanceSettlement(relayInfo, actualQuota); err != nil {
+		return err
+	}
 	quotaDelta := actualQuota - relayInfo.FinalPreConsumedQuota
 	if quotaDelta != 0 {
-		return PostConsumeQuota(relayInfo, quotaDelta, relayInfo.FinalPreConsumedQuota, true)
+		if err := PostConsumeQuota(relayInfo, quotaDelta, relayInfo.FinalPreConsumedQuota, true); err != nil {
+			MarkAIPDDFinanceSettlementReviewRequired(relayInfo)
+			return err
+		}
+	}
+	if err := RecordAIPDDFinanceSettlement(relayInfo, actualQuota, "CHARGED"); err != nil {
+		logger.LogError(ctx, "record AIPDD finance settlement failed: "+err.Error())
 	}
 	return nil
 }

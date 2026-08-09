@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 /* eslint-disable react-refresh/only-export-components */
 import { useState } from 'react'
-import { useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { type ColumnDef } from '@tanstack/react-table'
 import {
   AlertTriangle,
@@ -52,6 +52,7 @@ import {
   dotColorMap,
   textColorMap,
 } from '@/components/status-badge'
+import { getFinanceSyncStatus } from '@/features/aipdd-finance/api'
 import { getCodexUsage } from '../api'
 import { CHANNEL_STATUS_CONFIG, MODEL_FETCHABLE_TYPES } from '../constants'
 import {
@@ -97,6 +98,59 @@ function parseIonetMeta(otherInfo: string | null | undefined): null | {
     return null
   }
   return null
+}
+
+function AIPDDFinanceStatusCell({ channel }: { channel: Channel }) {
+  const { t } = useTranslation()
+  const statusQuery = useQuery({
+    queryKey: ['aipdd-finance-sync-channel-table'],
+    queryFn: () => getFinanceSyncStatus(),
+    staleTime: 30_000,
+    enabled: channel.type === 58,
+  })
+  if (channel.type !== 58) {
+    return <span className='text-muted-foreground text-xs'>—</span>
+  }
+  if (isMultiKeyChannel(channel)) {
+    return (
+      <StatusBadge
+        label={t('Multi-key is not allowed')}
+        variant='danger'
+        size='sm'
+        copyable={false}
+      />
+    )
+  }
+  const status = statusQuery.data?.data.find(
+    (item) => item.channel_id === channel.id
+  )
+  if (!status) {
+    return (
+      <span className='text-muted-foreground text-xs'>
+        {t('Pending confirmation')}
+      </span>
+    )
+  }
+  return (
+    <a
+      className='flex flex-col gap-0.5 text-xs hover:underline'
+      href={`/aipdd-finance?channel_id=${channel.id}`}
+    >
+      <span className='font-mono'>{status.instance_id}</span>
+      <span className='text-muted-foreground'>
+        {t('Cursor')} {status.last_sequence} · {t('Backlog')}{' '}
+        {status.backlog_count}
+      </span>
+      <span
+        className={
+          status.last_error ? 'text-destructive' : 'text-muted-foreground'
+        }
+      >
+        {status.last_error ||
+          `${t('Last success')} ${status.last_success_at ? formatTimestampToDate(status.last_success_at) : '—'}`}
+      </span>
+    </a>
+  )
 }
 
 /**
@@ -1040,6 +1094,18 @@ export function useChannelsColumns(): ColumnDef<Channel>[] {
         )
       },
       size: 120,
+      enableSorting: false,
+    },
+
+    {
+      id: 'aipdd-finance-sync',
+      meta: { label: t('Settlement synchronization'), mobileHidden: true },
+      header: t('Settlement synchronization'),
+      cell: ({ row }) =>
+        isTagAggregateRow(row.original) ? null : (
+          <AIPDDFinanceStatusCell channel={row.original} />
+        ),
+      size: 310,
       enableSorting: false,
     },
 

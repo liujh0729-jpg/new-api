@@ -152,6 +152,8 @@ type RelayInfo struct {
 	SubscriptionPlanTitle string
 	// RequestId is used for idempotent pre-consume/refund
 	RequestId string
+	// AIPDDFinance carries identifiers only. It never contains the upstream API key.
+	AIPDDFinance *AIPDDFinanceContext
 	// SubscriptionAmountTotal / SubscriptionAmountUsedAfterPreConsume are used to compute remaining in logs.
 	SubscriptionAmountTotal               int64
 	SubscriptionAmountUsedAfterPreConsume int64
@@ -191,6 +193,15 @@ type RelayInfo struct {
 	*ResponsesUsageInfo
 	*ChannelMeta
 	*TaskRelayInfo
+}
+
+type AIPDDFinanceContext struct {
+	InstanceID      string `json:"instance_id"`
+	PlatformOrderID string `json:"platform_order_id"`
+	AttemptID       string `json:"attempt_id"`
+	NewAPIUserID    string `json:"newapi_user_id"`
+	NewAPITokenID   string `json:"newapi_token_id"`
+	ChannelID       int    `json:"channel_id"`
 }
 
 func (info *RelayInfo) InitChannelMeta(c *gin.Context) {

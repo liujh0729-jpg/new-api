@@ -216,6 +216,9 @@ func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) {
 		Group:     task.Group,
 		Other:     other,
 	})
+	if err := RecordTaskAIPDDFinanceSettlement(task, 0, "REFUNDED"); err != nil {
+		logger.LogWarn(ctx, "record AIPDD task refund settlement failed: "+err.Error())
+	}
 }
 
 // RecalculateTaskQuota 通用的异步差额结算。
@@ -231,6 +234,9 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 	if quotaDelta == 0 {
 		logger.LogInfo(ctx, fmt.Sprintf("任务 %s 预扣费准确（%s，%s）",
 			task.TaskID, logger.LogQuota(actualQuota), reason))
+		if err := RecordTaskAIPDDFinanceSettlement(task, actualQuota, "CHARGED"); err != nil {
+			logger.LogWarn(ctx, "record AIPDD task settlement failed: "+err.Error())
+		}
 		return
 	}
 
@@ -282,6 +288,9 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 		Group:     task.Group,
 		Other:     other,
 	})
+	if err := RecordTaskAIPDDFinanceSettlement(task, actualQuota, "CHARGED"); err != nil {
+		logger.LogWarn(ctx, "record AIPDD task settlement failed: "+err.Error())
+	}
 }
 
 // RecalculateTaskQuotaByTokens 根据实际 token 消耗重新计费（异步差额结算）。

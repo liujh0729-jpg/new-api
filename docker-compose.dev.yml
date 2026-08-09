@@ -30,6 +30,7 @@ services:
       - SQL_DSN=postgresql://root:12345678@postgres:5432/new-api
       - REDIS_CONN_STRING=redis://redis
       - AIPDD_API_KEY=${AIPDD_API_KEY:-}
+      - AIPDD_INSTANCE_ID=${AIPDD_INSTANCE_ID:-}
       - TZ=Asia/Shanghai
       - BATCH_UPDATE_ENABLED=true
       - MATERIAL_PUBLIC_BASE_URL=http://127.0.0.1:6070
