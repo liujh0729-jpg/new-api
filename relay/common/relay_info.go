@@ -698,23 +698,24 @@ type TaskRelayInfo struct {
 }
 
 type TaskSubmitReq struct {
-	Prompt         string                 `json:"prompt"`
-	Model          string                 `json:"model,omitempty"`
-	CharacterID    *int64                 `json:"character_id,omitempty"`
-	Mode           string                 `json:"mode,omitempty"`
-	ClientTaskID   string                 `json:"client_task_id,omitempty"`
-	Image          string                 `json:"image,omitempty"`
-	ImageTail      string                 `json:"image_tail,omitempty"`
-	FirstFrame     string                 `json:"first_frame,omitempty"`
-	LastFrame      string                 `json:"last_frame,omitempty"`
-	Images         []string               `json:"images,omitempty"`
-	Size           string                 `json:"size,omitempty"`
-	N              *int                   `json:"n,omitempty"`
-	ImageCount     *int                   `json:"image_count,omitempty"`
-	Duration       int                    `json:"duration,omitempty"`
-	Seconds        string                 `json:"seconds,omitempty"`
-	InputReference string                 `json:"input_reference,omitempty"`
-	Metadata       map[string]interface{} `json:"metadata,omitempty"`
+	Prompt           string                 `json:"prompt"`
+	Model            string                 `json:"model,omitempty"`
+	CharacterID      *int64                 `json:"character_id,omitempty"`
+	CharacterAssetID *int64                 `json:"character_asset_id,omitempty"`
+	Mode             string                 `json:"mode,omitempty"`
+	ClientTaskID     string                 `json:"client_task_id,omitempty"`
+	Image            string                 `json:"image,omitempty"`
+	ImageTail        string                 `json:"image_tail,omitempty"`
+	FirstFrame       string                 `json:"first_frame,omitempty"`
+	LastFrame        string                 `json:"last_frame,omitempty"`
+	Images           []string               `json:"images,omitempty"`
+	Size             string                 `json:"size,omitempty"`
+	N                *int                   `json:"n,omitempty"`
+	ImageCount       *int                   `json:"image_count,omitempty"`
+	Duration         int                    `json:"duration,omitempty"`
+	Seconds          string                 `json:"seconds,omitempty"`
+	InputReference   string                 `json:"input_reference,omitempty"`
+	Metadata         map[string]interface{} `json:"metadata,omitempty"`
 }
 
 func (t *TaskSubmitReq) GetPrompt() string {

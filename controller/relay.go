@@ -527,6 +527,11 @@ func RelayTask(c *gin.Context) {
 				CharacterName:  item.Name,
 				CharacterScope: item.Scope,
 			}
+			if asset, assetBound := middleware.GetBoundVirtualCharacterAsset(c); assetBound {
+				link.CharacterAssetID = asset.ID
+				link.CharacterAssetName = asset.Name
+				link.ProviderAssetID = asset.ProviderAssetID
+			}
 			if createErr := model.CreateVirtualCharacterTaskLink(link); createErr != nil {
 				respondTaskError(c, service.TaskErrorWrapperLocal(createErr, "character_task_link_failed", http.StatusInternalServerError))
 				return
@@ -542,7 +547,7 @@ func RelayTask(c *gin.Context) {
 		if taskErr != nil {
 			if characterLinkCreated {
 				_ = model.MarkVirtualCharacterTaskFailed(relayInfo.PublicTaskID, taskErr.Message)
-				if boundCharacter != nil && service.IsVirtualCharacterRealPersonRejection(taskErr.Message) {
+				if boundCharacter != nil && boundCharacter.SourceType != model.VirtualCharacterSourceVolcRealPerson && service.IsVirtualCharacterRealPersonRejection(taskErr.Message) {
 					_ = model.MarkVirtualCharacterBlocked(boundCharacter.ID, taskErr.Message)
 				}
 			}

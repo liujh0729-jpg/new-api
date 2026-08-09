@@ -16,27 +16,26 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useMemo, useState, type FormEvent, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Add01Icon,
   AiUserIcon,
+  CheckmarkCircle02Icon,
   Clock01Icon,
   Delete02Icon,
-  Edit02Icon,
   FileUploadIcon,
-  Image01Icon,
   MagicWand01Icon,
   RefreshIcon,
   Settings01Icon,
   Video01Icon,
 } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
+import { QRCodeSVG } from 'qrcode.react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { useAuthStore } from '@/stores/auth-store'
 import { ROLE } from '@/lib/roles'
-import { cn } from '@/lib/utils'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import {
   AlertDialog,
@@ -50,7 +49,13 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card'
 import {
   Dialog,
   DialogContent,
@@ -59,38 +64,48 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import {
+  Field,
+  FieldDescription,
+  FieldGroup,
+  FieldLabel,
+} from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
+import { Progress, ProgressLabel } from '@/components/ui/progress'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Spinner } from '@/components/ui/spinner'
+import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import { SectionPageLayout } from '@/components/layout'
 import {
   createCharacterVideo,
-  createPublicVirtualCharacter,
+  createValidationSession,
   deleteVirtualCharacter,
+  deleteVirtualCharacterAsset,
   getAvailableVideoModels,
+  getValidationSession,
+  getVirtualCharacter,
   getVirtualCharacterConfig,
   getVirtualCharacterHistory,
   getVirtualCharacterSettings,
   importPublicVirtualCharacters,
-  listAdminPublicCharacters,
   listVirtualCharacters,
-  offlinePublicVirtualCharacter,
-  setVirtualCharacterUserLimit,
-  updatePublicVirtualCharacter,
-  updateVirtualCharacter,
+  setPrimaryVirtualCharacterAsset,
+  testVirtualCharacterProvider,
   updateVirtualCharacterSettings,
-  uploadVirtualCharacter,
+  uploadVirtualCharacterAsset,
   virtualCharacterQueryKeys,
 } from './api'
 import type {
-  PublicVirtualCharacterInput,
   VirtualCharacter,
+  VirtualCharacterAsset,
+  VirtualCharacterAssetStatus,
   VirtualCharacterSettings,
   VirtualCharacterStatus,
   VirtualCharacterTask,
+  VirtualCharacterValidationSession,
 } from './types'
 
 type LibraryTab = 'public' | 'private' | 'history'
@@ -105,33 +120,33 @@ export function VirtualCharacters() {
   const [privatePage, setPrivatePage] = useState(1)
   const [historyPage, setHistoryPage] = useState(1)
   const [filter, setFilter] = useState('')
-  const [selected, setSelected] = useState<VirtualCharacter | null>(null)
-  const [uploadOpen, setUploadOpen] = useState(false)
-  const [generateTarget, setGenerateTarget] = useState<VirtualCharacter | null>(
-    null
-  )
-  const [editTarget, setEditTarget] = useState<VirtualCharacter | null>(null)
+  const [statusFilter, setStatusFilter] = useState('all')
+  const [createOpen, setCreateOpen] = useState(false)
+  const [validation, setValidation] =
+    useState<VirtualCharacterValidationSession | null>(null)
+  const [detailID, setDetailID] = useState<number | null>(null)
+  const [generateTarget, setGenerateTarget] = useState<{
+    character: VirtualCharacter
+    asset?: VirtualCharacterAsset
+  } | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<VirtualCharacter | null>(
     null
   )
-  const [publicEditor, setPublicEditor] = useState<
-    VirtualCharacter | 'create' | null
-  >(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
 
-  const publicUserQuery = useQuery({
-    queryKey: virtualCharacterQueryKeys.list('public', publicPage, false),
+  const publicQuery = useQuery({
+    queryKey: virtualCharacterQueryKeys.list('public', publicPage),
     queryFn: () => listVirtualCharacters('public', publicPage),
-    enabled: !isAdmin,
-  })
-  const publicAdminQuery = useQuery({
-    queryKey: virtualCharacterQueryKeys.list('public', publicPage, true),
-    queryFn: () => listAdminPublicCharacters(publicPage),
-    enabled: isAdmin,
   })
   const privateQuery = useQuery({
-    queryKey: virtualCharacterQueryKeys.list('private', privatePage, false),
+    queryKey: virtualCharacterQueryKeys.list('private', privatePage),
     queryFn: () => listVirtualCharacters('private', privatePage),
+    refetchInterval: (query) =>
+      query.state.data?.data.page.items.some((item) =>
+        item.assets?.some((asset) => asset.status === 'Processing')
+      )
+        ? 5000
+        : false,
   })
   const historyQuery = useQuery({
     queryKey: virtualCharacterQueryKeys.history(historyPage),
@@ -151,79 +166,50 @@ export function VirtualCharacters() {
     enabled: isAdmin,
   })
 
-  const publicData = isAdmin
-    ? publicAdminQuery.data?.data
-    : publicUserQuery.data?.data.page
-  const privateData = privateQuery.data?.data.page
-  const historyData = historyQuery.data?.data.page
-  const activeLoading =
+  useEffect(() => {
+    const sessionID = new URLSearchParams(window.location.search).get(
+      'validation_session'
+    )
+    if (!sessionID) return
+    getValidationSession(sessionID)
+      .then((response) => setValidation(response.data))
+      .catch(() => undefined)
+  }, [])
+
+  const currentPage =
     tab === 'public'
-      ? isAdmin
-        ? publicAdminQuery.isLoading
-        : publicUserQuery.isLoading
+      ? publicQuery.data?.data.page
+      : tab === 'private'
+        ? privateQuery.data?.data.page
+        : historyQuery.data?.data.page
+  const characters = useMemo(() => {
+    const source =
+      tab === 'public'
+        ? publicQuery.data?.data.page.items
+        : privateQuery.data?.data.page.items
+    const keyword = filter.trim().toLowerCase()
+    if (!source) return []
+    return source.filter(
+      (item) =>
+        (statusFilter === 'all' || item.status === statusFilter) &&
+        (!keyword ||
+          [item.name, item.description, ...item.tags]
+            .join(' ')
+            .toLowerCase()
+            .includes(keyword))
+    )
+  }, [filter, privateQuery.data, publicQuery.data, statusFilter, tab])
+  const loading =
+    tab === 'public'
+      ? publicQuery.isLoading
       : tab === 'private'
         ? privateQuery.isLoading
         : historyQuery.isLoading
-
-  const filteredCharacters = useMemo(() => {
-    const items = tab === 'public' ? publicData?.items : privateData?.items
-    if (!items) return []
-    const keyword = filter.trim().toLowerCase()
-    if (!keyword) return items
-    return items.filter((item) =>
-      [item.name, item.description, ...item.tags]
-        .join(' ')
-        .toLowerCase()
-        .includes(keyword)
-    )
-  }, [filter, privateData?.items, publicData?.items, tab])
-
-  const allowedModels = useMemo(() => {
-    const configured = configQuery.data?.data.models ?? []
-    const available = new Set(userModelsQuery.data ?? [])
-    return configured.filter((model) => available.has(model))
-  }, [configQuery.data?.data.models, userModelsQuery.data])
 
   const refreshAll = async () => {
     await queryClient.invalidateQueries({
       queryKey: virtualCharacterQueryKeys.all,
     })
-  }
-
-  const handleDelete = async () => {
-    if (!deleteTarget) return
-    try {
-      if (deleteTarget.scope === 'public') {
-        await offlinePublicVirtualCharacter(deleteTarget.id)
-        toast.success(t('Public character taken offline'))
-      } else {
-        await deleteVirtualCharacter(deleteTarget.id)
-        toast.success(t('Character deletion queued'))
-      }
-      setDeleteTarget(null)
-      setSelected(null)
-      await refreshAll()
-    } catch {
-      // The shared API interceptor displays the server message.
-    }
-  }
-
-  const activePage =
-    tab === 'public'
-      ? publicData
-      : tab === 'private'
-        ? privateData
-        : historyData
-  const pageValue =
-    tab === 'public'
-      ? publicPage
-      : tab === 'private'
-        ? privatePage
-        : historyPage
-  const setPage = (value: number) => {
-    if (tab === 'public') setPublicPage(value)
-    else if (tab === 'private') setPrivatePage(value)
-    else setHistoryPage(value)
   }
 
   return (
@@ -232,282 +218,309 @@ export function VirtualCharacters() {
         {t('Character Library')}
       </SectionPageLayout.Title>
       <SectionPageLayout.Actions>
-        <Button variant='outline' size='sm' onClick={() => void refreshAll()}>
-          <HugeiconsIcon icon={RefreshIcon} strokeWidth={2} />
-          {t('Refresh')}
-        </Button>
         {isAdmin && (
           <Button
             variant='outline'
             size='sm'
             onClick={() => setSettingsOpen(true)}
           >
-            <HugeiconsIcon icon={Settings01Icon} strokeWidth={2} />
+            <HugeiconsIcon icon={Settings01Icon} data-icon='inline-start' />
             {t('Library settings')}
           </Button>
         )}
-        {tab === 'public' && isAdmin && (
-          <Button size='sm' onClick={() => setPublicEditor('create')}>
-            <HugeiconsIcon icon={Add01Icon} strokeWidth={2} />
-            {t('Add public character')}
-          </Button>
-        )}
         {tab === 'private' && (
-          <Button size='sm' onClick={() => setUploadOpen(true)}>
-            <HugeiconsIcon icon={FileUploadIcon} strokeWidth={2} />
-            {t('Create character')}
+          <Button
+            size='sm'
+            disabled={!configQuery.data?.data.real_person_enabled}
+            onClick={() => setCreateOpen(true)}
+          >
+            <HugeiconsIcon icon={Add01Icon} data-icon='inline-start' />
+            {t('Create real-person character')}
           </Button>
         )}
       </SectionPageLayout.Actions>
       <SectionPageLayout.Content>
-        <div className='min-w-[960px] space-y-4'>
-          <div className='flex items-end justify-between gap-4'>
-            <div>
-              <p className='text-muted-foreground text-sm'>
-                {t(
-                  'Use shared public characters or your private fictional characters to create Seedance videos.'
-                )}
-              </p>
-              {tab === 'private' && (
-                <p className='text-muted-foreground mt-1 text-xs'>
-                  {t('Private quota')}: {privateQuery.data?.data.used ?? 0} /{' '}
-                  {privateQuery.data?.data.limit ?? 0}
-                </p>
+        <div className='flex flex-col gap-4'>
+          <Alert>
+            <HugeiconsIcon icon={AiUserIcon} />
+            <AlertTitle>{t('Provider-backed character library')}</AlertTitle>
+            <AlertDescription>
+              {t(
+                'Official characters are shared read-only assets. My real-person characters require H5 validation and Active provider assets.'
               )}
-            </div>
-            {tab !== 'history' && (
-              <Input
-                value={filter}
-                onChange={(event) => setFilter(event.target.value)}
-                placeholder={t('Search characters')}
-                className='w-72'
-              />
-            )}
-          </div>
+            </AlertDescription>
+          </Alert>
 
           <Tabs
             value={tab}
             onValueChange={(value) => setTab(value as LibraryTab)}
           >
             <TabsList>
-              <TabsTrigger value='public'>{t('Public characters')}</TabsTrigger>
-              <TabsTrigger value='private'>{t('My characters')}</TabsTrigger>
+              <TabsTrigger value='public'>
+                {t('Official characters')}
+              </TabsTrigger>
+              <TabsTrigger value='private'>
+                {t('My real-person characters')}
+              </TabsTrigger>
               <TabsTrigger value='history'>{t('Task history')}</TabsTrigger>
             </TabsList>
           </Tabs>
 
-          {tab === 'history' && historyQuery.data?.data.output_notice && (
-            <Alert>
-              <HugeiconsIcon icon={Clock01Icon} strokeWidth={2} />
-              <AlertTitle>{t('Temporary output')}</AlertTitle>
+          <div className='flex flex-wrap items-center gap-2'>
+            {tab !== 'history' && (
+              <>
+                <Input
+                  className='max-w-sm'
+                  value={filter}
+                  onChange={(event) => setFilter(event.target.value)}
+                  placeholder={t('Search by name or tag')}
+                />
+                <NativeSelect
+                  value={statusFilter}
+                  onChange={(event) => setStatusFilter(event.target.value)}
+                >
+                  <NativeSelectOption value='all'>
+                    {t('All statuses')}
+                  </NativeSelectOption>
+                  <NativeSelectOption value='active'>
+                    {t('Active')}
+                  </NativeSelectOption>
+                  <NativeSelectOption value='creating'>
+                    {t('Creating')}
+                  </NativeSelectOption>
+                  <NativeSelectOption value='blocked'>
+                    {t('Blocked')}
+                  </NativeSelectOption>
+                  <NativeSelectOption value='deleting'>
+                    {t('Deleting')}
+                  </NativeSelectOption>
+                  <NativeSelectOption value='failed'>
+                    {t('Failed')}
+                  </NativeSelectOption>
+                </NativeSelect>
+              </>
+            )}
+            <Button variant='outline' size='sm' onClick={refreshAll}>
+              <HugeiconsIcon icon={RefreshIcon} data-icon='inline-start' />
+              {t('Refresh')}
+            </Button>
+            {tab === 'private' && privateQuery.data && (
+              <Badge variant='outline'>
+                {t('{{used}} of {{limit}} actor groups', {
+                  used: privateQuery.data.data.used ?? 0,
+                  limit: privateQuery.data.data.limit ?? 0,
+                })}
+              </Badge>
+            )}
+          </div>
+
+          {tab === 'public' && !configQuery.data?.data.official_enabled && (
+            <Alert variant='destructive'>
+              <AlertTitle>
+                {t('Official character library is disabled')}
+              </AlertTitle>
               <AlertDescription>
                 {t(
-                  'Task metadata is retained for 90 days. Generated video URLs may expire after about 24 hours.'
+                  'An administrator must configure the provider and import an authoritative catalog.'
+                )}
+              </AlertDescription>
+            </Alert>
+          )}
+          {tab === 'private' && !configQuery.data?.data.real_person_enabled && (
+            <Alert variant='destructive'>
+              <AlertTitle>
+                {t('Real-person character library is disabled')}
+              </AlertTitle>
+              <AlertDescription>
+                {t(
+                  'An administrator must complete provider and channel configuration first.'
                 )}
               </AlertDescription>
             </Alert>
           )}
 
-          {activeLoading ? (
+          {loading ? (
             <CharacterGridSkeleton />
           ) : tab === 'history' ? (
-            <TaskHistoryList items={historyData?.items ?? []} />
-          ) : filteredCharacters.length > 0 ? (
-            <div className='grid grid-cols-4 gap-4 2xl:grid-cols-5'>
-              {filteredCharacters.map((item) => (
+            <TaskHistory
+              items={historyQuery.data?.data.page.items ?? []}
+              outputNotice={historyQuery.data?.data.output_notice}
+              onRefresh={() => historyQuery.refetch()}
+            />
+          ) : characters.length > 0 ? (
+            <div className='grid gap-3 sm:grid-cols-2 xl:grid-cols-3'>
+              {characters.map((item) => (
                 <CharacterCard
                   key={item.id}
                   item={item}
-                  isAdmin={isAdmin}
-                  onSelect={() => setSelected(item)}
-                  onGenerate={() => setGenerateTarget(item)}
-                  onEdit={() =>
-                    item.scope === 'public'
-                      ? setPublicEditor(item)
-                      : setEditTarget(item)
+                  onOpen={() =>
+                    item.scope === 'private'
+                      ? setDetailID(item.id)
+                      : setGenerateTarget({ character: item })
                   }
+                  onGenerate={() => setGenerateTarget({ character: item })}
                   onDelete={() => setDeleteTarget(item)}
                 />
               ))}
             </div>
           ) : (
-            <EmptyLibrary tab={tab} />
+            <Card>
+              <CardHeader>
+                <CardTitle>{t('No characters found')}</CardTitle>
+                <CardDescription>
+                  {tab === 'public'
+                    ? t(
+                        'The authoritative official catalog has no matching active assets.'
+                      )
+                    : t(
+                        'Complete H5 validation to create your first real-person actor group.'
+                      )}
+                </CardDescription>
+              </CardHeader>
+            </Card>
           )}
 
-          <Pagination
-            page={pageValue}
-            pageSize={activePage?.page_size ?? 20}
-            total={activePage?.total ?? 0}
-            onChange={setPage}
-          />
+          {currentPage && currentPage.total > currentPage.page_size && (
+            <Pagination
+              page={currentPage.page}
+              total={currentPage.total}
+              pageSize={currentPage.page_size}
+              onChange={
+                tab === 'public'
+                  ? setPublicPage
+                  : tab === 'private'
+                    ? setPrivatePage
+                    : setHistoryPage
+              }
+            />
+          )}
         </div>
-
-        <CharacterDetailsDialog
-          item={selected}
-          isAdmin={isAdmin}
-          onOpenChange={(open) => !open && setSelected(null)}
-          onGenerate={(item) => {
-            setSelected(null)
-            setGenerateTarget(item)
-          }}
-          onEdit={(item) => {
-            setSelected(null)
-            if (item.scope === 'public') setPublicEditor(item)
-            else setEditTarget(item)
-          }}
-        />
-        <UploadCharacterDialog
-          open={uploadOpen}
-          onOpenChange={setUploadOpen}
-          onCompleted={refreshAll}
-        />
-        <EditPrivateCharacterDialog
-          item={editTarget}
-          onOpenChange={(open) => !open && setEditTarget(null)}
-          onCompleted={refreshAll}
-        />
-        <GenerateVideoDialog
-          item={generateTarget}
-          models={allowedModels}
-          defaultModel={configQuery.data?.data.default_model ?? ''}
-          onOpenChange={(open) => !open && setGenerateTarget(null)}
-          onCreated={async () => {
-            setGenerateTarget(null)
-            setTab('history')
-            await refreshAll()
-          }}
-        />
-        {isAdmin && (
-          <PublicCharacterDialog
-            target={publicEditor}
-            settings={settingsQuery.data?.data}
-            onOpenChange={(open) => !open && setPublicEditor(null)}
-            onCompleted={refreshAll}
-          />
-        )}
-        {isAdmin && (
-          <LibrarySettingsDialog
-            open={settingsOpen}
-            settings={settingsQuery.data?.data}
-            onOpenChange={setSettingsOpen}
-            onCompleted={refreshAll}
-          />
-        )}
-        <AlertDialog
-          open={Boolean(deleteTarget)}
-          onOpenChange={(open) => !open && setDeleteTarget(null)}
-        >
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>
-                {deleteTarget?.scope === 'public'
-                  ? t('Take public character offline?')
-                  : t('Delete this character?')}
-              </AlertDialogTitle>
-              <AlertDialogDescription>
-                {deleteTarget?.scope === 'public'
-                  ? t('Users will no longer be able to start tasks with it.')
-                  : t(
-                      'New tasks are blocked immediately. The source is removed after running tasks finish.'
-                    )}
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel>{t('Cancel')}</AlertDialogCancel>
-              <AlertDialogAction onClick={() => void handleDelete()}>
-                {t('Confirm')}
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
       </SectionPageLayout.Content>
+
+      <CreateRealPersonDialog
+        open={createOpen}
+        onOpenChange={setCreateOpen}
+        onCreated={(session) => {
+          setCreateOpen(false)
+          setValidation(session)
+        }}
+      />
+      <ValidationDialog
+        session={validation}
+        onClose={() => setValidation(null)}
+        onRetry={() => {
+          setValidation(null)
+          setCreateOpen(true)
+        }}
+        onSucceeded={async (characterID) => {
+          await refreshAll()
+          if (characterID) setDetailID(characterID)
+        }}
+      />
+      <CharacterDetailDialog
+        characterID={detailID}
+        onClose={() => setDetailID(null)}
+        onGenerate={(character, asset) =>
+          setGenerateTarget({ character, asset })
+        }
+      />
+      <GenerateDialog
+        target={generateTarget}
+        models={userModelsQuery.data ?? []}
+        defaultModel={configQuery.data?.data.default_model ?? ''}
+        onClose={() => setGenerateTarget(null)}
+        onCreated={async () => {
+          setGenerateTarget(null)
+          setTab('history')
+          await refreshAll()
+        }}
+      />
+      <DeleteCharacterDialog
+        target={deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        onDeleted={refreshAll}
+      />
+      {isAdmin && (
+        <SettingsDialog
+          open={settingsOpen}
+          settings={settingsQuery.data?.data}
+          onClose={() => setSettingsOpen(false)}
+          onSaved={refreshAll}
+        />
+      )}
     </SectionPageLayout>
   )
 }
 
 function CharacterCard({
   item,
-  isAdmin,
-  onSelect,
+  onOpen,
   onGenerate,
-  onEdit,
   onDelete,
 }: {
   item: VirtualCharacter
-  isAdmin: boolean
-  onSelect: () => void
+  onOpen: () => void
   onGenerate: () => void
-  onEdit: () => void
   onDelete: () => void
 }) {
   const { t } = useTranslation()
-  const manageable = item.scope === 'private' || isAdmin
+  const canGenerate =
+    item.status === 'active' &&
+    (item.scope === 'public' ||
+      item.assets.some((asset) => asset.status === 'Active'))
   return (
-    <Card
-      className='group cursor-pointer overflow-hidden p-0 transition-shadow hover:shadow-md'
-      onClick={onSelect}
-    >
-      <div className='bg-muted relative aspect-[4/5] overflow-hidden'>
+    <Card className='overflow-hidden'>
+      <div className='bg-muted aspect-video overflow-hidden'>
         {item.cover_url ? (
           <img
             src={item.cover_url}
             alt={item.name}
-            className='size-full object-cover transition-transform duration-300 group-hover:scale-[1.03]'
+            className='size-full object-cover'
           />
         ) : (
           <div className='text-muted-foreground flex size-full items-center justify-center'>
-            <HugeiconsIcon
-              icon={AiUserIcon}
-              strokeWidth={1.5}
-              className='size-12'
-            />
+            <HugeiconsIcon icon={AiUserIcon} className='size-10' />
           </div>
         )}
-        <Badge className='bg-background/90 text-foreground absolute top-2 left-2'>
-          {item.scope === 'public' ? t('Public') : t('Private')}
-        </Badge>
-        {item.status !== 'active' && (
-          <Badge className='absolute top-2 right-2' variant='outline'>
+      </div>
+      <CardHeader>
+        <div className='flex items-start justify-between gap-3'>
+          <div className='min-w-0'>
+            <CardTitle className='truncate'>{item.name}</CardTitle>
+            <CardDescription className='line-clamp-2'>
+              {item.description || t('No description')}
+            </CardDescription>
+          </div>
+          <Badge variant={item.status === 'active' ? 'default' : 'secondary'}>
             {statusLabel(item.status, t)}
           </Badge>
-        )}
-      </div>
-      <CardHeader className='gap-1 pb-2'>
-        <CardTitle className='truncate'>{item.name}</CardTitle>
-        <p className='text-muted-foreground line-clamp-2 min-h-10 text-xs'>
-          {item.description || t('No description')}
-        </p>
-      </CardHeader>
-      <CardContent className='space-y-3 pb-4'>
-        <div className='flex min-h-5 flex-wrap gap-1'>
-          {item.tags.slice(0, 3).map((tag) => (
-            <Badge key={tag} variant='secondary' className='max-w-24 truncate'>
-              {tag}
-            </Badge>
-          ))}
         </div>
-        <div
-          className='flex items-center gap-1.5'
-          onClick={(e) => e.stopPropagation()}
-        >
-          <Button
-            size='sm'
-            className='flex-1'
-            disabled={item.status !== 'active'}
-            onClick={onGenerate}
-          >
-            <HugeiconsIcon icon={Video01Icon} strokeWidth={2} />
+      </CardHeader>
+      <CardContent className='flex flex-col gap-3'>
+        <div className='flex min-h-6 flex-wrap gap-1.5'>
+          {item.tags.length > 0 ? (
+            item.tags.map((tag) => (
+              <Badge key={tag} variant='outline'>
+                {tag}
+              </Badge>
+            ))
+          ) : (
+            <span className='text-muted-foreground text-sm'>
+              {t('No tags')}
+            </span>
+          )}
+        </div>
+        <div className='flex flex-wrap gap-2'>
+          <Button size='sm' variant='outline' onClick={onOpen}>
+            {item.scope === 'private' ? t('Manage assets') : t('View')}
+          </Button>
+          <Button size='sm' disabled={!canGenerate} onClick={onGenerate}>
+            <HugeiconsIcon icon={MagicWand01Icon} data-icon='inline-start' />
             {t('Create video')}
           </Button>
-          {manageable && (
-            <Button variant='outline' size='icon-sm' onClick={onEdit}>
-              <HugeiconsIcon icon={Edit02Icon} strokeWidth={2} />
-              <span className='sr-only'>{t('Edit')}</span>
-            </Button>
-          )}
-          {manageable && (
-            <Button variant='destructive' size='icon-sm' onClick={onDelete}>
-              <HugeiconsIcon icon={Delete02Icon} strokeWidth={2} />
+          {item.scope === 'private' && (
+            <Button size='icon-sm' variant='ghost' onClick={onDelete}>
+              <HugeiconsIcon icon={Delete02Icon} />
               <span className='sr-only'>{t('Delete')}</span>
             </Button>
           )}
@@ -517,204 +530,90 @@ function CharacterCard({
   )
 }
 
-function CharacterDetailsDialog({
-  item,
-  isAdmin,
-  onOpenChange,
-  onGenerate,
-  onEdit,
-}: {
-  item: VirtualCharacter | null
-  isAdmin: boolean
-  onOpenChange: (open: boolean) => void
-  onGenerate: (item: VirtualCharacter) => void
-  onEdit: (item: VirtualCharacter) => void
-}) {
-  const { t } = useTranslation()
-  return (
-    <Dialog open={Boolean(item)} onOpenChange={onOpenChange}>
-      <DialogContent className='sm:max-w-3xl'>
-        {item && (
-          <div className='grid grid-cols-[280px_1fr] gap-5'>
-            <div className='bg-muted aspect-[4/5] overflow-hidden rounded-lg'>
-              {item.cover_url ? (
-                <img
-                  src={item.cover_url}
-                  alt={item.name}
-                  className='size-full object-cover'
-                />
-              ) : (
-                <div className='text-muted-foreground flex size-full items-center justify-center'>
-                  <HugeiconsIcon
-                    icon={AiUserIcon}
-                    strokeWidth={1.5}
-                    className='size-16'
-                  />
-                </div>
-              )}
-            </div>
-            <div className='flex min-w-0 flex-col'>
-              <DialogHeader>
-                <DialogTitle className='text-xl'>{item.name}</DialogTitle>
-                <DialogDescription>
-                  {item.description || t('No description')}
-                </DialogDescription>
-              </DialogHeader>
-              <div className='mt-5 space-y-4 text-sm'>
-                <DetailRow
-                  label={t('Library')}
-                  value={
-                    item.scope === 'public'
-                      ? t('Public library')
-                      : t('Private library')
-                  }
-                />
-                <DetailRow
-                  label={t('Status')}
-                  value={statusLabel(item.status, t)}
-                />
-                <DetailRow
-                  label={t('Verification')}
-                  value={validationLabel(item.validation_status, t)}
-                />
-                <div>
-                  <p className='text-muted-foreground mb-2 text-xs'>
-                    {t('Tags')}
-                  </p>
-                  <div className='flex flex-wrap gap-1.5'>
-                    {item.tags.length > 0 ? (
-                      item.tags.map((tag) => (
-                        <Badge key={tag} variant='secondary'>
-                          {tag}
-                        </Badge>
-                      ))
-                    ) : (
-                      <span>{t('No tags')}</span>
-                    )}
-                  </div>
-                </div>
-                {item.last_error && (
-                  <p className='text-destructive bg-destructive/10 rounded-lg p-3 text-xs'>
-                    {item.last_error}
-                  </p>
-                )}
-              </div>
-              <div className='mt-auto flex justify-end gap-2 pt-6'>
-                {(item.scope === 'private' || isAdmin) && (
-                  <Button variant='outline' onClick={() => onEdit(item)}>
-                    <HugeiconsIcon icon={Edit02Icon} strokeWidth={2} />
-                    {t('Edit')}
-                  </Button>
-                )}
-                <Button
-                  disabled={item.status !== 'active'}
-                  onClick={() => onGenerate(item)}
-                >
-                  <HugeiconsIcon icon={MagicWand01Icon} strokeWidth={2} />
-                  {t('Create video')}
-                </Button>
-              </div>
-            </div>
-          </div>
-        )}
-      </DialogContent>
-    </Dialog>
-  )
-}
-
-function UploadCharacterDialog({
+function CreateRealPersonDialog({
   open,
   onOpenChange,
-  onCompleted,
+  onCreated,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
-  onCompleted: () => Promise<void>
+  onCreated: (session: VirtualCharacterValidationSession) => void
 }) {
-  const { t } = useTranslation()
-  const [file, setFile] = useState<File | null>(null)
+  const { t, i18n } = useTranslation()
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [tags, setTags] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const submit = async (event: FormEvent) => {
     event.preventDefault()
-    if (!file || !name.trim()) return
     setSubmitting(true)
     try {
-      await uploadVirtualCharacter({
-        file,
-        name: name.trim(),
-        description: description.trim(),
+      const response = await createValidationSession({
+        name,
+        description,
         tags: splitTags(tags),
+        language: i18n.language.startsWith('zh') ? 'zh' : 'en',
       })
-      toast.success(t('Character created'))
-      setFile(null)
+      onCreated(response.data)
       setName('')
       setDescription('')
       setTags('')
-      onOpenChange(false)
-      await onCompleted()
-    } catch {
-      // Shared interceptor handles errors.
+    } catch (error) {
+      toast.error(errorMessage(error, t('Failed to create validation session')))
     } finally {
       setSubmitting(false)
     }
   }
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className='sm:max-w-lg'>
-        <form onSubmit={submit} className='space-y-4'>
+      <DialogContent>
+        <form className='flex flex-col gap-5' onSubmit={submit}>
           <DialogHeader>
-            <DialogTitle>{t('Create private character')}</DialogTitle>
+            <DialogTitle>{t('Create real-person character')}</DialogTitle>
             <DialogDescription>
               {t(
-                'Upload one fictional character image. Real people are not supported.'
+                'A 30-minute H5 identity validation starts before the actor group is created.'
               )}
             </DialogDescription>
           </DialogHeader>
-          <FormField label={t('Character image')}>
-            <Input
-              type='file'
-              accept='.jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp'
-              required
-              onChange={(event) => setFile(event.target.files?.[0] ?? null)}
-            />
-            <p className='text-muted-foreground text-xs'>
-              {t('JPG, PNG, or WebP; maximum 30 MB.')}
-            </p>
-          </FormField>
-          <FormField label={t('Name')}>
-            <Input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              maxLength={191}
-              required
-            />
-          </FormField>
-          <FormField label={t('Description')}>
-            <Textarea
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              maxLength={2000}
-              rows={3}
-            />
-          </FormField>
-          <FormField label={t('Tags')}>
-            <Input
-              value={tags}
-              onChange={(e) => setTags(e.target.value)}
-              placeholder={t('Separate tags with commas')}
-            />
-          </FormField>
           <Alert>
-            <HugeiconsIcon icon={Image01Icon} strokeWidth={2} />
+            <AlertTitle>{t('Validation protects portrait rights')}</AlertTitle>
             <AlertDescription>
               {t(
-                'By uploading, you confirm this image does not depict a real person.'
+                'Only the validated user may upload assets into this actor group.'
               )}
             </AlertDescription>
           </Alert>
+          <FieldGroup>
+            <Field>
+              <FieldLabel htmlFor='real-character-name'>{t('Name')}</FieldLabel>
+              <Input
+                id='real-character-name'
+                required
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+              />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor='real-character-description'>
+                {t('Description')}
+              </FieldLabel>
+              <Textarea
+                id='real-character-description'
+                value={description}
+                onChange={(event) => setDescription(event.target.value)}
+              />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor='real-character-tags'>{t('Tags')}</FieldLabel>
+              <Input
+                id='real-character-tags'
+                value={tags}
+                onChange={(event) => setTags(event.target.value)}
+                placeholder={t('Separate tags with commas')}
+              />
+            </Field>
+          </FieldGroup>
           <DialogFooter>
             <Button
               type='button'
@@ -723,11 +622,9 @@ function UploadCharacterDialog({
             >
               {t('Cancel')}
             </Button>
-            <Button
-              type='submit'
-              disabled={submitting || !file || !name.trim()}
-            >
-              {submitting ? t('Uploading...') : t('Create character')}
+            <Button type='submit' disabled={submitting}>
+              {submitting && <Spinner />}
+              {t('Start validation')}
             </Button>
           </DialogFooter>
         </form>
@@ -736,651 +633,1145 @@ function UploadCharacterDialog({
   )
 }
 
-function EditPrivateCharacterDialog({
-  item,
-  onOpenChange,
-  onCompleted,
+function ValidationDialog({
+  session,
+  onClose,
+  onRetry,
+  onSucceeded,
 }: {
-  item: VirtualCharacter | null
-  onOpenChange: (open: boolean) => void
-  onCompleted: () => Promise<void>
+  session: VirtualCharacterValidationSession | null
+  onClose: () => void
+  onRetry: () => void
+  onSucceeded: (characterID?: number) => void
 }) {
   const { t } = useTranslation()
-  const [submitting, setSubmitting] = useState(false)
-  const submit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    if (!item) return
-    const form = new FormData(event.currentTarget)
-    setSubmitting(true)
-    try {
-      await updateVirtualCharacter(item.id, {
-        name: String(form.get('name') ?? '').trim(),
-        description: String(form.get('description') ?? '').trim(),
-        tags: splitTags(String(form.get('tags') ?? '')),
-      })
-      toast.success(t('Character updated'))
-      onOpenChange(false)
-      await onCompleted()
-    } catch {
-      // Shared interceptor handles errors.
-    } finally {
-      setSubmitting(false)
+  const [now, setNow] = useState(() => Date.now())
+  const notified = useRef(false)
+  const query = useQuery({
+    queryKey: virtualCharacterQueryKeys.validation(session?.id ?? ''),
+    queryFn: () => getValidationSession(session?.id ?? ''),
+    enabled: Boolean(session?.id),
+    refetchInterval: (current) =>
+      current.state.data?.data.status === 'pending' ? 3000 : false,
+    initialData: session ? { success: true, data: session } : undefined,
+  })
+  const current = query.data?.data ?? session
+  useEffect(() => {
+    if (!session) return
+    const timer = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [session])
+  useEffect(() => {
+    if (current?.status === 'succeeded' && !notified.current) {
+      notified.current = true
+      onSucceeded(current.character_id)
     }
-  }
-  return (
-    <Dialog open={Boolean(item)} onOpenChange={onOpenChange}>
-      <DialogContent className='sm:max-w-lg'>
-        {item && (
-          <form key={item.id} onSubmit={submit} className='space-y-4'>
-            <DialogHeader>
-              <DialogTitle>{t('Edit character')}</DialogTitle>
-              <DialogDescription>
-                {t('The source image is not replaced when metadata changes.')}
-              </DialogDescription>
-            </DialogHeader>
-            <FormField label={t('Name')}>
-              <Input
-                name='name'
-                defaultValue={item.name}
-                required
-                maxLength={191}
-              />
-            </FormField>
-            <FormField label={t('Description')}>
-              <Textarea
-                name='description'
-                defaultValue={item.description}
-                rows={3}
-                maxLength={2000}
-              />
-            </FormField>
-            <FormField label={t('Tags')}>
-              <Input name='tags' defaultValue={item.tags.join(', ')} />
-            </FormField>
-            <DialogFooter>
-              <Button
-                type='button'
-                variant='outline'
-                onClick={() => onOpenChange(false)}
-              >
-                {t('Cancel')}
-              </Button>
-              <Button type='submit' disabled={submitting}>
-                {submitting ? t('Saving...') : t('Save')}
-              </Button>
-            </DialogFooter>
-          </form>
-        )}
-      </DialogContent>
-    </Dialog>
+  }, [current?.character_id, current?.status, onSucceeded])
+  if (!session || !current) return null
+  const remaining = Math.max(0, current.expires_at * 1000 - now)
+  const remainingSeconds = Math.ceil(remaining / 1000)
+  const progress = Math.max(
+    0,
+    Math.min(100, (remaining / (30 * 60 * 1000)) * 100)
   )
-}
-
-function GenerateVideoDialog({
-  item,
-  models,
-  defaultModel,
-  onOpenChange,
-  onCreated,
-}: {
-  item: VirtualCharacter | null
-  models: string[]
-  defaultModel: string
-  onOpenChange: (open: boolean) => void
-  onCreated: () => Promise<void>
-}) {
-  const { t } = useTranslation()
-  const [submitting, setSubmitting] = useState(false)
-  const submit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    if (!item) return
-    const form = new FormData(event.currentTarget)
-    setSubmitting(true)
-    try {
-      const response = await createCharacterVideo({
-        character_id: item.id,
-        model: String(form.get('model') ?? ''),
-        prompt: String(form.get('prompt') ?? '').trim(),
-        duration: Number(form.get('duration') ?? 5),
-        ratio: String(form.get('ratio') ?? '16:9'),
-        resolution: String(form.get('resolution') ?? '720p'),
-      })
-      if (response.error?.message) throw new Error(response.error.message)
-      toast.success(t('Video task created'))
-      await onCreated()
-    } catch (error) {
-      toast.error(errorMessage(error, t('Failed to create video task')))
-    } finally {
-      setSubmitting(false)
-    }
-  }
-  const selectedModel = models.includes(defaultModel)
-    ? defaultModel
-    : (models[0] ?? '')
   return (
-    <Dialog open={Boolean(item)} onOpenChange={onOpenChange}>
-      <DialogContent className='sm:max-w-xl'>
-        {item && (
-          <form
-            key={`${item.id}-${selectedModel}`}
-            onSubmit={submit}
-            className='space-y-4'
-          >
-            <DialogHeader>
-              <DialogTitle>
-                {t('Create video with {{name}}', { name: item.name })}
-              </DialogTitle>
-              <DialogDescription>
-                {t(
-                  'This creates a new video task and does not modify the character image.'
-                )}
-              </DialogDescription>
-            </DialogHeader>
-            {models.length === 0 ? (
-              <Alert>
-                <AlertTitle>{t('No available model')}</AlertTitle>
-                <AlertDescription>
-                  {t(
-                    'Your account has no enabled Seedance 2.0 model from the character whitelist.'
-                  )}
-                </AlertDescription>
-              </Alert>
-            ) : (
-              <>
-                <FormField label={t('Prompt')}>
-                  <Textarea
-                    name='prompt'
-                    required
-                    rows={5}
-                    placeholder={t(
-                      'Describe how 图片1中的角色 should move and what scene to create'
-                    )}
-                  />
-                </FormField>
-                <div className='grid grid-cols-2 gap-3'>
-                  <FormField label={t('Model')}>
-                    <NativeSelect
-                      name='model'
-                      defaultValue={selectedModel}
-                      className='w-full'
-                    >
-                      {models.map((model) => (
-                        <NativeSelectOption key={model} value={model}>
-                          {model}
-                        </NativeSelectOption>
-                      ))}
-                    </NativeSelect>
-                  </FormField>
-                  <FormField label={t('Duration')}>
-                    <NativeSelect
-                      name='duration'
-                      defaultValue='5'
-                      className='w-full'
-                    >
-                      {[4, 5, 6, 8, 10, 12, 15].map((value) => (
-                        <NativeSelectOption key={value} value={String(value)}>
-                          {t('{{count}} seconds', { count: value })}
-                        </NativeSelectOption>
-                      ))}
-                    </NativeSelect>
-                  </FormField>
-                  <FormField label={t('Aspect ratio')}>
-                    <NativeSelect
-                      name='ratio'
-                      defaultValue='16:9'
-                      className='w-full'
-                    >
-                      {['16:9', '9:16', '1:1'].map((value) => (
-                        <NativeSelectOption key={value} value={value}>
-                          {value}
-                        </NativeSelectOption>
-                      ))}
-                    </NativeSelect>
-                  </FormField>
-                  <FormField label={t('Resolution')}>
-                    <NativeSelect
-                      name='resolution'
-                      defaultValue='720p'
-                      className='w-full'
-                    >
-                      <NativeSelectOption value='720p'>720p</NativeSelectOption>
-                      <NativeSelectOption value='1080p'>
-                        1080p
-                      </NativeSelectOption>
-                    </NativeSelect>
-                  </FormField>
-                </div>
-              </>
-            )}
-            <DialogFooter>
-              <Button
-                type='button'
-                variant='outline'
-                onClick={() => onOpenChange(false)}
-              >
-                {t('Cancel')}
-              </Button>
-              <Button
-                type='submit'
-                disabled={submitting || models.length === 0}
-              >
-                {submitting ? t('Submitting...') : t('Create video')}
-              </Button>
-            </DialogFooter>
-          </form>
-        )}
-      </DialogContent>
-    </Dialog>
-  )
-}
-
-function PublicCharacterDialog({
-  target,
-  settings,
-  onOpenChange,
-  onCompleted,
-}: {
-  target: VirtualCharacter | 'create' | null
-  settings?: VirtualCharacterSettings
-  onOpenChange: (open: boolean) => void
-  onCompleted: () => Promise<void>
-}) {
-  const { t } = useTranslation()
-  const [submitting, setSubmitting] = useState(false)
-  const item = target && target !== 'create' ? target : null
-  const submit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    const form = new FormData(event.currentTarget)
-    const input: PublicVirtualCharacterInput = {
-      name: String(form.get('name') ?? '').trim(),
-      description: String(form.get('description') ?? '').trim(),
-      tags: splitTags(String(form.get('tags') ?? '')),
-      cover_url: String(form.get('cover_url') ?? '').trim(),
-      asset_id: String(form.get('asset_id') ?? '').trim(),
-      public_channel_id: Number(form.get('public_channel_id') ?? 0),
-      status: String(form.get('status') ?? 'active') as 'active' | 'offline',
-    }
-    setSubmitting(true)
-    try {
-      if (item) await updatePublicVirtualCharacter(item.id, input)
-      else await createPublicVirtualCharacter(input)
-      toast.success(
-        item ? t('Public character updated') : t('Public character created')
-      )
-      onOpenChange(false)
-      await onCompleted()
-    } catch {
-      // Shared interceptor handles errors.
-    } finally {
-      setSubmitting(false)
-    }
-  }
-  return (
-    <Dialog open={Boolean(target)} onOpenChange={onOpenChange}>
-      <DialogContent className='sm:max-w-xl'>
-        {target && (
-          <form
-            key={item?.id ?? 'create'}
-            onSubmit={submit}
-            className='space-y-4'
-          >
-            <DialogHeader>
-              <DialogTitle>
-                {item ? t('Edit public character') : t('Add public character')}
-              </DialogTitle>
-              <DialogDescription>
-                {t(
-                  'Public characters use a Volc asset:// reference and a fixed single-key channel.'
-                )}
-              </DialogDescription>
-            </DialogHeader>
-            <div className='grid grid-cols-2 gap-3'>
-              <FormField label={t('Name')}>
-                <Input name='name' defaultValue={item?.name} required />
-              </FormField>
-              <FormField label={t('Asset ID')}>
-                <Input
-                  name='asset_id'
-                  defaultValue={item?.asset_id}
-                  placeholder='asset-...'
-                  required
-                />
-              </FormField>
-            </div>
-            <FormField label={t('Cover URL')}>
-              <Input
-                name='cover_url'
-                type='url'
-                defaultValue={item?.cover_url}
-                required
-              />
-            </FormField>
-            <FormField label={t('Description')}>
-              <Textarea
-                name='description'
-                defaultValue={item?.description}
-                rows={3}
-              />
-            </FormField>
-            <FormField label={t('Tags')}>
-              <Input name='tags' defaultValue={item?.tags.join(', ')} />
-            </FormField>
-            <div className='grid grid-cols-2 gap-3'>
-              <FormField label={t('Public channel')}>
-                <NativeSelect
-                  name='public_channel_id'
-                  defaultValue={String(
-                    item?.public_channel_id ??
-                      settings?.public_channels[0]?.id ??
-                      ''
-                  )}
-                  className='w-full'
-                  required
-                >
-                  {settings?.public_channels.map((channel) => (
-                    <NativeSelectOption
-                      key={channel.id}
-                      value={String(channel.id)}
-                    >
-                      {channel.name} (#{channel.id})
-                    </NativeSelectOption>
-                  ))}
-                </NativeSelect>
-              </FormField>
-              <FormField label={t('Status')}>
-                <NativeSelect
-                  name='status'
-                  defaultValue={item?.status ?? 'active'}
-                  className='w-full'
-                >
-                  <NativeSelectOption value='active'>
-                    {t('Active')}
-                  </NativeSelectOption>
-                  <NativeSelectOption value='offline'>
-                    {t('Offline')}
-                  </NativeSelectOption>
-                </NativeSelect>
-              </FormField>
-            </div>
-            <DialogFooter>
-              <Button
-                type='button'
-                variant='outline'
-                onClick={() => onOpenChange(false)}
-              >
-                {t('Cancel')}
-              </Button>
-              <Button
-                type='submit'
-                disabled={submitting || !settings?.public_channels.length}
-              >
-                {submitting ? t('Saving...') : t('Save')}
-              </Button>
-            </DialogFooter>
-          </form>
-        )}
-      </DialogContent>
-    </Dialog>
-  )
-}
-
-function LibrarySettingsDialog({
-  open,
-  settings,
-  onOpenChange,
-  onCompleted,
-}: {
-  open: boolean
-  settings?: VirtualCharacterSettings
-  onOpenChange: (open: boolean) => void
-  onCompleted: () => Promise<void>
-}) {
-  const { t } = useTranslation()
-  const [saving, setSaving] = useState(false)
-  const [importing, setImporting] = useState(false)
-  const save = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    const form = new FormData(event.currentTarget)
-    setSaving(true)
-    try {
-      await updateVirtualCharacterSettings({
-        global_limit: Number(form.get('global_limit') ?? 100),
-        models: splitTags(String(form.get('models') ?? '')),
-        default_model: String(form.get('default_model') ?? '').trim(),
-      })
-      const userId = Number(form.get('user_id') ?? 0)
-      const userLimit = Number(form.get('user_limit') ?? 0)
-      if (userId > 0) await setVirtualCharacterUserLimit(userId, userLimit)
-      toast.success(t('Library settings updated'))
-      await onCompleted()
-    } catch {
-      // Shared interceptor handles errors.
-    } finally {
-      setSaving(false)
-    }
-  }
-  const importFile = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    const formElement = event.currentTarget
-    const form = new FormData(formElement)
-    const file = form.get('import_file')
-    if (!(file instanceof File) || !file.size) return
-    setImporting(true)
-    try {
-      const channelId = Number(form.get('import_channel') ?? 0)
-      const result = await importPublicVirtualCharacters(
-        file,
-        channelId || undefined
-      )
-      toast.success(
-        t('Imported {{count}} public characters', {
-          count: result.data.processed,
-        })
-      )
-      formElement.reset()
-      await onCompleted()
-    } catch {
-      // Shared interceptor handles errors.
-    } finally {
-      setImporting(false)
-    }
-  }
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className='max-h-[85vh] overflow-y-auto sm:max-w-2xl'>
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent>
         <DialogHeader>
-          <DialogTitle>{t('Character library settings')}</DialogTitle>
+          <DialogTitle>{t('Real-person validation')}</DialogTitle>
           <DialogDescription>
             {t(
-              'Configure private quotas, Seedance 2.0 models, and public library imports.'
+              'Scan the QR code with the person being validated and finish the H5 flow.'
             )}
           </DialogDescription>
         </DialogHeader>
-        {settings ? (
-          <div className='space-y-6'>
-            <form
-              key={`${settings.global_limit}-${settings.default_model}`}
-              onSubmit={save}
-              className='space-y-4'
-            >
-              <div className='grid grid-cols-2 gap-3'>
-                <FormField label={t('Default private quota')}>
-                  <Input
-                    name='global_limit'
-                    type='number'
-                    min={1}
-                    max={10000}
-                    defaultValue={settings.global_limit}
-                    required
-                  />
-                </FormField>
-                <FormField label={t('Default model')}>
-                  <Input
-                    name='default_model'
-                    defaultValue={settings.default_model}
-                    required
-                  />
-                </FormField>
-              </div>
-              <FormField label={t('Seedance 2.0 model whitelist')}>
-                <Textarea
-                  name='models'
-                  defaultValue={settings.models.join(', ')}
-                  rows={3}
-                  required
-                />
-                <p className='text-muted-foreground text-xs'>
-                  {t('Separate model names with commas.')}
-                </p>
-              </FormField>
-              <div className='rounded-lg border p-3'>
-                <p className='mb-3 text-sm font-medium'>
-                  {t('Per-account quota override')}
-                </p>
-                <div className='grid grid-cols-2 gap-3'>
-                  <FormField label={t('User ID')}>
-                    <Input
-                      name='user_id'
-                      type='number'
-                      min={1}
-                      placeholder={t('Leave blank to skip')}
-                    />
-                  </FormField>
-                  <FormField label={t('Quota override')}>
-                    <Input
-                      name='user_limit'
-                      type='number'
-                      min={0}
-                      max={10000}
-                      defaultValue={0}
-                    />
-                    <p className='text-muted-foreground text-xs'>
-                      {t('Use 0 to remove the override.')}
-                    </p>
-                  </FormField>
-                </div>
-              </div>
-              <div className='flex justify-end'>
-                <Button type='submit' disabled={saving}>
-                  {saving ? t('Saving...') : t('Save settings')}
-                </Button>
-              </div>
-            </form>
-            <form onSubmit={importFile} className='space-y-4 border-t pt-5'>
-              <div>
-                <p className='text-sm font-medium'>
-                  {t('Import public characters')}
-                </p>
-                <p className='text-muted-foreground text-xs'>
-                  {t(
-                    'Upload JSON or CSV. Existing channel + Asset ID pairs are updated.'
-                  )}
-                </p>
-              </div>
-              <div className='grid grid-cols-2 gap-3'>
-                <FormField label={t('Import file')}>
-                  <Input
-                    name='import_file'
-                    type='file'
-                    accept='.json,.csv,application/json,text/csv'
-                    required
-                  />
-                </FormField>
-                <FormField label={t('Default public channel')}>
-                  <NativeSelect
-                    name='import_channel'
-                    defaultValue={String(settings.public_channels[0]?.id ?? '')}
-                    className='w-full'
-                  >
-                    {settings.public_channels.map((channel) => (
-                      <NativeSelectOption
-                        key={channel.id}
-                        value={String(channel.id)}
-                      >
-                        {channel.name} (#{channel.id})
-                      </NativeSelectOption>
-                    ))}
-                  </NativeSelect>
-                </FormField>
-              </div>
-              <div className='flex justify-end'>
-                <Button
-                  type='submit'
-                  variant='outline'
-                  disabled={importing || !settings.public_channels.length}
-                >
-                  <HugeiconsIcon icon={FileUploadIcon} strokeWidth={2} />
-                  {importing ? t('Importing...') : t('Import')}
-                </Button>
-              </div>
-            </form>
+        <div className='flex flex-col items-center gap-5'>
+          {current.status === 'pending' && session.launch_url ? (
+            <div className='rounded-xl border bg-white p-4'>
+              <QRCodeSVG value={session.launch_url} size={220} level='M' />
+            </div>
+          ) : current.status === 'succeeded' ? (
+            <HugeiconsIcon
+              icon={CheckmarkCircle02Icon}
+              className='text-primary size-16'
+            />
+          ) : (
+            <Alert variant='destructive'>
+              <AlertTitle>
+                {current.status === 'expired'
+                  ? t('Validation expired')
+                  : t('Validation failed')}
+              </AlertTitle>
+              <AlertDescription>{current.last_error}</AlertDescription>
+            </Alert>
+          )}
+          <div className='w-full'>
+            <Progress value={progress}>
+              <ProgressLabel>
+                {validationStatusLabel(current.status, t)}
+              </ProgressLabel>
+              <span className='text-muted-foreground ml-auto text-sm tabular-nums'>
+                {t('{{count}} seconds', { count: remainingSeconds })}
+              </span>
+            </Progress>
           </div>
-        ) : (
-          <Skeleton className='h-80 w-full' />
-        )}
+          {current.status === 'pending' && (
+            <div className='flex flex-wrap justify-center gap-2'>
+              <Button
+                type='button'
+                onClick={() =>
+                  window.open(
+                    session.launch_url,
+                    '_blank',
+                    'noopener,noreferrer'
+                  )
+                }
+              >
+                {t('Open validation page')}
+              </Button>
+              <Button
+                type='button'
+                variant='outline'
+                onClick={() => query.refetch()}
+              >
+                <HugeiconsIcon icon={RefreshIcon} data-icon='inline-start' />
+                {t('Check status')}
+              </Button>
+            </div>
+          )}
+          {(current.status === 'failed' || current.status === 'expired') && (
+            <Button type='button' onClick={onRetry}>
+              {t('Retry validation')}
+            </Button>
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant='outline' onClick={onClose}>
+            {t('Close')}
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   )
 }
 
-function TaskHistoryList({ items }: { items: VirtualCharacterTask[] }) {
+function CharacterDetailDialog({
+  characterID,
+  onClose,
+  onGenerate,
+}: {
+  characterID: number | null
+  onClose: () => void
+  onGenerate: (
+    character: VirtualCharacter,
+    asset?: VirtualCharacterAsset
+  ) => void
+}) {
   const { t } = useTranslation()
-  if (!items.length) return <EmptyLibrary tab='history' />
+  const queryClient = useQueryClient()
+  const [uploadOpen, setUploadOpen] = useState(false)
+  const [deletingAsset, setDeletingAsset] = useState<number | null>(null)
+  const [busy, setBusy] = useState(false)
+  const query = useQuery({
+    queryKey: virtualCharacterQueryKeys.detail(characterID ?? 0),
+    queryFn: () => getVirtualCharacter(characterID ?? 0),
+    enabled: Boolean(characterID),
+    refetchInterval: (current) =>
+      current.state.data?.data.assets.some(
+        (asset) => asset.status === 'Processing'
+      )
+        ? 5000
+        : false,
+  })
+  const character = query.data?.data
+  const refresh = async () => {
+    await query.refetch()
+    await queryClient.invalidateQueries({
+      queryKey: virtualCharacterQueryKeys.all,
+    })
+  }
+  const setPrimary = async (assetID: number) => {
+    if (!character) return
+    setBusy(true)
+    try {
+      await setPrimaryVirtualCharacterAsset(character.id, assetID)
+      toast.success(t('Primary asset updated'))
+      await refresh()
+    } catch (error) {
+      toast.error(errorMessage(error, t('Failed to update primary asset')))
+    } finally {
+      setBusy(false)
+    }
+  }
+  const removeAsset = async () => {
+    if (!character || deletingAsset == null) return
+    setBusy(true)
+    try {
+      await deleteVirtualCharacterAsset(character.id, deletingAsset)
+      toast.success(t('Asset deletion queued'))
+      setDeletingAsset(null)
+      await refresh()
+    } catch (error) {
+      toast.error(errorMessage(error, t('Failed to delete asset')))
+    } finally {
+      setBusy(false)
+    }
+  }
   return (
-    <div className='space-y-2'>
-      {items.map((item) => {
-        const status = item.task?.status ?? item.link_status
-        return (
-          <Card key={item.task_id} className='py-3'>
-            <CardContent className='grid grid-cols-[minmax(220px,1fr)_180px_140px_180px] items-center gap-4'>
-              <div className='min-w-0'>
-                <p className='truncate font-medium'>{item.character_name}</p>
-                <p className='text-muted-foreground truncate font-mono text-xs'>
-                  {item.task_id}
-                </p>
+    <>
+      <Dialog
+        open={characterID != null}
+        onOpenChange={(open) => !open && onClose()}
+      >
+        <DialogContent className='max-h-[90vh] overflow-y-auto sm:max-w-3xl'>
+          <DialogHeader>
+            <DialogTitle>{character?.name ?? t('Actor group')}</DialogTitle>
+            <DialogDescription>
+              {t(
+                'Manage the validated actor group and its provider-hosted styling assets.'
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          {!character ? (
+            <div className='flex justify-center py-12'>
+              <Spinner className='size-6' />
+            </div>
+          ) : (
+            <div className='flex flex-col gap-4'>
+              <div className='flex flex-wrap items-center gap-2'>
+                <Badge>{t('Validated')}</Badge>
+                <Badge variant='outline'>
+                  {t('{{count}} assets', { count: character.assets.length })}
+                </Badge>
+                <Button size='sm' onClick={() => setUploadOpen(true)}>
+                  <HugeiconsIcon
+                    icon={FileUploadIcon}
+                    data-icon='inline-start'
+                  />
+                  {t('Upload styling asset')}
+                </Button>
               </div>
-              <div>
-                <p className='text-muted-foreground text-xs'>{t('Model')}</p>
-                <p className='truncate text-sm'>
-                  {item.task?.properties?.origin_model_name ??
-                    item.task?.properties?.upstream_model_name ??
-                    '-'}
-                </p>
-              </div>
-              <div>
-                <Badge variant='outline'>{taskStatusLabel(status, t)}</Badge>
-                <p className='text-muted-foreground mt-1 text-xs'>
-                  {item.task?.progress ?? ''}
-                </p>
-              </div>
-              <div className='flex justify-end'>
-                {item.task?.result_url ? (
-                  <Button
-                    variant='outline'
-                    size='sm'
-                    render={
-                      <a
-                        href={item.task.result_url}
-                        target='_blank'
-                        rel='noreferrer'
-                      />
+              {character.assets.length === 0 ? (
+                <Alert>
+                  <AlertTitle>{t('No styling assets')}</AlertTitle>
+                  <AlertDescription>
+                    {t(
+                      'Upload an image, video, or audio asset. Video generation unlocks after it becomes Active.'
+                    )}
+                  </AlertDescription>
+                </Alert>
+              ) : (
+                <div className='grid gap-3 sm:grid-cols-2'>
+                  {character.assets.map((asset) => (
+                    <Card key={asset.id}>
+                      <CardHeader>
+                        <div className='flex items-start justify-between gap-2'>
+                          <div>
+                            <CardTitle className='text-base'>
+                              {asset.name}
+                            </CardTitle>
+                            <CardDescription>
+                              {t(asset.asset_type)}
+                            </CardDescription>
+                          </div>
+                          <AssetStatusBadge status={asset.status} />
+                        </div>
+                      </CardHeader>
+                      <CardContent className='flex flex-col gap-3'>
+                        {asset.status === 'Processing' && (
+                          <Progress value={null}>
+                            <ProgressLabel>
+                              {t('Provider processing')}
+                            </ProgressLabel>
+                          </Progress>
+                        )}
+                        {asset.last_error && (
+                          <Alert variant='destructive'>
+                            <AlertDescription>
+                              {asset.last_error}
+                            </AlertDescription>
+                          </Alert>
+                        )}
+                        <div className='flex flex-wrap gap-2'>
+                          <Button
+                            size='sm'
+                            disabled={asset.status !== 'Active'}
+                            onClick={() => onGenerate(character, asset)}
+                          >
+                            <HugeiconsIcon
+                              icon={Video01Icon}
+                              data-icon='inline-start'
+                            />
+                            {t('Create video')}
+                          </Button>
+                          {!asset.is_primary && asset.status === 'Active' && (
+                            <Button
+                              size='sm'
+                              variant='outline'
+                              disabled={busy}
+                              onClick={() => setPrimary(asset.id)}
+                            >
+                              {t('Set as primary')}
+                            </Button>
+                          )}
+                          {asset.is_primary && (
+                            <Badge variant='secondary'>{t('Primary')}</Badge>
+                          )}
+                          <Button
+                            size='icon-sm'
+                            variant='ghost'
+                            disabled={busy || asset.status === 'Deleting'}
+                            onClick={() => setDeletingAsset(asset.id)}
+                          >
+                            <HugeiconsIcon icon={Delete02Icon} />
+                            <span className='sr-only'>{t('Delete')}</span>
+                          </Button>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant='outline' onClick={onClose}>
+              {t('Close')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      {character && (
+        <UploadAssetDialog
+          character={character}
+          open={uploadOpen}
+          onClose={() => setUploadOpen(false)}
+          onUploaded={refresh}
+        />
+      )}
+      <AlertDialog
+        open={deletingAsset != null}
+        onOpenChange={(open) => !open && setDeletingAsset(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t('Delete this asset?')}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t(
+                'New tasks are blocked immediately. Provider deletion continues in the background and retries on failure.'
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t('Cancel')}</AlertDialogCancel>
+            <AlertDialogAction disabled={busy} onClick={removeAsset}>
+              {t('Delete')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
+  )
+}
+
+function UploadAssetDialog({
+  character,
+  open,
+  onClose,
+  onUploaded,
+}: {
+  character: VirtualCharacter
+  open: boolean
+  onClose: () => void
+  onUploaded: () => void
+}) {
+  const { t } = useTranslation()
+  const [file, setFile] = useState<File | null>(null)
+  const [name, setName] = useState('')
+  const [assetType, setAssetType] = useState<'Image' | 'Video' | 'Audio'>(
+    'Image'
+  )
+  const [busy, setBusy] = useState(false)
+  const submit = async (event: FormEvent) => {
+    event.preventDefault()
+    if (!file) return
+    setBusy(true)
+    try {
+      await uploadVirtualCharacterAsset({
+        characterId: character.id,
+        file,
+        name,
+        assetType,
+      })
+      toast.success(t('Asset uploaded and queued for provider processing'))
+      setFile(null)
+      setName('')
+      onClose()
+      onUploaded()
+    } catch (error) {
+      toast.error(errorMessage(error, t('Failed to upload asset')))
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <Dialog open={open} onOpenChange={(value) => !value && onClose()}>
+      <DialogContent>
+        <form className='flex flex-col gap-5' onSubmit={submit}>
+          <DialogHeader>
+            <DialogTitle>{t('Upload styling asset')}</DialogTitle>
+            <DialogDescription>
+              {t(
+                'The file is staged privately, imported into the Volc asset group, then removed from staging.'
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          <FieldGroup>
+            <Field>
+              <FieldLabel htmlFor='asset-type'>{t('Asset type')}</FieldLabel>
+              <NativeSelect
+                id='asset-type'
+                className='w-full'
+                value={assetType}
+                onChange={(event) =>
+                  setAssetType(event.target.value as typeof assetType)
+                }
+              >
+                <NativeSelectOption value='Image'>
+                  {t('Image')}
+                </NativeSelectOption>
+                <NativeSelectOption value='Video'>
+                  {t('Video')}
+                </NativeSelectOption>
+                <NativeSelectOption value='Audio'>
+                  {t('Audio')}
+                </NativeSelectOption>
+              </NativeSelect>
+              <FieldDescription>
+                {t(
+                  'Images up to 30 MB, videos up to 50 MB, audio up to 15 MB.'
+                )}
+              </FieldDescription>
+            </Field>
+            <Field>
+              <FieldLabel htmlFor='asset-name'>{t('Asset name')}</FieldLabel>
+              <Input
+                id='asset-name'
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+              />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor='asset-file'>{t('File')}</FieldLabel>
+              <Input
+                id='asset-file'
+                type='file'
+                required
+                onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+              />
+            </Field>
+          </FieldGroup>
+          <DialogFooter>
+            <Button type='button' variant='outline' onClick={onClose}>
+              {t('Cancel')}
+            </Button>
+            <Button type='submit' disabled={busy || !file}>
+              {busy && <Spinner />}
+              {t('Upload')}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function GenerateDialog({
+  target,
+  models,
+  defaultModel,
+  onClose,
+  onCreated,
+}: {
+  target: { character: VirtualCharacter; asset?: VirtualCharacterAsset } | null
+  models: string[]
+  defaultModel: string
+  onClose: () => void
+  onCreated: () => void
+}) {
+  const { t } = useTranslation()
+  const [prompt, setPrompt] = useState('')
+  const [modelName, setModelName] = useState(defaultModel)
+  const [duration, setDuration] = useState(5)
+  const [ratio, setRatio] = useState('16:9')
+  const [resolution, setResolution] = useState('720p')
+  const [assetID, setAssetID] = useState<number | undefined>(target?.asset?.id)
+  const [busy, setBusy] = useState(false)
+  useEffect(() => {
+    setAssetID(target?.asset?.id ?? target?.character.primary_asset_id)
+    setModelName(defaultModel || models[0] || '')
+  }, [defaultModel, models, target])
+  const submit = async (event: FormEvent) => {
+    event.preventDefault()
+    if (!target) return
+    setBusy(true)
+    try {
+      const response = await createCharacterVideo({
+        character_id: target.character.id,
+        character_asset_id: assetID,
+        model: modelName,
+        prompt,
+        duration,
+        ratio,
+        resolution,
+      })
+      if (response.error?.message) throw new Error(response.error.message)
+      toast.success(t('Video task created'))
+      onCreated()
+    } catch (error) {
+      toast.error(errorMessage(error, t('Failed to create video task')))
+    } finally {
+      setBusy(false)
+    }
+  }
+  const assets =
+    target?.character.assets?.filter((asset) => asset.status === 'Active') ?? []
+  return (
+    <Dialog open={target != null} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent>
+        <form className='flex flex-col gap-5' onSubmit={submit}>
+          <DialogHeader>
+            <DialogTitle>
+              {t('Create video with {{name}}', {
+                name: target?.character.name ?? '',
+              })}
+            </DialogTitle>
+            <DialogDescription>
+              {t(
+                'The selected provider asset is sent as an asset:// reference through the fixed channel.'
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          <FieldGroup>
+            {target?.character.scope === 'private' && assets.length > 0 && (
+              <Field>
+                <FieldLabel htmlFor='generation-asset'>
+                  {t('Styling asset')}
+                </FieldLabel>
+                <NativeSelect
+                  id='generation-asset'
+                  className='w-full'
+                  value={assetID ?? ''}
+                  onChange={(event) => setAssetID(Number(event.target.value))}
+                >
+                  {assets.map((asset) => (
+                    <NativeSelectOption key={asset.id} value={asset.id}>
+                      {asset.name}
+                      {asset.is_primary ? ` · ${t('Primary')}` : ''}
+                    </NativeSelectOption>
+                  ))}
+                </NativeSelect>
+              </Field>
+            )}
+            <Field>
+              <FieldLabel htmlFor='generation-model'>{t('Model')}</FieldLabel>
+              <NativeSelect
+                id='generation-model'
+                className='w-full'
+                required
+                value={modelName}
+                onChange={(event) => setModelName(event.target.value)}
+              >
+                {models.map((model) => (
+                  <NativeSelectOption key={model} value={model}>
+                    {model}
+                  </NativeSelectOption>
+                ))}
+              </NativeSelect>
+            </Field>
+            <Field>
+              <FieldLabel htmlFor='generation-prompt'>{t('Prompt')}</FieldLabel>
+              <Textarea
+                id='generation-prompt'
+                required
+                value={prompt}
+                onChange={(event) => setPrompt(event.target.value)}
+                placeholder={t(
+                  'Describe how 图片1中的角色 should move and what scene to create'
+                )}
+              />
+            </Field>
+            <div className='grid gap-4 sm:grid-cols-3'>
+              <Field>
+                <FieldLabel htmlFor='generation-duration'>
+                  {t('Duration')}
+                </FieldLabel>
+                <Input
+                  id='generation-duration'
+                  type='number'
+                  min={2}
+                  max={15}
+                  value={duration}
+                  onChange={(event) => setDuration(Number(event.target.value))}
+                />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor='generation-ratio'>{t('Ratio')}</FieldLabel>
+                <NativeSelect
+                  id='generation-ratio'
+                  className='w-full'
+                  value={ratio}
+                  onChange={(event) => setRatio(event.target.value)}
+                >
+                  <NativeSelectOption value='16:9'>16:9</NativeSelectOption>
+                  <NativeSelectOption value='9:16'>9:16</NativeSelectOption>
+                  <NativeSelectOption value='1:1'>1:1</NativeSelectOption>
+                </NativeSelect>
+              </Field>
+              <Field>
+                <FieldLabel htmlFor='generation-resolution'>
+                  {t('Resolution')}
+                </FieldLabel>
+                <NativeSelect
+                  id='generation-resolution'
+                  className='w-full'
+                  value={resolution}
+                  onChange={(event) => setResolution(event.target.value)}
+                >
+                  <NativeSelectOption value='720p'>720p</NativeSelectOption>
+                  <NativeSelectOption value='1080p'>1080p</NativeSelectOption>
+                </NativeSelect>
+              </Field>
+            </div>
+          </FieldGroup>
+          <DialogFooter>
+            <Button type='button' variant='outline' onClick={onClose}>
+              {t('Cancel')}
+            </Button>
+            <Button
+              type='submit'
+              disabled={
+                busy ||
+                !modelName ||
+                !prompt ||
+                (target?.character.scope === 'private' && !assetID)
+              }
+            >
+              {busy && <Spinner />}
+              {t('Create video')}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function SettingsDialog({
+  open,
+  settings,
+  onClose,
+  onSaved,
+}: {
+  open: boolean
+  settings?: VirtualCharacterSettings
+  onClose: () => void
+  onSaved: () => void
+}) {
+  const { t } = useTranslation()
+  const queryClient = useQueryClient()
+  const [form, setForm] = useState({
+    enabled: false,
+    official_enabled: false,
+    real_person_enabled: false,
+    access_key: '',
+    secret_key: '',
+    region: 'cn-beijing',
+    project_name: 'default',
+    channel_id: 0,
+    global_limit: 100,
+    models: '',
+    default_model: '',
+  })
+  const [file, setFile] = useState<File | null>(null)
+  const [version, setVersion] = useState('')
+  const [busy, setBusy] = useState(false)
+  useEffect(() => {
+    if (!settings) return
+    setForm((current) => ({
+      ...current,
+      enabled: settings.enabled,
+      official_enabled: settings.official_enabled,
+      real_person_enabled: settings.real_person_enabled,
+      region: settings.region || 'cn-beijing',
+      project_name: settings.project_name || 'default',
+      channel_id: settings.channel_id,
+      global_limit: settings.global_limit,
+      models: settings.models.join(','),
+      default_model: settings.default_model,
+      access_key: '',
+      secret_key: '',
+    }))
+  }, [settings])
+  const save = async (event: FormEvent) => {
+    event.preventDefault()
+    setBusy(true)
+    try {
+      await updateVirtualCharacterSettings({
+        ...form,
+        access_key: form.access_key || undefined,
+        secret_key: form.secret_key || undefined,
+        models: splitTags(form.models),
+      })
+      toast.success(t('Library settings updated'))
+      await queryClient.invalidateQueries({
+        queryKey: virtualCharacterQueryKeys.settings(),
+      })
+      onSaved()
+    } catch (error) {
+      toast.error(errorMessage(error, t('Failed to update settings')))
+    } finally {
+      setBusy(false)
+    }
+  }
+  const testConnection = async () => {
+    setBusy(true)
+    try {
+      await testVirtualCharacterProvider()
+      toast.success(t('Provider connection and permission check passed'))
+      await queryClient.invalidateQueries({
+        queryKey: virtualCharacterQueryKeys.settings(),
+      })
+    } catch (error) {
+      toast.error(errorMessage(error, t('Provider connection test failed')))
+    } finally {
+      setBusy(false)
+    }
+  }
+  const importCatalog = async (dryRun: boolean) => {
+    if (!file) return
+    setBusy(true)
+    try {
+      await importPublicVirtualCharacters(file, dryRun, version)
+      toast.success(
+        dryRun ? t('Catalog validation passed') : t('Official catalog imported')
+      )
+      await queryClient.invalidateQueries({
+        queryKey: virtualCharacterQueryKeys.all,
+      })
+    } catch (error) {
+      toast.error(errorMessage(error, t('Catalog import failed')))
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <Dialog open={open} onOpenChange={(value) => !value && onClose()}>
+      <DialogContent className='max-h-[90vh] overflow-y-auto sm:max-w-3xl'>
+        <form className='flex flex-col gap-5' onSubmit={save}>
+          <DialogHeader>
+            <DialogTitle>{t('Character library settings')}</DialogTitle>
+            <DialogDescription>
+              {t(
+                'Configure the single Volc account, Project, stable video channel, feature flags, and official catalog.'
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          {!settings?.crypto_ready && (
+            <Alert variant='destructive'>
+              <AlertTitle>{t('Stable CRYPTO_SECRET required')}</AlertTitle>
+              <AlertDescription>
+                {t(
+                  'The character library cannot be enabled until a stable secret of at least 32 characters is configured.'
+                )}
+              </AlertDescription>
+            </Alert>
+          )}
+          <Card>
+            <CardHeader>
+              <CardTitle>{t('Provider account')}</CardTitle>
+              <CardDescription>
+                {t(
+                  'AK, SK, H5 links, and validation tokens are encrypted at rest.'
+                )}
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <FieldGroup>
+                <ToggleField
+                  label={t('Enable character library')}
+                  checked={form.enabled}
+                  onChange={(checked) => setForm({ ...form, enabled: checked })}
+                />
+                <div className='grid gap-4 sm:grid-cols-2'>
+                  <Field>
+                    <FieldLabel htmlFor='provider-ak'>
+                      {t('Access Key')}
+                    </FieldLabel>
+                    <Input
+                      id='provider-ak'
+                      type='password'
+                      value={form.access_key}
+                      onChange={(event) =>
+                        setForm({ ...form, access_key: event.target.value })
+                      }
+                      placeholder={
+                        settings?.access_key_masked || t('Not configured')
+                      }
+                    />
+                  </Field>
+                  <Field>
+                    <FieldLabel htmlFor='provider-sk'>
+                      {t('Secret Key')}
+                    </FieldLabel>
+                    <Input
+                      id='provider-sk'
+                      type='password'
+                      value={form.secret_key}
+                      onChange={(event) =>
+                        setForm({ ...form, secret_key: event.target.value })
+                      }
+                      placeholder={
+                        settings?.secret_key_masked || t('Not configured')
+                      }
+                    />
+                  </Field>
+                  <Field>
+                    <FieldLabel htmlFor='provider-region'>
+                      {t('Region')}
+                    </FieldLabel>
+                    <Input
+                      id='provider-region'
+                      value={form.region}
+                      onChange={(event) =>
+                        setForm({ ...form, region: event.target.value })
+                      }
+                    />
+                  </Field>
+                  <Field>
+                    <FieldLabel htmlFor='provider-project'>
+                      {t('Project Name')}
+                    </FieldLabel>
+                    <Input
+                      id='provider-project'
+                      value={form.project_name}
+                      onChange={(event) =>
+                        setForm({ ...form, project_name: event.target.value })
+                      }
+                    />
+                  </Field>
+                </div>
+                <Field>
+                  <FieldLabel htmlFor='provider-channel'>
+                    {t('Stable video channel')}
+                  </FieldLabel>
+                  <NativeSelect
+                    id='provider-channel'
+                    className='w-full'
+                    value={form.channel_id}
+                    onChange={(event) =>
+                      setForm({
+                        ...form,
+                        channel_id: Number(event.target.value),
+                      })
                     }
                   >
-                    <HugeiconsIcon icon={Video01Icon} strokeWidth={2} />
+                    <NativeSelectOption value={0}>
+                      {t('Select a channel')}
+                    </NativeSelectOption>
+                    {settings?.channels.map((channel) => (
+                      <NativeSelectOption key={channel.id} value={channel.id}>
+                        {channel.name}
+                      </NativeSelectOption>
+                    ))}
+                  </NativeSelect>
+                  <FieldDescription>
+                    {t(
+                      'Only enabled single-key Volc or DoubaoVideo channels are listed.'
+                    )}
+                  </FieldDescription>
+                </Field>
+                <div className='grid gap-4 sm:grid-cols-2'>
+                  <Field>
+                    <FieldLabel htmlFor='provider-models'>
+                      {t('Seedance 2.0 model whitelist')}
+                    </FieldLabel>
+                    <Input
+                      id='provider-models'
+                      value={form.models}
+                      onChange={(event) =>
+                        setForm({ ...form, models: event.target.value })
+                      }
+                    />
+                  </Field>
+                  <Field>
+                    <FieldLabel htmlFor='provider-default-model'>
+                      {t('Default model')}
+                    </FieldLabel>
+                    <Input
+                      id='provider-default-model'
+                      value={form.default_model}
+                      onChange={(event) =>
+                        setForm({ ...form, default_model: event.target.value })
+                      }
+                    />
+                  </Field>
+                </div>
+                <Field>
+                  <FieldLabel htmlFor='provider-quota'>
+                    {t('Default private quota')}
+                  </FieldLabel>
+                  <Input
+                    id='provider-quota'
+                    type='number'
+                    min={1}
+                    max={10000}
+                    value={form.global_limit}
+                    onChange={(event) =>
+                      setForm({
+                        ...form,
+                        global_limit: Number(event.target.value),
+                      })
+                    }
+                  />
+                  <FieldDescription>
+                    {t(
+                      'Quota is counted by actor group, not by styling asset.'
+                    )}
+                  </FieldDescription>
+                </Field>
+                <div className='grid gap-3 sm:grid-cols-2'>
+                  <ToggleField
+                    label={t('Enable official catalog (A)')}
+                    checked={form.official_enabled}
+                    onChange={(checked) =>
+                      setForm({ ...form, official_enabled: checked })
+                    }
+                  />
+                  <ToggleField
+                    label={t('Enable real-person groups (B)')}
+                    checked={form.real_person_enabled}
+                    onChange={(checked) =>
+                      setForm({ ...form, real_person_enabled: checked })
+                    }
+                  />
+                </div>
+                <Button
+                  type='button'
+                  variant='outline'
+                  disabled={busy || !settings?.enabled}
+                  onClick={testConnection}
+                >
+                  {busy && <Spinner />}
+                  {t('Test connection and permissions')}
+                </Button>
+              </FieldGroup>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader>
+              <CardTitle>{t('Authoritative official catalog')}</CardTitle>
+              <CardDescription>
+                {settings?.catalog
+                  ? t('Last import: version {{version}}, {{count}} entries', {
+                      version: settings.catalog.version,
+                      count: settings.catalog.total,
+                    })
+                  : t('No authoritative catalog has been imported.')}
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <FieldGroup>
+                <Field>
+                  <FieldLabel htmlFor='catalog-file'>
+                    {t('JSON or CSV catalog')}
+                  </FieldLabel>
+                  <Input
+                    id='catalog-file'
+                    type='file'
+                    accept='.json,.csv'
+                    onChange={(event) =>
+                      setFile(event.target.files?.[0] ?? null)
+                    }
+                  />
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor='catalog-version'>
+                    {t('Catalog version')}
+                  </FieldLabel>
+                  <Input
+                    id='catalog-version'
+                    value={version}
+                    onChange={(event) => setVersion(event.target.value)}
+                    placeholder={t(
+                      'Required for CSV; JSON may include version'
+                    )}
+                  />
+                </Field>
+                <div className='flex flex-wrap gap-2'>
+                  <Button
+                    type='button'
+                    variant='outline'
+                    disabled={busy || !file}
+                    onClick={() => importCatalog(true)}
+                  >
+                    {t('Dry run')}
+                  </Button>
+                  <Button
+                    type='button'
+                    disabled={busy || !file}
+                    onClick={() => importCatalog(false)}
+                  >
+                    {t('Import catalog')}
+                  </Button>
+                </div>
+              </FieldGroup>
+            </CardContent>
+          </Card>
+          <DialogFooter>
+            <Button type='button' variant='outline' onClick={onClose}>
+              {t('Close')}
+            </Button>
+            <Button type='submit' disabled={busy}>
+              {busy && <Spinner />}
+              {t('Save settings')}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function DeleteCharacterDialog({
+  target,
+  onClose,
+  onDeleted,
+}: {
+  target: VirtualCharacter | null
+  onClose: () => void
+  onDeleted: () => void
+}) {
+  const { t } = useTranslation()
+  const [busy, setBusy] = useState(false)
+  const remove = async () => {
+    if (!target) return
+    setBusy(true)
+    try {
+      await deleteVirtualCharacter(target.id)
+      toast.success(t('Character deletion queued'))
+      onClose()
+      onDeleted()
+    } catch (error) {
+      toast.error(errorMessage(error, t('Failed to delete character')))
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <AlertDialog
+      open={target != null}
+      onOpenChange={(open) => !open && onClose()}
+    >
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{t('Delete this actor group?')}</AlertDialogTitle>
+          <AlertDialogDescription>
+            {t(
+              'All assets are hidden immediately. Provider asset and group deletion continues with retries in the background.'
+            )}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>{t('Cancel')}</AlertDialogCancel>
+          <AlertDialogAction disabled={busy} onClick={remove}>
+            {t('Delete')}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  )
+}
+
+function TaskHistory({
+  items,
+  outputNotice,
+  onRefresh,
+}: {
+  items: VirtualCharacterTask[]
+  outputNotice?: string
+  onRefresh: () => void
+}) {
+  const { t } = useTranslation()
+  if (items.length === 0) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>{t('No character tasks yet')}</CardTitle>
+          <CardDescription>
+            {t(
+              'Tasks created from official or real-person assets will appear here.'
+            )}
+          </CardDescription>
+        </CardHeader>
+      </Card>
+    )
+  }
+  return (
+    <div className='flex flex-col gap-3'>
+      {outputNotice && (
+        <Alert>
+          <HugeiconsIcon icon={Clock01Icon} />
+          <AlertTitle>{t('Temporary output')}</AlertTitle>
+          <AlertDescription>{t(outputNotice)}</AlertDescription>
+        </Alert>
+      )}
+      {items.map((item) => {
+        const failure = item.task?.fail_reason || item.error
+        return (
+          <Card key={item.task_id}>
+            <CardHeader>
+              <div className='flex flex-wrap items-start justify-between gap-3'>
+                <div>
+                  <CardTitle>{item.character_name}</CardTitle>
+                  <CardDescription>
+                    {item.character_asset_name
+                      ? t('Asset: {{name}}', {
+                          name: item.character_asset_name,
+                        })
+                      : item.task_id}
+                  </CardDescription>
+                </div>
+                <Badge variant={failure ? 'destructive' : 'secondary'}>
+                  {taskStatusLabel(item.task?.status || item.link_status, t)}
+                </Badge>
+              </div>
+            </CardHeader>
+            <CardContent className='flex flex-col gap-3'>
+              {failure && (
+                <Alert variant='destructive'>
+                  <AlertTitle>{t('Task failed')}</AlertTitle>
+                  <AlertDescription>{failure}</AlertDescription>
+                </Alert>
+              )}
+              <div className='flex flex-wrap gap-2'>
+                {item.task?.result_url && (
+                  <Button
+                    size='sm'
+                    onClick={() =>
+                      window.open(
+                        item.task?.result_url,
+                        '_blank',
+                        'noopener,noreferrer'
+                      )
+                    }
+                  >
                     {t('Open video')}
                   </Button>
-                ) : (
-                  <span
-                    className={cn(
-                      'text-xs',
-                      item.task?.fail_reason || item.error
-                        ? 'text-destructive'
-                        : 'text-muted-foreground'
-                    )}
-                  >
-                    {item.task?.fail_reason || item.error || t('Processing')}
-                  </span>
                 )}
+                <Button size='sm' variant='outline' onClick={onRefresh}>
+                  {t('Refresh')}
+                </Button>
               </div>
             </CardContent>
           </Card>
@@ -1390,16 +1781,49 @@ function TaskHistoryList({ items }: { items: VirtualCharacterTask[] }) {
   )
 }
 
+function ToggleField({
+  label,
+  checked,
+  onChange,
+}: {
+  label: string
+  checked: boolean
+  onChange: (checked: boolean) => void
+}) {
+  return (
+    <Field orientation='horizontal'>
+      <FieldLabel>{label}</FieldLabel>
+      <Switch checked={checked} onCheckedChange={onChange} />
+    </Field>
+  )
+}
+
+function AssetStatusBadge({ status }: { status: VirtualCharacterAssetStatus }) {
+  const { t } = useTranslation()
+  return (
+    <Badge
+      variant={
+        status === 'Active'
+          ? 'default'
+          : status === 'Failed'
+            ? 'destructive'
+            : 'secondary'
+      }
+    >
+      {t(status)}
+    </Badge>
+  )
+}
+
 function CharacterGridSkeleton() {
   return (
-    <div className='grid grid-cols-4 gap-4 2xl:grid-cols-5'>
-      {Array.from({ length: 8 }).map((_, index) => (
-        <Card key={index} className='overflow-hidden p-0'>
-          <Skeleton className='aspect-[4/5] w-full rounded-none' />
-          <CardContent className='space-y-2 py-4'>
-            <Skeleton className='h-5 w-2/3' />
+    <div className='grid gap-3 sm:grid-cols-2 xl:grid-cols-3'>
+      {[0, 1, 2].map((item) => (
+        <Card key={item}>
+          <Skeleton className='aspect-video w-full' />
+          <CardContent className='flex flex-col gap-3 pt-5'>
+            <Skeleton className='h-5 w-1/2' />
             <Skeleton className='h-4 w-full' />
-            <Skeleton className='h-8 w-full' />
           </CardContent>
         </Card>
       ))}
@@ -1407,48 +1831,21 @@ function CharacterGridSkeleton() {
   )
 }
 
-function EmptyLibrary({ tab }: { tab: LibraryTab }) {
-  const { t } = useTranslation()
-  return (
-    <div className='text-muted-foreground flex min-h-72 flex-col items-center justify-center rounded-xl border border-dashed'>
-      <HugeiconsIcon
-        icon={tab === 'history' ? Clock01Icon : AiUserIcon}
-        strokeWidth={1.5}
-        className='mb-3 size-10'
-      />
-      <p className='text-foreground font-medium'>
-        {tab === 'history'
-          ? t('No character tasks yet')
-          : t('No characters found')}
-      </p>
-      <p className='mt-1 text-sm'>
-        {tab === 'private'
-          ? t('Create your first private fictional character.')
-          : t('There is nothing to show on this page.')}
-      </p>
-    </div>
-  )
-}
-
 function Pagination({
   page,
-  pageSize,
   total,
+  pageSize,
   onChange,
 }: {
   page: number
-  pageSize: number
   total: number
+  pageSize: number
   onChange: (page: number) => void
 }) {
   const { t } = useTranslation()
-  const pages = Math.max(1, Math.ceil(total / Math.max(1, pageSize)))
-  if (total <= pageSize) return null
+  const pages = Math.max(1, Math.ceil(total / pageSize))
   return (
-    <div className='flex items-center justify-end gap-3'>
-      <span className='text-muted-foreground text-xs'>
-        {t('Page {{page}} of {{pages}}', { page, pages })}
-      </span>
+    <div className='flex items-center justify-end gap-2'>
       <Button
         variant='outline'
         size='sm'
@@ -1457,6 +1854,9 @@ function Pagination({
       >
         {t('Previous')}
       </Button>
+      <span className='text-muted-foreground text-sm'>
+        {t('Page {{page}} of {{pages}}', { page, pages })}
+      </span>
       <Button
         variant='outline'
         size='sm'
@@ -1465,30 +1865,6 @@ function Pagination({
       >
         {t('Next')}
       </Button>
-    </div>
-  )
-}
-
-function FormField({
-  label,
-  children,
-}: {
-  label: string
-  children: ReactNode
-}) {
-  return (
-    <div className='space-y-1.5'>
-      <Label>{label}</Label>
-      {children}
-    </div>
-  )
-}
-
-function DetailRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className='grid grid-cols-[100px_1fr] gap-3'>
-      <span className='text-muted-foreground'>{label}</span>
-      <span>{value}</span>
     </div>
   )
 }
@@ -1505,40 +1881,41 @@ function errorMessage(error: unknown, fallback: string): string {
     const response = error as {
       response?: { data?: { error?: { message?: string }; message?: string } }
     }
-    const responseMessage =
+    const message =
       response.response?.data?.error?.message ||
       response.response?.data?.message
-    if (responseMessage) return responseMessage
+    if (message) return message
   }
-  if (error instanceof Error && error.message) return error.message
-  return fallback
+  return error instanceof Error && error.message ? error.message : fallback
 }
 
 function statusLabel(
   status: VirtualCharacterStatus,
   t: (key: string) => string
 ): string {
-  const labels: Record<VirtualCharacterStatus, string> = {
-    creating: 'Creating',
-    active: 'Active',
-    blocked: 'Blocked',
-    offline: 'Offline',
-    deleting: 'Deleting',
-    failed: 'Failed',
-  }
-  return t(labels[status])
+  return t(
+    {
+      creating: 'Creating',
+      active: 'Active',
+      blocked: 'Blocked',
+      offline: 'Offline',
+      deleting: 'Deleting',
+      failed: 'Failed',
+    }[status]
+  )
 }
 
-function validationLabel(
-  status: VirtualCharacter['validation_status'],
+function validationStatusLabel(
+  status: VirtualCharacterValidationSession['status'],
   t: (key: string) => string
 ): string {
   return t(
-    status === 'accepted'
-      ? 'Accepted'
-      : status === 'rejected'
-        ? 'Rejected'
-        : 'Unverified'
+    {
+      pending: 'Waiting for validation',
+      succeeded: 'Validation succeeded',
+      failed: 'Validation failed',
+      expired: 'Validation expired',
+    }[status]
   )
 }
 
@@ -1548,12 +1925,7 @@ function taskStatusLabel(status: string, t: (key: string) => string): string {
   if (normalized === 'FAILURE' || normalized === 'FAILED') return t('Failed')
   if (normalized === 'IN_PROGRESS' || normalized === 'ACTIVE')
     return t('Running')
-  if (
-    normalized === 'SUBMITTED' ||
-    normalized === 'QUEUED' ||
-    normalized === 'READY' ||
-    normalized === 'SUBMITTING'
-  )
+  if (['SUBMITTED', 'QUEUED', 'READY', 'SUBMITTING'].includes(normalized))
     return t('Queued')
   return status
 }

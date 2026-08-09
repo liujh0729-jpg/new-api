@@ -46,8 +46,10 @@ require (
 	github.com/tidwall/gjson v1.18.0
 	github.com/tidwall/sjson v1.2.5
 	github.com/tiktoken-go/tokenizer v0.6.2
+	github.com/volcengine/volcengine-go-sdk v1.2.46
 	github.com/waffo-com/waffo-go v1.3.1
 	github.com/wechatpay-apiv3/wechatpay-go v0.2.21
+	github.com/xuri/excelize/v2 v2.11.0
 	github.com/yapingcat/gomedia v0.0.0-20240906162731-17feea57090c
 	golang.org/x/crypto v0.53.0
 	golang.org/x/image v0.38.0
@@ -62,12 +64,14 @@ require (
 )
 
 require (
+	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/richardlehane/mscfb v1.0.7 // indirect
 	github.com/richardlehane/msoleps v1.0.6 // indirect
 	github.com/tiendc/go-deepcopy v1.7.2 // indirect
+	github.com/volcengine/volc-sdk-golang v1.0.23 // indirect
 	github.com/xuri/efp v0.0.1 // indirect
-	github.com/xuri/excelize/v2 v2.11.0 // indirect
 	github.com/xuri/nfp v0.0.2-0.20250530014748-2ddeb826f9a9 // indirect
+	gopkg.in/yaml.v2 v2.4.0 // indirect
 )
 
 require (

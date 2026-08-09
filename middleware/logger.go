@@ -34,7 +34,14 @@ func SetUpLogger(server *gin.Engine) {
 			param.Latency,
 			param.ClientIP,
 			param.Method,
-			param.Path,
+			safeGinLogPath(param),
 		)
 	}))
+}
+
+func safeGinLogPath(param gin.LogFormatterParams) string {
+	if param.Request != nil && param.Request.URL != nil && param.Request.URL.Path == "/api/virtual-characters/validation/callback" {
+		return param.Request.URL.Path
+	}
+	return param.Path
 }

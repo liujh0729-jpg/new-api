@@ -1140,11 +1140,10 @@ func normalizeAndValidateSeedanceOfficialPayload(raw map[string]any) (map[string
 		if seedanceRequestValuePresent(payload["content"]) && !contentPresent {
 			return nil, "invalid_content", fmt.Errorf("content must be a non-empty array")
 		}
-		prompt := strings.TrimSpace(anyToString(payload["prompt"]))
-		if prompt == "" {
+		content = seedanceOfficialContentFromLegacyFields(payload)
+		if len(content) == 0 {
 			return nil, "missing_content", fmt.Errorf("content is required when prompt is empty")
 		}
-		content = []any{map[string]any{"type": "text", "text": prompt}}
 		payload["content"] = content
 	}
 	for index, value := range content {
@@ -1186,7 +1185,71 @@ func normalizeAndValidateSeedanceOfficialPayload(raw map[string]any) (map[string
 	if ratio != "" {
 		payload["ratio"] = ratio
 	}
+	// These fields belong to New API's compatibility request shape, not to the
+	// official Seedance request contract. Their values have already been folded
+	// into content above, so do not leak them to the upstream endpoint.
+	for _, key := range []string{"character_id", "prompt", "image", "images"} {
+		delete(payload, key)
+	}
 	return payload, "", nil
+}
+
+func seedanceOfficialContentFromLegacyFields(payload map[string]any) []any {
+	content := make([]any, 0, 2)
+	if prompt := strings.TrimSpace(anyToString(payload["prompt"])); prompt != "" {
+		content = append(content, map[string]any{"type": "text", "text": prompt})
+	}
+
+	imageURLs := seedanceLegacyImageURLs(payload["images"], payload["image"])
+	for _, imageURL := range imageURLs {
+		content = append(content, map[string]any{
+			"type": "image_url",
+			"role": "reference_image",
+			"image_url": map[string]any{
+				"url": imageURL,
+			},
+		})
+	}
+	return content
+}
+
+func seedanceLegacyImageURLs(values ...any) []string {
+	urls := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	appendURL := func(value any) {
+		var raw string
+		switch typed := value.(type) {
+		case string:
+			raw = typed
+		case map[string]any:
+			raw = anyToString(typed["url"])
+		}
+		url := strings.TrimSpace(raw)
+		if url == "" {
+			return
+		}
+		if _, exists := seen[url]; exists {
+			return
+		}
+		seen[url] = struct{}{}
+		urls = append(urls, url)
+	}
+
+	for _, value := range values {
+		switch typed := value.(type) {
+		case []any:
+			for _, item := range typed {
+				appendURL(item)
+			}
+		case []string:
+			for _, item := range typed {
+				appendURL(item)
+			}
+		default:
+			appendURL(typed)
+		}
+	}
+	return urls
 }
 
 func validateSeedanceFrameParameters(payload map[string]any, cfg modelConfig) (string, error) {

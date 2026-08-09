@@ -9,12 +9,12 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
-	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 )
 
 const (
 	VirtualCharacterContextKey       = "virtual_character"
+	VirtualCharacterAssetContextKey  = "virtual_character_asset"
 	VirtualCharacterLockedChannelKey = "virtual_character_locked_channel"
 	VirtualCharacterTaskIDKey        = "virtual_character_task_id"
 	VirtualCharacterTaskClaimedKey   = "virtual_character_task_claimed"
@@ -29,11 +29,19 @@ func BindVirtualCharacter() gin.HandlerFunc {
 			return
 		}
 		if req.CharacterID == nil {
+			if req.CharacterAssetID != nil {
+				abortVirtualCharacterBinding(c, http.StatusBadRequest, "character_id_required", "character_asset_id requires character_id")
+				return
+			}
 			c.Next()
 			return
 		}
 		if *req.CharacterID <= 0 {
 			abortVirtualCharacterBinding(c, http.StatusBadRequest, "invalid_character_id", "character_id must be a positive integer")
+			return
+		}
+		if req.CharacterAssetID != nil && *req.CharacterAssetID <= 0 {
+			abortVirtualCharacterBinding(c, http.StatusBadRequest, "invalid_character_asset_id", "character_asset_id must be a positive integer")
 			return
 		}
 		if !model.IsVirtualCharacterModelAllowed(strings.TrimSpace(req.Model)) {
@@ -53,10 +61,44 @@ func BindVirtualCharacter() gin.HandlerFunc {
 			abortVirtualCharacterBinding(c, http.StatusConflict, "character_unavailable", "character is not available for new tasks")
 			return
 		}
+		assetID := int64(0)
+		if req.CharacterAssetID != nil {
+			assetID = *req.CharacterAssetID
+		}
+		asset, item, err := model.GetVirtualCharacterAssetForUser(item.ID, assetID, c.GetInt("id"))
+		if err != nil {
+			abortVirtualCharacterBinding(c, http.StatusNotFound, "character_asset_not_found", "character asset not found")
+			return
+		}
+		if asset.Status != model.VirtualCharacterAssetStatusActive || strings.TrimSpace(asset.ProviderAssetID) == "" {
+			abortVirtualCharacterBinding(c, http.StatusConflict, "character_asset_unavailable", "character asset is not active")
+			return
+		}
+		account, err := model.GetEnabledVirtualCharacterProviderAccount()
+		if err != nil || !common.HasStableCryptoSecret() || account.ID != item.ProviderAccountID {
+			abortVirtualCharacterBinding(c, http.StatusServiceUnavailable, "character_provider_unavailable", "virtual character provider is unavailable")
+			return
+		}
+		if (item.Scope == model.VirtualCharacterScopePublic && !account.OfficialEnabled) || (item.Scope == model.VirtualCharacterScopePrivate && !account.RealPersonEnabled) {
+			abortVirtualCharacterBinding(c, http.StatusServiceUnavailable, "character_feature_disabled", "this virtual character feature is disabled")
+			return
+		}
+		channel, err := validateVirtualCharacterProviderChannel(account, req.Model)
+		if err != nil {
+			abortVirtualCharacterBinding(c, http.StatusServiceUnavailable, "character_channel_unavailable", err.Error())
+			return
+		}
+		if setupErr := SetupContextForSelectedChannel(c, channel, req.Model); setupErr != nil {
+			abortVirtualCharacterBinding(c, http.StatusServiceUnavailable, "character_channel_unavailable", setupErr.Error())
+			return
+		}
+		c.Set(VirtualCharacterLockedChannelKey, channel)
+
 		taskID := model.GenerateTaskID()
 		if err := model.CreateVirtualCharacterTaskLink(&model.VirtualCharacterTask{
 			TaskID: taskID, UserID: c.GetInt("id"), CharacterID: item.ID,
-			CharacterName: item.Name, CharacterScope: item.Scope,
+			CharacterName: item.Name, CharacterScope: item.Scope, CharacterAssetID: asset.ID,
+			CharacterAssetName: asset.Name, ProviderAssetID: asset.ProviderAssetID,
 		}); err != nil {
 			abortVirtualCharacterBinding(c, http.StatusInternalServerError, "character_task_link_failed", err.Error())
 			return
@@ -76,44 +118,14 @@ func BindVirtualCharacter() gin.HandlerFunc {
 		// Re-check after registering the in-flight task. A delete/offline action
 		// that won the race blocks this request; a later action sees the link and
 		// waits for the task to reach a terminal state before source cleanup.
-		latest, err := model.GetVirtualCharacterByID(item.ID)
-		if err != nil || latest.Status != model.VirtualCharacterStatusActive ||
-			latest.Scope != item.Scope || (latest.Scope == model.VirtualCharacterScopePrivate && latest.UserID != c.GetInt("id")) {
+		latestAsset, latest, err := model.GetVirtualCharacterAssetForUser(item.ID, asset.ID, c.GetInt("id"))
+		if err != nil || latest.Status != model.VirtualCharacterStatusActive || latestAsset.Status != model.VirtualCharacterAssetStatusActive ||
+			latest.Scope != item.Scope || latestAsset.ProviderAssetID != asset.ProviderAssetID || (latest.Scope == model.VirtualCharacterScopePrivate && latest.UserID != c.GetInt("id")) {
 			abortVirtualCharacterBinding(c, http.StatusConflict, "character_unavailable", "character is not available for new tasks")
 			return
 		}
-		item = latest
-
-		var referenceURL string
-		if item.Scope == model.VirtualCharacterScopePublic {
-			channel, err := validateVirtualCharacterPublicChannel(item, req.Model)
-			if err != nil {
-				abortVirtualCharacterBinding(c, http.StatusServiceUnavailable, "public_character_channel_unavailable", err.Error())
-				return
-			}
-			if setupErr := SetupContextForSelectedChannel(c, channel, req.Model); setupErr != nil {
-				abortVirtualCharacterBinding(c, http.StatusServiceUnavailable, "public_character_channel_unavailable", setupErr.Error())
-				return
-			}
-			c.Set(VirtualCharacterLockedChannelKey, channel)
-			referenceURL = "asset://" + strings.TrimPrefix(strings.TrimSpace(item.VolcAssetID), "asset://")
-		} else {
-			if strings.TrimSpace(item.AIPDDFileID) == "" {
-				abortVirtualCharacterBinding(c, http.StatusConflict, "character_source_unavailable", "character source is unavailable")
-				return
-			}
-			storage, err := service.NewAIPDDVirtualCharacterStorage()
-			if err != nil {
-				abortVirtualCharacterBinding(c, http.StatusServiceUnavailable, "character_storage_unavailable", err.Error())
-				return
-			}
-			signed, err := storage.SignFile(c.Request.Context(), item.AIPDDFileID)
-			if err != nil {
-				abortVirtualCharacterBinding(c, http.StatusBadGateway, "character_sign_failed", err.Error())
-				return
-			}
-			referenceURL = signed.URL
-		}
+		item, asset = latest, latestAsset
+		referenceURL := "asset://" + strings.TrimPrefix(strings.TrimSpace(asset.ProviderAssetID), "asset://")
 
 		req.Images = []string{referenceURL}
 		req.Image = ""
@@ -131,8 +143,18 @@ func BindVirtualCharacter() gin.HandlerFunc {
 			return
 		}
 		c.Set(VirtualCharacterContextKey, item)
+		c.Set(VirtualCharacterAssetContextKey, asset)
 		c.Next()
 	}
+}
+
+func GetBoundVirtualCharacterAsset(c *gin.Context) (*model.VirtualCharacterAsset, bool) {
+	value, exists := c.Get(VirtualCharacterAssetContextKey)
+	if !exists {
+		return nil, false
+	}
+	item, ok := value.(*model.VirtualCharacterAsset)
+	return item, ok && item != nil
 }
 
 func GetBoundVirtualCharacter(c *gin.Context) (*model.VirtualCharacter, bool) {
@@ -165,8 +187,11 @@ func virtualCharacterRequestHasExternalReferences(req relaycommon.TaskSubmitReq)
 	return !ok || len(items) > 0
 }
 
-func validateVirtualCharacterPublicChannel(item *model.VirtualCharacter, modelName string) (*model.Channel, error) {
-	channel, err := model.GetChannelById(item.PublicChannelID, true)
+func validateVirtualCharacterProviderChannel(account *model.VirtualCharacterProviderAccount, modelName string) (*model.Channel, error) {
+	if account == nil || account.ChannelID <= 0 {
+		return nil, fmt.Errorf("configured provider channel is missing")
+	}
+	channel, err := model.GetChannelById(account.ChannelID, true)
 	if err != nil {
 		return nil, err
 	}

@@ -2,23 +2,27 @@ import { api } from '@/lib/api'
 import type {
   ApiResponse,
   CharacterVideoInput,
-  PageData,
-  PublicVirtualCharacterInput,
   VirtualCharacter,
+  VirtualCharacterAsset,
   VirtualCharacterConfig,
   VirtualCharacterListData,
   VirtualCharacterSettings,
   VirtualCharacterTaskHistory,
+  VirtualCharacterValidationSession,
 } from './types'
 
 export const virtualCharacterQueryKeys = {
   all: ['virtual-characters'] as const,
-  list: (scope: string, page: number, admin: boolean) =>
-    [...virtualCharacterQueryKeys.all, 'list', scope, page, admin] as const,
+  list: (scope: string, page: number) =>
+    [...virtualCharacterQueryKeys.all, 'list', scope, page] as const,
+  detail: (id: number) =>
+    [...virtualCharacterQueryKeys.all, 'detail', id] as const,
   history: (page: number) =>
     [...virtualCharacterQueryKeys.all, 'history', page] as const,
   config: () => [...virtualCharacterQueryKeys.all, 'config'] as const,
   settings: () => [...virtualCharacterQueryKeys.all, 'settings'] as const,
+  validation: (id: string) =>
+    [...virtualCharacterQueryKeys.all, 'validation', id] as const,
   userModels: () => [...virtualCharacterQueryKeys.all, 'user-models'] as const,
 }
 
@@ -33,13 +37,10 @@ export async function listVirtualCharacters(
   return res.data
 }
 
-export async function listAdminPublicCharacters(
-  page: number,
-  pageSize = 20
-): Promise<ApiResponse<PageData<VirtualCharacter>>> {
-  const res = await api.get('/api/virtual-characters/admin', {
-    params: { p: page, page_size: pageSize },
-  })
+export async function getVirtualCharacter(
+  id: number
+): Promise<ApiResponse<VirtualCharacter>> {
+  const res = await api.get(`/api/virtual-characters/${id}`)
   return res.data
 }
 
@@ -50,19 +51,62 @@ export async function getVirtualCharacterConfig(): Promise<
   return res.data
 }
 
-export async function uploadVirtualCharacter(input: {
-  file: File
+export async function createValidationSession(input: {
   name: string
   description: string
   tags: string[]
-}): Promise<ApiResponse<VirtualCharacter>> {
+  language: 'zh' | 'en'
+}): Promise<ApiResponse<VirtualCharacterValidationSession>> {
+  const res = await api.post(
+    '/api/virtual-characters/validation-sessions',
+    input
+  )
+  return res.data
+}
+
+export async function getValidationSession(
+  id: string
+): Promise<ApiResponse<VirtualCharacterValidationSession>> {
+  const res = await api.get(
+    `/api/virtual-characters/validation-sessions/${encodeURIComponent(id)}`
+  )
+  return res.data
+}
+
+export async function uploadVirtualCharacterAsset(input: {
+  characterId: number
+  file: File
+  name: string
+  assetType: 'Image' | 'Video' | 'Audio'
+}): Promise<ApiResponse<VirtualCharacterAsset>> {
   const form = new FormData()
   form.append('file', input.file)
   form.append('name', input.name)
-  form.append('description', input.description)
-  form.append('tags', JSON.stringify(input.tags))
-  form.append('non_real_person', 'true')
-  const res = await api.post('/api/virtual-characters/upload', form)
+  form.append('asset_type', input.assetType)
+  const res = await api.post(
+    `/api/virtual-characters/${input.characterId}/assets`,
+    form
+  )
+  return res.data
+}
+
+export async function setPrimaryVirtualCharacterAsset(
+  characterId: number,
+  assetId: number
+): Promise<ApiResponse<{ character_id: number; asset_id: number }>> {
+  const res = await api.put(
+    `/api/virtual-characters/${characterId}/assets/${assetId}/primary`
+  )
+  return res.data
+}
+
+export async function deleteVirtualCharacterAsset(
+  characterId: number,
+  assetId: number
+): Promise<ApiResponse<{ id: number; status: string }>> {
+  const res = await api.delete(
+    `/api/virtual-characters/${characterId}/assets/${assetId}`
+  )
   return res.data
 }
 
@@ -101,6 +145,7 @@ export async function createCharacterVideo(
     '/pg/video/generations',
     {
       character_id: input.character_id,
+      character_asset_id: input.character_asset_id,
       model: input.model,
       prompt,
       duration: input.duration,
@@ -114,41 +159,6 @@ export async function createCharacterVideo(
   return res.data
 }
 
-export async function createPublicVirtualCharacter(
-  input: PublicVirtualCharacterInput
-): Promise<ApiResponse<VirtualCharacter>> {
-  const res = await api.post('/api/virtual-characters/admin', input)
-  return res.data
-}
-
-export async function updatePublicVirtualCharacter(
-  id: number,
-  input: PublicVirtualCharacterInput
-): Promise<ApiResponse<VirtualCharacter>> {
-  const res = await api.put(`/api/virtual-characters/admin/${id}`, input)
-  return res.data
-}
-
-export async function offlinePublicVirtualCharacter(
-  id: number
-): Promise<ApiResponse<{ id: number; status: string }>> {
-  const res = await api.delete(`/api/virtual-characters/admin/${id}`)
-  return res.data
-}
-
-export async function importPublicVirtualCharacters(
-  file: File,
-  publicChannelId?: number
-): Promise<ApiResponse<{ processed: number }>> {
-  const form = new FormData()
-  form.append('file', file)
-  if (publicChannelId) {
-    form.append('public_channel_id', String(publicChannelId))
-  }
-  const res = await api.post('/api/virtual-characters/admin/import', form)
-  return res.data
-}
-
 export async function getVirtualCharacterSettings(): Promise<
   ApiResponse<VirtualCharacterSettings>
 > {
@@ -157,11 +167,39 @@ export async function getVirtualCharacterSettings(): Promise<
 }
 
 export async function updateVirtualCharacterSettings(input: {
+  enabled: boolean
+  official_enabled: boolean
+  real_person_enabled: boolean
+  access_key?: string
+  secret_key?: string
+  region: string
+  project_name: string
+  channel_id: number
   global_limit: number
   models: string[]
   default_model: string
 }): Promise<ApiResponse<VirtualCharacterSettings>> {
   const res = await api.put('/api/virtual-characters/admin/settings', input)
+  return res.data
+}
+
+export async function testVirtualCharacterProvider(): Promise<
+  ApiResponse<{ status: string; checked_at: number }>
+> {
+  const res = await api.post('/api/virtual-characters/admin/provider/test')
+  return res.data
+}
+
+export async function importPublicVirtualCharacters(
+  file: File,
+  dryRun: boolean,
+  version?: string
+): Promise<ApiResponse<Record<string, unknown>>> {
+  const form = new FormData()
+  form.append('file', file)
+  form.append('dry_run', String(dryRun))
+  if (version) form.append('version', version)
+  const res = await api.post('/api/virtual-characters/admin/import', form)
   return res.data
 }
 

@@ -270,6 +270,11 @@ func migrateDB() error {
 		&VirtualCharacter{},
 		&VirtualCharacterUserLimit{},
 		&VirtualCharacterTask{},
+		&VirtualCharacterAsset{},
+		&VirtualCharacterValidationSession{},
+		&VirtualCharacterProviderAccount{},
+		&VirtualCharacterCatalogImport{},
+		&VirtualCharacterCleanupJob{},
 		&Ability{},
 		&Log{},
 		&Midjourney{},
@@ -317,6 +322,9 @@ func migrateDB() error {
 	if err := EnsureAIPDDDefaults(); err != nil {
 		return err
 	}
+	if err := MigrateVirtualCharacterABData(); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -341,6 +349,11 @@ func migrateDBFast() error {
 		{&VirtualCharacter{}, "VirtualCharacter"},
 		{&VirtualCharacterUserLimit{}, "VirtualCharacterUserLimit"},
 		{&VirtualCharacterTask{}, "VirtualCharacterTask"},
+		{&VirtualCharacterAsset{}, "VirtualCharacterAsset"},
+		{&VirtualCharacterValidationSession{}, "VirtualCharacterValidationSession"},
+		{&VirtualCharacterProviderAccount{}, "VirtualCharacterProviderAccount"},
+		{&VirtualCharacterCatalogImport{}, "VirtualCharacterCatalogImport"},
+		{&VirtualCharacterCleanupJob{}, "VirtualCharacterCleanupJob"},
 		{&Ability{}, "Ability"},
 		{&Log{}, "Log"},
 		{&Midjourney{}, "Midjourney"},
@@ -406,6 +419,9 @@ func migrateDBFast() error {
 		return err
 	}
 	if err := EnsureAIPDDDefaults(); err != nil {
+		return err
+	}
+	if err := MigrateVirtualCharacterABData(); err != nil {
 		return err
 	}
 	common.SysLog("database migrated")

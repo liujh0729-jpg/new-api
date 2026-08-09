@@ -15,8 +15,10 @@ const (
 	VirtualCharacterScopePrivate = "private"
 	VirtualCharacterScopePublic  = "public"
 
-	VirtualCharacterSourceAIPDD = "aipdd"
-	VirtualCharacterSourceVolc  = "volc"
+	VirtualCharacterSourceAIPDD          = "aipdd"
+	VirtualCharacterSourceVolc           = "volc"
+	VirtualCharacterSourceVolcPreset     = "volc_preset"
+	VirtualCharacterSourceVolcRealPerson = "volc_real_person"
 
 	VirtualCharacterStatusCreating = "creating"
 	VirtualCharacterStatusActive   = "active"
@@ -43,29 +45,33 @@ const (
 // VirtualCharacter stores role-library metadata only. Private binary content is
 // kept in the AIPDD digital asset service and referenced by stable IDs.
 type VirtualCharacter struct {
-	ID               int64          `json:"id" gorm:"primaryKey;autoIncrement"`
-	UserID           int            `json:"user_id" gorm:"index;uniqueIndex:uk_virtual_character_user_slot"`
-	Slot             *int           `json:"-" gorm:"uniqueIndex:uk_virtual_character_user_slot"`
-	Scope            string         `json:"scope" gorm:"type:varchar(16);index"`
-	Name             string         `json:"name" gorm:"type:varchar(191);index"`
-	Description      string         `json:"description" gorm:"type:text"`
-	TagsJSON         string         `json:"-" gorm:"type:text"`
-	SourceType       string         `json:"source_type" gorm:"type:varchar(16);index"`
-	Status           string         `json:"status" gorm:"type:varchar(20);index"`
-	ValidationStatus string         `json:"validation_status" gorm:"type:varchar(20);index"`
-	CoverURL         string         `json:"cover_url,omitempty" gorm:"type:text"`
-	AIPDDAssetID     int64          `json:"-" gorm:"index"`
-	AIPDDFileID      string         `json:"-" gorm:"type:varchar(191);index"`
-	VolcAssetID      string         `json:"volc_asset_id,omitempty" gorm:"type:varchar(191);index"`
-	PublicChannelID  int            `json:"public_channel_id,omitempty" gorm:"index"`
-	MimeType         string         `json:"mime_type,omitempty" gorm:"type:varchar(100)"`
-	FileSize         int64          `json:"file_size,omitempty"`
-	LastError        string         `json:"last_error,omitempty" gorm:"type:text"`
-	CleanupAttempts  int            `json:"-"`
-	CleanupNextAt    int64          `json:"-" gorm:"index"`
-	CreatedAt        int64          `json:"created_at" gorm:"autoCreateTime;index"`
-	UpdatedAt        int64          `json:"updated_at" gorm:"autoUpdateTime"`
-	DeletedAt        gorm.DeletedAt `json:"-" gorm:"index"`
+	ID                int64          `json:"id" gorm:"primaryKey;autoIncrement"`
+	UserID            int            `json:"user_id" gorm:"index;uniqueIndex:uk_virtual_character_user_slot"`
+	Slot              *int           `json:"-" gorm:"uniqueIndex:uk_virtual_character_user_slot"`
+	Scope             string         `json:"scope" gorm:"type:varchar(16);index"`
+	Name              string         `json:"name" gorm:"type:varchar(191);index"`
+	Description       string         `json:"description" gorm:"type:text"`
+	TagsJSON          string         `json:"-" gorm:"type:text"`
+	SourceType        string         `json:"source_type" gorm:"type:varchar(16);index"`
+	Status            string         `json:"status" gorm:"type:varchar(20);index"`
+	ValidationStatus  string         `json:"validation_status" gorm:"type:varchar(20);index"`
+	CoverURL          string         `json:"cover_url,omitempty" gorm:"type:text"`
+	AIPDDAssetID      int64          `json:"-" gorm:"index"`
+	AIPDDFileID       string         `json:"-" gorm:"type:varchar(191);index"`
+	VolcAssetID       string         `json:"volc_asset_id,omitempty" gorm:"type:varchar(191);index"`
+	PublicChannelID   int            `json:"public_channel_id,omitempty" gorm:"index"`
+	ProviderAccountID int            `json:"provider_account_id,omitempty" gorm:"index"`
+	ProviderGroupID   string         `json:"provider_group_id,omitempty" gorm:"type:varchar(191);index"`
+	PrimaryAssetID    *int64         `json:"primary_asset_id,omitempty" gorm:"index"`
+	CatalogVersion    string         `json:"catalog_version,omitempty" gorm:"type:varchar(191);index"`
+	MimeType          string         `json:"mime_type,omitempty" gorm:"type:varchar(100)"`
+	FileSize          int64          `json:"file_size,omitempty"`
+	LastError         string         `json:"last_error,omitempty" gorm:"type:text"`
+	CleanupAttempts   int            `json:"-"`
+	CleanupNextAt     int64          `json:"-" gorm:"index"`
+	CreatedAt         int64          `json:"created_at" gorm:"autoCreateTime;index"`
+	UpdatedAt         int64          `json:"updated_at" gorm:"autoUpdateTime"`
+	DeletedAt         gorm.DeletedAt `json:"-" gorm:"index"`
 }
 
 type VirtualCharacterUserLimit struct {
@@ -78,22 +84,25 @@ type VirtualCharacterUserLimit struct {
 // VirtualCharacterTask is both the role snapshot used by task history and a
 // small recovery outbox for the gap between upstream acceptance and Task insert.
 type VirtualCharacterTask struct {
-	ID                int64  `json:"id" gorm:"primaryKey;autoIncrement"`
-	TaskID            string `json:"task_id" gorm:"type:varchar(191);uniqueIndex"`
-	UserID            int    `json:"user_id" gorm:"index"`
-	CharacterID       int64  `json:"character_id" gorm:"index"`
-	CharacterName     string `json:"character_name" gorm:"type:varchar(191)"`
-	CharacterScope    string `json:"character_scope" gorm:"type:varchar(16)"`
-	Status            string `json:"status" gorm:"type:varchar(20);index"`
-	UpstreamTaskID    string `json:"-" gorm:"type:varchar(191)"`
-	ChannelID         int    `json:"-" gorm:"index"`
-	TaskPayloadJSON   string `json:"-" gorm:"type:text"`
-	LastError         string `json:"last_error,omitempty" gorm:"type:text"`
-	RetryCount        int    `json:"-"`
-	NextRetryAt       int64  `json:"-" gorm:"index"`
-	TerminalCheckedAt int64  `json:"-" gorm:"index"`
-	CreatedAt         int64  `json:"created_at" gorm:"autoCreateTime;index"`
-	UpdatedAt         int64  `json:"updated_at" gorm:"autoUpdateTime"`
+	ID                 int64  `json:"id" gorm:"primaryKey;autoIncrement"`
+	TaskID             string `json:"task_id" gorm:"type:varchar(191);uniqueIndex"`
+	UserID             int    `json:"user_id" gorm:"index"`
+	CharacterID        int64  `json:"character_id" gorm:"index"`
+	CharacterName      string `json:"character_name" gorm:"type:varchar(191)"`
+	CharacterScope     string `json:"character_scope" gorm:"type:varchar(16)"`
+	CharacterAssetID   int64  `json:"character_asset_id,omitempty" gorm:"index"`
+	CharacterAssetName string `json:"character_asset_name,omitempty" gorm:"type:varchar(191)"`
+	ProviderAssetID    string `json:"provider_asset_id,omitempty" gorm:"type:varchar(191)"`
+	Status             string `json:"status" gorm:"type:varchar(20);index"`
+	UpstreamTaskID     string `json:"-" gorm:"type:varchar(191)"`
+	ChannelID          int    `json:"-" gorm:"index"`
+	TaskPayloadJSON    string `json:"-" gorm:"type:text"`
+	LastError          string `json:"last_error,omitempty" gorm:"type:text"`
+	RetryCount         int    `json:"-"`
+	NextRetryAt        int64  `json:"-" gorm:"index"`
+	TerminalCheckedAt  int64  `json:"-" gorm:"index"`
+	CreatedAt          int64  `json:"created_at" gorm:"autoCreateTime;index"`
+	UpdatedAt          int64  `json:"updated_at" gorm:"autoUpdateTime"`
 }
 
 func GetVirtualCharacterGlobalLimit() int {
@@ -147,8 +156,12 @@ func IsVirtualCharacterModelAllowed(modelName string) bool {
 }
 
 func GetVirtualCharacterEffectiveLimit(userID int) int {
+	return getVirtualCharacterEffectiveLimitDB(DB, userID)
+}
+
+func getVirtualCharacterEffectiveLimitDB(db *gorm.DB, userID int) int {
 	var override VirtualCharacterUserLimit
-	if err := DB.First(&override, "user_id = ?", userID).Error; err == nil && override.Limit > 0 {
+	if err := db.First(&override, "user_id = ?", userID).Error; err == nil && override.Limit > 0 {
 		return override.Limit
 	}
 	return GetVirtualCharacterGlobalLimit()
@@ -337,12 +350,12 @@ func RetryVirtualCharacterCleanup(itemID int64, attempts int, nextAt int64, last
 func CompleteVirtualCharacterCleanup(itemID int64) error {
 	return DB.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Model(&VirtualCharacter{}).Where("id = ?", itemID).Updates(map[string]any{
-		"status":          VirtualCharacterStatusFailed,
-		"a_ip_dd_asset_id":  0,
-		"a_ip_dd_file_id":   "",
-			"cleanup_next_at": 0,
-			"last_error":      "",
-			"updated_at":      time.Now().Unix(),
+			"status":           VirtualCharacterStatusFailed,
+			"a_ip_dd_asset_id": 0,
+			"a_ip_dd_file_id":  "",
+			"cleanup_next_at":  0,
+			"last_error":       "",
+			"updated_at":       time.Now().Unix(),
 		}).Error; err != nil {
 			return err
 		}

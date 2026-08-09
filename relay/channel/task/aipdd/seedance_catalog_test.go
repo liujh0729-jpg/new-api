@@ -133,6 +133,80 @@ func TestSeedanceCatalogNormalizesStandardVideoRequest(t *testing.T) {
 	require.Equal(t, map[string]any{"type": "text", "text": "cinematic city"}, content[0])
 }
 
+func TestSeedanceCatalogConvertsVirtualCharacterImageToOfficialContent(t *testing.T) {
+	constant.SetAIPDDCapabilities([]constant.AIPDDCapability{seedanceTestCapability()})
+	t.Cleanup(constant.ResetAIPDDCapabilities)
+
+	body := `{
+		"model":"AP Seedance",
+		"character_id":1,
+		"prompt":"图片1中的角色缓慢转身，保持角色外观一致。",
+		"images":["https://cdn.example.com/characters/eriyi.png"],
+		"duration":5,
+		"resolution":"720p",
+		"ratio":"16:9"
+	}`
+	ctx, info, adaptor := seedanceRequestContext(t, body)
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(ctx, info))
+
+	requestBody, err := adaptor.BuildRequestBody(ctx, info)
+	require.NoError(t, err)
+	data, err := io.ReadAll(requestBody)
+	require.NoError(t, err)
+
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(data, &payload))
+	content, ok := payload["content"].([]any)
+	require.True(t, ok)
+	require.Equal(t, []any{
+		map[string]any{
+			"type": "text",
+			"text": "图片1中的角色缓慢转身，保持角色外观一致。",
+		},
+		map[string]any{
+			"type": "image_url",
+			"role": "reference_image",
+			"image_url": map[string]any{
+				"url": "https://cdn.example.com/characters/eriyi.png",
+			},
+		},
+	}, content)
+	require.NotContains(t, payload, "character_id")
+	require.NotContains(t, payload, "prompt")
+	require.NotContains(t, payload, "image")
+	require.NotContains(t, payload, "images")
+}
+
+func TestSeedanceCatalogKeepsExplicitContentOverLegacyImages(t *testing.T) {
+	constant.SetAIPDDCapabilities([]constant.AIPDDCapability{seedanceTestCapability()})
+	t.Cleanup(constant.ResetAIPDDCapabilities)
+
+	body := `{
+		"model":"AP Seedance",
+		"prompt":"must not be injected",
+		"images":["https://cdn.example.com/legacy.png"],
+		"resolution":"720p",
+		"ratio":"16:9",
+		"content":[
+			{"type":"text","text":"official content"},
+			{"type":"image_url","role":"reference_image","image_url":{"url":"https://cdn.example.com/official.png"}}
+		]
+	}`
+	ctx, info, adaptor := seedanceRequestContext(t, body)
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(ctx, info))
+	payload, err := getSeedanceOfficialPayload(ctx)
+	require.NoError(t, err)
+
+	require.Equal(t, []any{
+		map[string]any{"type": "text", "text": "official content"},
+		map[string]any{
+			"type":      "image_url",
+			"role":      "reference_image",
+			"image_url": map[string]any{"url": "https://cdn.example.com/official.png"},
+		},
+	}, payload["content"])
+}
+
 func TestSeedanceCatalogKeepsExplicitContentAndRootFields(t *testing.T) {
 	constant.SetAIPDDCapabilities([]constant.AIPDDCapability{seedanceTestCapability()})
 	t.Cleanup(constant.ResetAIPDDCapabilities)

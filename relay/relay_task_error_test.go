@@ -57,3 +57,26 @@ func TestTaskErrorFromUpstreamResponseFallsBackForUnknownBody(t *testing.T) {
 		t.Fatalf("expected status code 503, got %d", taskErr.StatusCode)
 	}
 }
+
+func TestTaskErrorFromUpstreamResponseRedactsAccountID(t *testing.T) {
+	taskErr := taskErrorFromUpstreamResponse(
+		[]byte(`{"error":{"code":"ModelNotActivated","message":"Your account 2101505868 has not activated the model doubao-seedance-2-0-mini. Please activate the model service in the Ark Console. Request id: 02178627930751198a941fd3b1c6e321c170880bc52c9313087e1","type":"invalid_request_error"}}`),
+		400,
+	)
+
+	expected := "Your account [redacted] has not activated the model doubao-seedance-2-0-mini. Please activate the model service in the Ark Console. Request id: 02178627930751198a941fd3b1c6e321c170880bc52c9313087e1"
+	if taskErr.Message != expected {
+		t.Fatalf("expected account ID to be redacted, got %q", taskErr.Message)
+	}
+}
+
+func TestTaskErrorFromUpstreamResponseRedactsAccountIDInFallbackBody(t *testing.T) {
+	taskErr := taskErrorFromUpstreamResponse(
+		[]byte("upstream rejected 当前账号ID为2101505868，请检查模型权限"),
+		400,
+	)
+
+	if taskErr.Message != "upstream rejected 当前账号ID为[redacted]，请检查模型权限" {
+		t.Fatalf("expected fallback account ID to be redacted, got %q", taskErr.Message)
+	}
+}

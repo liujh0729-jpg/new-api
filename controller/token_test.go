@@ -14,6 +14,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/setting"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"gorm.io/driver/mysql"
@@ -73,12 +74,20 @@ func (legacyToken) TableName() string {
 
 func openTokenControllerTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
+	previousDB := model.DB
+	previousLogDB := model.LOG_DB
+	previousUsingSQLite := common.UsingSQLite
+	previousUsingMySQL := common.UsingMySQL
+	previousUsingPostgreSQL := common.UsingPostgreSQL
+	previousRedisEnabled := common.RedisEnabled
+	previousTokenGroupLock := setting.TokenGroupLockedToUserGroupEnabled
 
 	gin.SetMode(gin.TestMode)
 	common.UsingSQLite = true
 	common.UsingMySQL = false
 	common.UsingPostgreSQL = false
 	common.RedisEnabled = false
+	setting.TokenGroupLockedToUserGroupEnabled = false
 
 	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
@@ -89,6 +98,13 @@ func openTokenControllerTestDB(t *testing.T) *gorm.DB {
 	model.LOG_DB = db
 
 	t.Cleanup(func() {
+		model.DB = previousDB
+		model.LOG_DB = previousLogDB
+		common.UsingSQLite = previousUsingSQLite
+		common.UsingMySQL = previousUsingMySQL
+		common.UsingPostgreSQL = previousUsingPostgreSQL
+		common.RedisEnabled = previousRedisEnabled
+		setting.TokenGroupLockedToUserGroupEnabled = previousTokenGroupLock
 		sqlDB, err := db.DB()
 		if err == nil {
 			_ = sqlDB.Close()

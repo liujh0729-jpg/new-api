@@ -250,7 +250,7 @@ func DeleteVirtualCharacter(c *gin.Context) {
 		return
 	}
 	if item.Status != model.VirtualCharacterStatusDeleting {
-		if err := model.BeginVirtualCharacterDelete(item, "deleted by user"); err != nil {
+		if err := model.BeginVirtualCharacterDelete(item, ""); err != nil {
 			virtualCharacterError(c, http.StatusInternalServerError, "delete_failed", err.Error())
 			return
 		}
@@ -333,7 +333,9 @@ func GetVirtualCharacterTaskHistory(c *gin.Context) {
 		link := &links[i]
 		entry := gin.H{
 			"task_id": link.TaskID, "character_id": link.CharacterID, "character_name": link.CharacterName,
-			"character_scope": link.CharacterScope, "link_status": link.Status, "created_at": link.CreatedAt,
+			"character_scope": link.CharacterScope, "character_asset_id": link.CharacterAssetID,
+			"character_asset_name": link.CharacterAssetName, "provider_asset_id": link.ProviderAssetID,
+			"link_status": link.Status, "created_at": link.CreatedAt,
 		}
 		if task, exists := taskMap[link.TaskID]; exists {
 			entry["task"] = relayTaskToSafeDTO(task)

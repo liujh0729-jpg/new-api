@@ -8,6 +8,7 @@ import (
 	"net/http"
 	neturl "net/url"
 	"path"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -34,6 +35,18 @@ type TaskSubmitResult struct {
 	//PerCallPrice   types.PriceData
 }
 
+var upstreamAccountIDPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)\b((?:your\s+)?account(?:[\s_-]*id)?\s*(?:is\s+|[=:：#]\s*)?)\d{4,}\b`),
+	regexp.MustCompile(`((?:您的?|当前)?账号(?:\s*(?:ID|id))?\s*(?:为|是|[=:：])?\s*)\d{4,}`),
+}
+
+func sanitizeUpstreamErrorMessage(message string) string {
+	for _, pattern := range upstreamAccountIDPatterns {
+		message = pattern.ReplaceAllString(message, `${1}[redacted]`)
+	}
+	return message
+}
+
 func taskErrorFromUpstreamResponse(responseBody []byte, statusCode int) *dto.TaskError {
 	var errorResponse dto.GeneralErrorResponse
 	if err := common.Unmarshal(responseBody, &errorResponse); err == nil {
@@ -44,7 +57,8 @@ func taskErrorFromUpstreamResponse(responseBody []byte, statusCode int) *dto.Tas
 					code = upstreamCode
 				}
 			}
-			taskErr := service.TaskErrorWrapper(errors.New(upstreamError.Message), code, statusCode)
+			message := sanitizeUpstreamErrorMessage(upstreamError.Message)
+			taskErr := service.TaskErrorWrapper(errors.New(message), code, statusCode)
 			details := make(map[string]any, 3)
 			if errorType := strings.TrimSpace(upstreamError.Type); errorType != "" {
 				details["type"] = errorType
@@ -72,7 +86,8 @@ func taskErrorFromUpstreamResponse(responseBody []byte, statusCode int) *dto.Tas
 		}
 	}
 
-	return service.TaskErrorWrapper(fmt.Errorf("%s", string(responseBody)), "fail_to_fetch_task", statusCode)
+	message := sanitizeUpstreamErrorMessage(string(responseBody))
+	return service.TaskErrorWrapper(fmt.Errorf("%s", message), "fail_to_fetch_task", statusCode)
 }
 
 func isValidClientPublicTaskID(taskID string) bool {
