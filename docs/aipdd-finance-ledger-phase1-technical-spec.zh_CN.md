@@ -24,6 +24,8 @@ NewAPI 调用 AIPDD 时发送：
 
 AIPDD 唯一键为 `(api_key_id, instance_id, platform_order_id)`。同一订单的后续尝试更新 `latest_attempt_id`，不得新建重复财务订单。
 
+NewAPI 默认用实际选中的 AIPDD API Key 经带命名空间的 SHA-256 单向摘要生成稳定 UUID，不保存或传输摘要输入之外的原始 key。AIPDD 在首个财务请求中按已认证 API Key 自动登记该实例，因此常规部署无需配置 `AIPDD_INSTANCE_ID`。若多个逻辑实例共用一把 key，它们默认合并到同一财务实例；确需拆账时可为各实例显式配置不同 UUID，或使用不同 API Key。
+
 ## 3. 状态机
 
 订单状态：
@@ -107,7 +109,7 @@ NewAPI 第一阶段另提供管理员只读核查接口 `GET /api/aipdd-finance/
 
 1. 先发布 AIPDD 表、幂等服务与只读 query/pull API；不改变旧日志和旧报表。
 2. 发布 NewAPI 镜像、inbox/outbox/cursor 和后台恢复 worker，此时尚可不发送订单头。
-3. 为每个 NewAPI 实例配置 `AIPDD_INSTANCE_ID`，校验其归属后开启订单头。
+3. 开启订单头；NewAPI 默认从所选 AIPDD API Key 派生实例 UUID，AIPDD 在首个财务请求中自动登记。仅需要同 key 拆账时配置 `AIPDD_INSTANCE_ID` 覆盖。
 4. 开启同步/异步逐单写入与实时刷新；观察 pending/retry/reconciliation 指标。
 5. 后续阶段执行 180 天回填，标记 `EXACT/RULE_DERIVED/UNVERIFIABLE`；不把回填猜测伪装成精确事实。
 
@@ -134,8 +136,10 @@ NewAPI 第一阶段另提供管理员只读核查接口 `GET /api/aipdd-finance/
 实施过程中只在这里追加偏离，不静默改变契约。
 
 - `2026-08-08 / AIPDD channel multi-key`：第一阶段恢复游标按 channel + instance 建立，而 AIPDD 事件所有权按 API Key 隔离。为避免 key 轮换后把历史事件归错账号，worker 对 multi-key AIPDD channel 明确报错并跳过；部署时必须一把 AIPDD Key 对应一个 channel。后续若需要 multi-key，必须新增不可逆 key identity/fingerprint 维度并迁移游标，不能保存原始 key。
-- `2026-08-08 / 推理响应后的进程崩溃窗口`：现有推理 usage 由虚拟线程异步落库。现在会在派发前先持久化 finance order/outbox，并把订单 ID 写入 usage 以供 30 秒恢复任务重连；但若进程在响应完成后、usage 尚未落库前崩溃，已不存在可精确重建的 token 来源。15 分钟后该订单会显式进入 `RECONCILIATION_REQUIRED`，后续回填必须标记 `UNVERIFIABLE`，不会猜测成本。
+- `2026-08-10 / 实例自动关联`：常规部署不再要求人工配置 `AIPDD_INSTANCE_ID`。NewAPI 按请求实际选中的单一 AIPDD API Key 派生稳定 UUID，AIPDD 仅在该 key 已通过认证的财务请求中自动登记归属；原始 key 不写入实例、订单、日志或报表。显式 UUID 仅保留为同 key 多实例拆账的可选覆盖。
+- `2026-08-10 / 推理 usage 持久化`：推理 usage 改为在请求结束前同步落库，并携带统一订单与尝试身份；逐单财务台账写入若短暂失败，由 finance identity 恢复任务重连。这样不再保留“响应已返回、异步 usage 尚未落库”的进程崩溃窗口；无法恢复的异常仍显式进入 `RECONCILIATION_REQUIRED`。
 - `2026-08-08 / Seedance 外部提交原子性`：无法让火山外部任务创建、AIPDD task 表和本地 finance ledger 共用一个数据库事务。实现选择“先写 finance order/outbox，再调用上游；task 持久化时保存订单身份；30 秒恢复任务重连”。若进程恰好在上游接受任务后、task 行写入前崩溃，只能依据上游侧证据人工/后续账单回填，原因是外部接口没有参与本地两阶段提交。
-- `2026-08-08 / 第一阶段成本覆盖`：本阶段完整建立金额字段、状态、修订与传输链路；Seedance 可使用现有冻结成本快照，推理自有模型和其它合成模型的最终实际支出仍保持 `PENDING`，待第二阶段接计算成本与火山账单差异分摊。pending 不计入“已确认利润”。
+- `2026-08-10 / 共享任务恢复`：共享任务创建使用统一财务订单号作为 AIPDD `requestId`。finance order 先提交、任务后提交；两步间进程退出时，恢复任务可按用户与统一订单号重新绑定 `COMPUTE_TASK`，并持续同步成功、退款、设备奖励及利润快照。
+- `2026-08-10 / 成本覆盖与分摊`：Seedance 使用冻结成本快照；共享任务以已结算设备奖励作为实际支出；推理汇总奖励按每条 usage 的 token 权重和最大余数法分摊到逐单台账，禁止把同一汇总整笔成本重复记入多个订单。尚无可核验证据的外部成本继续保持 `PENDING`，不计入“已确认利润”。
 - `2026-08-08 / 报表交付格式`：第一阶段只增加管理员逐单核查 API，不提前实现合同月报与 XLSX。完整 XLSX、关账快照、3 个工作日异议窗口和 180 天回填按既定后续阶段实施；不会以 CSV 代替。
 - `2026-08-09 / NewAPI 钱包扣费/退款的模糊失败`：现有钱包额度变更是非幂等的 `quota +=/-= N`，没有 request ID 级唯一业务键；数据库返回错误时无法判断写入是否已生效，盲目自动重试可能造成多扣或多退。实现会在资金变更前先落 `SETTLEMENT_PENDING` 及预期金额，确认成功后才写 `CHARGED`；退款先写 `REFUND_PENDING`，成功后写 `REFUNDED`。15 分钟仍未确认分别转 `SETTLEMENT_REVIEW_REQUIRED` / `REFUND_REVIEW_REQUIRED`，不伪报实际金额。订阅退款沿用现有 request ID 幂等重试。后续要实现钱包自动恢复，必须先把钱包变更改造成带唯一业务键的账本操作。

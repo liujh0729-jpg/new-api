@@ -36,3 +36,7 @@ data/
 .test
 token_estimator_test.go
 skills-lock.json
+cookies.txt
+output/
+tmp_*.go
+tmp_*.py

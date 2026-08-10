@@ -1,11 +1,31 @@
+/*
+Copyright (C) 2023-2026 QuantumNous
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+For commercial licensing, please contact support@quantumnous.com
+*/
 import { api } from '@/lib/api'
 import type {
   ApiResponse,
   CharacterVideoInput,
   VirtualCharacter,
+  VirtualCharacterAIPDDCatalogSyncResult,
   VirtualCharacterAsset,
   VirtualCharacterConfig,
   VirtualCharacterListData,
+  VirtualCharacterListParams,
   VirtualCharacterSettings,
   VirtualCharacterTaskHistory,
   VirtualCharacterValidationSession,
@@ -13,8 +33,19 @@ import type {
 
 export const virtualCharacterQueryKeys = {
   all: ['virtual-characters'] as const,
-  list: (scope: string, page: number) =>
-    [...virtualCharacterQueryKeys.all, 'list', scope, page] as const,
+  list: (params: VirtualCharacterListParams) =>
+    [
+      ...virtualCharacterQueryKeys.all,
+      'list',
+      params.scope,
+      params.page ?? 1,
+      params.pageSize ?? 20,
+      params.keyword ?? '',
+      params.nationality ?? '',
+      params.gender ?? '',
+      params.ageBand ?? '',
+      params.status ?? '',
+    ] as const,
   detail: (id: number) =>
     [...virtualCharacterQueryKeys.all, 'detail', id] as const,
   history: (page: number) =>
@@ -27,12 +58,19 @@ export const virtualCharacterQueryKeys = {
 }
 
 export async function listVirtualCharacters(
-  scope: 'private' | 'public',
-  page: number,
-  pageSize = 20
+  params: VirtualCharacterListParams
 ): Promise<ApiResponse<VirtualCharacterListData>> {
   const res = await api.get('/api/virtual-characters', {
-    params: { scope, p: page, page_size: pageSize },
+    params: {
+      scope: params.scope,
+      p: params.page ?? 1,
+      page_size: params.pageSize ?? 20,
+      keyword: params.keyword || undefined,
+      nationality: params.nationality || undefined,
+      gender: params.gender || undefined,
+      age_band: params.ageBand || undefined,
+      status: params.status || undefined,
+    },
   })
   return res.data
 }
@@ -49,6 +87,28 @@ export async function getVirtualCharacterConfig(): Promise<
 > {
   const res = await api.get('/api/virtual-characters/config')
   return res.data
+}
+
+export async function createVirtualCharacter(input: {
+  name: string
+  description: string
+  tags: string[]
+  file: File
+}): Promise<ApiResponse<VirtualCharacter>> {
+  const form = new FormData()
+  form.append('name', input.name)
+  form.append('description', input.description)
+  form.append('tags', JSON.stringify(input.tags))
+  form.append('file', input.file)
+  const res = await api.post('/api/virtual-characters', form)
+  return res.data
+}
+
+export function virtualCharacterAssetPreviewURL(
+  characterId: number,
+  assetId: number
+): string {
+  return `/api/virtual-characters/${characterId}/assets/${assetId}/preview`
 }
 
 export async function createValidationSession(input: {
@@ -168,16 +228,15 @@ export async function getVirtualCharacterSettings(): Promise<
 
 export async function updateVirtualCharacterSettings(input: {
   enabled: boolean
-  official_enabled: boolean
-  real_person_enabled: boolean
+  quota_plan: 'free' | 'paid' | 'custom'
+  create_asset_qpm: number
   access_key?: string
   secret_key?: string
   region: string
   project_name: string
-  channel_id: number
   global_limit: number
-  models: string[]
-  default_model: string
+  account_asset_cap: number
+  max_assets_per_character: number
 }): Promise<ApiResponse<VirtualCharacterSettings>> {
   const res = await api.put('/api/virtual-characters/admin/settings', input)
   return res.data
@@ -190,29 +249,12 @@ export async function testVirtualCharacterProvider(): Promise<
   return res.data
 }
 
-export async function importPublicVirtualCharacters(
-  file: File,
-  dryRun: boolean,
-  version?: string
-): Promise<ApiResponse<Record<string, unknown>>> {
-  const form = new FormData()
-  form.append('file', file)
-  form.append('dry_run', String(dryRun))
-  if (version) form.append('version', version)
-  const res = await api.post('/api/virtual-characters/admin/import', form)
-  return res.data
-}
-
-export async function setVirtualCharacterUserLimit(
-  userId: number,
-  limit: number
-): Promise<
-  ApiResponse<{ user_id: number; limit: number; overridden: boolean }>
-> {
-  const res = await api.put(
-    `/api/virtual-characters/admin/users/${userId}/limit`,
-    { limit }
-  )
+export async function syncVirtualCharacterCatalogFromAIPDD(
+  force = false
+): Promise<ApiResponse<VirtualCharacterAIPDDCatalogSyncResult>> {
+  const res = await api.post('/api/virtual-characters/admin/sync-aipdd', {
+    force,
+  })
   return res.data
 }
 
@@ -221,10 +263,13 @@ export async function getAvailableVideoModels(): Promise<string[]> {
     params: { endpoint_type: 'openai-video', details: true },
   })
   if (!res.data?.success || !Array.isArray(res.data.data)) return []
-  return res.data.data.flatMap((item: unknown) => {
+  const models = res.data.data.flatMap((item: unknown) => {
     if (typeof item === 'string') return [item]
     if (!item || typeof item !== 'object') return []
     const value = (item as { model?: unknown }).model
     return typeof value === 'string' ? [value] : []
   })
+  return models.filter((name: string) =>
+    name.toLowerCase().includes('seedance')
+  )
 }

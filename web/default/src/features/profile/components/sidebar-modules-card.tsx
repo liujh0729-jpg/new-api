@@ -65,6 +65,11 @@ export function SidebarModulesCard() {
           description: t('AI model testing environment'),
         },
         {
+          key: 'characters',
+          title: t('Character Library'),
+          description: t('Official and private character assets'),
+        },
+        {
           key: 'chat',
           title: t('Chat'),
           description: t('Chat session management'),

@@ -980,7 +980,12 @@ func (a *TaskAdaptor) convertToRequestPayload(req relaycommon.TaskSubmitReq, inf
 	}
 	requestID := ""
 	if info != nil {
-		requestID = strings.TrimSpace(info.PublicTaskID)
+		if info.AIPDDFinance != nil {
+			requestID = strings.TrimSpace(info.AIPDDFinance.PlatformOrderID)
+		}
+		if requestID == "" {
+			requestID = strings.TrimSpace(info.PublicTaskID)
+		}
 	}
 	if requestID == "" {
 		requestID = metadataString(req.Metadata, "request_id")

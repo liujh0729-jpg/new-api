@@ -2,6 +2,7 @@ package model
 
 import (
 	"errors"
+	"strconv"
 	"strings"
 	"time"
 
@@ -77,7 +78,10 @@ type VirtualCharacterProviderAccount struct {
 	ID                 int    `json:"id" gorm:"primaryKey;autoIncrement"`
 	Enabled            bool   `json:"enabled" gorm:"index"`
 	OfficialEnabled    bool   `json:"official_enabled"`
+	VirtualEnabled     bool   `json:"virtual_enabled"`
 	RealPersonEnabled  bool   `json:"real_person_enabled"`
+	QuotaPlan          string `json:"quota_plan" gorm:"type:varchar(16)"` // free | paid | custom
+	CreateAssetQPM     int    `json:"create_asset_qpm"`
 	EncryptedAccessKey string `json:"-" gorm:"type:text"`
 	EncryptedSecretKey string `json:"-" gorm:"type:text"`
 	Region             string `json:"region" gorm:"type:varchar(64)"`
@@ -88,6 +92,30 @@ type VirtualCharacterProviderAccount struct {
 	LastCheckedAt      int64  `json:"last_checked_at,omitempty"`
 	CreatedAt          int64  `json:"created_at" gorm:"autoCreateTime"`
 	UpdatedAt          int64  `json:"updated_at" gorm:"autoUpdateTime"`
+}
+
+func (a *VirtualCharacterProviderAccount) EffectiveQuotaPlan() string {
+	if a == nil {
+		return VirtualCharacterQuotaPlanFree
+	}
+	switch strings.ToLower(strings.TrimSpace(a.QuotaPlan)) {
+	case VirtualCharacterQuotaPlanPaid:
+		return VirtualCharacterQuotaPlanPaid
+	case VirtualCharacterQuotaPlanCustom:
+		return VirtualCharacterQuotaPlanCustom
+	default:
+		return VirtualCharacterQuotaPlanFree
+	}
+}
+
+func (a *VirtualCharacterProviderAccount) EffectiveCreateAssetQPM() int {
+	if a == nil || a.CreateAssetQPM <= 0 {
+		return VirtualCharacterDefaultCreateAssetQPM
+	}
+	if a.CreateAssetQPM > 300 {
+		return 300
+	}
+	return a.CreateAssetQPM
 }
 
 type VirtualCharacterCatalogImport struct {
@@ -104,6 +132,28 @@ type VirtualCharacterCatalogImport struct {
 	CreatedAt      int64  `json:"created_at" gorm:"autoCreateTime;index"`
 }
 
+type VirtualCharacterCatalogEntry struct {
+	AssetID     string
+	Name        string
+	Description string
+	TagsJSON    string
+	CoverURL    string
+	Enabled     bool
+	Nationality string
+	Gender      string
+	AgeMin      *int
+	AgeMax      *int
+	Occupation  string
+	Temperament string
+}
+
+type VirtualCharacterCatalogStats struct {
+	Total    int `json:"total"`
+	Created  int `json:"created"`
+	Updated  int `json:"updated"`
+	Offlined int `json:"offlined"`
+}
+
 type VirtualCharacterCleanupJob struct {
 	ID                int64  `json:"id" gorm:"primaryKey;autoIncrement"`
 	CharacterID       int64  `json:"character_id,omitempty" gorm:"index"`
@@ -118,22 +168,6 @@ type VirtualCharacterCleanupJob struct {
 	LastError         string `json:"last_error,omitempty" gorm:"type:text"`
 	CreatedAt         int64  `json:"created_at" gorm:"autoCreateTime;index"`
 	UpdatedAt         int64  `json:"updated_at" gorm:"autoUpdateTime"`
-}
-
-type VirtualCharacterCatalogEntry struct {
-	AssetID     string
-	Name        string
-	Description string
-	TagsJSON    string
-	CoverURL    string
-	Enabled     bool
-}
-
-type VirtualCharacterCatalogStats struct {
-	Total    int `json:"total"`
-	Created  int `json:"created"`
-	Updated  int `json:"updated"`
-	Offlined int `json:"offlined"`
 }
 
 func GetEnabledVirtualCharacterProviderAccount() (*VirtualCharacterProviderAccount, error) {
@@ -158,6 +192,10 @@ func SaveVirtualCharacterProviderAccount(account *VirtualCharacterProviderAccoun
 	if strings.TrimSpace(account.ProjectName) == "" {
 		account.ProjectName = "default"
 	}
+	if account.CreateAssetQPM <= 0 {
+		account.CreateAssetQPM = VirtualCharacterDefaultCreateAssetQPM
+	}
+	account.QuotaPlan = account.EffectiveQuotaPlan()
 	return DB.Transaction(func(tx *gorm.DB) error {
 		if account.Enabled {
 			if err := tx.Model(&VirtualCharacterProviderAccount{}).Where("id <> ?", account.ID).Update("enabled", false).Error; err != nil {
@@ -166,6 +204,84 @@ func SaveVirtualCharacterProviderAccount(account *VirtualCharacterProviderAccoun
 		}
 		return tx.Save(account).Error
 	})
+}
+
+func CountVirtualCharacterAssets() (int64, error) {
+	var count int64
+	err := DB.Model(&VirtualCharacterAsset{}).
+		Where("status <> ?", VirtualCharacterAssetStatusDeleting).
+		Count(&count).Error
+	return count, err
+}
+
+func CountVirtualCharacterAssetsByCharacter(characterID int64) (int64, error) {
+	if characterID <= 0 {
+		return 0, errors.New("invalid character id")
+	}
+	var count int64
+	err := DB.Model(&VirtualCharacterAsset{}).
+		Where("character_id = ? AND status <> ?", characterID, VirtualCharacterAssetStatusDeleting).
+		Count(&count).Error
+	return count, err
+}
+
+// CreateAIGCVirtualCharacter reserves a private slot for a user-created virtual
+// character (volc_aigc). The provider group must be attached after CreateAssetGroup.
+func CreateAIGCVirtualCharacter(userID, providerAccountID int, name, description, tagsJSON string) (*VirtualCharacter, int, error) {
+	if userID <= 0 || providerAccountID <= 0 {
+		return nil, 0, errors.New("invalid user or provider account")
+	}
+	limit := GetVirtualCharacterEffectiveLimit(userID)
+	for slot := 1; slot <= limit; slot++ {
+		candidateSlot := slot
+		item := &VirtualCharacter{
+			UserID:            userID,
+			Slot:              &candidateSlot,
+			Scope:             VirtualCharacterScopePrivate,
+			Name:              name,
+			Description:       description,
+			TagsJSON:          tagsJSON,
+			SourceType:        VirtualCharacterSourceVolcAIGC,
+			Status:            VirtualCharacterStatusCreating,
+			ValidationStatus:  VirtualCharacterValidationAccepted,
+			ProviderAccountID: providerAccountID,
+		}
+		result := DB.Clauses(clause.OnConflict{DoNothing: true}).Create(item)
+		if result.Error != nil {
+			return nil, limit, result.Error
+		}
+		if result.RowsAffected == 1 {
+			return item, limit, nil
+		}
+	}
+	return nil, limit, errors.New("virtual character limit reached")
+}
+
+func AttachVirtualCharacterProviderGroup(characterID int64, providerGroupID string) error {
+	providerGroupID = strings.TrimSpace(providerGroupID)
+	if characterID <= 0 || providerGroupID == "" {
+		return errors.New("invalid character or provider group")
+	}
+	return DB.Model(&VirtualCharacter{}).Where("id = ?", characterID).Updates(map[string]any{
+		"provider_group_id": providerGroupID,
+		"status":            VirtualCharacterStatusActive,
+		"last_error":        "",
+		"updated_at":        time.Now().Unix(),
+	}).Error
+}
+
+func ReleasePrivateVirtualCharacterSlot(characterID int64, reason string) error {
+	if characterID <= 0 {
+		return errors.New("invalid character id")
+	}
+	now := time.Now().Unix()
+	return DB.Model(&VirtualCharacter{}).Where("id = ?", characterID).Updates(map[string]any{
+		"slot":            nil,
+		"status":          VirtualCharacterStatusFailed,
+		"last_error":      reason,
+		"cleanup_next_at": now,
+		"updated_at":      now,
+	}).Error
 }
 
 func ListVirtualCharacterAssets(characterID int64, includeDeleting bool) ([]VirtualCharacterAsset, error) {
@@ -211,11 +327,24 @@ func CreateVirtualCharacterAsset(asset *VirtualCharacterAsset) error {
 		if err := tx.Create(asset).Error; err != nil {
 			return err
 		}
-		if asset.IsPrimary {
-			return tx.Model(&VirtualCharacter{}).Where("id = ?", asset.CharacterID).Updates(map[string]any{"primary_asset_id": asset.ID, "updated_at": time.Now().Unix()}).Error
+		coverURL := virtualCharacterAssetPreviewPath(asset.CharacterID, asset.ID)
+		asset.CoverURL = coverURL
+		if err := tx.Model(asset).Update("cover_url", coverURL).Error; err != nil {
+			return err
 		}
-		return nil
+		if !asset.IsPrimary {
+			return nil
+		}
+		updates := map[string]any{"primary_asset_id": asset.ID, "updated_at": time.Now().Unix()}
+		if asset.AssetType == VirtualCharacterAssetTypeImage {
+			updates["cover_url"] = coverURL
+		}
+		return tx.Model(&VirtualCharacter{}).Where("id = ?", asset.CharacterID).Updates(updates).Error
 	})
+}
+
+func virtualCharacterAssetPreviewPath(characterID, assetID int64) string {
+	return "/api/virtual-characters/" + strconv.FormatInt(characterID, 10) + "/assets/" + strconv.FormatInt(assetID, 10) + "/preview"
 }
 
 func SetVirtualCharacterPrimaryAsset(characterID, assetID int64, userID int) error {
@@ -234,7 +363,11 @@ func SetVirtualCharacterPrimaryAsset(characterID, assetID int64, userID int) err
 		if err := tx.Model(&asset).Update("is_primary", true).Error; err != nil {
 			return err
 		}
-		return tx.Model(&character).Updates(map[string]any{"primary_asset_id": assetID, "cover_url": asset.CoverURL, "updated_at": time.Now().Unix()}).Error
+		updates := map[string]any{"primary_asset_id": assetID, "updated_at": time.Now().Unix()}
+		if asset.AssetType == VirtualCharacterAssetTypeImage && strings.TrimSpace(asset.CoverURL) != "" {
+			updates["cover_url"] = asset.CoverURL
+		}
+		return tx.Model(&character).Updates(updates).Error
 	})
 }
 
@@ -242,9 +375,12 @@ func MarkVirtualCharacterAssetTerminal(assetID int64, status, reason string) err
 	if status != VirtualCharacterAssetStatusActive && status != VirtualCharacterAssetStatusFailed {
 		return errors.New("invalid asset terminal status")
 	}
-	return DB.Model(&VirtualCharacterAsset{}).Where("id = ?", assetID).Updates(map[string]any{
-		"status": status, "last_error": reason, "staging_file_id": "", "next_poll_at": 0, "updated_at": time.Now().Unix(),
-	}).Error
+	updates := map[string]any{"status": status, "last_error": reason, "next_poll_at": 0, "updated_at": time.Now().Unix()}
+	// Keep staging files for Active assets so private covers/previews remain available.
+	if status != VirtualCharacterAssetStatusActive {
+		updates["staging_file_id"] = ""
+	}
+	return DB.Model(&VirtualCharacterAsset{}).Where("id = ?", assetID).Updates(updates).Error
 }
 
 func ListVirtualCharacterAssetsToPoll(now int64, limit int) ([]VirtualCharacterAsset, error) {
@@ -343,6 +479,8 @@ func CompleteVirtualCharacterValidation(id, providerGroupID string) (*VirtualCha
 	return character, err
 }
 
+var ErrVirtualCharacterPrimaryAssetProtected = errors.New("primary asset cannot be deleted")
+
 func BeginVirtualCharacterAssetDelete(characterID, assetID int64, userID int) error {
 	return DB.Transaction(func(tx *gorm.DB) error {
 		var character VirtualCharacter
@@ -353,29 +491,15 @@ func BeginVirtualCharacterAssetDelete(characterID, assetID int64, userID int) er
 		if err := tx.Where("id = ? AND character_id = ?", assetID, characterID).First(&asset).Error; err != nil {
 			return err
 		}
+		if asset.IsPrimary || (character.PrimaryAssetID != nil && *character.PrimaryAssetID == asset.ID) {
+			return ErrVirtualCharacterPrimaryAssetProtected
+		}
 		now := time.Now().Unix()
-		if err := tx.Model(&asset).Updates(map[string]any{"status": VirtualCharacterAssetStatusDeleting, "is_primary": false, "updated_at": now}).Error; err != nil {
+		if err := tx.Model(&asset).Updates(map[string]any{"status": VirtualCharacterAssetStatusDeleting, "updated_at": now}).Error; err != nil {
 			return err
 		}
 		if err := tx.Create(&VirtualCharacterCleanupJob{CharacterID: characterID, AssetID: asset.ID, ProviderAccountID: asset.ProviderAccountID, TargetType: "volc_asset", TargetID: asset.ProviderAssetID, Status: VirtualCharacterCleanupPending, NextAttemptAt: now}).Error; err != nil {
 			return err
-		}
-		if character.PrimaryAssetID != nil && *character.PrimaryAssetID == asset.ID {
-			var replacement VirtualCharacterAsset
-			result := tx.Where("character_id = ? AND id <> ? AND status = ?", characterID, asset.ID, VirtualCharacterAssetStatusActive).Order("id ASC").First(&replacement)
-			updates := map[string]any{"primary_asset_id": nil, "cover_url": "", "updated_at": now}
-			if result.Error == nil {
-				if err := tx.Model(&replacement).Update("is_primary", true).Error; err != nil {
-					return err
-				}
-				updates["primary_asset_id"] = replacement.ID
-				updates["cover_url"] = replacement.CoverURL
-			} else if !errors.Is(result.Error, gorm.ErrRecordNotFound) {
-				return result.Error
-			}
-			if err := tx.Model(&character).Updates(updates).Error; err != nil {
-				return err
-			}
 		}
 		var remaining int64
 		if err := tx.Model(&VirtualCharacterAsset{}).Where("character_id = ? AND id <> ? AND status <> ?", characterID, asset.ID, VirtualCharacterAssetStatusDeleting).Count(&remaining).Error; err != nil {
@@ -431,6 +555,35 @@ func BeginVirtualCharacterGroupDelete(characterID int64, userID int) error {
 	})
 }
 
+func virtualCharacterCatalogUpdates(entry VirtualCharacterCatalogEntry, status string, providerAccountID int, version string) map[string]any {
+	updates := map[string]any{
+		"name":                entry.Name,
+		"description":         entry.Description,
+		"tags_json":           entry.TagsJSON,
+		"nationality":         entry.Nationality,
+		"gender":              entry.Gender,
+		"occupation":          entry.Occupation,
+		"temperament":         entry.Temperament,
+		"cover_url":           entry.CoverURL,
+		"status":              status,
+		"validation_status":   VirtualCharacterValidationAccepted,
+		"provider_account_id": providerAccountID,
+		"catalog_version":     version,
+		"updated_at":          time.Now().Unix(),
+	}
+	if entry.AgeMin != nil {
+		updates["age_min"] = *entry.AgeMin
+	} else {
+		updates["age_min"] = nil
+	}
+	if entry.AgeMax != nil {
+		updates["age_max"] = *entry.AgeMax
+	} else {
+		updates["age_max"] = nil
+	}
+	return updates
+}
+
 func ApplyVirtualCharacterCatalog(version, contentHash string, entries []VirtualCharacterCatalogEntry, operatorUserID, providerAccountID int) (*VirtualCharacterCatalogStats, error) {
 	stats := &VirtualCharacterCatalogStats{Total: len(entries)}
 	err := DB.Transaction(func(tx *gorm.DB) error {
@@ -468,7 +621,13 @@ func ApplyVirtualCharacterCatalog(version, contentHash string, entries []Virtual
 				delete(offlinedCandidates, assetID)
 			}
 			if errors.Is(err, gorm.ErrRecordNotFound) {
-				character = VirtualCharacter{UserID: 0, Scope: VirtualCharacterScopePublic, Name: entry.Name, Description: entry.Description, TagsJSON: entry.TagsJSON, SourceType: VirtualCharacterSourceVolcPreset, Status: status, ValidationStatus: VirtualCharacterValidationAccepted, CoverURL: entry.CoverURL, ProviderAccountID: providerAccountID, CatalogVersion: version}
+				character = VirtualCharacter{
+					UserID: 0, Scope: VirtualCharacterScopePublic, Name: entry.Name, Description: entry.Description,
+					TagsJSON: entry.TagsJSON, Nationality: entry.Nationality, Gender: entry.Gender,
+					AgeMin: entry.AgeMin, AgeMax: entry.AgeMax, Occupation: entry.Occupation, Temperament: entry.Temperament,
+					SourceType: VirtualCharacterSourceVolcPreset, Status: status, ValidationStatus: VirtualCharacterValidationAccepted,
+					CoverURL: entry.CoverURL, ProviderAccountID: providerAccountID, CatalogVersion: version,
+				}
 				if err := tx.Create(&character).Error; err != nil {
 					return err
 				}
@@ -485,7 +644,7 @@ func ApplyVirtualCharacterCatalog(version, contentHash string, entries []Virtual
 			if err != nil {
 				return err
 			}
-			if err := tx.Model(&character).Updates(map[string]any{"name": entry.Name, "description": entry.Description, "tags_json": entry.TagsJSON, "cover_url": entry.CoverURL, "status": status, "validation_status": VirtualCharacterValidationAccepted, "provider_account_id": providerAccountID, "catalog_version": version, "updated_at": time.Now().Unix()}).Error; err != nil {
+			if err := tx.Model(&character).Updates(virtualCharacterCatalogUpdates(entry, status, providerAccountID, version)).Error; err != nil {
 				return err
 			}
 			assetUpdate := tx.Model(&VirtualCharacterAsset{}).Where("character_id = ? AND provider_asset_id = ?", character.ID, assetID).Updates(map[string]any{"name": entry.Name, "cover_url": entry.CoverURL, "status": VirtualCharacterAssetStatusActive, "updated_at": time.Now().Unix()})
@@ -525,7 +684,7 @@ func CreateVirtualCharacterCleanupJob(job *VirtualCharacterCleanupJob) error {
 	if job.NextAttemptAt == 0 {
 		job.NextAttemptAt = time.Now().Unix()
 	}
-	return DB.Create(job).Error
+	return createCleanupJobIfAbsent(DB, job.CharacterID, job.AssetID, job.ProviderAccountID, job.TargetType, job.TargetID, job.NextAttemptAt)
 }
 
 func ListVirtualCharacterCleanupJobs(now int64, limit int) ([]VirtualCharacterCleanupJob, error) {
@@ -543,8 +702,10 @@ func RetryVirtualCharacterCleanupJob(id int64, attempts int, nextAt int64, reaso
 	return DB.Model(&VirtualCharacterCleanupJob{}).Where("id = ?", id).Updates(map[string]any{"status": VirtualCharacterCleanupFailed, "attempts": attempts, "next_attempt_at": nextAt, "last_error": reason, "updated_at": time.Now().Unix()}).Error
 }
 
-// MigrateVirtualCharacterABData converts public rows into offline actor groups
-// with a single provider asset and irreversibly removes legacy fictional rows.
+// MigrateVirtualCharacterABData converts legacy public rows into offline actor
+// groups with a single provider asset, and removes only legacy private rows
+// (aipdd / empty / bare volc). User-created volc_aigc and volc_real_person
+// characters must survive restarts — this migration runs on every boot.
 func MigrateVirtualCharacterABData() error {
 	return DB.Transaction(func(tx *gorm.DB) error {
 		var publicItems []VirtualCharacter
@@ -574,20 +735,50 @@ func MigrateVirtualCharacterABData() error {
 			}
 		}
 		var privateItems []VirtualCharacter
-		if err := tx.Unscoped().Where("scope = ? AND source_type IN ?", VirtualCharacterScopePrivate, []string{VirtualCharacterSourceAIPDD, ""}).Find(&privateItems).Error; err != nil {
+		// Only purge pre-AB private rows. New private characters use volc_aigc / volc_real_person.
+		if err := tx.Unscoped().Where("scope = ? AND source_type IN ?", VirtualCharacterScopePrivate, []string{VirtualCharacterSourceAIPDD, VirtualCharacterSourceVolc, ""}).Find(&privateItems).Error; err != nil {
 			return err
 		}
+		now := time.Now().Unix()
 		for i := range privateItems {
 			item := &privateItems[i]
+			var assets []VirtualCharacterAsset
+			if err := tx.Unscoped().Where("character_id = ?", item.ID).Find(&assets).Error; err != nil {
+				return err
+			}
+			for j := range assets {
+				asset := &assets[j]
+				if strings.TrimSpace(asset.ProviderAssetID) != "" {
+					if err := createCleanupJobIfAbsent(tx, item.ID, asset.ID, asset.ProviderAccountID, "volc_asset", asset.ProviderAssetID, now); err != nil {
+						return err
+					}
+				}
+				if strings.TrimSpace(asset.StagingFileID) != "" {
+					if err := createCleanupJobIfAbsent(tx, item.ID, asset.ID, asset.ProviderAccountID, "aipdd_file", asset.StagingFileID, now); err != nil {
+						return err
+					}
+				}
+			}
+			if strings.TrimSpace(item.ProviderGroupID) != "" {
+				if err := createCleanupJobIfAbsent(tx, item.ID, 0, item.ProviderAccountID, "volc_group", item.ProviderGroupID, now); err != nil {
+					return err
+				}
+			}
 			if item.AIPDDAssetID > 0 {
-				if err := tx.Create(&VirtualCharacterCleanupJob{CharacterID: item.ID, TargetType: "aipdd_asset", TargetID: strings.TrimSpace(stringInt64(item.AIPDDAssetID)), Status: VirtualCharacterCleanupPending, NextAttemptAt: time.Now().Unix()}).Error; err != nil {
+				if err := createCleanupJobIfAbsent(tx, item.ID, 0, item.ProviderAccountID, "aipdd_asset", strings.TrimSpace(stringInt64(item.AIPDDAssetID)), now); err != nil {
 					return err
 				}
 			}
 			if strings.TrimSpace(item.AIPDDFileID) != "" {
-				if err := tx.Create(&VirtualCharacterCleanupJob{CharacterID: item.ID, TargetType: "aipdd_file", TargetID: item.AIPDDFileID, Status: VirtualCharacterCleanupPending, NextAttemptAt: time.Now().Unix()}).Error; err != nil {
+				if err := createCleanupJobIfAbsent(tx, item.ID, 0, item.ProviderAccountID, "aipdd_file", item.AIPDDFileID, now); err != nil {
 					return err
 				}
+			}
+			if err := tx.Unscoped().Where("character_id = ?", item.ID).Delete(&VirtualCharacterAsset{}).Error; err != nil {
+				return err
+			}
+			if err := tx.Unscoped().Where("character_id = ?", item.ID).Delete(&VirtualCharacterValidationSession{}).Error; err != nil {
+				return err
 			}
 			if err := tx.Unscoped().Delete(&VirtualCharacter{}, item.ID).Error; err != nil {
 				return err
@@ -595,6 +786,31 @@ func MigrateVirtualCharacterABData() error {
 		}
 		return nil
 	})
+}
+
+func createCleanupJobIfAbsent(tx *gorm.DB, characterID, assetID int64, providerAccountID int, targetType, targetID string, now int64) error {
+	targetID = strings.TrimSpace(targetID)
+	if targetType == "" || targetID == "" {
+		return nil
+	}
+	var count int64
+	if err := tx.Model(&VirtualCharacterCleanupJob{}).
+		Where("target_type = ? AND target_id = ? AND status IN ?", targetType, targetID, []string{VirtualCharacterCleanupPending, VirtualCharacterCleanupRunning, VirtualCharacterCleanupFailed}).
+		Count(&count).Error; err != nil {
+		return err
+	}
+	if count > 0 {
+		return nil
+	}
+	return tx.Create(&VirtualCharacterCleanupJob{
+		CharacterID:       characterID,
+		AssetID:           assetID,
+		ProviderAccountID: providerAccountID,
+		TargetType:        targetType,
+		TargetID:          targetID,
+		Status:            VirtualCharacterCleanupPending,
+		NextAttemptAt:     now,
+	}).Error
 }
 
 func stringInt64(value int64) string {
@@ -620,5 +836,5 @@ func stringInt64(value int64) string {
 }
 
 func UpsertVirtualCharacterProviderAccount(account *VirtualCharacterProviderAccount) error {
-	return DB.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "id"}}, DoUpdates: clause.AssignmentColumns([]string{"enabled", "official_enabled", "real_person_enabled", "encrypted_access_key", "encrypted_secret_key", "region", "project_name", "channel_id", "updated_at"})}).Create(account).Error
+	return DB.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "id"}}, DoUpdates: clause.AssignmentColumns([]string{"enabled", "official_enabled", "virtual_enabled", "real_person_enabled", "quota_plan", "create_asset_qpm", "encrypted_access_key", "encrypted_secret_key", "region", "project_name", "channel_id", "updated_at"})}).Create(account).Error
 }

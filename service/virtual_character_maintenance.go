@@ -111,7 +111,8 @@ func finishVirtualCharacterAssetPoll(asset *model.VirtualCharacterAsset, status,
 		common.SysError(fmt.Sprintf("mark virtual character asset %d terminal: %v", asset.ID, err))
 		return
 	}
-	if strings.TrimSpace(stagingFileID) == "" {
+	// Retain staging for Active assets so character covers and asset previews keep working.
+	if status == model.VirtualCharacterAssetStatusActive || strings.TrimSpace(stagingFileID) == "" {
 		return
 	}
 	storage, err := NewAIPDDVirtualCharacterStorage()
@@ -240,7 +241,10 @@ func checkVirtualCharacterTaskTerminals() {
 			continue
 		}
 		character, characterErr := model.GetVirtualCharacterByID(item.CharacterID)
-		if task.Status == model.TaskStatusFailure && characterErr == nil && character.SourceType != model.VirtualCharacterSourceVolcRealPerson && IsVirtualCharacterRealPersonRejection(task.FailReason) {
+		if task.Status == model.TaskStatusFailure && characterErr == nil &&
+			character.SourceType != model.VirtualCharacterSourceVolcRealPerson &&
+			character.SourceType != model.VirtualCharacterSourceVolcAIGC &&
+			IsVirtualCharacterRealPersonRejection(task.FailReason) {
 			if err := model.MarkVirtualCharacterBlocked(item.CharacterID, task.FailReason); err != nil {
 				common.SysError(fmt.Sprintf("block rejected virtual character %d: %v", item.CharacterID, err))
 				continue
@@ -269,31 +273,62 @@ func cleanupVirtualCharacters(now time.Time) {
 			_ = model.RetryVirtualCharacterCleanup(item.ID, item.CleanupAttempts, now.Add(time.Minute).Unix(), item.LastError)
 			continue
 		}
-		if item.AIPDDAssetID <= 0 && strings.TrimSpace(item.AIPDDFileID) == "" {
-			if err := model.CompleteVirtualCharacterCleanup(item.ID); err != nil {
-				retryVirtualCharacterCleanup(item, now, err)
+		if err := enqueueVirtualCharacterProviderCleanup(item, now); err != nil {
+			retryVirtualCharacterCleanup(item, now, err)
+			continue
+		}
+		if item.AIPDDAssetID > 0 || strings.TrimSpace(item.AIPDDFileID) != "" {
+			storage, storageErr := NewAIPDDVirtualCharacterStorage()
+			if storageErr != nil {
+				retryVirtualCharacterCleanup(item, now, storageErr)
+				continue
 			}
-			continue
-		}
-		storage, err := NewAIPDDVirtualCharacterStorage()
-		if err != nil {
-			retryVirtualCharacterCleanup(item, now, err)
-			continue
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-		err = storage.DeleteDigitalAsset(ctx, item.AIPDDAssetID)
-		if err == nil {
-			err = storage.DeleteFile(ctx, item.AIPDDFileID)
-		}
-		cancel()
-		if err != nil {
-			retryVirtualCharacterCleanup(item, now, err)
-			continue
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			err = storage.DeleteDigitalAsset(ctx, item.AIPDDAssetID)
+			if err == nil {
+				err = storage.DeleteFile(ctx, item.AIPDDFileID)
+			}
+			cancel()
+			if err != nil {
+				retryVirtualCharacterCleanup(item, now, err)
+				continue
+			}
 		}
 		if err := model.CompleteVirtualCharacterCleanup(item.ID); err != nil {
 			retryVirtualCharacterCleanup(item, now, err)
 		}
 	}
+}
+
+func enqueueVirtualCharacterProviderCleanup(item *model.VirtualCharacter, now time.Time) error {
+	if item == nil {
+		return nil
+	}
+	assets, err := model.ListVirtualCharacterAssets(item.ID, true)
+	if err != nil {
+		return err
+	}
+	for i := range assets {
+		asset := &assets[i]
+		if strings.TrimSpace(asset.ProviderAssetID) == "" {
+			continue
+		}
+		if err := model.CreateVirtualCharacterCleanupJob(&model.VirtualCharacterCleanupJob{
+			CharacterID: item.ID, AssetID: asset.ID, ProviderAccountID: asset.ProviderAccountID,
+			TargetType: "volc_asset", TargetID: asset.ProviderAssetID, Status: model.VirtualCharacterCleanupPending, NextAttemptAt: now.Unix(),
+		}); err != nil {
+			return err
+		}
+	}
+	if strings.TrimSpace(item.ProviderGroupID) != "" {
+		if err := model.CreateVirtualCharacterCleanupJob(&model.VirtualCharacterCleanupJob{
+			CharacterID: item.ID, ProviderAccountID: item.ProviderAccountID,
+			TargetType: "volc_group", TargetID: item.ProviderGroupID, Status: model.VirtualCharacterCleanupPending, NextAttemptAt: now.Unix() + 5,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func retryVirtualCharacterCleanup(item *model.VirtualCharacter, now time.Time, err error) {

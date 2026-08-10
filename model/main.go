@@ -325,6 +325,9 @@ func migrateDB() error {
 	if err := MigrateVirtualCharacterABData(); err != nil {
 		return err
 	}
+	if err := BackfillVirtualCharacterStructuredFacets(); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -422,6 +425,9 @@ func migrateDBFast() error {
 		return err
 	}
 	if err := MigrateVirtualCharacterABData(); err != nil {
+		return err
+	}
+	if err := BackfillVirtualCharacterStructuredFacets(); err != nil {
 		return err
 	}
 	common.SysLog("database migrated")

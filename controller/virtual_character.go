@@ -72,7 +72,7 @@ func ListVirtualCharacters(c *gin.Context) {
 		return
 	}
 	page := getVirtualCharacterPage(c)
-	items, total, err := model.ListVirtualCharacters(userID, scope, false, page.GetStartIdx(), page.GetPageSize())
+	items, total, err := model.ListVirtualCharacters(userID, scope, false, model.VirtualCharacterListFilter{}, page.GetStartIdx(), page.GetPageSize())
 	if err != nil {
 		virtualCharacterError(c, http.StatusInternalServerError, "list_failed", err.Error())
 		return
@@ -103,15 +103,6 @@ func GetVirtualCharacter(c *gin.Context) {
 		return
 	}
 	common.ApiSuccess(c, virtualCharacterToResponse(item))
-}
-
-func GetVirtualCharacterConfig(c *gin.Context) {
-	common.ApiSuccess(c, gin.H{
-		"models":              model.GetVirtualCharacterModels(),
-		"default_model":       model.GetVirtualCharacterDefaultModel(),
-		"max_file_mb":         30,
-		"task_retention_days": 90,
-	})
 }
 
 func UploadVirtualCharacter(c *gin.Context) {
@@ -238,9 +229,19 @@ func UpdateVirtualCharacter(c *gin.Context) {
 		virtualCharacterError(c, http.StatusInternalServerError, "update_failed", err.Error())
 		return
 	}
+	if strings.TrimSpace(item.ProviderGroupID) != "" {
+		if account, client, clientErr := enabledVirtualCharacterClientForSource(item.SourceType); clientErr == nil && account.ID == item.ProviderAccountID {
+			_ = client.UpdateAssetGroup(c.Request.Context(), item.ProviderGroupID, metadata.Name, metadata.Description, account.ProjectName)
+		}
+	}
 	item.Name, item.Description, item.TagsJSON = metadata.Name, metadata.Description, tagsJSON
 	item.UpdatedAt = time.Now().Unix()
-	common.ApiSuccess(c, virtualCharacterToResponse(item))
+	response, responseErr := virtualCharacterGroupToResponse(item, true)
+	if responseErr != nil {
+		virtualCharacterError(c, http.StatusInternalServerError, "update_failed", responseErr.Error())
+		return
+	}
+	common.ApiSuccess(c, response)
 }
 
 func DeleteVirtualCharacter(c *gin.Context) {
@@ -355,7 +356,7 @@ func GetVirtualCharacterTaskHistory(c *gin.Context) {
 
 func AdminListVirtualCharacters(c *gin.Context) {
 	page := getVirtualCharacterPage(c)
-	items, total, err := model.ListVirtualCharacters(0, model.VirtualCharacterScopePublic, true, page.GetStartIdx(), page.GetPageSize())
+	items, total, err := model.ListVirtualCharacters(0, model.VirtualCharacterScopePublic, true, model.VirtualCharacterListFilter{}, page.GetStartIdx(), page.GetPageSize())
 	if err != nil {
 		virtualCharacterError(c, http.StatusInternalServerError, "list_failed", err.Error())
 		return
@@ -474,65 +475,6 @@ func AdminImportVirtualCharacters(c *gin.Context) {
 		return
 	}
 	common.ApiSuccess(c, gin.H{"processed": len(items)})
-}
-
-func AdminGetVirtualCharacterSettings(c *gin.Context) {
-	channels := make([]gin.H, 0)
-	for _, channelType := range []int{constant.ChannelTypeVolcEngine, constant.ChannelTypeDoubaoVideo} {
-		items, err := model.GetChannelsByType(0, 1000, false, channelType)
-		if err != nil {
-			virtualCharacterError(c, http.StatusInternalServerError, "channels_failed", err.Error())
-			return
-		}
-		for _, channel := range items {
-			if channel.Status == common.ChannelStatusEnabled && !channel.ChannelInfo.IsMultiKey {
-				channels = append(channels, gin.H{"id": channel.Id, "name": channel.Name, "type": channel.Type, "models": channel.Models})
-			}
-		}
-	}
-	common.ApiSuccess(c, gin.H{
-		"global_limit":    model.GetVirtualCharacterGlobalLimit(),
-		"models":          model.GetVirtualCharacterModels(),
-		"default_model":   model.GetVirtualCharacterDefaultModel(),
-		"public_channels": channels,
-	})
-}
-
-func AdminUpdateVirtualCharacterSettings(c *gin.Context) {
-	var req struct {
-		GlobalLimit int      `json:"global_limit"`
-		Models      []string `json:"models"`
-		Default     string   `json:"default_model"`
-	}
-	if err := common.DecodeJson(c.Request.Body, &req); err != nil {
-		virtualCharacterError(c, http.StatusBadRequest, "invalid_request", err.Error())
-		return
-	}
-	if req.GlobalLimit < 1 || req.GlobalLimit > 10000 {
-		virtualCharacterError(c, http.StatusBadRequest, "invalid_limit", "global limit must be between 1 and 10000")
-		return
-	}
-	models, err := normalizeVirtualCharacterModels(req.Models)
-	if err != nil {
-		virtualCharacterError(c, http.StatusBadRequest, "invalid_models", err.Error())
-		return
-	}
-	if !stringSliceContains(models, strings.TrimSpace(req.Default)) {
-		virtualCharacterError(c, http.StatusBadRequest, "invalid_default_model", "default model must be in the whitelist")
-		return
-	}
-	updates := []struct{ key, value string }{
-		{"VirtualCharacterLimit", strconv.Itoa(req.GlobalLimit)},
-		{"VirtualCharacterModels", strings.Join(models, ",")},
-		{"VirtualCharacterDefaultModel", strings.TrimSpace(req.Default)},
-	}
-	for _, update := range updates {
-		if err := model.UpdateOption(update.key, update.value); err != nil {
-			virtualCharacterError(c, http.StatusInternalServerError, "settings_failed", err.Error())
-			return
-		}
-	}
-	AdminGetVirtualCharacterSettings(c)
 }
 
 func AdminSetVirtualCharacterUserLimit(c *gin.Context) {
@@ -784,29 +726,6 @@ func parsePublicVirtualCharacterImport(filename string, reader io.Reader, defaul
 		})
 	}
 	return records, nil
-}
-
-func normalizeVirtualCharacterModels(values []string) ([]string, error) {
-	result := make([]string, 0, len(values))
-	seen := make(map[string]struct{})
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
-		}
-		compact := strings.ToLower(strings.NewReplacer(".", "-", "_", "-").Replace(value))
-		if !strings.Contains(compact, "seedance-2-0") {
-			return nil, fmt.Errorf("model %s is not a Seedance 2.0 model", value)
-		}
-		if _, exists := seen[value]; !exists {
-			seen[value] = struct{}{}
-			result = append(result, value)
-		}
-	}
-	if len(result) == 0 {
-		return nil, errors.New("at least one Seedance 2.0 model is required")
-	}
-	return result, nil
 }
 
 func getAccessibleVirtualCharacterParam(c *gin.Context, userID int) (*model.VirtualCharacter, error) {

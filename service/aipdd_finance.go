@@ -1,12 +1,12 @@
 package service
 
 import (
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"os"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -21,30 +21,41 @@ import (
 
 const aipddInstanceIDEnv = "AIPDD_INSTANCE_ID"
 
-var financeInstanceWarning sync.Once
-
 // PrepareAIPDDFinanceAttempt freezes identifiers after channel selection and before the upstream request.
 func PrepareAIPDDFinanceAttempt(c *gin.Context, info *relaycommon.RelayInfo) error {
 	if info == nil {
 		return errors.New("relay info is required")
 	}
+	previousFinance := info.AIPDDFinance
 	info.InitChannelMeta(c)
 	if info.ChannelMeta == nil || info.ChannelType != constant.ChannelTypeAIPDD {
-		if info.AIPDDFinance != nil {
-			_ = recordAIPDDFinanceSettlement(info.AIPDDFinance, 0, "NOT_CHARGED")
+		if previousFinance != nil {
+			// Closing a superseded attempt is best-effort: the reconciliation worker
+			// re-settles stale orders, so a bookkeeping failure must not abort a relay
+			// that is no longer routed to AIPDD.
+			if err := recordAIPDDFinanceSettlement(previousFinance, 0, "NOT_CHARGED"); err != nil {
+				common.SysError("close previous AIPDD finance attempt failed: " + err.Error())
+			}
 			info.AIPDDFinance = nil
 		}
 		return nil
 	}
-	instanceID := strings.TrimSpace(os.Getenv(aipddInstanceIDEnv))
-	if instanceID == "" {
-		financeInstanceWarning.Do(func() {
-			common.SysLog("AIPDD finance headers disabled: AIPDD_INSTANCE_ID is not configured")
-		})
+	if previousFinance != nil && previousFinance.ChannelID != info.ChannelId {
+		if err := recordAIPDDFinanceSettlement(previousFinance, 0, "NOT_CHARGED"); err != nil {
+			common.SysError("close previous AIPDD channel attempt failed: " + err.Error())
+		}
+		info.AIPDDFinance = nil
+	}
+	if info.ChannelIsMultiKey {
+		// Mirrors the reconciliation worker: per-order finance requires one stable key
+		// per channel, so multi-key channels relay without a finance order instead of failing.
+		common.SysLog(fmt.Sprintf("skip AIPDD finance order for multi-key channel #%d; finance ownership requires one key per channel", info.ChannelId))
+		info.AIPDDFinance = nil
 		return nil
 	}
-	if _, err := uuid.Parse(instanceID); err != nil {
-		return fmt.Errorf("%s must be a UUID: %w", aipddInstanceIDEnv, err)
+	instanceID, err := resolveAIPDDFinanceInstanceID(info.ApiKey)
+	if err != nil {
+		return err
 	}
 	orderID := strings.TrimSpace(info.RequestId)
 	if orderID == "" {
@@ -63,6 +74,22 @@ func PrepareAIPDDFinanceAttempt(c *gin.Context, info *relaycommon.RelayInfo) err
 	info.AIPDDFinance = finance
 	wakeAIPDDFinanceReconciliation()
 	return nil
+}
+
+func resolveAIPDDFinanceInstanceID(apiKey string) (string, error) {
+	if configured := strings.TrimSpace(os.Getenv(aipddInstanceIDEnv)); configured != "" {
+		if _, err := uuid.Parse(configured); err != nil {
+			return "", fmt.Errorf("%s must be a UUID: %w", aipddInstanceIDEnv, err)
+		}
+		return configured, nil
+	}
+	key := strings.TrimSpace(apiKey)
+	if key == "" {
+		return "", errors.New("AIPDD API key is required to derive finance instance identity")
+	}
+	return uuid.NewHash(
+		sha256.New(), uuid.NameSpaceURL, []byte("aipdd:new-api:finance-instance:"+key), 8,
+	).String(), nil
 }
 
 func RecordAIPDDFinanceSettlement(info *relaycommon.RelayInfo, actualQuota int, status string) error {

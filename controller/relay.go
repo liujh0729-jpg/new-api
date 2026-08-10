@@ -504,6 +504,9 @@ func RelayTask(c *gin.Context) {
 		respondTaskError(c, taskErr)
 		return
 	}
+	if abortIfOriginTaskModelForbidden(c, relayInfo) {
+		return
+	}
 
 	var boundCharacter *model.VirtualCharacter
 	characterLinkCreated := false
@@ -515,9 +518,6 @@ func RelayTask(c *gin.Context) {
 			characterLinkCreated = true
 		} else {
 			relayInfo.PublicTaskID = model.GenerateTaskID()
-		}
-		if locked, ok := c.Get(middleware.VirtualCharacterLockedChannelKey); ok {
-			relayInfo.LockedChannel = locked
 		}
 		if !characterLinkCreated {
 			link := &model.VirtualCharacterTask{
@@ -547,7 +547,10 @@ func RelayTask(c *gin.Context) {
 		if taskErr != nil {
 			if characterLinkCreated {
 				_ = model.MarkVirtualCharacterTaskFailed(relayInfo.PublicTaskID, taskErr.Message)
-				if boundCharacter != nil && boundCharacter.SourceType != model.VirtualCharacterSourceVolcRealPerson && service.IsVirtualCharacterRealPersonRejection(taskErr.Message) {
+				if boundCharacter != nil &&
+					boundCharacter.SourceType != model.VirtualCharacterSourceVolcRealPerson &&
+					boundCharacter.SourceType != model.VirtualCharacterSourceVolcAIGC &&
+					service.IsVirtualCharacterRealPersonRejection(taskErr.Message) {
 					_ = model.MarkVirtualCharacterBlocked(boundCharacter.ID, taskErr.Message)
 				}
 			}
@@ -689,6 +692,17 @@ func RelayTask(c *gin.Context) {
 	if taskErr != nil {
 		respondTaskError(c, taskErr)
 	}
+}
+
+// abortIfOriginTaskModelForbidden validates remix/continuation requests after
+// ResolveOriginTask has loaded the user-owned task and resolved its model.
+// Read-only task fetches never pass through RelayTask and therefore remain
+// governed solely by token authentication and task ownership.
+func abortIfOriginTaskModelForbidden(c *gin.Context, info *relaycommon.RelayInfo) bool {
+	if info == nil || info.TaskRelayInfo == nil || info.OriginTaskID == "" {
+		return false
+	}
+	return middleware.AbortIfTokenModelForbidden(c, info.OriginModelName)
 }
 
 func isTaskPerCallBilling(relayInfo *relaycommon.RelayInfo) bool {

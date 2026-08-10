@@ -1,24 +1,21 @@
 package middleware
 
 import (
-	"fmt"
 	"net/http"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/gin-gonic/gin"
 )
 
 const (
-	VirtualCharacterContextKey       = "virtual_character"
-	VirtualCharacterAssetContextKey  = "virtual_character_asset"
-	VirtualCharacterLockedChannelKey = "virtual_character_locked_channel"
-	VirtualCharacterTaskIDKey        = "virtual_character_task_id"
-	VirtualCharacterTaskClaimedKey   = "virtual_character_task_claimed"
-	virtualCharacterTaskFailureKey   = "virtual_character_task_failure"
+	VirtualCharacterContextKey      = "virtual_character"
+	VirtualCharacterAssetContextKey = "virtual_character_asset"
+	VirtualCharacterTaskIDKey       = "virtual_character_task_id"
+	VirtualCharacterTaskClaimedKey  = "virtual_character_task_claimed"
+	virtualCharacterTaskFailureKey  = "virtual_character_task_failure"
 )
 
 func BindVirtualCharacter() gin.HandlerFunc {
@@ -44,8 +41,8 @@ func BindVirtualCharacter() gin.HandlerFunc {
 			abortVirtualCharacterBinding(c, http.StatusBadRequest, "invalid_character_asset_id", "character_asset_id must be a positive integer")
 			return
 		}
-		if !model.IsVirtualCharacterModelAllowed(strings.TrimSpace(req.Model)) {
-			abortVirtualCharacterBinding(c, http.StatusBadRequest, "character_model_not_allowed", "the selected model is not enabled for virtual characters")
+		if !model.IsVirtualCharacterSeedanceModel(strings.TrimSpace(req.Model)) {
+			abortVirtualCharacterBinding(c, http.StatusBadRequest, "character_model_not_allowed", "character video requires a Seedance model")
 			return
 		}
 		if virtualCharacterRequestHasExternalReferences(req) {
@@ -79,20 +76,16 @@ func BindVirtualCharacter() gin.HandlerFunc {
 			abortVirtualCharacterBinding(c, http.StatusServiceUnavailable, "character_provider_unavailable", "virtual character provider is unavailable")
 			return
 		}
-		if (item.Scope == model.VirtualCharacterScopePublic && !account.OfficialEnabled) || (item.Scope == model.VirtualCharacterScopePrivate && !account.RealPersonEnabled) {
-			abortVirtualCharacterBinding(c, http.StatusServiceUnavailable, "character_feature_disabled", "this virtual character feature is disabled")
+		switch item.SourceType {
+		case model.VirtualCharacterSourceVolcAIGC, model.VirtualCharacterSourceVolcPreset:
+			// Official presets and user-created virtual characters follow the library master switch.
+		case model.VirtualCharacterSourceVolcRealPerson:
+			abortVirtualCharacterBinding(c, http.StatusServiceUnavailable, "character_feature_disabled", "real-person virtual characters are not available yet")
+			return
+		default:
+			abortVirtualCharacterBinding(c, http.StatusServiceUnavailable, "character_feature_disabled", "unsupported virtual character source")
 			return
 		}
-		channel, err := validateVirtualCharacterProviderChannel(account, req.Model)
-		if err != nil {
-			abortVirtualCharacterBinding(c, http.StatusServiceUnavailable, "character_channel_unavailable", err.Error())
-			return
-		}
-		if setupErr := SetupContextForSelectedChannel(c, channel, req.Model); setupErr != nil {
-			abortVirtualCharacterBinding(c, http.StatusServiceUnavailable, "character_channel_unavailable", setupErr.Error())
-			return
-		}
-		c.Set(VirtualCharacterLockedChannelKey, channel)
 
 		taskID := model.GenerateTaskID()
 		if err := model.CreateVirtualCharacterTaskLink(&model.VirtualCharacterTask{
@@ -185,38 +178,6 @@ func virtualCharacterRequestHasExternalReferences(req relaycommon.TaskSubmitReq)
 	}
 	items, ok := content.([]interface{})
 	return !ok || len(items) > 0
-}
-
-func validateVirtualCharacterProviderChannel(account *model.VirtualCharacterProviderAccount, modelName string) (*model.Channel, error) {
-	if account == nil || account.ChannelID <= 0 {
-		return nil, fmt.Errorf("configured provider channel is missing")
-	}
-	channel, err := model.GetChannelById(account.ChannelID, true)
-	if err != nil {
-		return nil, err
-	}
-	if channel.Status != common.ChannelStatusEnabled {
-		return nil, fmt.Errorf("configured public channel is disabled")
-	}
-	if channel.ChannelInfo.IsMultiKey {
-		return nil, fmt.Errorf("configured public channel must use one stable upstream key")
-	}
-	if channel.Type != constant.ChannelTypeVolcEngine && channel.Type != constant.ChannelTypeDoubaoVideo {
-		return nil, fmt.Errorf("configured public channel is not a Volc video channel")
-	}
-	if !channelSupportsVirtualCharacterModel(channel, modelName) {
-		return nil, fmt.Errorf("configured public channel does not support model %s", modelName)
-	}
-	return channel, nil
-}
-
-func channelSupportsVirtualCharacterModel(channel *model.Channel, modelName string) bool {
-	for _, supported := range strings.Split(channel.Models, ",") {
-		if strings.TrimSpace(supported) == strings.TrimSpace(modelName) {
-			return true
-		}
-	}
-	return false
 }
 
 func abortVirtualCharacterBinding(c *gin.Context, status int, code, message string) {

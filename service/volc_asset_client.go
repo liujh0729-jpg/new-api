@@ -45,7 +45,10 @@ type VolcAssetGroupResult struct {
 type VolcAssetClient interface {
 	CreateVisualValidateSession(ctx context.Context, callbackURL, projectName, language string) (*VolcValidationSessionResult, error)
 	GetVisualValidateResult(ctx context.Context, bytedToken, projectName string) (string, error)
+	CreateAssetGroup(ctx context.Context, name, description, projectName string) (string, error)
+	UpdateAssetGroup(ctx context.Context, groupID, name, description, projectName string) error
 	CreateAsset(ctx context.Context, groupID, sourceURL, assetType, name, projectName string) (string, error)
+	UpdateAsset(ctx context.Context, assetID, name, projectName string) error
 	GetAsset(ctx context.Context, assetID, projectName string) (*VolcAssetResult, error)
 	ListAssets(ctx context.Context, groupID, projectName string) ([]VolcAssetResult, error)
 	DeleteAsset(ctx context.Context, assetID, projectName string) error
@@ -59,8 +62,9 @@ type volcUniversalCaller interface {
 }
 
 type volcAssetClient struct {
-	client  volcUniversalCaller
-	limiter *volcAccountRateLimiter
+	client         volcUniversalCaller
+	limiter        *volcAccountRateLimiter
+	createAssetQPM int
 }
 
 type volcAccountRateLimiter struct {
@@ -101,7 +105,11 @@ func NewVolcAssetClient(account *model.VirtualCharacterProviderAccount) (VolcAss
 		return nil, fmt.Errorf("create Volc session: %w", err)
 	}
 	limiterValue, _ := volcAccountRateLimiters.LoadOrStore(account.ID, &volcAccountRateLimiter{lastRun: make(map[string]time.Time)})
-	return &volcAssetClient{client: universal.New(sess), limiter: limiterValue.(*volcAccountRateLimiter)}, nil
+	return &volcAssetClient{
+		client:         universal.New(sess),
+		limiter:        limiterValue.(*volcAccountRateLimiter),
+		createAssetQPM: account.EffectiveCreateAssetQPM(),
+	}, nil
 }
 
 func (c *volcAssetClient) CreateVisualValidateSession(ctx context.Context, callbackURL, projectName, language string) (*VolcValidationSessionResult, error) {
@@ -132,12 +140,52 @@ func (c *volcAssetClient) GetVisualValidateResult(ctx context.Context, bytedToke
 	return groupID, nil
 }
 
+func (c *volcAssetClient) CreateAssetGroup(ctx context.Context, name, description, projectName string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", errors.New("asset group name is required")
+	}
+	body := map[string]interface{}{
+		"Name":        name,
+		"GroupType":   "AIGC",
+		"ProjectName": projectOrDefault(projectName),
+	}
+	if description = strings.TrimSpace(description); description != "" {
+		body["Description"] = description
+	}
+	result, err := c.call(ctx, "CreateAssetGroup", body, 10)
+	if err != nil {
+		return "", err
+	}
+	id := findString(result, "Id", "ID", "GroupId", "GroupID")
+	if id == "" {
+		return "", errors.New("Volc CreateAssetGroup response did not contain an id")
+	}
+	return id, nil
+}
+
+func (c *volcAssetClient) UpdateAssetGroup(ctx context.Context, groupID, name, description, projectName string) error {
+	groupID = strings.TrimSpace(groupID)
+	if groupID == "" {
+		return errors.New("asset group id is required")
+	}
+	body := map[string]interface{}{"Id": groupID, "ProjectName": projectOrDefault(projectName)}
+	if name = strings.TrimSpace(name); name != "" {
+		body["Name"] = name
+	}
+	if description = strings.TrimSpace(description); description != "" {
+		body["Description"] = description
+	}
+	_, err := c.call(ctx, "UpdateAssetGroup", body, 10)
+	return err
+}
+
 func (c *volcAssetClient) CreateAsset(ctx context.Context, groupID, sourceURL, assetType, name, projectName string) (string, error) {
 	body := map[string]interface{}{"GroupId": groupID, "URL": sourceURL, "AssetType": assetType, "ProjectName": projectOrDefault(projectName)}
 	if strings.TrimSpace(name) != "" {
 		body["Name"] = strings.TrimSpace(name)
 	}
-	result, err := c.call(ctx, "CreateAsset", body, 3)
+	result, err := c.callQPM(ctx, "CreateAsset", body, c.createAssetQPM)
 	if err != nil {
 		return "", err
 	}
@@ -146,6 +194,18 @@ func (c *volcAssetClient) CreateAsset(ctx context.Context, groupID, sourceURL, a
 		return "", errors.New("Volc CreateAsset response did not contain an id")
 	}
 	return id, nil
+}
+
+func (c *volcAssetClient) UpdateAsset(ctx context.Context, assetID, name, projectName string) error {
+	assetID = strings.TrimSpace(assetID)
+	name = strings.TrimSpace(name)
+	if assetID == "" || name == "" {
+		return errors.New("asset id and name are required")
+	}
+	_, err := c.call(ctx, "UpdateAsset", map[string]interface{}{
+		"Id": assetID, "Name": name, "ProjectName": projectOrDefault(projectName),
+	}, 10)
+	return err
 }
 
 func (c *volcAssetClient) GetAsset(ctx context.Context, assetID, projectName string) (*VolcAssetResult, error) {
@@ -157,9 +217,17 @@ func (c *volcAssetClient) GetAsset(ctx context.Context, assetID, projectName str
 }
 
 func (c *volcAssetClient) ListAssets(ctx context.Context, groupID, projectName string) ([]VolcAssetResult, error) {
-	body := map[string]interface{}{"ProjectName": projectOrDefault(projectName)}
-	if strings.TrimSpace(groupID) != "" {
-		body["GroupId"] = groupID
+	filter := map[string]interface{}{
+		"GroupType": "AIGC",
+	}
+	if groupID = strings.TrimSpace(groupID); groupID != "" {
+		filter["GroupIds"] = []string{groupID}
+	}
+	body := map[string]interface{}{
+		"Filter":      filter,
+		"PageNumber":  1,
+		"PageSize":    100,
+		"ProjectName": projectOrDefault(projectName),
 	}
 	result, err := c.call(ctx, "ListAssets", body, 100)
 	if err != nil {
@@ -174,12 +242,21 @@ func (c *volcAssetClient) DeleteAsset(ctx context.Context, assetID, projectName 
 }
 
 func (c *volcAssetClient) DeleteAssetGroup(ctx context.Context, groupID, projectName string) error {
-	_, err := c.call(ctx, "DeleteAssetGroup", map[string]interface{}{"GroupId": groupID, "ProjectName": projectOrDefault(projectName)}, 10)
+	_, err := c.call(ctx, "DeleteAssetGroup", map[string]interface{}{"Id": groupID, "ProjectName": projectOrDefault(projectName)}, 10)
 	return err
 }
 
 func (c *volcAssetClient) ListAssetGroups(ctx context.Context, projectName string) ([]VolcAssetGroupResult, error) {
-	result, err := c.call(ctx, "ListAssetGroups", map[string]interface{}{"ProjectName": projectOrDefault(projectName)}, 10)
+	// Volc requires Filter.GroupType for ListAssetGroups.
+	body := map[string]interface{}{
+		"Filter": map[string]interface{}{
+			"GroupType": "AIGC",
+		},
+		"PageNumber":  1,
+		"PageSize":    10,
+		"ProjectName": projectOrDefault(projectName),
+	}
+	result, err := c.call(ctx, "ListAssetGroups", body, 10)
 	if err != nil {
 		return nil, err
 	}
@@ -187,7 +264,7 @@ func (c *volcAssetClient) ListAssetGroups(ctx context.Context, projectName strin
 }
 
 func (c *volcAssetClient) GetAssetGroup(ctx context.Context, groupID, projectName string) (*VolcAssetGroupResult, error) {
-	result, err := c.call(ctx, "GetAssetGroup", map[string]interface{}{"GroupId": groupID, "ProjectName": projectOrDefault(projectName)}, 10)
+	result, err := c.call(ctx, "GetAssetGroup", map[string]interface{}{"Id": groupID, "ProjectName": projectOrDefault(projectName)}, 10)
 	if err != nil {
 		return nil, err
 	}
@@ -195,16 +272,26 @@ func (c *volcAssetClient) GetAssetGroup(ctx context.Context, groupID, projectNam
 }
 
 func (c *volcAssetClient) call(ctx context.Context, action string, body map[string]interface{}, qps int) (map[string]interface{}, error) {
+	return c.doCall(ctx, action, body, time.Second, qps)
+}
+
+func (c *volcAssetClient) callQPM(ctx context.Context, action string, body map[string]interface{}, qpm int) (map[string]interface{}, error) {
+	return c.doCall(ctx, action, body, time.Minute, qpm)
+}
+
+func (c *volcAssetClient) doCall(ctx context.Context, action string, body map[string]interface{}, window time.Duration, rate int) (map[string]interface{}, error) {
 	if c == nil || c.client == nil {
 		return nil, errors.New("Volc asset client is not configured")
-	}
-	if err := c.wait(ctx, action, qps); err != nil {
-		return nil, err
 	}
 	info := universal.RequestUniversal{ServiceName: volcAssetServiceName, Action: action, Version: volcAssetAPIVersion, HttpMethod: universal.POST, ContentType: universal.ApplicationJSON}
 	var lastErr error
 	for attempt := 0; attempt < 4; attempt++ {
 		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		// Claim rate-limit budget per attempt: retries are mostly triggered by upstream
+		// throttling, so reusing one slot for all four attempts would burst against it.
+		if err := c.wait(ctx, action, window, rate); err != nil {
 			return nil, err
 		}
 		output, err := c.client.DoCall(info, &body)
@@ -230,16 +317,23 @@ func (c *volcAssetClient) call(ctx context.Context, action string, body map[stri
 	return nil, fmt.Errorf("Volc %s failed: %w", action, lastErr)
 }
 
-func (c *volcAssetClient) wait(ctx context.Context, action string, qps int) error {
-	if qps <= 0 {
-		qps = 1
+func (c *volcAssetClient) wait(ctx context.Context, action string, window time.Duration, rate int) error {
+	if rate <= 0 {
+		rate = 1
 	}
-	interval := time.Second / time.Duration(qps)
+	if window <= 0 {
+		window = time.Second
+	}
+	interval := window / time.Duration(rate)
+	if interval <= 0 {
+		interval = time.Millisecond
+	}
 	if c.limiter == nil {
 		c.limiter = &volcAccountRateLimiter{lastRun: make(map[string]time.Time)}
 	}
 	c.limiter.mu.Lock()
-	next := c.limiter.lastRun[action].Add(interval)
+	previous := c.limiter.lastRun[action]
+	next := previous.Add(interval)
 	now := time.Now()
 	if next.Before(now) {
 		next = now
@@ -251,11 +345,22 @@ func (c *volcAssetClient) wait(ctx context.Context, action string, qps int) erro
 		select {
 		case <-ctx.Done():
 			timer.Stop()
+			c.releaseReservation(action, previous, next)
 			return ctx.Err()
 		case <-timer.C:
 		}
 	}
 	return nil
+}
+
+// releaseReservation hands an unused slot back to the limiter so a cancelled caller
+// does not make later callers wait out a request that was never sent.
+func (c *volcAssetClient) releaseReservation(action string, previous, reserved time.Time) {
+	c.limiter.mu.Lock()
+	if c.limiter.lastRun[action].Equal(reserved) {
+		c.limiter.lastRun[action] = previous
+	}
+	c.limiter.mu.Unlock()
 }
 
 func projectOrDefault(value string) string {

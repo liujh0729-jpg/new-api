@@ -82,6 +82,12 @@ export function SidebarModulesSection({
         title: t('Playground'),
         description: t('Experiment with prompts and models in real time.'),
       },
+      characters: {
+        title: t('Character Library'),
+        description: t(
+          'Official and private Volc character assets for Seedance video generation. Disabled by default.'
+        ),
+      },
       test_bench: {
         title: t('Test Bench'),
         description: t('Run direct model relay tests from the default UI.'),

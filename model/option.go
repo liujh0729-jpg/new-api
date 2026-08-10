@@ -58,8 +58,9 @@ func InitOptionMap() {
 	common.OptionMap["DrawingEnabled"] = strconv.FormatBool(common.DrawingEnabled)
 	common.OptionMap["TaskEnabled"] = strconv.FormatBool(common.TaskEnabled)
 	common.OptionMap["VirtualCharacterLimit"] = strconv.Itoa(VirtualCharacterDefaultLimit)
-	common.OptionMap["VirtualCharacterModels"] = "doubao-seedance-2-0-260128,doubao-seedance-2-0-fast-260128"
-	common.OptionMap["VirtualCharacterDefaultModel"] = "doubao-seedance-2-0-260128"
+	common.OptionMap["VirtualCharacterAccountAssetCap"] = strconv.Itoa(VirtualCharacterDefaultAccountAssetCap)
+	common.OptionMap["VirtualCharacterMaxAssetsPerCharacter"] = strconv.Itoa(VirtualCharacterDefaultMaxAssetsPerCharacter)
+	common.OptionMap["VirtualCharacterAIPDDCatalogLastSyncAt"] = "0"
 	common.OptionMap["DataExportEnabled"] = strconv.FormatBool(common.DataExportEnabled)
 	common.OptionMap["ChannelDisableThreshold"] = strconv.FormatFloat(common.ChannelDisableThreshold, 'f', -1, 64)
 	common.OptionMap["EmailDomainRestrictionEnabled"] = strconv.FormatBool(common.EmailDomainRestrictionEnabled)

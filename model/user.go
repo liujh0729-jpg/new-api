@@ -103,6 +103,8 @@ func generateDefaultSidebarConfigForRole(userRole int) string {
 	defaultConfig := map[string]interface{}{}
 
 	// 聊天区域 - 所有用户都可以访问
+	// 角色库菜单由管理员侧栏模块（SidebarModulesAdmin.characters）控制，默认关闭，此处不写入 false，
+	// 以免管理员开启后仍被用户默认配置二次隐藏。
 	defaultConfig["chat"] = map[string]interface{}{
 		"enabled":    true,
 		"playground": true,

@@ -5,12 +5,18 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
+	appi18n "github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
+
+const seedanceLimitedModel = "AP Seedance-2.0 高性价比版"
 
 func TestGetModelRequestReadsMultipartImageGenerationModel(t *testing.T) {
 	ctx := newMultipartModelRequest(t, "/v1/images/generations", "aipdd-flux-gguf")
@@ -40,6 +46,38 @@ func TestGetModelRequestReadsMultipartAudioSpeechModel(t *testing.T) {
 	if modelRequest.Model != "aipdd-indextts" {
 		t.Fatalf("unexpected model: %q", modelRequest.Model)
 	}
+}
+
+func TestDistributeAllowsOpenAIVideoFetchWithModelLimitedToken(t *testing.T) {
+	ctx := newModelLimitedDistributorContext(t, http.MethodGet, "/v1/videos/task_123", "")
+
+	Distribute()(ctx)
+
+	require.False(t, ctx.IsAborted())
+}
+
+func TestDistributeAllowsCompatibleVideoFetchWithModelLimitedToken(t *testing.T) {
+	ctx := newModelLimitedDistributorContext(t, http.MethodGet, "/v1/video/generations/task_123", "")
+
+	Distribute()(ctx)
+
+	require.False(t, ctx.IsAborted())
+}
+
+func TestDistributeRejectsDisallowedVideoSubmitWithModelLimitedToken(t *testing.T) {
+	ctx := newModelLimitedDistributorContext(t, http.MethodPost, "/v1/videos", `{"model":"not-allowed"}`)
+
+	Distribute()(ctx)
+
+	require.True(t, ctx.IsAborted())
+	require.Equal(t, http.StatusForbidden, ctx.Writer.Status())
+}
+
+func TestAbortIfTokenModelForbiddenAllowsResolvedModel(t *testing.T) {
+	ctx := newModelLimitedDistributorContext(t, http.MethodPost, "/v1/videos", "")
+
+	require.False(t, AbortIfTokenModelForbidden(ctx, seedanceLimitedModel))
+	require.False(t, ctx.IsAborted())
 }
 
 func TestPlaygroundGroupOverrideAllowsAutoWhenUserHasAutoGroup(t *testing.T) {
@@ -87,5 +125,22 @@ func newMultipartModelRequest(t *testing.T, path, model string) *gin.Context {
 	ctx, _ := gin.CreateTestContext(recorder)
 	ctx.Request = httptest.NewRequest(http.MethodPost, path, &body)
 	ctx.Request.Header.Set("Content-Type", writer.FormDataContentType())
+	return ctx
+}
+
+func newModelLimitedDistributorContext(t *testing.T, method, path, body string) *gin.Context {
+	t.Helper()
+	require.NoError(t, appi18n.Init())
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(method, path, strings.NewReader(body))
+	if body != "" {
+		ctx.Request.Header.Set("Content-Type", "application/json")
+	}
+	common.SetContextKey(ctx, constant.ContextKeyTokenModelLimitEnabled, true)
+	common.SetContextKey(ctx, constant.ContextKeyTokenModelLimit, map[string]bool{
+		seedanceLimitedModel: true,
+	})
 	return ctx
 }

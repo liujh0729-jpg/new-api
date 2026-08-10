@@ -70,13 +70,14 @@ func runAIPDDFinanceReconciliation() {
 	if err != nil {
 		return
 	}
-	instanceID := strings.TrimSpace(os.Getenv(aipddInstanceIDEnv))
-	if instanceID == "" {
-		return
-	}
 	for index := range channels {
 		if channels[index].ChannelInfo.IsMultiKey {
 			common.SysLog(fmt.Sprintf("skip AIPDD finance pull for multi-key channel #%d; finance ownership requires one key per channel", channels[index].Id))
+			continue
+		}
+		instanceID, resolveErr := resolveAIPDDFinanceInstanceID(channels[index].Key)
+		if resolveErr != nil {
+			common.SysLog(fmt.Sprintf("resolve AIPDD finance instance for channel #%d failed: %s", channels[index].Id, resolveErr.Error()))
 			continue
 		}
 		if err := pullAIPDDFinanceEvents(&channels[index], instanceID); err != nil {

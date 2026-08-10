@@ -53,30 +53,14 @@ func Distribute() func(c *gin.Context) {
 			}
 		} else {
 			// Select a channel for the user
-			// check token model mapping
-			modelLimitEnable := common.GetContextKeyBool(c, constant.ContextKeyTokenModelLimitEnabled)
-			if modelLimitEnable {
-				s, ok := common.GetContextKey(c, constant.ContextKeyTokenModelLimit)
-				if !ok {
-					// token model limit is empty, all models are not allowed
-					abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorTokenNoModelAccess))
-					return
-				}
-				var tokenModelLimit map[string]bool
-				tokenModelLimit, ok = s.(map[string]bool)
-				if !ok {
-					tokenModelLimit = map[string]bool{}
-				}
-				matchName := ratio_setting.FormatMatchingModelName(modelRequest.Model) // match gpts & thinking-*
-				if _, ok := tokenModelLimit[matchName]; !ok {
-					abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorTokenModelForbidden, map[string]any{"Model": modelRequest.Model}))
-					return
-				}
-			}
-
 			if shouldSelectChannel {
 				if modelRequest.Model == "" {
 					abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorModelNameRequired))
+					return
+				}
+				// Only generation requests select a model/channel here. Task fetches carry
+				// no model and are authorized later by user_id + task_id ownership.
+				if AbortIfTokenModelForbidden(c, modelRequest.Model) {
 					return
 				}
 				var selectGroup string
@@ -166,6 +150,36 @@ func Distribute() func(c *gin.Context) {
 			service.RecordChannelAffinity(c, selectedChannelID)
 		}
 	}
+}
+
+// AbortIfTokenModelForbidden checks a resolved model against the current
+// token's model allowlist. It returns true after writing and aborting a
+// forbidden response. Callers must only invoke it once a concrete model has
+// been resolved; read-only task fetches intentionally skip this check and rely
+// on task ownership validation instead.
+func AbortIfTokenModelForbidden(c *gin.Context, modelName string) bool {
+	if !common.GetContextKeyBool(c, constant.ContextKeyTokenModelLimitEnabled) {
+		return false
+	}
+
+	s, ok := common.GetContextKey(c, constant.ContextKeyTokenModelLimit)
+	if !ok {
+		abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorTokenNoModelAccess))
+		return true
+	}
+
+	tokenModelLimit, ok := s.(map[string]bool)
+	if !ok || modelName == "" {
+		abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorTokenNoModelAccess))
+		return true
+	}
+
+	matchName := ratio_setting.FormatMatchingModelName(modelName) // match gpts & thinking-*
+	if _, ok := tokenModelLimit[matchName]; !ok {
+		abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorTokenModelForbidden, map[string]any{"Model": modelName}))
+		return true
+	}
+	return false
 }
 
 // getModelFromRequest 从请求中读取模型信息

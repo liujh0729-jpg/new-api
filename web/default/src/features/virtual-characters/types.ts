@@ -1,3 +1,21 @@
+/*
+Copyright (C) 2023-2026 QuantumNous
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+For commercial licensing, please contact support@quantumnous.com
+*/
 export type VirtualCharacterScope = 'public' | 'private'
 export type VirtualCharacterStatus =
   'creating' | 'active' | 'blocked' | 'offline' | 'deleting' | 'failed'
@@ -5,6 +23,8 @@ export type VirtualCharacterAssetStatus =
   'Processing' | 'Active' | 'Failed' | 'Deleting'
 export type VirtualCharacterValidationSessionStatus =
   'pending' | 'succeeded' | 'failed' | 'expired'
+export type VirtualCharacterSourceType =
+  'volc_preset' | 'volc_aigc' | 'volc_real_person'
 
 export interface VirtualCharacterAsset {
   id: number
@@ -24,10 +44,16 @@ export interface VirtualCharacterAsset {
 export interface VirtualCharacter {
   id: number
   scope: VirtualCharacterScope
-  source_type: 'volc_preset' | 'volc_real_person'
+  source_type: VirtualCharacterSourceType
   name: string
   description: string
   tags: string[]
+  nationality?: string
+  gender?: string
+  age_min?: number
+  age_max?: number
+  occupation?: string
+  temperament?: string
   status: VirtualCharacterStatus
   validation_status: 'unverified' | 'accepted' | 'rejected'
   cover_url?: string
@@ -36,6 +62,17 @@ export interface VirtualCharacter {
   created_at: number
   updated_at: number
   last_error?: string
+}
+
+export interface VirtualCharacterListParams {
+  scope: 'private' | 'public'
+  page?: number
+  pageSize?: number
+  keyword?: string
+  nationality?: string
+  gender?: string
+  ageBand?: string
+  status?: string
 }
 
 export interface PageData<T> {
@@ -58,14 +95,15 @@ export interface VirtualCharacterListData {
 }
 
 export interface VirtualCharacterConfig {
-  models: string[]
-  default_model: string
   image_max_mb: number
   video_max_mb: number
   audio_max_mb: number
   task_retention_days: number
   official_enabled: boolean
+  virtual_enabled: boolean
   real_person_enabled: boolean
+  account_asset_cap?: number
+  max_assets_per_character?: number
 }
 
 export interface VirtualCharacterValidationSession {
@@ -112,28 +150,23 @@ export interface VirtualCharacterTaskHistory {
   output_notice: string
 }
 
+export type VirtualCharacterQuotaPlan = 'free' | 'paid' | 'custom'
+
 export interface VirtualCharacterSettings {
   enabled: boolean
-  official_enabled: boolean
-  real_person_enabled: boolean
+  quota_plan: VirtualCharacterQuotaPlan
+  create_asset_qpm: number
   access_key_masked: string
   secret_key_masked: string
   region: string
   project_name: string
-  channel_id: number
   crypto_ready: boolean
   last_check_status?: string
   last_check_error?: string
   last_checked_at?: number
   global_limit: number
-  models: string[]
-  default_model: string
-  channels: Array<{
-    id: number
-    name: string
-    type: number
-    models: string
-  }>
+  account_asset_cap: number
+  max_assets_per_character: number
   catalog?: {
     version: string
     content_hash: string
@@ -143,6 +176,19 @@ export interface VirtualCharacterSettings {
     offlined: number
     created_at: number
   }
+  catalog_last_synced_at?: number
+}
+
+export interface VirtualCharacterAIPDDCatalogSyncResult {
+  version: string
+  revision: string
+  total: number
+  created: number
+  updated: number
+  offlined: number
+  skipped: boolean
+  skip_reason?: string
+  last_synced_at: number
 }
 
 export interface CharacterVideoInput {

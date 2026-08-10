@@ -2,7 +2,7 @@
 
 本文面向 API 用户，说明如何通过 NewAPI 调用 **AIPDD 渠道**已开放的模型。调用方只需要使用平台发放的 NewAPI Token，不需要也不应在客户端传递 AIPDD 上游 API Key。
 
-更新时间：2026-07-27。
+更新时间：2026-08-11。
 
 > 模型目录和价格可能由服务方动态调整。实际可用模型、参数约束和价格请以 `GET /v1/models` 与 `/api/pricing` 返回结果为准。
 
@@ -80,7 +80,7 @@ curl "$BASE_URL/v1/models" \
 | MimicMotion 动作迁移 | `aipdd-mimic-motion` | `POST /v1/videos` | `GET /v1/videos/{task_id}` | `motion_video`、`appearance_image` |
 | Latentsync 对口型 | `aipdd-latentsync-1.5` | `POST /v1/videos` | `GET /v1/videos/{task_id}` | `video`、`LoadAudio` |
 | IndexTTS 声音复刻 | `aipdd-indextts` | `POST /v1/audio/speech` | `GET /v1/audio/speech/{task_id}` | `input`、`audio` |
-| AP Seedance 2.0 | `AP Seedance-2.0 VIP` / `标准版` / `轻量版` / `高性价比版` | `POST /v1/videos` | `GET /v1/videos/{task_id}` | `prompt` 或 `content`；并需可解析的 `resolution` |
+| AP Seedance 2.0 | `AP Seedance-2.0 VIP` / `标准版` / `轻量版` / `高性价比版` | `POST /v1/videos` | `GET /v1/videos/{task_id}` | `prompt` 或 `content`；并需可解析的 `resolution`；角色素材可用 `asset://` 或 `character_id`（见 [4.13.5](#4135-角色素材-asset--与角色库引用)） |
 
 说明：
 
@@ -573,8 +573,10 @@ curl "$BASE_URL/v1/audio/speech" \
 | `ratio` | 否 | `16:9`、`9:16`、`1:1`、`4:3`、`3:4` | 未传时可由 `width`/`height` 推导 |
 | `duration` / `seconds` | 否 | 正数秒；不传默认按 **5 秒**计费与提交 | 优先直接传秒数 |
 | `width`、`height` | 否 | 须同时为正整数 | 仅在未传 `resolution`/`ratio` 时用于推导；短边 `720`→`720p`，`1080`→`1080p`，`2160`→`4k` |
-| `content` | 否 | 非空数组；每项必须有 `type` | 官方多模态内容，见 4.11.3 |
-| `image` | 否 | 公网 HTTPS URL | 首帧 / 参考图简写；也可写入 `content` |
+| `content` | 否 | 非空数组；每项必须有 `type` | 官方多模态内容，见 [4.13.3](#4133-content-项与参考素材) |
+| `image` / `images` | 否 | 公网 HTTPS URL，或 `asset://{asset_id}` | 首帧 / 参考图简写；`images` 会转为 `reference_image`；也可写入 `content` |
+| `character_id` | 否 | 正整数 | NewAPI 角色库角色 ID；仅 `POST /v1/video/generations`（及控制台 `/pg/video/generations`）支持，见 [4.13.5](#4135-角色素材-asset--与角色库引用) |
+| `character_asset_id` | 否 | 正整数 | 角色下指定素材 ID；须与 `character_id` 同传；省略则用该角色主素材 |
 | `generate_audio` | 否 | `true` / `false` | 是否生成同步音频；显式 `false` 会保留 |
 | `seed` | 否 | 整数 | 随机种子 |
 | `service_tier` | 否 | 字符串 | 上游服务档位控制 |
@@ -598,7 +600,7 @@ ratio:      根级 ratio > metadata.ratio > width/height 推导
 | `type` | 相关字段 | `role` 示例 | 约束 |
 | --- | --- | --- | --- |
 | `text` | `text` | — | 文生视频主提示 |
-| `image_url` | `image_url.url` | `reference_image`、`first_frame`、`last_frame` | 公网 HTTPS 图片 URL |
+| `image_url` | `image_url.url` | `reference_image`、`first_frame`、`last_frame` | 公网 HTTPS 图片 URL，或火山官方素材引用 `asset://{asset_id}`（见 [4.13.5](#4135-角色素材-asset--与角色库引用)） |
 | `video_url` | `video_url.url` | `reference_video` | 公网 HTTPS 视频 URL；含参考视频可能走不同价格变体 |
 | `audio_url` | `audio_url.url` | `reference_audio` | 公网 HTTPS 音频 URL；通常需同时有图或视频参考 |
 
@@ -618,10 +620,10 @@ first/last frame content cannot be mixed with reference media content.
 
 补充约束：
 
-1. 素材须为 **可被 NewAPI 与上游访问的公网 HTTPS URL**；任务接口不会自动上传本地文件，也不接受私有链接、内网地址、过期签名 URL。
+1. 普通素材须为 **可被 NewAPI 与上游访问的公网 HTTPS URL**；任务接口不会自动上传本地文件，也不接受私有链接、内网地址、过期签名 URL。角色托管素材另见 `asset://`（[4.13.5](#4135-角色素材-asset--与角色库引用)）。
 2. 参考视频单条建议时长约 **2～15.2 秒**；参考视频/音频总时长建议不超过 **15.2 秒**。超时会返回类似 `video duration ... must be less than or equal to 15.2` 的错误。
 3. 输出时长请直接传合法 `duration` / `seconds`；非法值会返回 `duration` 参数无效。
-4. 参考图/视频若被判定含真人，上游可能直接拒绝（如 `input image/video may contain real person`）。
+4. 参考图/视频若被判定含真人，上游可能直接拒绝（如 `input image/video may contain real person`）。写实人像应先入库拿到 `asset://`，再作为 `reference_image` 引用。
 5. `Invalid video_url` 通常表示参考视频 URL 无效或不可访问，不是模型名错误。
 
 参考素材数量建议上限（与 Playground 校验一致）：
@@ -754,6 +756,90 @@ curl "$BASE_URL/v1/videos" \
 }
 ```
 
+#### 4.13.5 角色素材 `asset://` 与角色库引用
+
+Seedance 2.0 支持引用火山托管角色素材。**上游官方写法**是把素材 ID 写成 `asset://{asset_id}`，放在 `content` 的 `image_url.url`（`role` 为 `reference_image`）中；NewAPI 会原样转发。
+
+| 引用方式 | 字段 | 适用创建接口 | 说明 |
+| --- | --- | --- | --- |
+| 官方 `asset://` | `content[].image_url.url`，或简写 `images` / `image` | `POST /v1/videos`、`POST /v1/video/generations` | 传火山侧素材 ID，**请求里请写完整** `asset://{asset_id}`（`asset_id` 即角色库中的 `provider_asset_id`） |
+| NewAPI 角色库 | `character_id`，可选 `character_asset_id` | **仅** `POST /v1/video/generations`（控制台为 `POST /pg/video/generations`） | 平台内部角色/素材 ID；中间件解析后注入 `images: ["asset://..."]` 再转发上游 |
+
+三种 ID 不要混用：
+
+| 名称 | 来源 | 示例 |
+| --- | --- | --- |
+| 火山 `asset_id` / `provider_asset_id` | 角色库详情里的素材引用，或上游素材接口返回值 | `asset-2026xxxx-xxxxx` → 请求里写 `asset://asset-2026xxxx-xxxxx` |
+| `character_id` | NewAPI 角色库角色主键 | `12` |
+| `character_asset_id` | NewAPI 角色下某一素材主键 | `34`（省略则用该角色主素材） |
+
+约束：
+
+1. 提示词用「图片1」「图片2」按顺序指代表材，**不要**在文案里写 `asset://` 原文。
+2. `asset://` 与公网 HTTPS 参考图可在同一 `content` 中混用；仍须遵守 [4.13.3](#4133-content-项与参考素材) 的「参考素材模式 / 首尾帧模式」二选一，不可与 `first_frame`/`last_frame` 混用。
+3. 使用 `character_id` 时：**不要**再同时传 `image` / `images` / `first_frame` / `last_frame` / `input_reference`，也不要再传非空的 `metadata.content`；否则返回 `character_reference_conflict`。
+4. `character_id` **不会**作用在 `POST /v1/videos` 上；该路径请直接传 `asset://` 或普通 URL。
+5. `character_asset_id` 不能单独使用，必须同时带 `character_id`。
+6. 模型必须是当前账号可用的 Seedance 2.0 档位；角色/素材须为可访问且状态为 Active。
+
+官方 `asset://` 示例（可用 `/v1/videos`）：
+
+```bash
+curl "$BASE_URL/v1/videos" \
+  -H "Authorization: Bearer $NEW_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "AP Seedance-2.0 标准版",
+    "resolution": "720p",
+    "ratio": "16:9",
+    "duration": 5,
+    "content": [
+      {"type": "text", "text": "图片1中的角色缓慢转身，保持外观一致，电影感"},
+      {
+        "type": "image_url",
+        "role": "reference_image",
+        "image_url": {"url": "asset://asset-2026xxxx-xxxxx"}
+      }
+    ],
+    "generate_audio": false
+  }'
+```
+
+等价简写（`images` 会转为 `reference_image`）：
+
+```bash
+curl "$BASE_URL/v1/videos" \
+  -H "Authorization: Bearer $NEW_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "AP Seedance-2.0 标准版",
+    "prompt": "图片1中的角色缓慢转身，保持外观一致",
+    "images": ["asset://asset-2026xxxx-xxxxx"],
+    "resolution": "720p",
+    "ratio": "16:9",
+    "duration": 5
+  }'
+```
+
+角色库封装示例（须走 `/v1/video/generations`）：
+
+```bash
+curl "$BASE_URL/v1/video/generations" \
+  -H "Authorization: Bearer $NEW_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "AP Seedance-2.0 标准版",
+    "character_id": 12,
+    "character_asset_id": 34,
+    "prompt": "以图片1中的角色为主体，缓慢走向镜头，自然光",
+    "duration": 5,
+    "metadata": {
+      "ratio": "16:9",
+      "resolution": "720p"
+    }
+  }'
+```
+
 ## 5. 素材字段别名（URL 字符串）
 
 任务请求中的素材字段应传 URL 字符串。常见别名如下（新项目优先用推荐名）：
@@ -772,6 +858,7 @@ curl "$BASE_URL/v1/videos" \
 | `aipdd-mimic-motion` | `motion_video`、`appearance_image` | `video`/`load_video`；`image` |
 | `aipdd-latentsync-1.5` | `video`、`LoadAudio` | `load_video`；`audio` |
 | `aipdd-indextts` | `input`、`audio` | `text`；`ref_audio`、`reference_audio`、`voice`、`metadata.audio` |
+| AP Seedance 2.0 | `content` / `prompt`、`resolution` | 参考图：`image`/`images`（HTTPS 或 `asset://`）；角色库：`character_id` + 可选 `character_asset_id`（仅 `/v1/video/generations`） |
 
 ## 6. 创建响应
 
@@ -923,7 +1010,12 @@ OpenAI Video 风格：
 | `Invalid video_url` | 参考视频 URL 无效或不可访问 | 换公网 HTTPS 可直链视频；勿用本地路径/内网/过期签名 |
 | 参考视频时长 `> 15.2` 秒 | r2v 参考视频超限 | 将参考视频压到约 2～15.2 秒 |
 | `duration` 参数无效 | 输出时长不合法 | 直接传合法 `duration`/`seconds`（常见如 5） |
-| 参考视频/图片含真人等敏感内容 | 上游隐私/审核错误 | 去掉参考素材或更换非真人素材；可改文生视频 |
+| 参考视频/图片含真人等敏感内容 | 上游隐私/审核错误 | 去掉参考素材、换非真人素材，或改用已入库的 `asset://` 引用；也可改文生视频 |
+| `character_id_required` / `invalid_character_id` / `invalid_character_asset_id` | 角色库字段不合法 | `character_asset_id` 必须搭配 `character_id`；二者均为正整数 |
+| `character_model_not_allowed` | 非 Seedance 模型却传了 `character_id` | 仅 Seedance 2.0 档位支持角色库引用 |
+| `character_reference_conflict` | `character_id` 与其他参考素材同传 | 去掉 `image`/`images`/`content` 等外部参考，只保留角色库字段 |
+| `character_not_found` / `character_asset_not_found` / `character_unavailable` | 角色或素材不可用 | 确认账号可访问、素材 Active，或改传已知可用的 `asset://` |
+| `asset` 不存在 / 不属于当前账户 | 火山侧无法解析 `asset://` | 确认 `asset_id` 正确，且与出片所用上游账号/项目一致 |
 | `timeline_data must be valid JSON` | 首尾帧 LTX 时间线非法 | 传合法 JSON 对象/数组 |
 | LTX 分辨率/帧率/时长错误 | 不在允许范围 | 见 [4.8](#48-ltx-23-图生视频) |
 | `task_not_exist` | 任务不存在或不属于当前用户 | 使用创建响应中的公开 `task_id` |

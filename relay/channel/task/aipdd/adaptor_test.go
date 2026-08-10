@@ -139,6 +139,28 @@ func TestConvertToRequestPayloadBuildsIndexTTSContent(t *testing.T) {
 	}
 }
 
+func TestConvertToRequestPayloadUsesUnifiedFinanceOrderID(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+	info := relayInfoWithModel(ModelIndexTTS)
+	info.PublicTaskID = "task_public"
+	info.AIPDDFinance = &relaycommon.AIPDDFinanceContext{PlatformOrderID: "finance-order-1"}
+
+	payload, err := adaptor.convertToRequestPayload(relaycommon.TaskSubmitReq{
+		Prompt: "hello",
+		Model:  ModelIndexTTS,
+		Metadata: map[string]interface{}{
+			"audio": "https://cdn.example.com/reference.wav",
+		},
+	}, info)
+
+	if err != nil {
+		t.Fatalf("convertToRequestPayload returned error: %v", err)
+	}
+	if payload.RequestID != "finance-order-1" {
+		t.Fatalf("unexpected request id: %s", payload.RequestID)
+	}
+}
+
 func TestConvertToRequestPayloadDoesNotForwardFilenameForVideoModels(t *testing.T) {
 	adaptor := &TaskAdaptor{}
 	tests := []relaycommon.TaskSubmitReq{

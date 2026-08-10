@@ -2,6 +2,7 @@ package model
 
 import (
 	"errors"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -18,7 +19,20 @@ const (
 	VirtualCharacterSourceAIPDD          = "aipdd"
 	VirtualCharacterSourceVolc           = "volc"
 	VirtualCharacterSourceVolcPreset     = "volc_preset"
+	VirtualCharacterSourceVolcAIGC       = "volc_aigc"
 	VirtualCharacterSourceVolcRealPerson = "volc_real_person"
+
+	VirtualCharacterDefaultAccountAssetCap       = 50
+	VirtualCharacterDefaultCreateAssetQPM        = 3
+	VirtualCharacterDefaultMaxAssetsPerCharacter = 10
+
+	// Volc Assets account quota plans (local guardrails; not queried from Volc).
+	VirtualCharacterQuotaPlanFree   = "free"
+	VirtualCharacterQuotaPlanPaid   = "paid"
+	VirtualCharacterQuotaPlanCustom = "custom"
+
+	VirtualCharacterPaidAccountAssetCap = 1000000
+	VirtualCharacterPaidCreateAssetQPM  = 120
 
 	VirtualCharacterStatusCreating = "creating"
 	VirtualCharacterStatusActive   = "active"
@@ -42,8 +56,40 @@ const (
 	VirtualCharacterDefaultLimit = 100
 )
 
-// VirtualCharacter stores role-library metadata only. Private binary content is
-// kept in the AIPDD digital asset service and referenced by stable IDs.
+// Seedance / AIPDD official catalog facet values (exact-match filters).
+var (
+	VirtualCharacterNationalities = []string{"中国", "美国", "日本", "韩国", "英国", "法国", "印度", "巴西"}
+	VirtualCharacterGenders       = []string{"男", "女"}
+	VirtualCharacterAgeBands      = []VirtualCharacterAgeBand{
+		{Key: "0-20", Min: 0, Max: 20},
+		{Key: "20-40", Min: 20, Max: 40},
+		{Key: "40-60", Min: 40, Max: 60},
+		{Key: "60-80", Min: 60, Max: 80},
+		{Key: "80-100", Min: 80, Max: 100},
+	}
+	virtualCharacterAgeBandPattern = regexp.MustCompile(`^(\d+)\s*[-~～]\s*(\d+)\s*岁?$`)
+	virtualCharacterNationalitySet = virtualCharacterStringSet(VirtualCharacterNationalities)
+	virtualCharacterGenderSet      = virtualCharacterStringSet(VirtualCharacterGenders)
+)
+
+type VirtualCharacterAgeBand struct {
+	Key string
+	Min int
+	Max int
+}
+
+// VirtualCharacterListFilter holds optional list query facets.
+type VirtualCharacterListFilter struct {
+	Keyword     string
+	Nationality string
+	Gender      string
+	AgeMin      *int
+	AgeMax      *int
+	Status      string
+}
+
+// VirtualCharacter stores role-library metadata. Private provider binary content
+// lives in Volc Asset Groups; AIPDD is used only as temporary staging for uploads.
 type VirtualCharacter struct {
 	ID                int64          `json:"id" gorm:"primaryKey;autoIncrement"`
 	UserID            int            `json:"user_id" gorm:"index;uniqueIndex:uk_virtual_character_user_slot"`
@@ -52,14 +98,20 @@ type VirtualCharacter struct {
 	Name              string         `json:"name" gorm:"type:varchar(191);index"`
 	Description       string         `json:"description" gorm:"type:text"`
 	TagsJSON          string         `json:"-" gorm:"type:text"`
+	Nationality       string         `json:"nationality,omitempty" gorm:"type:varchar(64);index:idx_virtual_character_nationality_gender,priority:1"`
+	Gender            string         `json:"gender,omitempty" gorm:"type:varchar(32);index:idx_virtual_character_nationality_gender,priority:2"`
+	AgeMin            *int           `json:"age_min,omitempty"`
+	AgeMax            *int           `json:"age_max,omitempty"`
+	Occupation        string         `json:"occupation,omitempty" gorm:"type:varchar(128)"`
+	Temperament       string         `json:"temperament,omitempty" gorm:"type:varchar(128)"`
 	SourceType        string         `json:"source_type" gorm:"type:varchar(16);index"`
 	Status            string         `json:"status" gorm:"type:varchar(20);index"`
 	ValidationStatus  string         `json:"validation_status" gorm:"type:varchar(20);index"`
 	CoverURL          string         `json:"cover_url,omitempty" gorm:"type:text"`
-	AIPDDAssetID      int64          `json:"-" gorm:"index"`
-	AIPDDFileID       string         `json:"-" gorm:"type:varchar(191);index"`
-	VolcAssetID       string         `json:"volc_asset_id,omitempty" gorm:"type:varchar(191);index"`
-	PublicChannelID   int            `json:"public_channel_id,omitempty" gorm:"index"`
+	AIPDDAssetID      int64          `json:"-" gorm:"index"`                                         // deprecated: legacy private fictional path
+	AIPDDFileID       string         `json:"-" gorm:"type:varchar(191);index"`                       // deprecated: legacy private fictional path
+	VolcAssetID       string         `json:"volc_asset_id,omitempty" gorm:"type:varchar(191);index"` // deprecated: use VirtualCharacterAsset.ProviderAssetID
+	PublicChannelID   int            `json:"public_channel_id,omitempty" gorm:"index"`               // deprecated
 	ProviderAccountID int            `json:"provider_account_id,omitempty" gorm:"index"`
 	ProviderGroupID   string         `json:"provider_group_id,omitempty" gorm:"type:varchar(191);index"`
 	PrimaryAssetID    *int64         `json:"primary_asset_id,omitempty" gorm:"index"`
@@ -119,40 +171,63 @@ func GetVirtualCharacterGlobalLimit() int {
 	return limit
 }
 
-func GetVirtualCharacterModels() []string {
+func GetVirtualCharacterAccountAssetCap() int {
 	common.OptionMapRWMutex.RLock()
-	raw := common.OptionMap["VirtualCharacterModels"]
+	raw := strings.TrimSpace(common.OptionMap["VirtualCharacterAccountAssetCap"])
 	common.OptionMapRWMutex.RUnlock()
-	seen := make(map[string]struct{})
-	models := make([]string, 0)
-	for _, value := range strings.Split(raw, ",") {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
-		}
-		if _, exists := seen[value]; exists {
-			continue
-		}
-		seen[value] = struct{}{}
-		models = append(models, value)
+	limit, err := strconv.Atoi(raw)
+	if err != nil || limit <= 0 {
+		return VirtualCharacterDefaultAccountAssetCap
 	}
-	return models
+	if limit > 5000000 {
+		return 5000000
+	}
+	return limit
 }
 
-func GetVirtualCharacterDefaultModel() string {
+func GetVirtualCharacterMaxAssetsPerCharacter() int {
 	common.OptionMapRWMutex.RLock()
-	value := strings.TrimSpace(common.OptionMap["VirtualCharacterDefaultModel"])
+	raw := strings.TrimSpace(common.OptionMap["VirtualCharacterMaxAssetsPerCharacter"])
 	common.OptionMapRWMutex.RUnlock()
-	return value
+	limit, err := strconv.Atoi(raw)
+	if err != nil || limit <= 0 {
+		return VirtualCharacterDefaultMaxAssetsPerCharacter
+	}
+	if limit > 100 {
+		return 100
+	}
+	return limit
 }
 
-func IsVirtualCharacterModelAllowed(modelName string) bool {
-	for _, allowed := range GetVirtualCharacterModels() {
-		if modelName == allowed {
-			return true
+// NormalizeVirtualCharacterQuotaPlan returns a known plan and the asset-cap / CreateAsset QPM
+// that should be applied for that plan. free/paid overwrite the numeric inputs; custom keeps them.
+func NormalizeVirtualCharacterQuotaPlan(plan string, assetCap, createAssetQPM int) (normalized string, nextAssetCap, nextQPM int) {
+	switch strings.ToLower(strings.TrimSpace(plan)) {
+	case VirtualCharacterQuotaPlanPaid:
+		return VirtualCharacterQuotaPlanPaid, VirtualCharacterPaidAccountAssetCap, VirtualCharacterPaidCreateAssetQPM
+	case VirtualCharacterQuotaPlanCustom:
+		if assetCap <= 0 {
+			assetCap = VirtualCharacterDefaultAccountAssetCap
 		}
+		if createAssetQPM <= 0 {
+			createAssetQPM = VirtualCharacterDefaultCreateAssetQPM
+		}
+		if createAssetQPM > 300 {
+			createAssetQPM = 300
+		}
+		if assetCap > 5000000 {
+			assetCap = 5000000
+		}
+		return VirtualCharacterQuotaPlanCustom, assetCap, createAssetQPM
+	default:
+		return VirtualCharacterQuotaPlanFree, VirtualCharacterDefaultAccountAssetCap, VirtualCharacterDefaultCreateAssetQPM
 	}
-	return false
+}
+
+// IsVirtualCharacterSeedanceModel reports whether the model name can be used
+// for character-library video generation (name contains "seedance").
+func IsVirtualCharacterSeedanceModel(modelName string) bool {
+	return strings.Contains(strings.ToLower(strings.TrimSpace(modelName)), "seedance")
 }
 
 func GetVirtualCharacterEffectiveLimit(userID int) int {
@@ -243,10 +318,10 @@ func GetOwnedVirtualCharacter(id int64, userID int) (*VirtualCharacter, error) {
 	return &item, err
 }
 
-func ListVirtualCharacters(userID int, scope string, includeOffline bool, offset, limit int) ([]VirtualCharacter, int64, error) {
+func ListVirtualCharacters(userID int, scope string, includeOffline bool, filter VirtualCharacterListFilter, offset, limit int) ([]VirtualCharacter, int64, error) {
 	query := DB.Model(&VirtualCharacter{})
 	switch scope {
-	case VirtualCharacterScopePrivate:
+	case VirtualCharacterScopePrivate, "":
 		query = query.Where("scope = ? AND user_id = ?", VirtualCharacterScopePrivate, userID)
 	case VirtualCharacterScopePublic:
 		query = query.Where("scope = ?", VirtualCharacterScopePublic)
@@ -256,6 +331,7 @@ func ListVirtualCharacters(userID int, scope string, includeOffline bool, offset
 	default:
 		return nil, 0, errors.New("invalid virtual character scope")
 	}
+	query = applyVirtualCharacterListFilter(query, filter)
 	var total int64
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
@@ -263,6 +339,163 @@ func ListVirtualCharacters(userID int, scope string, includeOffline bool, offset
 	var items []VirtualCharacter
 	err := query.Order("id DESC").Offset(offset).Limit(limit).Find(&items).Error
 	return items, total, err
+}
+
+func applyVirtualCharacterListFilter(query *gorm.DB, filter VirtualCharacterListFilter) *gorm.DB {
+	if keyword := strings.TrimSpace(filter.Keyword); keyword != "" {
+		like := "%" + escapeVirtualCharacterLike(keyword) + "%"
+		query = query.Where(
+			"(name LIKE ? ESCAPE '!' OR description LIKE ? ESCAPE '!' OR occupation LIKE ? ESCAPE '!' OR temperament LIKE ? ESCAPE '!' OR tags_json LIKE ? ESCAPE '!')",
+			like, like, like, like, like,
+		)
+	}
+	if nationality := strings.TrimSpace(filter.Nationality); nationality != "" {
+		query = query.Where("nationality = ?", nationality)
+	}
+	if gender := strings.TrimSpace(filter.Gender); gender != "" {
+		query = query.Where("gender = ?", gender)
+	}
+	if filter.AgeMin != nil && filter.AgeMax != nil {
+		// Official catalog stores discrete Seedance bands (e.g. 20-40 / 40-60).
+		// Exact match avoids double-counting characters that sit on shared band edges.
+		query = query.Where("age_min = ? AND age_max = ?", *filter.AgeMin, *filter.AgeMax)
+	}
+	if status := strings.TrimSpace(filter.Status); status != "" {
+		query = query.Where("status = ?", status)
+	}
+	return query
+}
+
+func escapeVirtualCharacterLike(value string) string {
+	value = strings.ReplaceAll(value, "!", "!!")
+	value = strings.ReplaceAll(value, "%", "!%")
+	value = strings.ReplaceAll(value, "_", "!_")
+	return value
+}
+
+func virtualCharacterStringSet(values []string) map[string]struct{} {
+	set := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		set[value] = struct{}{}
+	}
+	return set
+}
+
+// ParseVirtualCharacterAgeBandKey accepts "20-40" or "20-40岁" and returns the band bounds.
+func ParseVirtualCharacterAgeBandKey(value string) (min, max int, ok bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0, 0, false
+	}
+	for _, band := range VirtualCharacterAgeBands {
+		if value == band.Key || value == band.Key+"岁" {
+			return band.Min, band.Max, true
+		}
+	}
+	matches := virtualCharacterAgeBandPattern.FindStringSubmatch(value)
+	if len(matches) != 3 {
+		return 0, 0, false
+	}
+	parsedMin, errMin := strconv.Atoi(matches[1])
+	parsedMax, errMax := strconv.Atoi(matches[2])
+	if errMin != nil || errMax != nil || parsedMin > parsedMax {
+		return 0, 0, false
+	}
+	return parsedMin, parsedMax, true
+}
+
+// ParseVirtualCharacterAgeBandFromTags finds the first "N-M岁" style tag.
+func ParseVirtualCharacterAgeBandFromTags(tags []string) (min, max int, ok bool) {
+	for _, tag := range tags {
+		if parsedMin, parsedMax, parsed := ParseVirtualCharacterAgeBandKey(tag); parsed {
+			return parsedMin, parsedMax, true
+		}
+	}
+	return 0, 0, false
+}
+
+func GuessVirtualCharacterNationalityFromTags(tags []string) string {
+	for _, tag := range tags {
+		tag = strings.TrimSpace(tag)
+		if _, exists := virtualCharacterNationalitySet[tag]; exists {
+			return tag
+		}
+	}
+	return ""
+}
+
+func GuessVirtualCharacterGenderFromTags(tags []string) string {
+	for _, tag := range tags {
+		tag = strings.TrimSpace(tag)
+		if _, exists := virtualCharacterGenderSet[tag]; exists {
+			return tag
+		}
+	}
+	return ""
+}
+
+func FormatVirtualCharacterAgeLabel(ageMin, ageMax *int) string {
+	if ageMin == nil || ageMax == nil {
+		return ""
+	}
+	return strconv.Itoa(*ageMin) + "-" + strconv.Itoa(*ageMax) + "岁"
+}
+
+// BackfillVirtualCharacterStructuredFacets fills nationality/gender/age from tags
+// for public catalog rows that predate structured columns.
+func BackfillVirtualCharacterStructuredFacets() error {
+	var items []VirtualCharacter
+	if err := DB.Where(
+		"scope = ? AND source_type = ? AND (nationality = ? OR gender = ? OR age_min IS NULL OR age_max IS NULL)",
+		VirtualCharacterScopePublic, VirtualCharacterSourceVolcPreset, "", "",
+	).Find(&items).Error; err != nil {
+		return err
+	}
+	for i := range items {
+		item := &items[i]
+		tags := decodeVirtualCharacterTagsJSON(item.TagsJSON)
+		updates := map[string]any{}
+		if strings.TrimSpace(item.Nationality) == "" {
+			if nationality := GuessVirtualCharacterNationalityFromTags(tags); nationality != "" {
+				updates["nationality"] = nationality
+			}
+		}
+		if strings.TrimSpace(item.Gender) == "" {
+			if gender := GuessVirtualCharacterGenderFromTags(tags); gender != "" {
+				updates["gender"] = gender
+			}
+		}
+		if item.AgeMin == nil || item.AgeMax == nil {
+			if ageMin, ageMax, ok := ParseVirtualCharacterAgeBandFromTags(tags); ok {
+				if item.AgeMin == nil {
+					updates["age_min"] = ageMin
+				}
+				if item.AgeMax == nil {
+					updates["age_max"] = ageMax
+				}
+			}
+		}
+		if len(updates) == 0 {
+			continue
+		}
+		updates["updated_at"] = time.Now().Unix()
+		if err := DB.Model(item).Updates(updates).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func decodeVirtualCharacterTagsJSON(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	var tags []string
+	if err := common.Unmarshal([]byte(raw), &tags); err != nil {
+		return nil
+	}
+	return tags
 }
 
 func UpdateVirtualCharacterMetadata(item *VirtualCharacter, name, description, tagsJSON string) error {

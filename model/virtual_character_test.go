@@ -133,3 +133,20 @@ func TestRecoverVirtualCharacterTaskCreatesTaskExactlyOnce(t *testing.T) {
 	require.NoError(t, DB.Model(&Task{}).Where("task_id = ?", task.TaskID).Count(&count).Error)
 	require.EqualValues(t, 1, count)
 }
+
+func TestNormalizeVirtualCharacterQuotaPlan(t *testing.T) {
+	plan, cap, qpm := NormalizeVirtualCharacterQuotaPlan("free", 999, 99)
+	require.Equal(t, VirtualCharacterQuotaPlanFree, plan)
+	require.Equal(t, VirtualCharacterDefaultAccountAssetCap, cap)
+	require.Equal(t, VirtualCharacterDefaultCreateAssetQPM, qpm)
+
+	plan, cap, qpm = NormalizeVirtualCharacterQuotaPlan("paid", 1, 1)
+	require.Equal(t, VirtualCharacterQuotaPlanPaid, plan)
+	require.Equal(t, VirtualCharacterPaidAccountAssetCap, cap)
+	require.Equal(t, VirtualCharacterPaidCreateAssetQPM, qpm)
+
+	plan, cap, qpm = NormalizeVirtualCharacterQuotaPlan("custom", 1234, 45)
+	require.Equal(t, VirtualCharacterQuotaPlanCustom, plan)
+	require.Equal(t, 1234, cap)
+	require.Equal(t, 45, qpm)
+}

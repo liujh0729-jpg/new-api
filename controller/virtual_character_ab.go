@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -18,7 +19,6 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
@@ -29,6 +29,30 @@ const (
 	virtualCharacterValidationTTL = 30 * time.Minute
 	virtualCharacterUploadMaxBody = int64(51 << 20)
 )
+
+type virtualCharacterStagingStorage interface {
+	UploadPrivateFile(ctx context.Context, filename string, reader io.Reader) (*service.AIPDDStoredFile, error)
+	SignFile(ctx context.Context, fileID string) (*service.AIPDDSignedURL, error)
+	DeleteFile(ctx context.Context, fileID string) error
+}
+
+// newVirtualCharacterStagingStorage is overridable in tests.
+var newVirtualCharacterStagingStorage = func() (virtualCharacterStagingStorage, error) {
+	return service.NewAIPDDVirtualCharacterStorage()
+}
+
+type virtualCharacterAssetCreateError struct {
+	Status  int
+	Code    string
+	Message string
+}
+
+func (e *virtualCharacterAssetCreateError) Error() string {
+	if e == nil {
+		return ""
+	}
+	return e.Message
+}
 
 type virtualCharacterAssetResponse struct {
 	ID              int64  `json:"id"`
@@ -52,6 +76,12 @@ type virtualCharacterGroupResponse struct {
 	Name             string                          `json:"name"`
 	Description      string                          `json:"description"`
 	Tags             []string                        `json:"tags"`
+	Nationality      string                          `json:"nationality,omitempty"`
+	Gender           string                          `json:"gender,omitempty"`
+	AgeMin           *int                            `json:"age_min,omitempty"`
+	AgeMax           *int                            `json:"age_max,omitempty"`
+	Occupation       string                          `json:"occupation,omitempty"`
+	Temperament      string                          `json:"temperament,omitempty"`
 	Status           string                          `json:"status"`
 	ValidationStatus string                          `json:"validation_status"`
 	CoverURL         string                          `json:"cover_url,omitempty"`
@@ -63,6 +93,33 @@ type virtualCharacterGroupResponse struct {
 	CatalogVersion   string                          `json:"catalog_version,omitempty"`
 }
 
+func parseVirtualCharacterListFilter(c *gin.Context) (model.VirtualCharacterListFilter, error) {
+	filter := model.VirtualCharacterListFilter{
+		Keyword:     strings.TrimSpace(c.Query("keyword")),
+		Nationality: strings.TrimSpace(c.Query("nationality")),
+		Gender:      strings.TrimSpace(c.Query("gender")),
+		Status:      strings.TrimSpace(c.Query("status")),
+	}
+	if ageBand := strings.TrimSpace(c.Query("age_band")); ageBand != "" {
+		ageMin, ageMax, ok := model.ParseVirtualCharacterAgeBandKey(ageBand)
+		if !ok {
+			return filter, errors.New("age_band must be one of 0-20, 20-40, 40-60, 60-80, 80-100")
+		}
+		filter.AgeMin = &ageMin
+		filter.AgeMax = &ageMax
+	}
+	if filter.Status != "" {
+		switch filter.Status {
+		case model.VirtualCharacterStatusCreating, model.VirtualCharacterStatusActive,
+			model.VirtualCharacterStatusBlocked, model.VirtualCharacterStatusOffline,
+			model.VirtualCharacterStatusDeleting, model.VirtualCharacterStatusFailed:
+		default:
+			return filter, errors.New("invalid status filter")
+		}
+	}
+	return filter, nil
+}
+
 func ListVirtualCharacterGroups(c *gin.Context) {
 	userID := c.GetInt("id")
 	scope := strings.TrimSpace(c.DefaultQuery("scope", model.VirtualCharacterScopePublic))
@@ -70,15 +127,20 @@ func ListVirtualCharacterGroups(c *gin.Context) {
 		virtualCharacterError(c, http.StatusBadRequest, "invalid_scope", "scope must be public or private")
 		return
 	}
+	filter, err := parseVirtualCharacterListFilter(c)
+	if err != nil {
+		virtualCharacterError(c, http.StatusBadRequest, "invalid_filter", err.Error())
+		return
+	}
 	page := getVirtualCharacterPage(c)
-	items, total, err := model.ListVirtualCharacters(userID, scope, false, page.GetStartIdx(), page.GetPageSize())
+	items, total, err := model.ListVirtualCharacters(userID, scope, false, filter, page.GetStartIdx(), page.GetPageSize())
 	if err != nil {
 		virtualCharacterError(c, http.StatusInternalServerError, "list_failed", err.Error())
 		return
 	}
 	responses := make([]virtualCharacterGroupResponse, 0, len(items))
 	for i := range items {
-		response, responseErr := virtualCharacterGroupToResponse(&items[i], scope == model.VirtualCharacterScopePrivate)
+		response, responseErr := virtualCharacterGroupToResponse(&items[i], true)
 		if responseErr != nil {
 			virtualCharacterError(c, http.StatusInternalServerError, "list_failed", responseErr.Error())
 			return
@@ -87,13 +149,8 @@ func ListVirtualCharacterGroups(c *gin.Context) {
 	}
 	page.SetTotal(int(total))
 	page.SetItems(responses)
-	data := gin.H{"page": page}
-	if scope == model.VirtualCharacterScopePrivate {
-		used, _ := model.CountActivePrivateVirtualCharacters(userID)
-		data["used"] = used
-		data["limit"] = model.GetVirtualCharacterEffectiveLimit(userID)
-	}
-	common.ApiSuccess(c, data)
+	used, _ := model.CountActivePrivateVirtualCharacters(userID)
+	common.ApiSuccess(c, gin.H{"page": page, "used": used, "limit": model.GetVirtualCharacterEffectiveLimit(userID)})
 }
 
 func GetVirtualCharacterGroup(c *gin.Context) {
@@ -116,8 +173,13 @@ func GetVirtualCharacterGroup(c *gin.Context) {
 }
 
 func AdminListVirtualCharacterGroups(c *gin.Context) {
+	filter, err := parseVirtualCharacterListFilter(c)
+	if err != nil {
+		virtualCharacterError(c, http.StatusBadRequest, "invalid_filter", err.Error())
+		return
+	}
 	page := getVirtualCharacterPage(c)
-	items, total, err := model.ListVirtualCharacters(0, model.VirtualCharacterScopePublic, true, page.GetStartIdx(), page.GetPageSize())
+	items, total, err := model.ListVirtualCharacters(0, model.VirtualCharacterScopePublic, true, filter, page.GetStartIdx(), page.GetPageSize())
 	if err != nil {
 		virtualCharacterError(c, http.StatusInternalServerError, "list_failed", err.Error())
 		return
@@ -137,12 +199,109 @@ func AdminListVirtualCharacterGroups(c *gin.Context) {
 }
 
 func GetVirtualCharacterABConfig(c *gin.Context) {
-	account, err := model.GetEnabledVirtualCharacterProviderAccount()
-	officialEnabled, realPersonEnabled := false, false
-	if err == nil && common.HasStableCryptoSecret() {
-		officialEnabled, realPersonEnabled = account.OfficialEnabled, account.RealPersonEnabled
+	_, err := model.GetEnabledVirtualCharacterProviderAccount()
+	libraryEnabled := err == nil && common.HasStableCryptoSecret()
+	common.ApiSuccess(c, gin.H{
+		"image_max_mb": 30, "video_max_mb": 50, "audio_max_mb": 15, "task_retention_days": 90,
+		// Official and user virtual characters follow the library master switch; real-person stays reserved.
+		"official_enabled": libraryEnabled, "virtual_enabled": libraryEnabled, "real_person_enabled": false,
+		"account_asset_cap":        model.GetVirtualCharacterAccountAssetCap(),
+		"max_assets_per_character": model.GetVirtualCharacterMaxAssetsPerCharacter(),
+	})
+}
+
+func CreateVirtualCharacter(c *gin.Context) {
+	userID := c.GetInt("id")
+	if userID <= 0 {
+		virtualCharacterError(c, http.StatusUnauthorized, "unauthorized", "authentication is required")
+		return
 	}
-	common.ApiSuccess(c, gin.H{"models": model.GetVirtualCharacterModels(), "default_model": model.GetVirtualCharacterDefaultModel(), "image_max_mb": 30, "video_max_mb": 50, "audio_max_mb": 15, "task_retention_days": 90, "official_enabled": officialEnabled, "real_person_enabled": realPersonEnabled})
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, virtualCharacterUploadMaxBody)
+	if err := c.Request.ParseMultipartForm(8 << 20); err != nil {
+		virtualCharacterError(c, http.StatusBadRequest, "invalid_upload", "invalid or oversized multipart upload")
+		return
+	}
+	header, err := c.FormFile("file")
+	if err != nil {
+		virtualCharacterError(c, http.StatusBadRequest, "missing_file", "primary image file is required")
+		return
+	}
+	assetType, _, err := validateVolcCharacterAssetUpload(header, model.VirtualCharacterAssetTypeImage)
+	if err != nil {
+		virtualCharacterError(c, http.StatusBadRequest, "invalid_file", err.Error())
+		return
+	}
+	if assetType != model.VirtualCharacterAssetTypeImage {
+		virtualCharacterError(c, http.StatusBadRequest, "invalid_file", "primary asset must be an Image")
+		return
+	}
+	account, client, err := enabledVirtualCharacterClientForSource(model.VirtualCharacterSourceVolcAIGC)
+	if err != nil {
+		virtualCharacterError(c, http.StatusServiceUnavailable, "virtual_disabled", err.Error())
+		return
+	}
+	assetCount, countErr := model.CountVirtualCharacterAssets()
+	if countErr != nil {
+		virtualCharacterError(c, http.StatusInternalServerError, "quota_check_failed", countErr.Error())
+		return
+	}
+	if assetCount >= int64(model.GetVirtualCharacterAccountAssetCap()) {
+		virtualCharacterError(c, http.StatusConflict, "account_asset_cap_reached", "account asset capacity has been reached")
+		return
+	}
+	metadata, tagsJSON, err := normalizeVirtualCharacterMetadata(virtualCharacterMetadataRequest{
+		Name: c.PostForm("name"), Description: c.PostForm("description"), Tags: parseVirtualCharacterTags(c.PostForm("tags")),
+	})
+	if err != nil {
+		virtualCharacterError(c, http.StatusBadRequest, "invalid_metadata", err.Error())
+		return
+	}
+	item, _, err := model.CreateAIGCVirtualCharacter(userID, account.ID, metadata.Name, metadata.Description, tagsJSON)
+	if err != nil {
+		if strings.Contains(err.Error(), "limit reached") {
+			virtualCharacterError(c, http.StatusConflict, "limit_reached", err.Error())
+			return
+		}
+		virtualCharacterError(c, http.StatusInternalServerError, "create_failed", err.Error())
+		return
+	}
+	groupID, err := client.CreateAssetGroup(c.Request.Context(), metadata.Name, metadata.Description, account.ProjectName)
+	if err != nil {
+		_ = model.ReleasePrivateVirtualCharacterSlot(item.ID, common.MaskSensitiveInfo(err.Error()))
+		virtualCharacterError(c, http.StatusBadGateway, "provider_group_failed", common.MaskSensitiveInfo(err.Error()))
+		return
+	}
+	if err := model.AttachVirtualCharacterProviderGroup(item.ID, groupID); err != nil {
+		_ = model.CreateVirtualCharacterCleanupJob(&model.VirtualCharacterCleanupJob{
+			CharacterID: item.ID, ProviderAccountID: account.ID, TargetType: "volc_group", TargetID: groupID, Status: model.VirtualCharacterCleanupPending, NextAttemptAt: time.Now().Unix(),
+		})
+		_ = model.ReleasePrivateVirtualCharacterSlot(item.ID, err.Error())
+		virtualCharacterError(c, http.StatusInternalServerError, "attach_group_failed", err.Error())
+		return
+	}
+	item.ProviderGroupID = groupID
+	item.Status = model.VirtualCharacterStatusActive
+	assetName := strings.TrimSpace(c.PostForm("asset_name"))
+	if assetName == "" {
+		assetName = metadata.Name
+	}
+	asset, createErr := stageAndCreateVirtualCharacterAsset(c.Request.Context(), item, account, client, header, assetName, model.VirtualCharacterAssetTypeImage)
+	if createErr != nil {
+		_ = model.CreateVirtualCharacterCleanupJob(&model.VirtualCharacterCleanupJob{
+			CharacterID: item.ID, ProviderAccountID: account.ID, TargetType: "volc_group", TargetID: groupID, Status: model.VirtualCharacterCleanupPending, NextAttemptAt: time.Now().Unix(),
+		})
+		_ = model.ReleasePrivateVirtualCharacterSlot(item.ID, createErr.Message)
+		virtualCharacterError(c, createErr.Status, createErr.Code, createErr.Message)
+		return
+	}
+	item.PrimaryAssetID = &asset.ID
+	item.CoverURL = asset.CoverURL
+	response, err := virtualCharacterGroupToResponse(item, true)
+	if err != nil {
+		virtualCharacterError(c, http.StatusInternalServerError, "create_failed", err.Error())
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"success": true, "data": response})
 }
 
 func CreateVirtualCharacterValidationSession(c *gin.Context) {
@@ -323,7 +482,7 @@ func UploadVirtualCharacterAsset(c *gin.Context) {
 		return
 	}
 	character, err := model.GetOwnedVirtualCharacter(characterID, c.GetInt("id"))
-	if err != nil || character.SourceType != model.VirtualCharacterSourceVolcRealPerson {
+	if err != nil || (character.SourceType != model.VirtualCharacterSourceVolcAIGC && character.SourceType != model.VirtualCharacterSourceVolcRealPerson) {
 		virtualCharacterLookupError(c, gorm.ErrRecordNotFound)
 		return
 	}
@@ -331,9 +490,31 @@ func UploadVirtualCharacterAsset(c *gin.Context) {
 		virtualCharacterError(c, http.StatusConflict, "character_unavailable", "character is not ready for assets")
 		return
 	}
-	account, client, err := enabledVirtualCharacterClient(true)
+	if strings.TrimSpace(character.ProviderGroupID) == "" {
+		virtualCharacterError(c, http.StatusConflict, "group_missing", "character provider group is missing")
+		return
+	}
+	account, client, err := enabledVirtualCharacterClientForSource(character.SourceType)
 	if err != nil || account.ID != character.ProviderAccountID {
 		virtualCharacterError(c, http.StatusServiceUnavailable, "provider_unavailable", "virtual character provider is unavailable")
+		return
+	}
+	assetCount, countErr := model.CountVirtualCharacterAssets()
+	if countErr != nil {
+		virtualCharacterError(c, http.StatusInternalServerError, "quota_check_failed", countErr.Error())
+		return
+	}
+	if assetCount >= int64(model.GetVirtualCharacterAccountAssetCap()) {
+		virtualCharacterError(c, http.StatusConflict, "account_asset_cap_reached", "account asset capacity has been reached")
+		return
+	}
+	characterAssetCount, characterCountErr := model.CountVirtualCharacterAssetsByCharacter(character.ID)
+	if characterCountErr != nil {
+		virtualCharacterError(c, http.StatusInternalServerError, "quota_check_failed", characterCountErr.Error())
+		return
+	}
+	if characterAssetCount >= int64(model.GetVirtualCharacterMaxAssetsPerCharacter()) {
+		virtualCharacterError(c, http.StatusConflict, "character_asset_limit_reached", "this character has reached the maximum number of related assets")
 		return
 	}
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, virtualCharacterUploadMaxBody)
@@ -346,55 +527,82 @@ func UploadVirtualCharacterAsset(c *gin.Context) {
 		virtualCharacterError(c, http.StatusBadRequest, "missing_file", "file is required")
 		return
 	}
-	assetType, mimeType, err := validateVolcCharacterAssetUpload(header, c.PostForm("asset_type"))
-	if err != nil {
-		virtualCharacterError(c, http.StatusBadRequest, "invalid_file", err.Error())
+	name := strings.TrimSpace(c.PostForm("name"))
+	asset, createErr := stageAndCreateVirtualCharacterAsset(c.Request.Context(), character, account, client, header, name, c.PostForm("asset_type"))
+	if createErr != nil {
+		virtualCharacterError(c, createErr.Status, createErr.Code, createErr.Message)
 		return
+	}
+	c.JSON(http.StatusAccepted, gin.H{"success": true, "data": virtualCharacterAssetResponse{ID: asset.ID, Name: asset.Name, AssetType: asset.AssetType, Status: asset.Status, IsPrimary: asset.IsPrimary, MimeType: asset.MimeType, FileSize: asset.FileSize, ProviderAssetID: asset.ProviderAssetID, CreatedAt: asset.CreatedAt, UpdatedAt: asset.UpdatedAt}})
+}
+
+func stageAndCreateVirtualCharacterAsset(
+	ctx context.Context,
+	character *model.VirtualCharacter,
+	account *model.VirtualCharacterProviderAccount,
+	client service.VolcAssetClient,
+	header *multipart.FileHeader,
+	name string,
+	declaredType string,
+) (*model.VirtualCharacterAsset, *virtualCharacterAssetCreateError) {
+	assetType, mimeType, err := validateVolcCharacterAssetUpload(header, declaredType)
+	if err != nil {
+		return nil, &virtualCharacterAssetCreateError{Status: http.StatusBadRequest, Code: "invalid_file", Message: err.Error()}
 	}
 	file, err := header.Open()
 	if err != nil {
-		virtualCharacterError(c, http.StatusBadRequest, "invalid_file", err.Error())
-		return
+		return nil, &virtualCharacterAssetCreateError{Status: http.StatusBadRequest, Code: "invalid_file", Message: err.Error()}
 	}
 	defer file.Close()
-	storage, err := service.NewAIPDDVirtualCharacterStorage()
+	storage, err := newVirtualCharacterStagingStorage()
 	if err != nil {
-		virtualCharacterError(c, http.StatusServiceUnavailable, "staging_unavailable", err.Error())
-		return
+		return nil, &virtualCharacterAssetCreateError{Status: http.StatusServiceUnavailable, Code: "staging_unavailable", Message: err.Error()}
 	}
-	stored, err := storage.UploadPrivateFile(c.Request.Context(), header.Filename, file)
+	stored, err := storage.UploadPrivateFile(ctx, header.Filename, file)
 	if err != nil {
-		virtualCharacterError(c, http.StatusBadGateway, "staging_upload_failed", err.Error())
-		return
+		return nil, &virtualCharacterAssetCreateError{Status: http.StatusBadGateway, Code: "staging_upload_failed", Message: err.Error()}
 	}
 	cleanupStaging := true
 	defer func() {
-		if cleanupStaging {
-			_ = storage.DeleteFile(c.Request.Context(), stored.FileID)
+		if !cleanupStaging {
+			return
+		}
+		// ctx is usually already cancelled on this path (client gone or request timed
+		// out), so drop the staged file on an independent deadline and fall back to a
+		// cleanup job rather than leaking an orphan file.
+		cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancelCleanup()
+		if err := storage.DeleteFile(cleanupCtx, stored.FileID); err != nil {
+			_ = model.CreateVirtualCharacterCleanupJob(&model.VirtualCharacterCleanupJob{
+				CharacterID: character.ID, ProviderAccountID: account.ID, TargetType: "aipdd_file", TargetID: stored.FileID,
+			})
 		}
 	}()
-	signed, err := storage.SignFile(c.Request.Context(), stored.FileID)
+	signed, err := storage.SignFile(ctx, stored.FileID)
 	if err != nil {
-		virtualCharacterError(c, http.StatusBadGateway, "staging_sign_failed", err.Error())
-		return
+		return nil, &virtualCharacterAssetCreateError{Status: http.StatusBadGateway, Code: "staging_sign_failed", Message: err.Error()}
 	}
-	name := strings.TrimSpace(c.PostForm("name"))
+	name = strings.TrimSpace(name)
 	if name == "" {
 		name = strings.TrimSuffix(filepath.Base(header.Filename), filepath.Ext(header.Filename))
 	}
-	providerAssetID, err := client.CreateAsset(c.Request.Context(), character.ProviderGroupID, signed.URL, assetType, name, account.ProjectName)
+	providerAssetID, err := client.CreateAsset(ctx, character.ProviderGroupID, signed.URL, assetType, name, account.ProjectName)
 	if err != nil {
-		virtualCharacterError(c, http.StatusBadGateway, "provider_asset_failed", common.MaskSensitiveInfo(err.Error()))
-		return
+		return nil, &virtualCharacterAssetCreateError{Status: http.StatusBadGateway, Code: "provider_asset_failed", Message: common.MaskSensitiveInfo(err.Error())}
 	}
-	asset := &model.VirtualCharacterAsset{CharacterID: character.ID, ProviderAccountID: account.ID, ProviderAssetID: providerAssetID, Name: name, AssetType: assetType, Status: model.VirtualCharacterAssetStatusProcessing, StagingFileID: stored.FileID, MimeType: mimeType, FileSize: header.Size, NextPollAt: time.Now().Add(5 * time.Second).Unix()}
+	asset := &model.VirtualCharacterAsset{
+		CharacterID: character.ID, ProviderAccountID: account.ID, ProviderAssetID: providerAssetID, Name: name,
+		AssetType: assetType, Status: model.VirtualCharacterAssetStatusProcessing, StagingFileID: stored.FileID,
+		MimeType: mimeType, FileSize: header.Size, NextPollAt: time.Now().Add(5 * time.Second).Unix(),
+	}
 	if err := model.CreateVirtualCharacterAsset(asset); err != nil {
-		_ = model.CreateVirtualCharacterCleanupJob(&model.VirtualCharacterCleanupJob{CharacterID: character.ID, ProviderAccountID: account.ID, TargetType: "volc_asset", TargetID: providerAssetID})
-		virtualCharacterError(c, http.StatusInternalServerError, "asset_save_failed", err.Error())
-		return
+		_ = model.CreateVirtualCharacterCleanupJob(&model.VirtualCharacterCleanupJob{
+			CharacterID: character.ID, ProviderAccountID: account.ID, TargetType: "volc_asset", TargetID: providerAssetID,
+		})
+		return nil, &virtualCharacterAssetCreateError{Status: http.StatusInternalServerError, Code: "asset_save_failed", Message: err.Error()}
 	}
 	cleanupStaging = false
-	c.JSON(http.StatusAccepted, gin.H{"success": true, "data": virtualCharacterAssetResponse{ID: asset.ID, Name: asset.Name, AssetType: asset.AssetType, Status: asset.Status, IsPrimary: asset.IsPrimary, MimeType: asset.MimeType, FileSize: asset.FileSize, ProviderAssetID: asset.ProviderAssetID, CreatedAt: asset.CreatedAt, UpdatedAt: asset.UpdatedAt}})
+	return asset, nil
 }
 
 func SetVirtualCharacterPrimaryAsset(c *gin.Context) {
@@ -419,10 +627,97 @@ func DeleteVirtualCharacterAsset(c *gin.Context) {
 		return
 	}
 	if err := model.BeginVirtualCharacterAssetDelete(characterID, assetID, c.GetInt("id")); err != nil {
+		if errors.Is(err, model.ErrVirtualCharacterPrimaryAssetProtected) {
+			virtualCharacterError(c, http.StatusConflict, "primary_asset_protected", "primary asset cannot be deleted")
+			return
+		}
 		virtualCharacterLookupError(c, err)
 		return
 	}
 	common.ApiSuccess(c, gin.H{"id": assetID, "status": model.VirtualCharacterAssetStatusDeleting})
+}
+
+func PreviewVirtualCharacterAsset(c *gin.Context) {
+	characterID, characterErr := parseVirtualCharacterID(c.Param("id"))
+	assetID, assetErr := parseVirtualCharacterID(c.Param("asset_id"))
+	if characterErr != nil || assetErr != nil {
+		virtualCharacterError(c, http.StatusBadRequest, "invalid_id", "invalid character or asset id")
+		return
+	}
+	asset, _, err := model.GetVirtualCharacterAssetForUser(characterID, assetID, c.GetInt("id"))
+	if err != nil {
+		virtualCharacterLookupError(c, err)
+		return
+	}
+	if asset.Status == model.VirtualCharacterAssetStatusDeleting || strings.TrimSpace(asset.StagingFileID) == "" {
+		virtualCharacterError(c, http.StatusNotFound, "preview_not_found", "asset preview is unavailable")
+		return
+	}
+	storage, err := newVirtualCharacterStagingStorage()
+	if err != nil {
+		virtualCharacterError(c, http.StatusServiceUnavailable, "storage_unavailable", err.Error())
+		return
+	}
+	signed, err := storage.SignFile(c.Request.Context(), asset.StagingFileID)
+	if err != nil {
+		virtualCharacterError(c, http.StatusBadGateway, "preview_sign_failed", err.Error())
+		return
+	}
+	req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, signed.URL, nil)
+	if err != nil {
+		virtualCharacterError(c, http.StatusBadGateway, "preview_request_failed", err.Error())
+		return
+	}
+	resp, err := (&http.Client{Timeout: 90 * time.Second}).Do(req)
+	if err != nil {
+		virtualCharacterError(c, http.StatusBadGateway, "preview_fetch_failed", err.Error())
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		virtualCharacterError(c, http.StatusBadGateway, "preview_fetch_failed", fmt.Sprintf("storage returned %d", resp.StatusCode))
+		return
+	}
+	maxBytes := virtualCharacterUploadMaxBody
+	if resp.ContentLength > maxBytes {
+		virtualCharacterError(c, http.StatusBadGateway, "preview_too_large", "stored preview exceeds the size limit")
+		return
+	}
+	c.Header("Content-Type", virtualCharacterPreviewContentType(asset.AssetType, resp.Header.Get("Content-Type"), asset.MimeType))
+	c.Header("Cache-Control", "private, max-age=300")
+	c.Header("X-Content-Type-Options", "nosniff")
+	c.Status(http.StatusOK)
+	written, copyErr := io.Copy(c.Writer, io.LimitReader(resp.Body, maxBytes+1))
+	if copyErr != nil || written > maxBytes {
+		return
+	}
+}
+
+// virtualCharacterPreviewContentType keeps proxied previews on inert media types.
+// Both the upstream header and the stored MIME come from user-controlled uploads,
+// so anything outside the asset-type allowlist is served as an opaque download.
+func virtualCharacterPreviewContentType(assetType, upstream, stored string) string {
+	var prefix string
+	switch assetType {
+	case model.VirtualCharacterAssetTypeImage:
+		prefix = "image/"
+	case model.VirtualCharacterAssetTypeVideo:
+		prefix = "video/"
+	case model.VirtualCharacterAssetTypeAudio:
+		prefix = "audio/"
+	default:
+		return "application/octet-stream"
+	}
+	for _, candidate := range []string{upstream, stored} {
+		candidate = strings.ToLower(strings.TrimSpace(candidate))
+		if index := strings.Index(candidate, ";"); index >= 0 {
+			candidate = strings.TrimSpace(candidate[:index])
+		}
+		if strings.HasPrefix(candidate, prefix) {
+			return candidate
+		}
+	}
+	return "application/octet-stream"
 }
 
 func DeleteVirtualCharacterGroup(c *gin.Context) {
@@ -450,32 +745,65 @@ func AdminGetVirtualCharacterABSettings(c *gin.Context) {
 		virtualCharacterError(c, http.StatusInternalServerError, "settings_failed", err.Error())
 		return
 	}
-	channels, err := virtualCharacterProviderChannels()
-	if err != nil {
-		virtualCharacterError(c, http.StatusInternalServerError, "settings_failed", err.Error())
-		return
-	}
+	createAssetQPM := account.EffectiveCreateAssetQPM()
 	latest, latestErr := model.GetLatestVirtualCharacterCatalogImport()
 	var catalog any
 	if latestErr == nil {
 		catalog = latest
 	}
-	common.ApiSuccess(c, gin.H{"enabled": account.Enabled, "official_enabled": account.OfficialEnabled, "real_person_enabled": account.RealPersonEnabled, "access_key_masked": maskProviderCredential(account.EncryptedAccessKey != ""), "secret_key_masked": maskProviderCredential(account.EncryptedSecretKey != ""), "region": account.Region, "project_name": account.ProjectName, "channel_id": account.ChannelID, "crypto_ready": common.HasStableCryptoSecret(), "last_check_status": account.LastCheckStatus, "last_check_error": account.LastCheckError, "last_checked_at": account.LastCheckedAt, "channels": channels, "catalog": catalog, "global_limit": model.GetVirtualCharacterGlobalLimit(), "models": model.GetVirtualCharacterModels(), "default_model": model.GetVirtualCharacterDefaultModel()})
+	common.ApiSuccess(c, gin.H{
+		"enabled": account.Enabled, "official_enabled": account.OfficialEnabled,
+		"quota_plan":        account.EffectiveQuotaPlan(),
+		"create_asset_qpm":  createAssetQPM,
+		"access_key_masked": maskProviderCredential(account.EncryptedAccessKey != ""), "secret_key_masked": maskProviderCredential(account.EncryptedSecretKey != ""),
+		"region": account.Region, "project_name": account.ProjectName,
+		"crypto_ready": common.HasStableCryptoSecret(), "last_check_status": account.LastCheckStatus, "last_check_error": account.LastCheckError,
+		"last_checked_at": account.LastCheckedAt, "catalog": catalog,
+		"catalog_last_synced_at":   model.GetVirtualCharacterAIPDDCatalogLastSyncAt(),
+		"global_limit":             model.GetVirtualCharacterGlobalLimit(),
+		"account_asset_cap":        model.GetVirtualCharacterAccountAssetCap(),
+		"max_assets_per_character": model.GetVirtualCharacterMaxAssetsPerCharacter(),
+	})
+}
+
+func AdminSyncVirtualCharacterCatalogFromAIPDD(c *gin.Context) {
+	force := parseVirtualCharacterDeclaration(c.Query("force"))
+	var body struct {
+		Force bool `json:"force"`
+	}
+	if err := common.DecodeJson(c.Request.Body, &body); err == nil && body.Force {
+		force = true
+	}
+	result, err := model.SyncVirtualCharacterCatalogFromAIPDD(c.Request.Context(), nil, force, c.GetInt("id"))
+	if err != nil {
+		message := err.Error()
+		status := http.StatusBadGateway
+		code := "catalog_sync_failed"
+		if strings.Contains(message, "AIPDD_API_KEY") {
+			status = http.StatusServiceUnavailable
+			code = "aipdd_key_missing"
+		} else if strings.Contains(message, "not enabled") || strings.Contains(message, "disabled") {
+			status = http.StatusServiceUnavailable
+			code = "provider_unavailable"
+		}
+		virtualCharacterError(c, status, code, message)
+		return
+	}
+	common.ApiSuccess(c, result)
 }
 
 func AdminUpdateVirtualCharacterABSettings(c *gin.Context) {
 	var req struct {
-		Enabled           bool     `json:"enabled"`
-		OfficialEnabled   bool     `json:"official_enabled"`
-		RealPersonEnabled bool     `json:"real_person_enabled"`
-		AccessKey         string   `json:"access_key"`
-		SecretKey         string   `json:"secret_key"`
-		Region            string   `json:"region"`
-		ProjectName       string   `json:"project_name"`
-		ChannelID         int      `json:"channel_id"`
-		GlobalLimit       int      `json:"global_limit"`
-		Models            []string `json:"models"`
-		DefaultModel      string   `json:"default_model"`
+		Enabled               bool   `json:"enabled"`
+		QuotaPlan             string `json:"quota_plan"`
+		CreateAssetQPM        int    `json:"create_asset_qpm"`
+		AccessKey             string `json:"access_key"`
+		SecretKey             string `json:"secret_key"`
+		Region                string `json:"region"`
+		ProjectName           string `json:"project_name"`
+		GlobalLimit           int    `json:"global_limit"`
+		AccountAssetCap       int    `json:"account_asset_cap"`
+		MaxAssetsPerCharacter int    `json:"max_assets_per_character"`
 	}
 	if err := common.DecodeJson(c.Request.Body, &req); err != nil {
 		virtualCharacterError(c, http.StatusBadRequest, "invalid_request", err.Error())
@@ -510,31 +838,40 @@ func AdminUpdateVirtualCharacterABSettings(c *gin.Context) {
 		virtualCharacterError(c, http.StatusBadRequest, "credentials_required", "AK and SK are required before enabling the provider")
 		return
 	}
-	if req.ChannelID > 0 {
-		if _, err := validateVirtualCharacterProviderChannel(req.ChannelID, strings.TrimSpace(req.DefaultModel)); err != nil {
-			virtualCharacterError(c, http.StatusBadRequest, "invalid_channel", err.Error())
-			return
-		}
-	} else if req.Enabled {
-		virtualCharacterError(c, http.StatusBadRequest, "channel_required", "a stable Volc video channel is required")
-		return
-	}
-	models, err := normalizeVirtualCharacterModels(req.Models)
-	if err != nil || (req.DefaultModel != "" && !containsString(models, req.DefaultModel)) {
-		virtualCharacterError(c, http.StatusBadRequest, "invalid_models", "default model must be one of the enabled models")
-		return
-	}
 	if req.GlobalLimit <= 0 || req.GlobalLimit > 10000 {
 		virtualCharacterError(c, http.StatusBadRequest, "invalid_limit", "global limit must be between 1 and 10000")
 		return
 	}
-	account.Enabled, account.OfficialEnabled, account.RealPersonEnabled = req.Enabled, req.OfficialEnabled, req.RealPersonEnabled
-	account.Region, account.ProjectName, account.ChannelID = strings.TrimSpace(req.Region), strings.TrimSpace(req.ProjectName), req.ChannelID
+	if req.MaxAssetsPerCharacter <= 0 || req.MaxAssetsPerCharacter > 100 {
+		virtualCharacterError(c, http.StatusBadRequest, "invalid_character_asset_limit", "max assets per character must be between 1 and 100")
+		return
+	}
+	quotaPlan, accountAssetCap, createAssetQPM := model.NormalizeVirtualCharacterQuotaPlan(req.QuotaPlan, req.AccountAssetCap, req.CreateAssetQPM)
+	if accountAssetCap <= 0 || accountAssetCap > 5000000 {
+		virtualCharacterError(c, http.StatusBadRequest, "invalid_asset_cap", "account asset cap must be between 1 and 5000000")
+		return
+	}
+	if createAssetQPM <= 0 || createAssetQPM > 300 {
+		virtualCharacterError(c, http.StatusBadRequest, "invalid_qpm", "create asset QPM must be between 1 and 300")
+		return
+	}
+	account.Enabled = req.Enabled
+	// Official and virtual follow the library master switch; real-person stays reserved.
+	account.OfficialEnabled = req.Enabled
+	account.VirtualEnabled = req.Enabled
+	account.RealPersonEnabled = false
+	account.QuotaPlan = quotaPlan
+	account.CreateAssetQPM = createAssetQPM
+	account.Region, account.ProjectName = strings.TrimSpace(req.Region), strings.TrimSpace(req.ProjectName)
 	if err := model.SaveVirtualCharacterProviderAccount(account); err != nil {
 		virtualCharacterError(c, http.StatusInternalServerError, "settings_failed", err.Error())
 		return
 	}
-	for key, value := range map[string]string{"VirtualCharacterLimit": strconv.Itoa(req.GlobalLimit), "VirtualCharacterModels": strings.Join(models, ","), "VirtualCharacterDefaultModel": strings.TrimSpace(req.DefaultModel)} {
+	for key, value := range map[string]string{
+		"VirtualCharacterLimit":                 strconv.Itoa(req.GlobalLimit),
+		"VirtualCharacterAccountAssetCap":       strconv.Itoa(accountAssetCap),
+		"VirtualCharacterMaxAssetsPerCharacter": strconv.Itoa(req.MaxAssetsPerCharacter),
+	} {
 		if err := model.UpdateOption(key, value); err != nil {
 			virtualCharacterError(c, http.StatusInternalServerError, "settings_failed", err.Error())
 			return
@@ -613,7 +950,14 @@ func AdminImportVirtualCharacterCatalog(c *gin.Context) {
 }
 
 func virtualCharacterGroupToResponse(item *model.VirtualCharacter, includeAssets bool) (virtualCharacterGroupResponse, error) {
-	response := virtualCharacterGroupResponse{ID: item.ID, Scope: item.Scope, SourceType: item.SourceType, Name: item.Name, Description: item.Description, Tags: decodeVirtualCharacterTags(item.TagsJSON), Status: item.Status, ValidationStatus: item.ValidationStatus, CoverURL: item.CoverURL, PrimaryAssetID: item.PrimaryAssetID, LastError: item.LastError, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt, CatalogVersion: item.CatalogVersion, Assets: []virtualCharacterAssetResponse{}}
+	response := virtualCharacterGroupResponse{
+		ID: item.ID, Scope: item.Scope, SourceType: item.SourceType, Name: item.Name, Description: item.Description,
+		Tags: decodeVirtualCharacterTags(item.TagsJSON), Nationality: item.Nationality, Gender: item.Gender,
+		AgeMin: item.AgeMin, AgeMax: item.AgeMax, Occupation: item.Occupation, Temperament: item.Temperament,
+		Status: item.Status, ValidationStatus: item.ValidationStatus, CoverURL: item.CoverURL,
+		PrimaryAssetID: item.PrimaryAssetID, LastError: item.LastError, CreatedAt: item.CreatedAt,
+		UpdatedAt: item.UpdatedAt, CatalogVersion: item.CatalogVersion, Assets: []virtualCharacterAssetResponse{},
+	}
 	if !includeAssets {
 		return response, nil
 	}
@@ -633,6 +977,16 @@ func validationSessionResponse(item *model.VirtualCharacterValidationSession, la
 }
 
 func enabledVirtualCharacterClient(realPerson bool) (*model.VirtualCharacterProviderAccount, service.VolcAssetClient, error) {
+	if realPerson {
+		return enabledVirtualCharacterClientForSource(model.VirtualCharacterSourceVolcRealPerson)
+	}
+	return enabledVirtualCharacterClientForSource(model.VirtualCharacterSourceVolcAIGC)
+}
+
+// newVolcAssetClientForVirtualCharacters is overridable in tests.
+var newVolcAssetClientForVirtualCharacters = service.NewVolcAssetClient
+
+func enabledVirtualCharacterClientForSource(sourceType string) (*model.VirtualCharacterProviderAccount, service.VolcAssetClient, error) {
 	if !common.HasStableCryptoSecret() {
 		return nil, nil, common.ErrCryptoSecretNotConfigured
 	}
@@ -640,43 +994,16 @@ func enabledVirtualCharacterClient(realPerson bool) (*model.VirtualCharacterProv
 	if err != nil {
 		return nil, nil, errors.New("virtual character provider account is not enabled")
 	}
-	if realPerson && !account.RealPersonEnabled {
-		return nil, nil, errors.New("real-person virtual characters are disabled")
+	switch sourceType {
+	case model.VirtualCharacterSourceVolcAIGC, model.VirtualCharacterSourceVolcPreset:
+		// Follow the library master switch (account already required to be enabled).
+	case model.VirtualCharacterSourceVolcRealPerson:
+		return nil, nil, errors.New("real-person virtual characters are not available yet")
+	default:
+		return nil, nil, errors.New("unsupported virtual character source")
 	}
-	client, err := service.NewVolcAssetClient(account)
+	client, err := newVolcAssetClientForVirtualCharacters(account)
 	return account, client, err
-}
-
-func validateVolcCharacterAssetUpload(header *multipart.FileHeader, declaredType string) (string, string, error) {
-	if header == nil || header.Size <= 0 {
-		return "", "", errors.New("file is empty")
-	}
-	ext := strings.ToLower(filepath.Ext(header.Filename))
-	mimeType := strings.ToLower(strings.TrimSpace(header.Header.Get("Content-Type")))
-	typeName := strings.TrimSpace(declaredType)
-	if typeName == "" {
-		switch ext {
-		case ".jpg", ".jpeg", ".png", ".webp", ".gif", ".heic":
-			typeName = model.VirtualCharacterAssetTypeImage
-		case ".mp4", ".mov":
-			typeName = model.VirtualCharacterAssetTypeVideo
-		case ".mp3", ".wav":
-			typeName = model.VirtualCharacterAssetTypeAudio
-		}
-	}
-	limits := map[string]int64{model.VirtualCharacterAssetTypeImage: 30 << 20, model.VirtualCharacterAssetTypeVideo: 50 << 20, model.VirtualCharacterAssetTypeAudio: 15 << 20}
-	limit, ok := limits[typeName]
-	if !ok {
-		return "", "", errors.New("asset_type must be Image, Video, or Audio")
-	}
-	allowed := map[string]map[string]bool{model.VirtualCharacterAssetTypeImage: {".jpg": true, ".jpeg": true, ".png": true, ".webp": true, ".gif": true, ".heic": true}, model.VirtualCharacterAssetTypeVideo: {".mp4": true, ".mov": true}, model.VirtualCharacterAssetTypeAudio: {".mp3": true, ".wav": true}}
-	if !allowed[typeName][ext] {
-		return "", "", fmt.Errorf("file extension is not supported for %s", typeName)
-	}
-	if header.Size > limit {
-		return "", "", fmt.Errorf("%s file exceeds the %d MB limit", typeName, limit>>20)
-	}
-	return typeName, mimeType, nil
 }
 
 func parseVirtualCharacterCatalog(filename string, payload []byte, fallbackVersion string) (string, []model.VirtualCharacterCatalogEntry, error) {
@@ -687,6 +1014,12 @@ func parseVirtualCharacterCatalog(filename string, payload []byte, fallbackVersi
 		Tags        []string `json:"tags"`
 		CoverURL    string   `json:"cover_url"`
 		Enabled     *bool    `json:"enabled"`
+		Nationality string   `json:"nationality"`
+		Gender      string   `json:"gender"`
+		AgeMin      *int     `json:"age_min"`
+		AgeMax      *int     `json:"age_max"`
+		Occupation  string   `json:"occupation"`
+		Temperament string   `json:"temperament"`
 	}
 	version := strings.TrimSpace(fallbackVersion)
 	rawEntries := make([]rawEntry, 0)
@@ -736,7 +1069,26 @@ func parseVirtualCharacterCatalog(filename string, payload []byte, fallbackVersi
 			if value := strings.ToLower(read("enabled")); value == "false" || value == "0" || value == "no" {
 				enabled = false
 			}
-			rawEntries = append(rawEntries, rawEntry{AssetID: read("asset_id"), Name: read("name"), Description: read("description"), Tags: tags, CoverURL: read("cover_url"), Enabled: &enabled})
+			var ageMin, ageMax *int
+			if value := read("age_min"); value != "" {
+				parsed, parseErr := strconv.Atoi(value)
+				if parseErr != nil {
+					return "", nil, fmt.Errorf("CSV catalog has invalid age_min: %s", value)
+				}
+				ageMin = &parsed
+			}
+			if value := read("age_max"); value != "" {
+				parsed, parseErr := strconv.Atoi(value)
+				if parseErr != nil {
+					return "", nil, fmt.Errorf("CSV catalog has invalid age_max: %s", value)
+				}
+				ageMax = &parsed
+			}
+			rawEntries = append(rawEntries, rawEntry{
+				AssetID: read("asset_id"), Name: read("name"), Description: read("description"), Tags: tags,
+				CoverURL: read("cover_url"), Enabled: &enabled, Nationality: read("nationality"), Gender: read("gender"),
+				AgeMin: ageMin, AgeMax: ageMax, Occupation: read("occupation"), Temperament: read("temperament"),
+			})
 		}
 	default:
 		return "", nil, errors.New("catalog must be a JSON or CSV file")
@@ -770,42 +1122,51 @@ func parseVirtualCharacterCatalog(filename string, payload []byte, fallbackVersi
 		if raw.Enabled != nil {
 			enabled = *raw.Enabled
 		}
-		entries = append(entries, model.VirtualCharacterCatalogEntry{AssetID: assetID, Name: metadata.Name, Description: metadata.Description, TagsJSON: tagsJSON, CoverURL: cover.String(), Enabled: enabled})
+		entry := model.VirtualCharacterCatalogEntry{
+			AssetID: assetID, Name: metadata.Name, Description: metadata.Description, TagsJSON: tagsJSON,
+			CoverURL: cover.String(), Enabled: enabled, Nationality: strings.TrimSpace(raw.Nationality),
+			Gender: strings.TrimSpace(raw.Gender), AgeMin: raw.AgeMin, AgeMax: raw.AgeMax,
+			Occupation: strings.TrimSpace(raw.Occupation), Temperament: strings.TrimSpace(raw.Temperament),
+		}
+		model.EnrichVirtualCharacterCatalogEntryFacets(&entry, metadata.Tags)
+		if entry.AgeMin != nil && entry.AgeMax != nil && *entry.AgeMin > *entry.AgeMax {
+			return "", nil, fmt.Errorf("asset %s has invalid age range", assetID)
+		}
+		entries = append(entries, entry)
 	}
 	return version, entries, nil
 }
 
-func virtualCharacterProviderChannels() ([]gin.H, error) {
-	channels, err := model.GetAllChannels(0, 10000, true, true)
-	if err != nil {
-		return nil, err
+func validateVolcCharacterAssetUpload(header *multipart.FileHeader, declaredType string) (string, string, error) {
+	if header == nil || header.Size <= 0 {
+		return "", "", errors.New("file is empty")
 	}
-	result := make([]gin.H, 0)
-	for _, channel := range channels {
-		if channel.Status == common.ChannelStatusEnabled && !channel.ChannelInfo.IsMultiKey && (channel.Type == constant.ChannelTypeVolcEngine || channel.Type == constant.ChannelTypeDoubaoVideo) {
-			result = append(result, gin.H{"id": channel.Id, "name": channel.Name, "type": channel.Type, "models": channel.Models})
+	ext := strings.ToLower(filepath.Ext(header.Filename))
+	mimeType := strings.ToLower(strings.TrimSpace(header.Header.Get("Content-Type")))
+	typeName := strings.TrimSpace(declaredType)
+	if typeName == "" {
+		switch ext {
+		case ".jpg", ".jpeg", ".png", ".webp", ".gif", ".heic":
+			typeName = model.VirtualCharacterAssetTypeImage
+		case ".mp4", ".mov":
+			typeName = model.VirtualCharacterAssetTypeVideo
+		case ".mp3", ".wav":
+			typeName = model.VirtualCharacterAssetTypeAudio
 		}
 	}
-	return result, nil
-}
-
-func validateVirtualCharacterProviderChannel(channelID int, modelName string) (*model.Channel, error) {
-	channel, err := model.GetChannelById(channelID, true)
-	if err != nil {
-		return nil, errors.New("configured channel was not found")
+	limits := map[string]int64{model.VirtualCharacterAssetTypeImage: 30 << 20, model.VirtualCharacterAssetTypeVideo: 50 << 20, model.VirtualCharacterAssetTypeAudio: 15 << 20}
+	limit, ok := limits[typeName]
+	if !ok {
+		return "", "", errors.New("asset_type must be Image, Video, or Audio")
 	}
-	if channel.Status != common.ChannelStatusEnabled || channel.ChannelInfo.IsMultiKey || (channel.Type != constant.ChannelTypeVolcEngine && channel.Type != constant.ChannelTypeDoubaoVideo) {
-		return nil, errors.New("configured channel must be an enabled, single-key Volc video channel")
+	allowed := map[string]map[string]bool{model.VirtualCharacterAssetTypeImage: {".jpg": true, ".jpeg": true, ".png": true, ".webp": true, ".gif": true, ".heic": true}, model.VirtualCharacterAssetTypeVideo: {".mp4": true, ".mov": true}, model.VirtualCharacterAssetTypeAudio: {".mp3": true, ".wav": true}}
+	if !allowed[typeName][ext] {
+		return "", "", fmt.Errorf("file extension is not supported for %s", typeName)
 	}
-	if modelName != "" {
-		for _, supported := range strings.Split(channel.Models, ",") {
-			if strings.TrimSpace(supported) == modelName {
-				return channel, nil
-			}
-		}
-		return nil, errors.New("configured channel does not support the default role model")
+	if header.Size > limit {
+		return "", "", fmt.Errorf("%s file exceeds the %d MB limit", typeName, limit>>20)
 	}
-	return channel, nil
+	return typeName, mimeType, nil
 }
 
 func randomHex(size int) (string, error) {
@@ -836,13 +1197,4 @@ func maskProviderCredential(configured bool) string {
 		return ""
 	}
 	return "••••••••"
-}
-
-func containsString(values []string, wanted string) bool {
-	for _, value := range values {
-		if strings.TrimSpace(value) == strings.TrimSpace(wanted) {
-			return true
-		}
-	}
-	return false
 }
