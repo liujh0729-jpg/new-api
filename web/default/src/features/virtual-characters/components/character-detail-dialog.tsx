@@ -264,13 +264,13 @@ export function CharacterDetailDialog({
                           asset.status !== 'Deleting' ? (
                             <button
                               type='button'
-                              className='bg-muted aspect-video overflow-hidden rounded-md'
+                              className='bg-muted aspect-[4/3] cursor-zoom-in overflow-hidden rounded-md'
                               onClick={() => setPreviewAsset(asset)}
                             >
                               <img
                                 src={asset.cover_url || previewURL}
                                 alt={asset.name}
-                                className='size-full object-cover'
+                                className='size-full object-contain'
                               />
                             </button>
                           ) : null}

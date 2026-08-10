@@ -39,16 +39,19 @@ import { Progress, ProgressLabel } from '@/components/ui/progress'
 import { Spinner } from '@/components/ui/spinner'
 import { virtualCharacterAssetPreviewURL } from '../api'
 import type { VirtualCharacter, VirtualCharacterAsset } from '../types'
+import type { CharacterImagePreview } from './character-image-preview-dialog'
 import { statusLabel, virtualCharacterFacetMeta } from './utils'
 
 export function CharacterCard({
   item,
   onOpen,
+  onPreview,
   onGenerate,
   onDelete,
 }: {
   item: VirtualCharacter
   onOpen: () => void
+  onPreview: (preview: CharacterImagePreview) => void
   onGenerate: () => void
   onDelete: () => void
 }) {
@@ -83,13 +86,22 @@ export function CharacterCard({
   const facetMeta = virtualCharacterFacetMeta(item)
   return (
     <Card className='overflow-hidden'>
-      <div className='bg-muted relative aspect-video overflow-hidden'>
+      <div className='bg-muted relative aspect-[4/3] overflow-hidden'>
         {coverURL ? (
-          <img
-            src={coverURL}
-            alt={item.name}
-            className='size-full object-cover'
-          />
+          <button
+            type='button'
+            className='group focus-visible:ring-ring size-full cursor-zoom-in focus-visible:ring-2 focus-visible:outline-none focus-visible:ring-inset'
+            aria-label={`${t('Preview')}: ${item.name}`}
+            onClick={() => onPreview({ name: item.name, url: coverURL })}
+          >
+            <img
+              src={coverURL}
+              alt={item.name}
+              loading='lazy'
+              decoding='async'
+              className='size-full object-contain transition-transform duration-200 group-hover:scale-[1.02]'
+            />
+          </button>
         ) : (
           <div className='text-muted-foreground flex size-full items-center justify-center'>
             <HugeiconsIcon icon={AiUserIcon} className='size-10' />

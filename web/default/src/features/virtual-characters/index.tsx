@@ -51,6 +51,10 @@ import {
 } from './api'
 import { CharacterCard } from './components/character-card'
 import { CharacterDetailDialog } from './components/character-detail-dialog'
+import {
+  CharacterImagePreviewDialog,
+  type CharacterImagePreview,
+} from './components/character-image-preview-dialog'
 import { CreateRealPersonDialog } from './components/create-real-person-dialog'
 import { CreateVirtualCharacterDialog } from './components/create-virtual-character-dialog'
 import { DeleteCharacterDialog } from './components/delete-character-dialog'
@@ -73,6 +77,7 @@ import type {
 } from './types'
 
 type LibraryTab = 'public' | 'private' | 'history'
+const CHARACTER_PAGE_SIZE = 12
 
 export function VirtualCharacters() {
   const { t } = useTranslation()
@@ -94,6 +99,8 @@ export function VirtualCharacters() {
   const [validation, setValidation] =
     useState<VirtualCharacterValidationSession | null>(null)
   const [detailID, setDetailID] = useState<number | null>(null)
+  const [imagePreview, setImagePreview] =
+    useState<CharacterImagePreview | null>(null)
   const [generateTarget, setGenerateTarget] = useState<{
     character: VirtualCharacter
     asset?: VirtualCharacterAsset
@@ -106,6 +113,7 @@ export function VirtualCharacters() {
   const publicListParams = {
     scope: 'public' as const,
     page: publicPage,
+    pageSize: CHARACTER_PAGE_SIZE,
     keyword,
     nationality,
     gender,
@@ -114,6 +122,7 @@ export function VirtualCharacters() {
   const privateListParams = {
     scope: 'private' as const,
     page: privatePage,
+    pageSize: CHARACTER_PAGE_SIZE,
     keyword,
     status: statusFilter === 'all' ? '' : statusFilter,
   }
@@ -424,7 +433,7 @@ export function VirtualCharacters() {
                 )
               }
               return (
-                <div className='grid gap-3 sm:grid-cols-2 xl:grid-cols-3'>
+                <div className='grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4'>
                   {characters.map((item) => (
                     <CharacterCard
                       key={item.id}
@@ -434,6 +443,7 @@ export function VirtualCharacters() {
                           ? setDetailID(item.id)
                           : setGenerateTarget({ character: item })
                       }
+                      onPreview={setImagePreview}
                       onGenerate={() => setGenerateTarget({ character: item })}
                       onDelete={() => setDeleteTarget(item)}
                     />
@@ -489,6 +499,10 @@ export function VirtualCharacters() {
           configQuery.data?.data.max_assets_per_character ?? 10
         }
         onClose={() => setDetailID(null)}
+      />
+      <CharacterImagePreviewDialog
+        preview={imagePreview}
+        onClose={() => setImagePreview(null)}
       />
       <GenerateDialog
         target={generateTarget}

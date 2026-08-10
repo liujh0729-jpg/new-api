@@ -59,10 +59,10 @@ export function AssetStatusBadge({
 
 export function CharacterGridSkeleton() {
   return (
-    <div className='grid gap-3 sm:grid-cols-2 xl:grid-cols-3'>
-      {[0, 1, 2].map((item) => (
+    <div className='grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4'>
+      {[0, 1, 2, 3].map((item) => (
         <Card key={item}>
-          <Skeleton className='aspect-video w-full' />
+          <Skeleton className='aspect-[4/3] w-full' />
           <CardContent className='flex flex-col gap-3 pt-5'>
             <Skeleton className='h-5 w-1/2' />
             <Skeleton className='h-4 w-full' />
