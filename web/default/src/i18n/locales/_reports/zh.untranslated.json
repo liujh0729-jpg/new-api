@@ -18,6 +18,7 @@
   "Client Secret": "Client Secret",
   "Cloudflare": "Cloudflare",
   "Cohere": "Cohere",
+  "CreateAsset QPM": "CreateAsset QPM",
   "DeepSeek": "DeepSeek",
   "Discord": "Discord",
   "DoubaoVideo": "DoubaoVideo",
@@ -67,6 +68,7 @@
   "New API": "New API",
   "New API &lt;noreply@example.com&gt;": "New API &lt;noreply@example.com&gt;",
   "NewAPI": "NewAPI",
+  "NewAPI token": "NewAPI token",
   "NewAPI Token": "NewAPI Token",
   "noreply@example.com": "noreply@example.com",
   "OhMyGPT": "OhMyGPT",
@@ -101,7 +103,5 @@
   "Well-Known URL": "Well-Known URL",
   "whsec_xxx": "whsec_xxx",
   "Worker URL": "Worker URL",
-  "Xinference": "Xinference",
-  "NewAPI token": "NewAPI token",
-  "CreateAsset QPM": "CreateAsset QPM"
+  "Xinference": "Xinference"
 }

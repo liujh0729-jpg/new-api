@@ -71,6 +71,61 @@ func AdminRetryAIPDDFinanceSync(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{"queued": queued}})
 }
 
+func AdminCloseAIPDDFinanceOutbox(c *gin.Context) {
+	var body struct {
+		State  string `json:"state"`
+		Reason string `json:"reason"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "invalid close request: " + err.Error()})
+		return
+	}
+	state := strings.ToUpper(strings.TrimSpace(body.State))
+	if state == "" {
+		state = model.AIPDDFinanceOutboxIgnored
+	}
+	reason := strings.TrimSpace(body.Reason)
+	if reason == "" {
+		reason = "manually closed by admin"
+	}
+	if err := model.CloseAIPDDFinanceOutbox(strings.TrimSpace(c.Param("id")), state, reason); err != nil {
+		aipddFinanceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+func AdminCloseOrphanAIPDDFinanceOutbox(c *gin.Context) {
+	closed, err := model.SweepOrphanAIPDDFinanceOutbox()
+	if err != nil {
+		aipddFinanceError(c, err)
+		return
+	}
+	service.WakeAIPDDFinanceReconciliation()
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{"closed": closed}})
+}
+
+func AdminSkipAIPDDFinancePoisonEvent(c *gin.Context) {
+	var body struct {
+		ChannelID  int    `json:"channel_id"`
+		InstanceID string `json:"instance_id"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "invalid skip request: " + err.Error()})
+		return
+	}
+	if body.ChannelID <= 0 || strings.TrimSpace(body.InstanceID) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "channel_id and instance_id are required"})
+		return
+	}
+	if err := model.SkipAIPDDFinancePoisonEvent(body.ChannelID, strings.TrimSpace(body.InstanceID)); err != nil {
+		aipddFinanceError(c, err)
+		return
+	}
+	service.WakeAIPDDFinanceReconciliation()
+	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
 func AdminCreateAIPDDFinanceExport(c *gin.Context) {
 	var filter model.AIPDDFinanceOrderFilter
 	if c.Request.ContentLength > 0 {

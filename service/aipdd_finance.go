@@ -19,7 +19,18 @@ import (
 	"github.com/shopspring/decimal"
 )
 
-const aipddInstanceIDEnv = "AIPDD_INSTANCE_ID"
+const (
+	aipddInstanceIDEnv     = "AIPDD_INSTANCE_ID"
+	aipddFinanceEnabledEnv = "AIPDD_FINANCE_ENABLED"
+)
+
+// IsAIPDDFinanceEnabled reports whether NewAPI should create finance orders,
+// settle local finance mirrors, or run the AIPDD reconciliation worker.
+// Set AIPDD_FINANCE_ENABLED=false to keep relay traffic available while finance
+// sync is paused (matches the phase-1 rollback guidance: disable order header + worker).
+func IsAIPDDFinanceEnabled() bool {
+	return common.GetEnvOrDefaultBool(aipddFinanceEnabledEnv, true)
+}
 
 // PrepareAIPDDFinanceAttempt freezes identifiers after channel selection and before the upstream request.
 func PrepareAIPDDFinanceAttempt(c *gin.Context, info *relaycommon.RelayInfo) error {
@@ -28,6 +39,11 @@ func PrepareAIPDDFinanceAttempt(c *gin.Context, info *relaycommon.RelayInfo) err
 	}
 	previousFinance := info.AIPDDFinance
 	info.InitChannelMeta(c)
+	if !IsAIPDDFinanceEnabled() {
+		// Keep channel meta for relay, but do not touch finance tables or block the request.
+		info.AIPDDFinance = nil
+		return nil
+	}
 	if info.ChannelMeta == nil || info.ChannelType != constant.ChannelTypeAIPDD {
 		if previousFinance != nil {
 			// Closing a superseded attempt is best-effort: the reconciliation worker
@@ -93,21 +109,21 @@ func resolveAIPDDFinanceInstanceID(apiKey string) (string, error) {
 }
 
 func RecordAIPDDFinanceSettlement(info *relaycommon.RelayInfo, actualQuota int, status string) error {
-	if info == nil || info.AIPDDFinance == nil {
+	if !IsAIPDDFinanceEnabled() || info == nil || info.AIPDDFinance == nil {
 		return nil
 	}
 	return recordAIPDDFinanceSettlement(info.AIPDDFinance, actualQuota, status)
 }
 
 func RecordTaskAIPDDFinanceSettlement(task *model.Task, actualQuota int, status string) error {
-	if task == nil || task.PrivateData.AIPDDFinance == nil {
+	if !IsAIPDDFinanceEnabled() || task == nil || task.PrivateData.AIPDDFinance == nil {
 		return nil
 	}
 	return recordAIPDDFinanceSettlement(task.PrivateData.AIPDDFinance, actualQuota, status)
 }
 
 func BeginAIPDDFinanceSettlement(info *relaycommon.RelayInfo, actualQuota int) error {
-	if info == nil || info.AIPDDFinance == nil {
+	if !IsAIPDDFinanceEnabled() || info == nil || info.AIPDDFinance == nil {
 		return nil
 	}
 	quota, rmbMic, _, err := aipddFinanceAmount(actualQuota)
@@ -120,7 +136,7 @@ func BeginAIPDDFinanceSettlement(info *relaycommon.RelayInfo, actualQuota int) e
 }
 
 func MarkAIPDDFinanceSettlementReviewRequired(info *relaycommon.RelayInfo) {
-	if info == nil || info.AIPDDFinance == nil {
+	if !IsAIPDDFinanceEnabled() || info == nil || info.AIPDDFinance == nil {
 		return
 	}
 	finance := info.AIPDDFinance
@@ -170,7 +186,7 @@ func aipddFinanceAmount(actualQuota int) (int64, int64, string, error) {
 }
 
 func MarkAIPDDFinanceRefundPending(info *relaycommon.RelayInfo) {
-	if info == nil || info.AIPDDFinance == nil {
+	if !IsAIPDDFinanceEnabled() || info == nil || info.AIPDDFinance == nil {
 		return
 	}
 	if err := model.MarkAIPDDFinanceRefundPending(info.AIPDDFinance.InstanceID, info.AIPDDFinance.PlatformOrderID, info.AIPDDFinance.ChannelID); err != nil {

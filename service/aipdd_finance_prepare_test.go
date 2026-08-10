@@ -43,6 +43,21 @@ func TestResolveAIPDDFinanceInstanceIDHonorsExplicitOverride(t *testing.T) {
 	require.Equal(t, configured, resolved)
 }
 
+func TestPrepareAIPDDFinanceAttemptDisabledKeepsRelayAvailable(t *testing.T) {
+	t.Setenv(aipddFinanceEnabledEnv, "false")
+	c := aipddFinanceTestContext(constant.ChannelTypeAIPDD, 3)
+	info := &relaycommon.RelayInfo{
+		RequestId: "finance-disabled-order", OriginModelName: "test-model",
+		UserId: 1, TokenId: 2,
+		AIPDDFinance: &relaycommon.AIPDDFinanceContext{
+			InstanceID: uuid.NewString(), PlatformOrderID: "finance-disabled-order", ChannelID: 1,
+		},
+	}
+	require.NoError(t, PrepareAIPDDFinanceAttempt(c, info))
+	require.Nil(t, info.AIPDDFinance)
+	require.NotNil(t, info.ChannelMeta)
+}
+
 func TestPrepareAIPDDFinanceAttemptSkipsMultiKeyChannel(t *testing.T) {
 	t.Setenv(aipddInstanceIDEnv, "11111111-2222-4333-8444-555555555555")
 	c := aipddFinanceTestContext(constant.ChannelTypeAIPDD, 7)

@@ -14,6 +14,7 @@
   "Claude": "Claude",
   "Cloudflare": "Cloudflare",
   "Cohere": "Cohere",
+  "CreateAsset QPM": "CreateAsset QPM",
   "DeepSeek": "DeepSeek",
   "Discord": "Discord",
   "DoubaoVideo": "DoubaoVideo",
@@ -94,6 +95,5 @@
   "WeChat Pay": "WeChat Pay",
   "whsec_xxx": "whsec_xxx",
   "Xinference": "Xinference",
-  "Xunfei": "Xunfei",
-  "CreateAsset QPM": "CreateAsset QPM"
+  "Xunfei": "Xunfei"
 }

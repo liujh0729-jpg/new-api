@@ -1,6 +1,7 @@
 package model
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -108,6 +109,74 @@ func TestAIPDDFinanceSettlementAndInboxAreIdempotent(t *testing.T) {
 	order = AIPDDFinanceOrder{}
 	require.NoError(t, DB.Where("platform_order_id = ?", orderID).First(&order).Error)
 	require.Nil(t, order.ProfitRMBMic, "pending or partial upstream cost must not be reported as confirmed profit")
+}
+
+func TestSweepOrphanAIPDDFinanceOutboxIgnoresRefunded404(t *testing.T) {
+	require.NoError(t, DB.AutoMigrate(
+		&AIPDDFinanceOrder{}, &AIPDDFinanceMovement{}, &AIPDDFinanceInbox{},
+		&AIPDDFinanceOutbox{}, &AIPDDFinanceCursor{}))
+	require.NoError(t, DB.Session(&gormSessionAllowGlobalUpdate).Delete(&AIPDDFinanceOutbox{}).Error)
+	require.NoError(t, DB.Session(&gormSessionAllowGlobalUpdate).Delete(&AIPDDFinanceOrder{}).Error)
+
+	instanceID := uuid.NewString()
+	orderID := "req-orphan-404-" + uuid.NewString()
+	require.NoError(t, EnsureAIPDDFinanceOrder(instanceID, orderID, orderID+":0:11", 1, 2, 11, "test-model"))
+	require.NoError(t, RecordLocalAIPDDFinanceSettlement(instanceID, orderID, 11, 0, 0, `{"quota_per_unit":"500000"}`, "REFUNDED"))
+
+	require.NoError(t, DB.Model(&AIPDDFinanceOutbox{}).
+		Where("platform_order_id = ? AND state = ?", orderID, AIPDDFinanceOutboxPending).
+		Updates(map[string]interface{}{
+			"last_error": "AIPDD finance endpoint returned 404: {\"detail\":\"not found\"}",
+			"attempts":   8,
+		}).Error)
+	var pending int64
+	require.NoError(t, DB.Model(&AIPDDFinanceOutbox{}).
+		Where("platform_order_id = ? AND state = ?", orderID, AIPDDFinanceOutboxPending).Count(&pending).Error)
+	require.Greater(t, pending, int64(0))
+
+	closed, err := SweepOrphanAIPDDFinanceOutbox()
+	require.NoError(t, err)
+	require.EqualValues(t, pending, closed)
+
+	var ignored int64
+	require.NoError(t, DB.Model(&AIPDDFinanceOutbox{}).
+		Where("platform_order_id = ? AND state = ?", orderID, AIPDDFinanceOutboxIgnored).Count(&ignored).Error)
+	require.EqualValues(t, pending, ignored)
+}
+
+func TestCanIgnoreOrphanAIPDDFinance404RequiresTerminalLocalBilling(t *testing.T) {
+	require.True(t, CanIgnoreOrphanAIPDDFinance404(&AIPDDFinanceOrder{LocalBillingStatus: "REFUNDED"}))
+	require.True(t, CanIgnoreOrphanAIPDDFinance404(&AIPDDFinanceOrder{LocalBillingStatus: "NOT_CHARGED"}))
+	require.False(t, CanIgnoreOrphanAIPDDFinance404(&AIPDDFinanceOrder{LocalBillingStatus: "CHARGED"}))
+	require.False(t, CanIgnoreOrphanAIPDDFinance404(&AIPDDFinanceOrder{
+		LocalBillingStatus: "REFUNDED", SettlementRevision: 1,
+	}))
+}
+
+func TestAIPDDFinanceCursorBackoffAndPoisonSkip(t *testing.T) {
+	require.NoError(t, DB.AutoMigrate(&AIPDDFinanceCursor{}))
+	require.NoError(t, DB.Session(&gormSessionAllowGlobalUpdate).Delete(&AIPDDFinanceCursor{}).Error)
+
+	instanceID := uuid.NewString()
+	require.NoError(t, RecordAIPDDFinancePullFailure(21, instanceID, errors.New("AIPDD finance endpoint returned 500: boom")))
+	cursor, err := GetAIPDDFinanceCursorRecord(21, instanceID)
+	require.NoError(t, err)
+	require.NotNil(t, cursor)
+	require.Equal(t, 1, cursor.ConsecutiveFailures)
+	require.Greater(t, cursor.NextPullAt, time.Now().Unix())
+
+	shouldPull, _, err := ShouldPullAIPDDFinanceEvents(21, instanceID, time.Now().Unix())
+	require.NoError(t, err)
+	require.False(t, shouldPull)
+
+	require.NoError(t, RecordAIPDDFinancePoisonEvent(21, instanceID, 9, errors.New("invalid envelope")))
+	require.NoError(t, SkipAIPDDFinancePoisonEvent(21, instanceID))
+	cursor, err = GetAIPDDFinanceCursorRecord(21, instanceID)
+	require.NoError(t, err)
+	require.EqualValues(t, 9, cursor.LastSequence)
+	require.EqualValues(t, 0, cursor.PoisonSequence)
+	require.Equal(t, 0, cursor.ConsecutiveFailures)
+	require.EqualValues(t, 0, cursor.NextPullAt)
 }
 
 var gormSessionAllowGlobalUpdate = gorm.Session{AllowGlobalUpdate: true}

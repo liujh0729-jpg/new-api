@@ -49,6 +49,30 @@ export async function retryFinanceSync(filter: FinanceFilter) {
   return response.data as { success: boolean; data: { queued: number } }
 }
 
+export async function closeOrphanFinanceOutbox() {
+  const response = await api.post('/api/aipdd-finance/sync/orphans/close')
+  return response.data as { success: boolean; data: { closed: number } }
+}
+
+export async function skipFinancePoisonEvent(input: {
+  channel_id: number
+  instance_id: string
+}) {
+  const response = await api.post('/api/aipdd-finance/sync/poison/skip', input)
+  return response.data as { success: boolean }
+}
+
+export async function closeFinanceOutbox(
+  id: string,
+  input?: { state?: 'IGNORED' | 'DEAD'; reason?: string }
+) {
+  const response = await api.post(
+    `/api/aipdd-finance/sync/outbox/${id}/close`,
+    input ?? { state: 'IGNORED' }
+  )
+  return response.data as { success: boolean }
+}
+
 export async function createFinanceExport(filter: FinanceFilter) {
   const response = await api.post('/api/aipdd-finance/exports', filter)
   return response.data as { success: boolean; data: FinanceExportJob }

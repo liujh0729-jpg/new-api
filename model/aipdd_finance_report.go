@@ -101,16 +101,22 @@ type AIPDDFinanceSummary struct {
 }
 
 type AIPDDFinanceSyncStatus struct {
-	ChannelID       int    `json:"channel_id"`
-	ChannelName     string `json:"channel_name"`
-	InstanceID      string `json:"instance_id"`
-	LastSequence    int64  `json:"last_sequence"`
-	LastSuccessAt   int64  `json:"last_success_at"`
-	BacklogCount    int64  `json:"backlog_count"`
-	LastError       string `json:"last_error"`
-	LastErrorAt     int64  `json:"last_error_at"`
-	SingleKeyValid  bool   `json:"single_key_valid"`
-	MultiKeyEnabled bool   `json:"multi_key_enabled"`
+	ChannelID             int    `json:"channel_id"`
+	ChannelName           string `json:"channel_name"`
+	InstanceID            string `json:"instance_id"`
+	LastSequence          int64  `json:"last_sequence"`
+	LastSuccessAt         int64  `json:"last_success_at"`
+	BacklogCount          int64  `json:"backlog_count"`
+	DeadCount             int64  `json:"dead_count"`
+	IgnoredCount          int64  `json:"ignored_count"`
+	NextPullAt            int64  `json:"next_pull_at"`
+	ConsecutiveFailures   int    `json:"consecutive_failures"`
+	PoisonSequence        int64  `json:"poison_sequence"`
+	PoisonError           string `json:"poison_error"`
+	LastError             string `json:"last_error"`
+	LastErrorAt           int64  `json:"last_error_at"`
+	SingleKeyValid        bool   `json:"single_key_valid"`
+	MultiKeyEnabled       bool   `json:"multi_key_enabled"`
 }
 
 type AIPDDFinanceExportJob struct {
@@ -320,8 +326,9 @@ func GetAIPDDFinanceOrderDetail(id string) (*AIPDDFinanceOrderDetail, error) {
 	if err = DB.Where("platform_order_id = ?", order.PlatformOrderID).Order("source_sequence asc").Find(&detail.SettlementEvents).Error; err != nil {
 		return nil, err
 	}
-	if err = DB.Where("channel_id = ? AND instance_id = ? AND platform_order_id = ? AND (state = ? OR last_error <> '')",
-		order.ChannelID, order.InstanceID, order.PlatformOrderID, AIPDDFinanceOutboxPending).
+	if err = DB.Where("channel_id = ? AND instance_id = ? AND platform_order_id = ? AND state IN ?",
+		order.ChannelID, order.InstanceID, order.PlatformOrderID,
+		[]string{AIPDDFinanceOutboxPending, AIPDDFinanceOutboxDead, AIPDDFinanceOutboxIgnored}).
 		Order("created_at desc").Find(&detail.PendingOrFailedSyncJobs).Error; err != nil {
 		return nil, err
 	}
@@ -350,7 +357,8 @@ func ListAIPDDFinanceIssues(financeOrderIDs []string) ([]AIPDDFinanceOutbox, err
 		platformOrderIDs = append(platformOrderIDs, order.PlatformOrderID)
 	}
 	var issues []AIPDDFinanceOutbox
-	err := DB.Where("platform_order_id IN ? AND (state = ? OR last_error <> '')", platformOrderIDs, AIPDDFinanceOutboxPending).
+	err := DB.Where("platform_order_id IN ? AND state IN ?", platformOrderIDs,
+		[]string{AIPDDFinanceOutboxPending, AIPDDFinanceOutboxDead}).
 		Order("created_at asc").Find(&issues).Error
 	return issues, err
 }
@@ -392,13 +400,31 @@ func ListAIPDDFinanceSyncStatus(instanceID string) ([]AIPDDFinanceSyncStatus, er
 	}
 	statuses := make([]AIPDDFinanceSyncStatus, 0, len(channels))
 	for _, channel := range channels {
+		instanceSet := make(map[string]struct{})
 		instances := make([]string, 0)
 		query := DB.Model(&AIPDDFinanceOrder{}).Distinct("instance_id").Where("channel_id = ?", channel.Id)
-		if strings.TrimSpace(instanceID) != "" {
-			query = query.Where("instance_id = ?", strings.TrimSpace(instanceID))
+		cursorQuery := DB.Model(&AIPDDFinanceCursor{}).Distinct("instance_id").Where("channel_id = ?", channel.Id)
+		if trimmed := strings.TrimSpace(instanceID); trimmed != "" {
+			query = query.Where("instance_id = ?", trimmed)
+			cursorQuery = cursorQuery.Where("instance_id = ?", trimmed)
 		}
-		if err = query.Pluck("instance_id", &instances).Error; err != nil {
+		var orderInstances []string
+		var cursorInstances []string
+		if err = query.Pluck("instance_id", &orderInstances).Error; err != nil {
 			return nil, err
+		}
+		if err = cursorQuery.Pluck("instance_id", &cursorInstances).Error; err != nil {
+			return nil, err
+		}
+		for _, current := range append(orderInstances, cursorInstances...) {
+			if current == "" {
+				continue
+			}
+			if _, exists := instanceSet[current]; exists {
+				continue
+			}
+			instanceSet[current] = struct{}{}
+			instances = append(instances, current)
 		}
 		if len(instances) == 0 && strings.TrimSpace(instanceID) != "" {
 			instances = append(instances, strings.TrimSpace(instanceID))
@@ -408,19 +434,39 @@ func ListAIPDDFinanceSyncStatus(instanceID string) ([]AIPDDFinanceSyncStatus, er
 				SingleKeyValid: !channel.ChannelInfo.IsMultiKey, MultiKeyEnabled: channel.ChannelInfo.IsMultiKey}
 			var cursor AIPDDFinanceCursor
 			if cursorErr := DB.Where("channel_id = ? AND instance_id = ?", channel.Id, currentInstance).First(&cursor).Error; cursorErr == nil {
-				status.LastSequence, status.LastSuccessAt = cursor.LastSequence, cursor.UpdatedAt
+				status.LastSequence = cursor.LastSequence
+				status.NextPullAt = cursor.NextPullAt
+				status.ConsecutiveFailures = cursor.ConsecutiveFailures
+				status.PoisonSequence = cursor.PoisonSequence
+				status.PoisonError = cursor.PoisonError
+				if cursor.LastPullError != "" {
+					status.LastError, status.LastErrorAt = cursor.LastPullError, cursor.LastPullErrorAt
+				}
+				if cursor.ConsecutiveFailures == 0 && cursor.PoisonSequence == 0 {
+					status.LastSuccessAt = cursor.UpdatedAt
+				}
 			} else if !errors.Is(cursorErr, gorm.ErrRecordNotFound) {
 				return nil, cursorErr
 			}
 			if err = DB.Model(&AIPDDFinanceOutbox{}).Where("channel_id = ? AND instance_id = ? AND state = ?", channel.Id, currentInstance, AIPDDFinanceOutboxPending).Count(&status.BacklogCount).Error; err != nil {
 				return nil, err
 			}
-			var failed AIPDDFinanceOutbox
-			failedErr := DB.Where("channel_id = ? AND instance_id = ? AND last_error <> ''", channel.Id, currentInstance).Order("updated_at desc").First(&failed).Error
-			if failedErr == nil {
-				status.LastError, status.LastErrorAt = failed.LastError, failed.UpdatedAt
-			} else if !errors.Is(failedErr, gorm.ErrRecordNotFound) {
-				return nil, failedErr
+			if err = DB.Model(&AIPDDFinanceOutbox{}).Where("channel_id = ? AND instance_id = ? AND state = ?", channel.Id, currentInstance, AIPDDFinanceOutboxDead).Count(&status.DeadCount).Error; err != nil {
+				return nil, err
+			}
+			if err = DB.Model(&AIPDDFinanceOutbox{}).Where("channel_id = ? AND instance_id = ? AND state = ?", channel.Id, currentInstance, AIPDDFinanceOutboxIgnored).Count(&status.IgnoredCount).Error; err != nil {
+				return nil, err
+			}
+			if status.LastError == "" {
+				var failed AIPDDFinanceOutbox
+				failedErr := DB.Where("channel_id = ? AND instance_id = ? AND state IN ? AND last_error <> ''",
+					channel.Id, currentInstance, []string{AIPDDFinanceOutboxPending, AIPDDFinanceOutboxDead}).
+					Order("updated_at desc").First(&failed).Error
+				if failedErr == nil {
+					status.LastError, status.LastErrorAt = failed.LastError, failed.UpdatedAt
+				} else if !errors.Is(failedErr, gorm.ErrRecordNotFound) {
+					return nil, failedErr
+				}
 			}
 			statuses = append(statuses, status)
 		}

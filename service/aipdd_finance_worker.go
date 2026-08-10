@@ -15,14 +15,28 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/google/uuid"
+	"gorm.io/gorm"
 )
 
 const aipddFinanceWorkerInterval = 5 * time.Second
 
 var aipddFinanceWake = make(chan struct{}, 1)
 
+type aipddFinanceHTTPError struct {
+	StatusCode int
+	Body       string
+}
+
+func (e *aipddFinanceHTTPError) Error() string {
+	return fmt.Sprintf("AIPDD finance endpoint returned %d: %s", e.StatusCode, strings.TrimSpace(e.Body))
+}
+
 func StartAIPDDFinanceReconciliationTask() {
 	if !common.IsMasterNode {
+		return
+	}
+	if !IsAIPDDFinanceEnabled() {
+		common.SysLog("AIPDD finance reconciliation disabled via AIPDD_FINANCE_ENABLED=false")
 		return
 	}
 	gopool.Go(func() {
@@ -54,6 +68,11 @@ func runAIPDDFinanceReconciliation() {
 	if err := model.MarkStaleAIPDDFinanceRefundsForReview(); err != nil {
 		common.SysLog("mark stale AIPDD finance refunds failed: " + err.Error())
 	}
+	if closed, err := model.SweepOrphanAIPDDFinanceOutbox(); err != nil {
+		common.SysLog("sweep orphan AIPDD finance outbox failed: " + err.Error())
+	} else if closed > 0 {
+		common.SysLog(fmt.Sprintf("closed %d orphan AIPDD finance outbox events (upstream 404 + local terminal billing)", closed))
+	}
 	events, err := model.ClaimAIPDDFinanceOutbox(50)
 	if err != nil {
 		common.SysLog("claim AIPDD finance outbox failed: " + err.Error())
@@ -61,7 +80,9 @@ func runAIPDDFinanceReconciliation() {
 	}
 	for index := range events {
 		if err = refreshAIPDDFinanceOrder(&events[index]); err != nil {
-			_ = model.RetryAIPDDFinanceOutbox(&events[index], err)
+			if handled := handleAIPDDFinanceOutboxFailure(&events[index], err); !handled {
+				_ = model.RetryAIPDDFinanceOutbox(&events[index], err)
+			}
 		} else {
 			_ = model.CompleteAIPDDFinanceOutbox(events[index].ID)
 		}
@@ -70,6 +91,7 @@ func runAIPDDFinanceReconciliation() {
 	if err != nil {
 		return
 	}
+	now := time.Now().Unix()
 	for index := range channels {
 		if channels[index].ChannelInfo.IsMultiKey {
 			common.SysLog(fmt.Sprintf("skip AIPDD finance pull for multi-key channel #%d; finance ownership requires one key per channel", channels[index].Id))
@@ -80,10 +102,40 @@ func runAIPDDFinanceReconciliation() {
 			common.SysLog(fmt.Sprintf("resolve AIPDD finance instance for channel #%d failed: %s", channels[index].Id, resolveErr.Error()))
 			continue
 		}
-		if err := pullAIPDDFinanceEvents(&channels[index], instanceID); err != nil {
+		shouldPull, cursor, pullGateErr := model.ShouldPullAIPDDFinanceEvents(channels[index].Id, instanceID, now)
+		if pullGateErr != nil {
+			common.SysLog(fmt.Sprintf("check AIPDD finance pull gate for channel #%d failed: %s", channels[index].Id, pullGateErr.Error()))
+			continue
+		}
+		if !shouldPull {
+			continue
+		}
+		if err := pullAIPDDFinanceEvents(&channels[index], instanceID, cursor); err != nil {
 			common.SysLog(fmt.Sprintf("pull AIPDD finance events for channel #%d failed: %s", channels[index].Id, err.Error()))
 		}
 	}
+}
+
+func handleAIPDDFinanceOutboxFailure(event *model.AIPDDFinanceOutbox, err error) bool {
+	if event == nil || err == nil || !isAIPDDFinanceNotFound(err) {
+		return false
+	}
+	order, orderErr := model.GetAIPDDFinanceOrderByScope(event.ChannelID, event.InstanceID, event.PlatformOrderID)
+	if orderErr != nil {
+		if errors.Is(orderErr, gorm.ErrRecordNotFound) {
+			_ = model.IgnoreOrphanAIPDDFinanceOutbox(event,
+				"ignored orphan refresh: local finance order missing and upstream returned 404")
+			return true
+		}
+		// Fall through to normal retry when order lookup itself failed unexpectedly.
+		return false
+	}
+	if !model.CanIgnoreOrphanAIPDDFinance404(order) {
+		return false
+	}
+	_ = model.IgnoreOrphanAIPDDFinanceOutbox(event,
+		"ignored orphan refresh: upstream returned 404 and local billing already closed")
+	return true
 }
 
 func refreshAIPDDFinanceOrder(event *model.AIPDDFinanceOutbox) error {
@@ -110,26 +162,40 @@ func refreshAIPDDFinanceOrder(event *model.AIPDDFinanceOutbox) error {
 	return model.ApplyAIPDDSettlementEnvelope(&envelope, body, channel.Id, nil)
 }
 
-func pullAIPDDFinanceEvents(channel *model.Channel, instanceID string) error {
-	cursor, err := model.GetAIPDDFinanceCursor(channel.Id, instanceID)
-	if err != nil {
-		return err
+func pullAIPDDFinanceEvents(channel *model.Channel, instanceID string, cursorRecord *model.AIPDDFinanceCursor) error {
+	cursor := int64(0)
+	if cursorRecord != nil {
+		cursor = cursorRecord.LastSequence
+	} else {
+		value, err := model.GetAIPDDFinanceCursor(channel.Id, instanceID)
+		if err != nil {
+			return err
+		}
+		cursor = value
 	}
 	endpoint := fmt.Sprintf("%s/api/finance/v1/settlement-events?after_sequence=%d&limit=200",
 		aipddFinanceBaseURL(channel), cursor)
 	body, err := doAIPDDFinanceGET(endpoint, channel.Key, instanceID)
 	if err != nil {
+		_ = model.RecordAIPDDFinancePullFailure(channel.Id, instanceID, err)
 		return err
 	}
 	var response struct {
 		Events []json.RawMessage `json:"events"`
 	}
 	if err = common.Unmarshal(body, &response); err != nil {
+		_ = model.RecordAIPDDFinancePullFailure(channel.Id, instanceID, err)
 		return err
 	}
 	for _, raw := range response.Events {
 		var envelope model.AIPDDSettlementEnvelope
 		if err = common.Unmarshal(raw, &envelope); err != nil {
+			sequence := peekAIPDDFinanceSequence(raw)
+			if sequence > cursor {
+				_ = model.RecordAIPDDFinancePoisonEvent(channel.Id, instanceID, sequence, err)
+			} else {
+				_ = model.RecordAIPDDFinancePullFailure(channel.Id, instanceID, err)
+			}
 			return err
 		}
 		if envelope.Sequence <= cursor {
@@ -137,11 +203,23 @@ func pullAIPDDFinanceEvents(channel *model.Channel, instanceID string) error {
 		}
 		sequence := envelope.Sequence
 		if err = model.ApplyAIPDDSettlementEnvelope(&envelope, raw, channel.Id, &sequence); err != nil {
+			_ = model.RecordAIPDDFinancePoisonEvent(channel.Id, instanceID, sequence, err)
 			return err
 		}
 		cursor = sequence
 	}
+	_ = model.RecordAIPDDFinancePullSuccess(channel.Id, instanceID)
 	return nil
+}
+
+func peekAIPDDFinanceSequence(raw json.RawMessage) int64 {
+	var probe struct {
+		Sequence int64 `json:"sequence"`
+	}
+	if err := common.Unmarshal(raw, &probe); err != nil {
+		return 0
+	}
+	return probe.Sequence
 }
 
 func doAIPDDFinanceGET(endpoint, apiKey, instanceID string) ([]byte, error) {
@@ -167,9 +245,17 @@ func doAIPDDFinanceGET(endpoint, apiKey, instanceID string) ([]byte, error) {
 		return nil, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("AIPDD finance endpoint returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return nil, &aipddFinanceHTTPError{StatusCode: resp.StatusCode, Body: string(body)}
 	}
 	return body, nil
+}
+
+func isAIPDDFinanceNotFound(err error) bool {
+	var httpErr *aipddFinanceHTTPError
+	if errors.As(err, &httpErr) {
+		return httpErr.StatusCode == http.StatusNotFound
+	}
+	return strings.Contains(err.Error(), "returned 404")
 }
 
 func aipddFinanceBaseURL(channel *model.Channel) string {

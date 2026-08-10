@@ -47,6 +47,8 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { SectionPageLayout } from '@/components/layout'
 import {
+  closeFinanceOutbox,
+  closeOrphanFinanceOutbox,
   createFinanceExport,
   downloadFinanceExport,
   getFinanceExport,
@@ -55,6 +57,7 @@ import {
   getFinanceSummary,
   getFinanceSyncStatus,
   retryFinanceSync,
+  skipFinancePoisonEvent,
 } from './api'
 import type { FinanceExportJob, FinanceFilter, FinanceOrder } from './types'
 
@@ -145,6 +148,40 @@ export function AIPDDFinanceReport() {
         })
       )
       await queryClient.invalidateQueries({ queryKey: ['aipdd-finance-sync'] })
+    },
+  })
+  const closeOrphansMutation = useMutation({
+    mutationFn: closeOrphanFinanceOutbox,
+    onSuccess: async (response) => {
+      toast.success(
+        t('{{count}} orphan sync jobs were closed', {
+          count: response.data.closed,
+        })
+      )
+      await queryClient.invalidateQueries({ queryKey: ['aipdd-finance-sync'] })
+    },
+  })
+  const skipPoisonMutation = useMutation({
+    mutationFn: skipFinancePoisonEvent,
+    onSuccess: async () => {
+      toast.success(t('Poison settlement event was skipped'))
+      await queryClient.invalidateQueries({ queryKey: ['aipdd-finance-sync'] })
+    },
+  })
+  const closeOutboxMutation = useMutation({
+    mutationFn: (id: string) =>
+      closeFinanceOutbox(id, {
+        state: 'IGNORED',
+        reason: 'manually closed by admin',
+      }),
+    onSuccess: async () => {
+      toast.success(t('Sync job closed'))
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['aipdd-finance-sync'] }),
+        queryClient.invalidateQueries({
+          queryKey: ['aipdd-finance-order-detail', selectedOrderId],
+        }),
+      ])
     },
   })
 
@@ -250,7 +287,16 @@ export function AIPDDFinanceReport() {
                     instance_id: instanceId,
                   })
                 }
+                onCloseOrphans={() => closeOrphansMutation.mutate()}
+                onSkipPoison={(channelId, instanceId) =>
+                  skipPoisonMutation.mutate({
+                    channel_id: channelId,
+                    instance_id: instanceId,
+                  })
+                }
                 retrying={retryMutation.isPending}
+                closingOrphans={closeOrphansMutation.isPending}
+                skippingPoison={skipPoisonMutation.isPending}
                 t={t}
               />
             </TabsContent>
@@ -267,6 +313,8 @@ export function AIPDDFinanceReport() {
           open={Boolean(selectedOrderId)}
           onOpenChange={(open) => !open && setSelectedOrderId(null)}
           detail={detailQuery.data?.data}
+          onCloseOutbox={(id) => closeOutboxMutation.mutate(id)}
+          closingOutbox={closeOutboxMutation.isPending}
           loading={detailQuery.isLoading}
           t={t}
         />
@@ -658,24 +706,42 @@ function SyncTable({
   statuses,
   loading,
   onRetry,
+  onCloseOrphans,
+  onSkipPoison,
   retrying,
+  closingOrphans,
+  skippingPoison,
   t,
 }: {
   statuses: Awaited<ReturnType<typeof getFinanceSyncStatus>>['data']
   loading: boolean
   onRetry: (channelId: number, instanceId: string) => void
+  onCloseOrphans: () => void
+  onSkipPoison: (channelId: number, instanceId: string) => void
   retrying: boolean
+  closingOrphans: boolean
+  skippingPoison: boolean
   t: (key: string) => string
 }) {
   return (
     <Card size='sm'>
-      <CardHeader>
-        <CardTitle>{t('Settlement synchronization')}</CardTitle>
-        <CardDescription>
-          {t(
-            'Manual retry only refreshes settlement snapshots and never guesses a charge or refund'
-          )}
-        </CardDescription>
+      <CardHeader className='flex flex-row items-start justify-between gap-3'>
+        <div className='space-y-1.5'>
+          <CardTitle>{t('Settlement synchronization')}</CardTitle>
+          <CardDescription>
+            {t(
+              'Manual retry only refreshes settlement snapshots and never guesses a charge or refund'
+            )}
+          </CardDescription>
+        </div>
+        <Button
+          size='sm'
+          variant='outline'
+          disabled={closingOrphans}
+          onClick={onCloseOrphans}
+        >
+          {t('Close orphan 404 jobs')}
+        </Button>
       </CardHeader>
       <CardContent className='px-0'>
         <div className='overflow-x-auto border-y'>
@@ -685,7 +751,7 @@ function SyncTable({
                 <TableHead>{t('Channel')}</TableHead>
                 <TableHead>{t('Instance ID')}</TableHead>
                 <TableHead>{t('Cursor')}</TableHead>
-                <TableHead>{t('Last success')}</TableHead>
+                <TableHead>{t('Next pull')}</TableHead>
                 <TableHead>{t('Backlog')}</TableHead>
                 <TableHead>{t('Last error')}</TableHead>
                 <TableHead className='text-right'>{t('Actions')}</TableHead>
@@ -723,31 +789,74 @@ function SyncTable({
                     <TableCell className='font-mono text-xs'>
                       {status.instance_id}
                     </TableCell>
-                    <TableCell>{status.last_sequence}</TableCell>
-                    <TableCell>{formatTime(status.last_success_at)}</TableCell>
                     <TableCell>
-                      <Badge
-                        variant={
-                          status.backlog_count > 0 ? 'destructive' : 'secondary'
-                        }
-                      >
-                        {status.backlog_count}
-                      </Badge>
+                      <div>{status.last_sequence}</div>
+                      {status.poison_sequence > 0 && (
+                        <Badge variant='destructive' className='mt-1'>
+                          {t('Poison')} #{status.poison_sequence}
+                        </Badge>
+                      )}
+                    </TableCell>
+                    <TableCell className='text-xs'>
+                      {status.next_pull_at > 0
+                        ? formatTime(status.next_pull_at)
+                        : t('Ready')}
+                      {status.consecutive_failures > 0 && (
+                        <div className='text-muted-foreground mt-1'>
+                          {t('Failures')}: {status.consecutive_failures}
+                        </div>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <div className='flex flex-col gap-1'>
+                        <Badge
+                          variant={
+                            status.backlog_count > 0
+                              ? 'destructive'
+                              : 'secondary'
+                          }
+                        >
+                          {status.backlog_count}
+                        </Badge>
+                        {(status.dead_count > 0 || status.ignored_count > 0) && (
+                          <span className='text-muted-foreground text-xs'>
+                            {t('Dead')}: {status.dead_count} · {t('Ignored')}:{' '}
+                            {status.ignored_count}
+                          </span>
+                        )}
+                      </div>
                     </TableCell>
                     <TableCell className='text-destructive max-w-72 text-xs'>
-                      {status.last_error || '—'}
+                      {status.poison_error || status.last_error || '—'}
                     </TableCell>
                     <TableCell className='text-right'>
-                      <Button
-                        size='sm'
-                        variant='outline'
-                        disabled={retrying || !status.single_key_valid}
-                        onClick={() =>
-                          onRetry(status.channel_id, status.instance_id)
-                        }
-                      >
-                        {t('Safe refresh')}
-                      </Button>
+                      <div className='flex flex-col items-end gap-2'>
+                        <Button
+                          size='sm'
+                          variant='outline'
+                          disabled={retrying || !status.single_key_valid}
+                          onClick={() =>
+                            onRetry(status.channel_id, status.instance_id)
+                          }
+                        >
+                          {t('Safe refresh')}
+                        </Button>
+                        {status.poison_sequence > 0 && (
+                          <Button
+                            size='sm'
+                            variant='destructive'
+                            disabled={skippingPoison}
+                            onClick={() =>
+                              onSkipPoison(
+                                status.channel_id,
+                                status.instance_id
+                              )
+                            }
+                          >
+                            {t('Skip poison event')}
+                          </Button>
+                        )}
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))
@@ -765,15 +874,20 @@ function OrderDetailSheet({
   onOpenChange,
   detail,
   loading,
+  onCloseOutbox,
+  closingOutbox,
   t,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   detail?: Awaited<ReturnType<typeof getFinanceOrderDetail>>['data']
   loading: boolean
+  onCloseOutbox: (id: string) => void
+  closingOutbox: boolean
   t: (key: string, options?: Record<string, unknown>) => string
 }) {
   const order = detail?.order
+  const syncJobs = detail?.pending_or_failed_sync_jobs ?? []
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent className='w-full overflow-y-auto sm:max-w-3xl'>
@@ -798,6 +912,48 @@ function OrderDetailSheet({
                 )}
               </AlertDescription>
             </Alert>
+            {syncJobs.length > 0 && (
+              <Card size='sm'>
+                <CardHeader>
+                  <CardTitle>{t('Sync jobs')}</CardTitle>
+                  <CardDescription>
+                    {t(
+                      'Close orphan refresh jobs when upstream never created the order and local billing is already terminal'
+                    )}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className='flex flex-col gap-2'>
+                  {syncJobs.map((job) => (
+                    <div
+                      key={job.id}
+                      className='flex items-start justify-between gap-3 rounded-lg border p-3'
+                    >
+                      <div className='min-w-0'>
+                        <div className='flex items-center gap-2'>
+                          <Badge variant='outline'>{job.state}</Badge>
+                          <span className='text-muted-foreground text-xs'>
+                            {t('Attempts')}: {job.attempts}
+                          </span>
+                        </div>
+                        <p className='text-destructive mt-1 text-xs break-all'>
+                          {job.last_error || '—'}
+                        </p>
+                      </div>
+                      {job.state === 'PENDING' && (
+                        <Button
+                          size='sm'
+                          variant='outline'
+                          disabled={closingOutbox}
+                          onClick={() => onCloseOutbox(job.id)}
+                        >
+                          {t('Close job')}
+                        </Button>
+                      )}
+                    </div>
+                  ))}
+                </CardContent>
+              </Card>
+            )}
             <div className='grid gap-2 sm:grid-cols-3'>
               <AmountTile
                 label={t('Customer charge AWCoin / quota')}

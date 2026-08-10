@@ -108,6 +108,12 @@ export type FinanceSyncStatus = {
   last_sequence: number
   last_success_at: number
   backlog_count: number
+  dead_count: number
+  ignored_count: number
+  next_pull_at: number
+  consecutive_failures: number
+  poison_sequence: number
+  poison_error: string
   last_error: string
   last_error_at: number
   single_key_valid: boolean

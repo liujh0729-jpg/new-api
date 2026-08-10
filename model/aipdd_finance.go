@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -17,6 +18,10 @@ import (
 const (
 	AIPDDFinanceOutboxPending = "PENDING"
 	AIPDDFinanceOutboxDone    = "DONE"
+	AIPDDFinanceOutboxIgnored = "IGNORED"
+	AIPDDFinanceOutboxDead    = "DEAD"
+
+	aipddFinanceOutboxMaxAttempts = 20
 )
 
 // AIPDDFinanceOrder is a settlement mirror, not a projection of ordinary request logs.
@@ -96,11 +101,18 @@ type AIPDDFinanceOutbox struct {
 }
 
 type AIPDDFinanceCursor struct {
-	ID           string `gorm:"type:varchar(36);primaryKey" json:"id"`
-	ChannelID    int    `gorm:"uniqueIndex:uk_aipdd_finance_cursor,priority:1" json:"channel_id"`
-	InstanceID   string `gorm:"type:varchar(36);uniqueIndex:uk_aipdd_finance_cursor,priority:2" json:"instance_id"`
-	LastSequence int64  `json:"last_sequence"`
-	UpdatedAt    int64  `json:"updated_at"`
+	ID                  string `gorm:"type:varchar(36);primaryKey" json:"id"`
+	ChannelID           int    `gorm:"uniqueIndex:uk_aipdd_finance_cursor,priority:1" json:"channel_id"`
+	InstanceID          string `gorm:"type:varchar(36);uniqueIndex:uk_aipdd_finance_cursor,priority:2" json:"instance_id"`
+	LastSequence        int64  `json:"last_sequence"`
+	NextPullAt          int64  `gorm:"index" json:"next_pull_at"`
+	ConsecutiveFailures int    `json:"consecutive_failures"`
+	LastPullError       string `gorm:"type:text" json:"last_pull_error"`
+	LastPullErrorAt     int64  `json:"last_pull_error_at"`
+	PoisonSequence      int64  `json:"poison_sequence"`
+	PoisonError         string `gorm:"type:text" json:"poison_error"`
+	PoisonAt            int64  `json:"poison_at"`
+	UpdatedAt           int64  `json:"updated_at"`
 }
 
 func (AIPDDFinanceOrder) TableName() string    { return "aipdd_finance_order" }
@@ -282,13 +294,121 @@ func CompleteAIPDDFinanceOutbox(id string) error {
 		Updates(map[string]interface{}{"state": AIPDDFinanceOutboxDone, "updated_at": time.Now().Unix(), "last_error": ""}).Error
 }
 
+func CloseAIPDDFinanceOutbox(id, state, reason string) error {
+	switch state {
+	case AIPDDFinanceOutboxIgnored, AIPDDFinanceOutboxDead:
+	default:
+		return fmt.Errorf("unsupported AIPDD finance outbox close state: %s", state)
+	}
+	now := time.Now().Unix()
+	result := DB.Model(&AIPDDFinanceOutbox{}).Where("id = ? AND state = ?", id, AIPDDFinanceOutboxPending).
+		Updates(map[string]interface{}{
+			"state": state, "last_error": reason, "next_attempt_at": now + 365*24*3600, "updated_at": now,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
+}
+
 func RetryAIPDDFinanceOutbox(event *AIPDDFinanceOutbox, cause error) error {
+	if event == nil {
+		return errors.New("AIPDD finance outbox event is required")
+	}
 	attempts := event.Attempts + 1
+	now := time.Now().Unix()
+	if attempts >= aipddFinanceOutboxMaxAttempts {
+		return DB.Model(&AIPDDFinanceOutbox{}).Where("id = ? AND state = ?", event.ID, AIPDDFinanceOutboxPending).
+			Updates(map[string]interface{}{
+				"state": AIPDDFinanceOutboxDead, "attempts": attempts,
+				"next_attempt_at": now + 365*24*3600,
+				"last_error":      fmt.Sprintf("max attempts exceeded: %s", cause.Error()),
+				"updated_at":      now,
+			}).Error
+	}
 	delay := int64(1 << min(attempts, 10))
 	return DB.Model(&AIPDDFinanceOutbox{}).Where("id = ?", event.ID).Updates(map[string]interface{}{
-		"attempts": attempts, "next_attempt_at": time.Now().Unix() + delay,
-		"last_error": cause.Error(), "updated_at": time.Now().Unix(),
+		"attempts": attempts, "next_attempt_at": now + delay,
+		"last_error": cause.Error(), "updated_at": now,
 	}).Error
+}
+
+// CanIgnoreOrphanAIPDDFinance404 marks local-only failures as terminal:
+// upstream never accepted the order (no settlement revision) and NewAPI already
+// closed customer billing as REFUNDED / NOT_CHARGED.
+func CanIgnoreOrphanAIPDDFinance404(order *AIPDDFinanceOrder) bool {
+	if order == nil {
+		return false
+	}
+	if order.SettlementRevision > 0 || order.CostStatus == "CONFIRMED" {
+		return false
+	}
+	switch order.LocalBillingStatus {
+	case "REFUNDED", "NOT_CHARGED":
+		return true
+	default:
+		return false
+	}
+}
+
+func GetAIPDDFinanceOrderByScope(channelID int, instanceID, platformOrderID string) (*AIPDDFinanceOrder, error) {
+	var order AIPDDFinanceOrder
+	err := DB.Where("channel_id = ? AND instance_id = ? AND platform_order_id = ?",
+		channelID, instanceID, platformOrderID).First(&order).Error
+	if err != nil {
+		return nil, err
+	}
+	return &order, nil
+}
+
+func IgnoreOrphanAIPDDFinanceOutbox(event *AIPDDFinanceOutbox, reason string) error {
+	if event == nil {
+		return errors.New("AIPDD finance outbox event is required")
+	}
+	if strings.TrimSpace(reason) == "" {
+		reason = "ignored orphan refresh: upstream order missing and local billing already closed"
+	}
+	return CloseAIPDDFinanceOutbox(event.ID, AIPDDFinanceOutboxIgnored, reason)
+}
+
+// SweepOrphanAIPDDFinanceOutbox closes PENDING refresh jobs that already failed with
+// upstream 404 while local billing is terminal. Used to drain historical backlog
+// without waiting for AIPDD to create those orders.
+func SweepOrphanAIPDDFinanceOutbox() (int64, error) {
+	var events []AIPDDFinanceOutbox
+	if err := DB.Where("state = ? AND last_error LIKE ?", AIPDDFinanceOutboxPending, "%returned 404%").
+		Order("created_at asc").Limit(200).Find(&events).Error; err != nil {
+		return 0, err
+	}
+	var closed int64
+	for index := range events {
+		event := &events[index]
+		order, err := GetAIPDDFinanceOrderByScope(event.ChannelID, event.InstanceID, event.PlatformOrderID)
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				if closeErr := IgnoreOrphanAIPDDFinanceOutbox(event,
+					"ignored orphan refresh: local finance order missing and upstream returned 404"); closeErr == nil {
+					closed++
+				}
+			}
+			continue
+		}
+		if !CanIgnoreOrphanAIPDDFinance404(order) {
+			continue
+		}
+		if err = IgnoreOrphanAIPDDFinanceOutbox(event,
+			"ignored orphan refresh: upstream returned 404 and local billing already closed"); err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				continue
+			}
+			return closed, err
+		}
+		closed++
+	}
+	return closed, nil
 }
 
 func ApplyAIPDDSettlementEnvelope(envelope *AIPDDSettlementEnvelope, payload []byte, channelID int, cursorSequence *int64) error {
@@ -447,12 +567,160 @@ func pointerValue(value *int64) int64 {
 }
 
 func GetAIPDDFinanceCursor(channelID int, instanceID string) (int64, error) {
+	cursor, err := GetAIPDDFinanceCursorRecord(channelID, instanceID)
+	if err != nil {
+		return 0, err
+	}
+	if cursor == nil {
+		return 0, nil
+	}
+	return cursor.LastSequence, nil
+}
+
+func GetAIPDDFinanceCursorRecord(channelID int, instanceID string) (*AIPDDFinanceCursor, error) {
 	var cursor AIPDDFinanceCursor
 	err := DB.Where("channel_id = ? AND instance_id = ?", channelID, instanceID).First(&cursor).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return 0, nil
+		return nil, nil
 	}
-	return cursor.LastSequence, err
+	if err != nil {
+		return nil, err
+	}
+	return &cursor, nil
+}
+
+func ensureAIPDDFinanceCursor(channelID int, instanceID string) (*AIPDDFinanceCursor, error) {
+	cursor, err := GetAIPDDFinanceCursorRecord(channelID, instanceID)
+	if err != nil {
+		return nil, err
+	}
+	if cursor != nil {
+		return cursor, nil
+	}
+	now := time.Now().Unix()
+	cursor = &AIPDDFinanceCursor{
+		ID: uuid.NewString(), ChannelID: channelID, InstanceID: instanceID, UpdatedAt: now,
+	}
+	if err = DB.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "channel_id"}, {Name: "instance_id"}},
+		DoNothing: true,
+	}).Create(cursor).Error; err != nil {
+		return nil, err
+	}
+	return GetAIPDDFinanceCursorRecord(channelID, instanceID)
+}
+
+func ShouldPullAIPDDFinanceEvents(channelID int, instanceID string, now int64) (bool, *AIPDDFinanceCursor, error) {
+	cursor, err := GetAIPDDFinanceCursorRecord(channelID, instanceID)
+	if err != nil {
+		return false, nil, err
+	}
+	if cursor == nil {
+		return true, nil, nil
+	}
+	if cursor.NextPullAt > now {
+		return false, cursor, nil
+	}
+	return true, cursor, nil
+}
+
+func RecordAIPDDFinancePullFailure(channelID int, instanceID string, cause error) error {
+	cursor, err := ensureAIPDDFinanceCursor(channelID, instanceID)
+	if err != nil {
+		return err
+	}
+	if cursor == nil {
+		return errors.New("failed to ensure AIPDD finance cursor")
+	}
+	now := time.Now().Unix()
+	failures := cursor.ConsecutiveFailures + 1
+	delay := int64(1 << min(failures, 10))
+	message := ""
+	if cause != nil {
+		message = cause.Error()
+	}
+	return DB.Model(&AIPDDFinanceCursor{}).Where("id = ?", cursor.ID).Updates(map[string]interface{}{
+		"consecutive_failures": failures,
+		"next_pull_at":         now + delay,
+		"last_pull_error":      message,
+		"last_pull_error_at":   now,
+		"updated_at":           now,
+	}).Error
+}
+
+func RecordAIPDDFinancePullSuccess(channelID int, instanceID string) error {
+	cursor, err := GetAIPDDFinanceCursorRecord(channelID, instanceID)
+	if err != nil || cursor == nil {
+		return err
+	}
+	if cursor.ConsecutiveFailures == 0 && cursor.NextPullAt == 0 &&
+		cursor.LastPullError == "" && cursor.PoisonSequence == 0 {
+		return nil
+	}
+	now := time.Now().Unix()
+	return DB.Model(&AIPDDFinanceCursor{}).Where("id = ?", cursor.ID).Updates(map[string]interface{}{
+		"consecutive_failures": 0,
+		"next_pull_at":         0,
+		"last_pull_error":      "",
+		"last_pull_error_at":   0,
+		"poison_sequence":      0,
+		"poison_error":         "",
+		"poison_at":            0,
+		"updated_at":           now,
+	}).Error
+}
+
+func RecordAIPDDFinancePoisonEvent(channelID int, instanceID string, sequence int64, cause error) error {
+	cursor, err := ensureAIPDDFinanceCursor(channelID, instanceID)
+	if err != nil {
+		return err
+	}
+	if cursor == nil {
+		return errors.New("failed to ensure AIPDD finance cursor")
+	}
+	now := time.Now().Unix()
+	failures := cursor.ConsecutiveFailures + 1
+	delay := int64(1 << min(failures, 10))
+	message := ""
+	if cause != nil {
+		message = cause.Error()
+	}
+	return DB.Model(&AIPDDFinanceCursor{}).Where("id = ?", cursor.ID).Updates(map[string]interface{}{
+		"poison_sequence":      sequence,
+		"poison_error":         message,
+		"poison_at":            now,
+		"consecutive_failures": failures,
+		"next_pull_at":         now + delay,
+		"last_pull_error":      fmt.Sprintf("poison event sequence %d: %s", sequence, message),
+		"last_pull_error_at":   now,
+		"updated_at":           now,
+	}).Error
+}
+
+func SkipAIPDDFinancePoisonEvent(channelID int, instanceID string) error {
+	cursor, err := GetAIPDDFinanceCursorRecord(channelID, instanceID)
+	if err != nil {
+		return err
+	}
+	if cursor == nil || cursor.PoisonSequence <= 0 {
+		return errors.New("no poison AIPDD finance event to skip")
+	}
+	now := time.Now().Unix()
+	lastSequence := cursor.LastSequence
+	if cursor.PoisonSequence > lastSequence {
+		lastSequence = cursor.PoisonSequence
+	}
+	return DB.Model(&AIPDDFinanceCursor{}).Where("id = ?", cursor.ID).Updates(map[string]interface{}{
+		"last_sequence":        lastSequence,
+		"poison_sequence":      0,
+		"poison_error":         "",
+		"poison_at":            0,
+		"consecutive_failures": 0,
+		"next_pull_at":         0,
+		"last_pull_error":      "",
+		"last_pull_error_at":   0,
+		"updated_at":           now,
+	}).Error
 }
 
 func GetAIPDDChannelsForFinance() ([]Channel, error) {

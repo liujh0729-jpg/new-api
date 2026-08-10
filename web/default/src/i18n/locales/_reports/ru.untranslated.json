@@ -5,6 +5,7 @@
   "{\"original-model\": \"replacement-model\"}": "{\"original-model\": \"replacement-model\"}",
   "/status/": "/status/",
   "/your/endpoint": "/your/endpoint",
+  "Access Key (AK)": "Access Key (AK)",
   "AccessKey / SecretAccessKey": "AccessKey / SecretAccessKey",
   "AI Proxy": "AI Proxy",
   "AIGC2D": "AIGC2D",
@@ -22,6 +23,7 @@
   "Cloudflare": "Cloudflare",
   "Cohere": "Cohere",
   "Core pricing": "Core pricing",
+  "CreateAsset QPM": "CreateAsset QPM",
   "DeepSeek": "DeepSeek",
   "Discord": "Discord",
   "DoubaoVideo": "DoubaoVideo",
@@ -85,6 +87,7 @@
   "Prompt": "Prompt",
   "QuantumNous": "QuantumNous",
   "Replicate": "Replicate",
+  "Secret Key (SK)": "Secret Key (SK)",
   "Separate image/audio prices are enabled.": "Separate image/audio prices are enabled.",
   "Set separate prices for cache reads and writes.": "Set separate prices for cache reads and writes.",
   "SiliconFlow": "SiliconFlow",
@@ -110,8 +113,5 @@
   "whsec_xxx": "whsec_xxx",
   "Xinference": "Xinference",
   "Xunfei": "Xunfei",
-  "Zhipu V4": "Zhipu V4",
-  "Access Key (AK)": "Access Key (AK)",
-  "Secret Key (SK)": "Secret Key (SK)",
-  "CreateAsset QPM": "CreateAsset QPM"
+  "Zhipu V4": "Zhipu V4"
 }
