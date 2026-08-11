@@ -120,8 +120,9 @@ func (legacyVirtualCharacterAsset) TableName() string { return "virtual_characte
 ### [`router/video-router.go`](../router/video-router.go)
 
 - 新增 API Key 接口 `POST /v1/virtual-characters`，接受与控制台一致的 multipart 字段并创建「角色 + 唯一图片」
+- 新增 API Key 接口 `GET /v1/virtual-characters?scope=public|private`，分页查询公开角色或当前 Key 用户的私有角色
 - 新增 API Key 接口 `GET /v1/virtual-characters/:id`，供调用方查询 `creating → active/failed` 异步状态
-- 两个接口使用 `TokenAuth`，角色所有权、配额与上传限流都按 API Key 对应用户计算
+- 以上接口使用 `TokenAuth`，角色所有权、配额与上传限流都按 API Key 对应用户计算
 
 ### [`model/virtual_character.go`](../model/virtual_character.go) / [`model/option.go`](../model/option.go)
 

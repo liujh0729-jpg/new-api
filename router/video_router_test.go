@@ -17,6 +17,7 @@ func TestVideoRouterRegistersAPIKeyVirtualCharacterEndpoints(t *testing.T) {
 	for _, route := range engine.Routes() {
 		routes[route.Method+" "+route.Path] = true
 	}
+	require.True(t, routes[http.MethodGet+" /v1/virtual-characters"])
 	require.True(t, routes[http.MethodPost+" /v1/virtual-characters"])
 	require.True(t, routes[http.MethodGet+" /v1/virtual-characters/:id"])
 }

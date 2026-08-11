@@ -16,6 +16,7 @@ func SetVideoRouter(router *gin.Engine) {
 	virtualCharacterV1Router.Use(middleware.SystemPerformanceCheck())
 	virtualCharacterV1Router.Use(middleware.TokenAuth())
 	{
+		virtualCharacterV1Router.GET("", controller.ListVirtualCharacterGroups)
 		virtualCharacterV1Router.POST("", middleware.UserUploadRateLimit(), controller.CreateVirtualCharacter)
 		virtualCharacterV1Router.GET("/:id", controller.GetVirtualCharacterGroup)
 	}

@@ -54,6 +54,55 @@ func TestValidateVolcCharacterImageUploadEnforcesTypeAndLimits(t *testing.T) {
 	require.ErrorContains(t, err, "must be JPG")
 }
 
+func TestListVirtualCharacterGroupsSeparatesPublicAndAPIKeyOwnerPrivateCharacters(t *testing.T) {
+	db := setupVirtualCharacterControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.VirtualCharacterUserLimit{}))
+	ownerSlot := 1
+	otherSlot := 1
+	require.NoError(t, db.Create(&[]model.VirtualCharacter{
+		{UserID: 0, Scope: model.VirtualCharacterScopePublic, Name: "Public Active", Status: model.VirtualCharacterStatusActive},
+		{UserID: 0, Scope: model.VirtualCharacterScopePublic, Name: "Public Offline", Status: model.VirtualCharacterStatusOffline},
+		{UserID: 77, Slot: &ownerSlot, Scope: model.VirtualCharacterScopePrivate, Name: "Owner Private", Status: model.VirtualCharacterStatusActive},
+		{UserID: 88, Slot: &otherSlot, Scope: model.VirtualCharacterScopePrivate, Name: "Other Private", Status: model.VirtualCharacterStatusActive},
+	}).Error)
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.GET("/v1/virtual-characters", func(c *gin.Context) {
+		c.Set("id", 77)
+		ListVirtualCharacterGroups(c)
+	})
+
+	list := func(scope string) []virtualCharacterGroupResponse {
+		t.Helper()
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodGet, "/v1/virtual-characters?scope="+scope, nil)
+		router.ServeHTTP(recorder, request)
+		require.Equal(t, http.StatusOK, recorder.Code)
+		var payload struct {
+			Success bool `json:"success"`
+			Data    struct {
+				Page struct {
+					Total int                             `json:"total"`
+					Items []virtualCharacterGroupResponse `json:"items"`
+				} `json:"page"`
+			} `json:"data"`
+		}
+		require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
+		require.True(t, payload.Success)
+		require.Equal(t, payload.Data.Page.Total, len(payload.Data.Page.Items))
+		return payload.Data.Page.Items
+	}
+
+	publicItems := list(model.VirtualCharacterScopePublic)
+	require.Len(t, publicItems, 1)
+	require.Equal(t, "Public Active", publicItems[0].Name)
+
+	privateItems := list(model.VirtualCharacterScopePrivate)
+	require.Len(t, privateItems, 1)
+	require.Equal(t, "Owner Private", privateItems[0].Name)
+}
+
 func TestValidationCallbackRejectsTokenMismatchAndReplay(t *testing.T) {
 	db := setupVirtualCharacterControllerTestDB(t)
 	require.NoError(t, db.AutoMigrate(&model.VirtualCharacterValidationSession{}))

@@ -763,10 +763,27 @@ Seedance 2.0 支持引用火山托管角色图片。**上游官方写法**是把
 使用 API Key 上传角色：
 
 - 创建：`POST /v1/virtual-characters`，请求格式为 `multipart/form-data`。
+- 列表：`GET /v1/virtual-characters?scope=public` 查询公开角色；`scope=private` 查询当前 API Key 用户的私有角色。不传 `scope` 时默认为 `public`。
 - 查询：`GET /v1/virtual-characters/{id}`，轮询响应中的 `data.status`；正常状态流转为 `creating → active`，终态失败为 `failed`，并在 `data.last_error` 中返回原因。
-- 鉴权：两个接口均使用 `Authorization: Bearer $NEW_API_TOKEN`。角色归属于 API Key 对应的用户，并沿用该用户的角色配额与上传限流。
+- 鉴权：以上接口均使用 `Authorization: Bearer $NEW_API_TOKEN`。角色归属于 API Key 对应的用户，并沿用该用户的角色配额与上传限流。
 - 字段：`name` 和 `file` 必填；`description`、`tags` 可选。`tags` 可传 JSON 字符串数组或逗号分隔文本。
 - 图片：支持 JPG/JPEG、PNG、WebP、GIF、HEIC，最大 30 MB。
+
+公开角色支持分页及条件筛选：
+
+```bash
+curl "$BASE_URL/v1/virtual-characters?scope=public&p=1&page_size=20&keyword=摄影师&gender=男&age_band=20-40" \
+  -H "Authorization: Bearer $NEW_API_TOKEN"
+```
+
+查询当前用户的私有角色：
+
+```bash
+curl "$BASE_URL/v1/virtual-characters?scope=private&p=1&page_size=20&status=active" \
+  -H "Authorization: Bearer $NEW_API_TOKEN"
+```
+
+可用筛选参数包括 `keyword`、`nationality`、`gender`、`age_band` 和 `status`。`age_band` 可选 `0-20`、`20-40`、`40-60`、`60-80`、`80-100`；`status` 可选 `creating`、`active`、`blocked`、`offline`、`deleting`、`failed`。响应中的 `data.page.items` 为角色数组，`data.used` / `data.limit` 表示当前用户私有角色配额。
 
 ```bash
 curl "$BASE_URL/v1/virtual-characters" \
