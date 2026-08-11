@@ -142,6 +142,12 @@ export function SidebarModulesSection({
         title: t('Redeem codes'),
         description: t('Create and review invite or credit codes.'),
       },
+      aipdd_transit_orders: {
+        title: t('AIPDD Order Records'),
+        description: t(
+          'View NewAPI customer charges and AIPDD source costs for transit orders.'
+        ),
+      },
       user: {
         title: t('Users'),
         description: t('Administer user accounts and roles.'),

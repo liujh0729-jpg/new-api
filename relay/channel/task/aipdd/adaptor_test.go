@@ -19,8 +19,7 @@ import (
 func TestBuildRequestHeaderIncludesFinanceIdentity(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/tasks", nil)
 	info := &relaycommon.RelayInfo{AIPDDFinance: &relaycommon.AIPDDFinanceContext{
-		InstanceID: "instance-id", PlatformOrderID: "order-id", AttemptID: "attempt-id",
-		NewAPIUserID: "12", NewAPITokenID: "34",
+		InstanceID: "instance-id", PlatformOrderID: "order-id",
 	}}
 	adaptor := &TaskAdaptor{apiKey: "aipdd-key"}
 	if err := adaptor.BuildRequestHeader(nil, req, info); err != nil {

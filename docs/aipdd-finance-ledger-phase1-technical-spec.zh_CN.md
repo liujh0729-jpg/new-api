@@ -1,6 +1,8 @@
 # AIPDD × NewAPI 财务台账第一阶段技术契约
 
-状态：实施基线（2026-08-08）
+> **已废止（2026-08-11）**：模型订单不再使用本文的 movement/inbox/outbox/cursor/XLSX 方案。现行跨系统协议与单订单模型以 [AIPDD × NewAPI 中转订单与 AIPDD 利润报表最终地图](./aipdd-newapi-transit-order-profit-report-final-map.zh_CN.md) 为准；历史表仅保留既有数据，不再参与新模型订单写入或报表。
+
+状态：历史技术记录（原实施基线 2026-08-08）
 
 ## 1. 边界与事实源
 

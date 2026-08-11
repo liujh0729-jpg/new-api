@@ -52,7 +52,7 @@ import { Route as AuthenticatedKeysIndexRouteImport } from './routes/_authentica
 import { Route as AuthenticatedDashboardIndexRouteImport } from './routes/_authenticated/dashboard/index'
 import { Route as AuthenticatedCharactersIndexRouteImport } from './routes/_authenticated/characters/index'
 import { Route as AuthenticatedChannelsIndexRouteImport } from './routes/_authenticated/channels/index'
-import { Route as AuthenticatedAipddFinanceIndexRouteImport } from './routes/_authenticated/aipdd-finance/index'
+import { Route as AuthenticatedAipddTransitOrdersIndexRouteImport } from './routes/_authenticated/aipdd-transit-orders/index'
 import { Route as AuthenticatedUsageLogsSectionRouteImport } from './routes/_authenticated/usage-logs/$section'
 import { Route as AuthenticatedModelsSectionRouteImport } from './routes/_authenticated/models/$section'
 import { Route as AuthenticatedErrorsErrorRouteImport } from './routes/_authenticated/errors/$error'
@@ -301,10 +301,10 @@ const AuthenticatedChannelsIndexRoute =
     path: '/channels/',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
-const AuthenticatedAipddFinanceIndexRoute =
-  AuthenticatedAipddFinanceIndexRouteImport.update({
-    id: '/aipdd-finance/',
-    path: '/aipdd-finance/',
+const AuthenticatedAipddTransitOrdersIndexRoute =
+  AuthenticatedAipddTransitOrdersIndexRouteImport.update({
+    id: '/aipdd-transit-orders/',
+    path: '/aipdd-transit-orders/',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
 const AuthenticatedUsageLogsSectionRoute =
@@ -458,7 +458,7 @@ export interface FileRoutesByFullPath {
   '/errors/$error': typeof AuthenticatedErrorsErrorRoute
   '/models/$section': typeof AuthenticatedModelsSectionRoute
   '/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
-  '/aipdd-finance/': typeof AuthenticatedAipddFinanceIndexRoute
+  '/aipdd-transit-orders/': typeof AuthenticatedAipddTransitOrdersIndexRoute
   '/channels/': typeof AuthenticatedChannelsIndexRoute
   '/characters/': typeof AuthenticatedCharactersIndexRoute
   '/dashboard/': typeof AuthenticatedDashboardIndexRoute
@@ -521,7 +521,7 @@ export interface FileRoutesByTo {
   '/errors/$error': typeof AuthenticatedErrorsErrorRoute
   '/models/$section': typeof AuthenticatedModelsSectionRoute
   '/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
-  '/aipdd-finance': typeof AuthenticatedAipddFinanceIndexRoute
+  '/aipdd-transit-orders': typeof AuthenticatedAipddTransitOrdersIndexRoute
   '/channels': typeof AuthenticatedChannelsIndexRoute
   '/characters': typeof AuthenticatedCharactersIndexRoute
   '/dashboard': typeof AuthenticatedDashboardIndexRoute
@@ -588,7 +588,7 @@ export interface FileRoutesById {
   '/_authenticated/errors/$error': typeof AuthenticatedErrorsErrorRoute
   '/_authenticated/models/$section': typeof AuthenticatedModelsSectionRoute
   '/_authenticated/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
-  '/_authenticated/aipdd-finance/': typeof AuthenticatedAipddFinanceIndexRoute
+  '/_authenticated/aipdd-transit-orders/': typeof AuthenticatedAipddTransitOrdersIndexRoute
   '/_authenticated/channels/': typeof AuthenticatedChannelsIndexRoute
   '/_authenticated/characters/': typeof AuthenticatedCharactersIndexRoute
   '/_authenticated/dashboard/': typeof AuthenticatedDashboardIndexRoute
@@ -654,7 +654,7 @@ export interface FileRouteTypes {
     | '/errors/$error'
     | '/models/$section'
     | '/usage-logs/$section'
-    | '/aipdd-finance/'
+    | '/aipdd-transit-orders/'
     | '/channels/'
     | '/characters/'
     | '/dashboard/'
@@ -717,7 +717,7 @@ export interface FileRouteTypes {
     | '/errors/$error'
     | '/models/$section'
     | '/usage-logs/$section'
-    | '/aipdd-finance'
+    | '/aipdd-transit-orders'
     | '/channels'
     | '/characters'
     | '/dashboard'
@@ -783,7 +783,7 @@ export interface FileRouteTypes {
     | '/_authenticated/errors/$error'
     | '/_authenticated/models/$section'
     | '/_authenticated/usage-logs/$section'
-    | '/_authenticated/aipdd-finance/'
+    | '/_authenticated/aipdd-transit-orders/'
     | '/_authenticated/channels/'
     | '/_authenticated/characters/'
     | '/_authenticated/dashboard/'
@@ -1141,11 +1141,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedChannelsIndexRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
-    '/_authenticated/aipdd-finance/': {
-      id: '/_authenticated/aipdd-finance/'
-      path: '/aipdd-finance'
-      fullPath: '/aipdd-finance/'
-      preLoaderRoute: typeof AuthenticatedAipddFinanceIndexRouteImport
+    '/_authenticated/aipdd-transit-orders/': {
+      id: '/_authenticated/aipdd-transit-orders/'
+      path: '/aipdd-transit-orders'
+      fullPath: '/aipdd-transit-orders/'
+      preLoaderRoute: typeof AuthenticatedAipddTransitOrdersIndexRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/usage-logs/$section': {
@@ -1382,7 +1382,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedErrorsErrorRoute: typeof AuthenticatedErrorsErrorRoute
   AuthenticatedModelsSectionRoute: typeof AuthenticatedModelsSectionRoute
   AuthenticatedUsageLogsSectionRoute: typeof AuthenticatedUsageLogsSectionRoute
-  AuthenticatedAipddFinanceIndexRoute: typeof AuthenticatedAipddFinanceIndexRoute
+  AuthenticatedAipddTransitOrdersIndexRoute: typeof AuthenticatedAipddTransitOrdersIndexRoute
   AuthenticatedChannelsIndexRoute: typeof AuthenticatedChannelsIndexRoute
   AuthenticatedCharactersIndexRoute: typeof AuthenticatedCharactersIndexRoute
   AuthenticatedDashboardIndexRoute: typeof AuthenticatedDashboardIndexRoute
@@ -1408,7 +1408,8 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedErrorsErrorRoute: AuthenticatedErrorsErrorRoute,
   AuthenticatedModelsSectionRoute: AuthenticatedModelsSectionRoute,
   AuthenticatedUsageLogsSectionRoute: AuthenticatedUsageLogsSectionRoute,
-  AuthenticatedAipddFinanceIndexRoute: AuthenticatedAipddFinanceIndexRoute,
+  AuthenticatedAipddTransitOrdersIndexRoute:
+    AuthenticatedAipddTransitOrdersIndexRoute,
   AuthenticatedChannelsIndexRoute: AuthenticatedChannelsIndexRoute,
   AuthenticatedCharactersIndexRoute: AuthenticatedCharactersIndexRoute,
   AuthenticatedDashboardIndexRoute: AuthenticatedDashboardIndexRoute,

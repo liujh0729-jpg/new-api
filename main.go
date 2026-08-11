@@ -113,9 +113,6 @@ func main() {
 	// Subscription quota reset task (daily/weekly/monthly/custom)
 	service.StartSubscriptionQuotaResetTask()
 
-	// Durable AIPDD finance outbox delivery and inbox/cursor recovery.
-	service.StartAIPDDFinanceReconciliationTask()
-
 	// Virtual character task recovery, retention, and deferred private-source cleanup.
 	service.StartVirtualCharacterMaintenanceTask()
 

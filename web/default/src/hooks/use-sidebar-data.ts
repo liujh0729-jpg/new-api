@@ -34,8 +34,8 @@ import {
   ListTodo,
   Settings,
   Image as ImageIcon,
-  FileSpreadsheet,
   UserRoundCog,
+  ScrollText,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { WORKSPACE_IDS } from '@/components/layout/lib/workspace-registry'
@@ -133,11 +133,6 @@ export function useSidebarData(): SidebarData {
             icon: Radio,
           },
           {
-            title: t('AIPDD Profit Report'),
-            url: '/aipdd-finance',
-            icon: FileSpreadsheet,
-          },
-          {
             title: t('Models'),
             url: '/models/metadata',
             icon: Box,
@@ -151,6 +146,11 @@ export function useSidebarData(): SidebarData {
             title: t('Redemption Codes'),
             url: '/redemption-codes',
             icon: Ticket,
+          },
+          {
+            title: t('AIPDD Order Records'),
+            url: '/aipdd-transit-orders',
+            icon: ScrollText,
           },
           {
             title: t('Subscription Management'),

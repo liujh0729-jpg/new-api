@@ -394,6 +394,11 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 	}
 
 	logger.LogDebug(ctx, fmt.Sprintf("updateVideoSingleTask response: %s", string(responseBody)))
+	if finance := task.PrivateData.AIPDDFinance; finance != nil {
+		if settlementErr := ApplyAIPDDTransitSettlementResponse(finance, responseBody); settlementErr != nil {
+			logger.LogWarn(ctx, "apply AIPDD task source cost failed: "+settlementErr.Error())
+		}
+	}
 
 	snap := task.Snapshot()
 
@@ -565,6 +570,9 @@ func settleTaskBillingOnComplete(ctx context.Context, adaptor TaskPollingAdaptor
 	// 0. 按次计费的任务不做差额结算
 	if bc := task.PrivateData.BillingContext; bc != nil && bc.PerCallBilling {
 		logger.LogInfo(ctx, fmt.Sprintf("任务 %s 按次计费，跳过差额结算", task.TaskID))
+		if err := RecordTaskAIPDDFinanceSettlement(task, task.Quota, "CHARGED"); err != nil {
+			logger.LogWarn(ctx, "record AIPDD per-call task settlement failed: "+err.Error())
+		}
 		return
 	}
 	// 1. 优先让 adaptor 决定最终额度
@@ -578,4 +586,7 @@ func settleTaskBillingOnComplete(ctx context.Context, adaptor TaskPollingAdaptor
 		return
 	}
 	// 3. 无调整，保持预扣额度
+	if err := RecordTaskAIPDDFinanceSettlement(task, task.Quota, "CHARGED"); err != nil {
+		logger.LogWarn(ctx, "record AIPDD task settlement failed: "+err.Error())
+	}
 }

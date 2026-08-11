@@ -102,8 +102,8 @@ export function CharacterCard({
           </div>
         ) : null}
       </div>
-      <CardHeader className='gap-1 px-2.5 pt-2.5 pb-0'>
-        <div className='flex items-start justify-between gap-1.5'>
+      <CardHeader className='min-w-0 gap-1 px-2.5 pt-2.5 pb-0'>
+        <div className='grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-1.5'>
           <div className='min-w-0'>
             <CardTitle className='truncate text-xs'>{item.name}</CardTitle>
             <CardDescription className='line-clamp-1 text-[11px]'>
@@ -112,7 +112,7 @@ export function CharacterCard({
             {assetReference ? (
               <div className='mt-0.5 flex min-w-0 items-center gap-0.5'>
                 <p
-                  className='text-muted-foreground truncate font-mono text-[10px]'
+                  className='text-muted-foreground min-w-0 truncate font-mono text-[10px]'
                   title={assetReference}
                 >
                   {assetReference}
@@ -138,13 +138,16 @@ export function CharacterCard({
             ) : null}
           </div>
           {isUploading ? (
-            <Badge variant='secondary' className='shrink-0 px-1.5 text-[10px]'>
+            <Badge
+              variant='secondary'
+              className='mr-1 shrink-0 px-1.5 text-[10px]'
+            >
               {t('Processing')}
             </Badge>
           ) : (
             <Badge
               variant={item.status === 'active' ? 'default' : 'secondary'}
-              className='shrink-0 px-1.5 text-[10px]'
+              className='mr-1 shrink-0 px-1.5 text-[10px]'
             >
               {statusLabel(item.status, t)}
             </Badge>

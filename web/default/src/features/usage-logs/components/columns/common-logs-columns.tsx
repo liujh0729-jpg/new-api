@@ -442,30 +442,6 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
     )
   }
 
-  if (isAdmin) {
-    columns.push({
-      id: 'financial_order',
-      header: t('Unified financial order ID'),
-      cell: ({ row }) => {
-        const log = row.original
-        const other = parseLogOther(log.other)
-        if (other?.channel_type !== 58 || !log.request_id) {
-          return <span className='text-muted-foreground text-xs'>—</span>
-        }
-        return (
-          <a
-            className='font-mono text-xs text-primary hover:underline'
-            href={`/aipdd-finance?order=${encodeURIComponent(log.request_id)}`}
-          >
-            {log.request_id}
-          </a>
-        )
-      },
-      meta: { label: t('Unified financial order ID') },
-      size: 220,
-    })
-  }
-
   columns.push({
     accessorKey: 'token_name',
     header: ({ column }) => (

@@ -198,10 +198,8 @@ type RelayInfo struct {
 type AIPDDFinanceContext struct {
 	InstanceID      string `json:"instance_id"`
 	PlatformOrderID string `json:"platform_order_id"`
-	AttemptID       string `json:"attempt_id"`
-	NewAPIUserID    string `json:"newapi_user_id"`
-	NewAPITokenID   string `json:"newapi_token_id"`
 	ChannelID       int    `json:"channel_id"`
+	ChannelKeyIndex int    `json:"channel_key_index"`
 }
 
 func (info *RelayInfo) InitChannelMeta(c *gin.Context) {

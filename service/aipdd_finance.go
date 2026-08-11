@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -24,10 +23,7 @@ const (
 	aipddFinanceEnabledEnv = "AIPDD_FINANCE_ENABLED"
 )
 
-// IsAIPDDFinanceEnabled reports whether NewAPI should create finance orders,
-// settle local finance mirrors, or run the AIPDD reconciliation worker.
-// Set AIPDD_FINANCE_ENABLED=false to keep relay traffic available while finance
-// sync is paused (matches the phase-1 rollback guidance: disable order header + worker).
+// IsAIPDDFinanceEnabled reports whether NewAPI should create and settle AIPDD transit orders.
 func IsAIPDDFinanceEnabled() bool {
 	return common.GetEnvOrDefaultBool(aipddFinanceEnabledEnv, true)
 }
@@ -46,9 +42,7 @@ func PrepareAIPDDFinanceAttempt(c *gin.Context, info *relaycommon.RelayInfo) err
 	}
 	if info.ChannelMeta == nil || info.ChannelType != constant.ChannelTypeAIPDD {
 		if previousFinance != nil {
-			// Closing a superseded attempt is best-effort: the reconciliation worker
-			// re-settles stale orders, so a bookkeeping failure must not abort a relay
-			// that is no longer routed to AIPDD.
+			// Close the local pending record when retry routing leaves AIPDD.
 			if err := recordAIPDDFinanceSettlement(previousFinance, 0, "NOT_CHARGED"); err != nil {
 				common.SysError("close previous AIPDD finance attempt failed: " + err.Error())
 			}
@@ -62,13 +56,6 @@ func PrepareAIPDDFinanceAttempt(c *gin.Context, info *relaycommon.RelayInfo) err
 		}
 		info.AIPDDFinance = nil
 	}
-	if info.ChannelIsMultiKey {
-		// Mirrors the reconciliation worker: per-order finance requires one stable key
-		// per channel, so multi-key channels relay without a finance order instead of failing.
-		common.SysLog(fmt.Sprintf("skip AIPDD finance order for multi-key channel #%d; finance ownership requires one key per channel", info.ChannelId))
-		info.AIPDDFinance = nil
-		return nil
-	}
 	instanceID, err := resolveAIPDDFinanceInstanceID(info.ApiKey)
 	if err != nil {
 		return err
@@ -77,18 +64,15 @@ func PrepareAIPDDFinanceAttempt(c *gin.Context, info *relaycommon.RelayInfo) err
 	if orderID == "" {
 		return errors.New("request id is required for AIPDD finance order")
 	}
-	attemptID := fmt.Sprintf("%s:%d:%d", orderID, info.RetryIndex, info.ChannelId)
 	finance := &relaycommon.AIPDDFinanceContext{
-		InstanceID: instanceID, PlatformOrderID: orderID, AttemptID: attemptID,
-		NewAPIUserID: strconv.Itoa(info.UserId), NewAPITokenID: strconv.Itoa(info.TokenId),
-		ChannelID: info.ChannelId,
+		InstanceID: instanceID, PlatformOrderID: orderID,
+		ChannelID: info.ChannelId, ChannelKeyIndex: info.ChannelMultiKeyIndex,
 	}
-	if err := model.EnsureAIPDDFinanceOrder(instanceID, orderID, attemptID,
-		info.UserId, info.TokenId, info.ChannelId, info.OriginModelName); err != nil {
+	if err := model.EnsureAIPDDTransitOrder(instanceID, orderID,
+		info.UserId, info.TokenId, info.ChannelId, info.ChannelMultiKeyIndex, info.OriginModelName); err != nil {
 		return err
 	}
 	info.AIPDDFinance = finance
-	wakeAIPDDFinanceReconciliation()
 	return nil
 }
 
@@ -123,37 +107,19 @@ func RecordTaskAIPDDFinanceSettlement(task *model.Task, actualQuota int, status 
 }
 
 func BeginAIPDDFinanceSettlement(info *relaycommon.RelayInfo, actualQuota int) error {
-	if !IsAIPDDFinanceEnabled() || info == nil || info.AIPDDFinance == nil {
-		return nil
-	}
-	quota, rmbMic, _, err := aipddFinanceAmount(actualQuota)
-	if err != nil {
-		return err
-	}
-	finance := info.AIPDDFinance
-	return model.BeginLocalAIPDDFinanceSettlement(
-		finance.InstanceID, finance.PlatformOrderID, finance.ChannelID, quota, rmbMic)
+	return nil
 }
 
 func MarkAIPDDFinanceSettlementReviewRequired(info *relaycommon.RelayInfo) {
-	if !IsAIPDDFinanceEnabled() || info == nil || info.AIPDDFinance == nil {
-		return
-	}
-	finance := info.AIPDDFinance
-	if err := model.MarkAIPDDFinanceSettlementReviewRequired(
-		finance.InstanceID, finance.PlatformOrderID, finance.ChannelID); err != nil {
-		common.SysLog("mark AIPDD finance settlement review failed: " + err.Error())
-	}
 }
 
 func recordAIPDDFinanceSettlement(finance *relaycommon.AIPDDFinanceContext, actualQuota int, status string) error {
-	quota, rmbMic, rateSnapshot, err := aipddFinanceAmount(actualQuota)
+	quota, rmbMic, err := aipddFinanceAmount(actualQuota)
 	if err != nil {
 		return err
 	}
 	for attempt := 0; attempt < 3; attempt++ {
-		err = model.RecordLocalAIPDDFinanceSettlement(
-			finance.InstanceID, finance.PlatformOrderID, finance.ChannelID, quota, rmbMic, rateSnapshot, status)
+		err = model.RecordAIPDDTransitLocalSettlement(finance.PlatformOrderID, quota, rmbMic, status)
 		if err == nil {
 			break
 		}
@@ -161,35 +127,29 @@ func recordAIPDDFinanceSettlement(finance *relaycommon.AIPDDFinanceContext, actu
 			time.Sleep(time.Duration(50*(attempt+1)) * time.Millisecond)
 		}
 	}
-	if err == nil {
-		wakeAIPDDFinanceReconciliation()
+	if err != nil || status != "CHARGED" {
+		return err
 	}
-	return err
+	return fetchAndApplyAIPDDTransitSettlement(finance)
 }
 
-func aipddFinanceAmount(actualQuota int) (int64, int64, string, error) {
+func aipddFinanceAmount(actualQuota int) (int64, int64, error) {
 	quota := int64(max(0, actualQuota))
 	quotaPerUnit := decimal.NewFromFloat(common.QuotaPerUnit)
 	usdToRMB := decimal.NewFromFloat(operation_setting.USDExchangeRate)
 	if quotaPerUnit.LessThanOrEqual(decimal.Zero) || usdToRMB.LessThanOrEqual(decimal.Zero) {
-		return 0, 0, "", errors.New("invalid quota or currency conversion setting")
+		return 0, 0, errors.New("invalid quota or currency conversion setting")
 	}
 	rmbMic := decimal.NewFromInt(quota).Div(quotaPerUnit).Mul(usdToRMB).
 		Mul(decimal.NewFromInt(1_000_000)).Round(0).IntPart()
-	snapshot, err := common.Marshal(map[string]string{
-		"quota_per_unit": quotaPerUnit.String(), "usd_exchange_rate": usdToRMB.String(),
-	})
-	if err != nil {
-		return 0, 0, "", err
-	}
-	return quota, rmbMic, string(snapshot), nil
+	return quota, rmbMic, nil
 }
 
 func MarkAIPDDFinanceRefundPending(info *relaycommon.RelayInfo) {
 	if !IsAIPDDFinanceEnabled() || info == nil || info.AIPDDFinance == nil {
 		return
 	}
-	if err := model.MarkAIPDDFinanceRefundPending(info.AIPDDFinance.InstanceID, info.AIPDDFinance.PlatformOrderID, info.AIPDDFinance.ChannelID); err != nil {
+	if err := model.RecordAIPDDTransitLocalSettlement(info.AIPDDFinance.PlatformOrderID, 0, 0, "REFUNDED"); err != nil {
 		common.SysLog("mark AIPDD finance refund pending failed: " + err.Error())
 	}
 }

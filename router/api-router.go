@@ -315,6 +315,12 @@ func SetApiRouter(router *gin.Engine) {
 			redemptionRoute.DELETE("/invalid", controller.DeleteInvalidRedemption)
 			redemptionRoute.DELETE("/:id", controller.DeleteRedemption)
 		}
+		aipddTransitOrderRoute := apiRouter.Group("/aipdd-transit-orders")
+		aipddTransitOrderRoute.Use(middleware.AdminAuth())
+		{
+			aipddTransitOrderRoute.GET("", controller.GetAIPDDTransitOrders)
+			aipddTransitOrderRoute.GET("/", controller.GetAIPDDTransitOrders)
+		}
 		logRoute := apiRouter.Group("/log")
 		logRoute.GET("/", middleware.AdminAuth(), controller.GetAllLogs)
 		logRoute.DELETE("/", middleware.AdminAuth(), controller.DeleteHistoryLogs)
@@ -323,22 +329,6 @@ func SetApiRouter(router *gin.Engine) {
 		logRoute.GET("/channel_affinity_usage_cache", middleware.AdminAuth(), controller.GetChannelAffinityUsageCacheStats)
 		logRoute.GET("/search", middleware.AdminAuth(), controller.SearchAllLogs)
 
-		financeRoute := apiRouter.Group("/aipdd-finance")
-		financeRoute.Use(middleware.AdminAuth())
-		{
-			financeRoute.GET("/summary", controller.AdminGetAIPDDFinanceSummary)
-			financeRoute.GET("/orders", controller.AdminListAIPDDFinanceOrders)
-			financeRoute.GET("/orders/:id", controller.AdminGetAIPDDFinanceOrder)
-			financeRoute.GET("/sync-status", controller.AdminGetAIPDDFinanceSyncStatus)
-			financeRoute.POST("/sync/retry", controller.AdminRetryAIPDDFinanceSync)
-			financeRoute.POST("/sync/outbox/:id/close", controller.AdminCloseAIPDDFinanceOutbox)
-			financeRoute.POST("/sync/orphans/close", controller.AdminCloseOrphanAIPDDFinanceOutbox)
-			financeRoute.POST("/sync/poison/skip", controller.AdminSkipAIPDDFinancePoisonEvent)
-			financeRoute.POST("/exports", controller.AdminCreateAIPDDFinanceExport)
-			financeRoute.GET("/exports", controller.AdminListAIPDDFinanceExports)
-			financeRoute.GET("/exports/:id", controller.AdminGetAIPDDFinanceExport)
-			financeRoute.GET("/exports/:id/download", controller.AdminDownloadAIPDDFinanceExport)
-		}
 		logRoute.GET("/self", middleware.UserAuth(), controller.GetUserLogs)
 		logRoute.GET("/self/search", middleware.UserAuth(), middleware.SearchRateLimit(), controller.SearchUserLogs)
 

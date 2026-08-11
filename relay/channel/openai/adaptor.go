@@ -238,9 +238,6 @@ func setAIPDDFinanceHeaders(header *http.Header, info *relaycommon.RelayInfo) {
 	finance := info.AIPDDFinance
 	header.Set("X-AIPDD-Instance-ID", finance.InstanceID)
 	header.Set("X-AIPDD-Order-ID", finance.PlatformOrderID)
-	header.Set("X-AIPDD-Attempt-ID", finance.AttemptID)
-	header.Set("X-AIPDD-NewAPI-User-ID", finance.NewAPIUserID)
-	header.Set("X-AIPDD-NewAPI-Token-ID", finance.NewAPITokenID)
 }
 
 func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.GeneralOpenAIRequest) (any, error) {

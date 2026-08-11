@@ -394,9 +394,6 @@ func (a *TaskAdaptor) BuildRequestHeader(_ *gin.Context, req *http.Request, info
 		finance := info.AIPDDFinance
 		req.Header.Set("X-AIPDD-Instance-ID", finance.InstanceID)
 		req.Header.Set("X-AIPDD-Order-ID", finance.PlatformOrderID)
-		req.Header.Set("X-AIPDD-Attempt-ID", finance.AttemptID)
-		req.Header.Set("X-AIPDD-NewAPI-User-ID", finance.NewAPIUserID)
-		req.Header.Set("X-AIPDD-NewAPI-Token-ID", finance.NewAPITokenID)
 	}
 	return nil
 }

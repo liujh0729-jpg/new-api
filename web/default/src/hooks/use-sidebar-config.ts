@@ -61,10 +61,10 @@ const DEFAULT_SIDEBAR_MODULES: SidebarModulesAdminConfig = {
     channel: true,
     models: true,
     redemption: true,
+    aipdd_transit_orders: true,
     user: true,
     setting: true,
     subscription: true,
-    finance: true,
   },
 }
 
@@ -112,12 +112,15 @@ const URL_TO_CONFIG_MAP: Record<string, { section: string; module: string }> = {
   '/wallet': { section: 'personal', module: 'topup' },
   '/profile': { section: 'personal', module: 'personal' },
   '/channels': { section: 'admin', module: 'channel' },
-  '/aipdd-finance': { section: 'admin', module: 'finance' },
   '/models': { section: 'admin', module: 'models' },
   '/models/metadata': { section: 'admin', module: 'models' },
   '/models/deployments': { section: 'admin', module: 'models' },
   '/users': { section: 'admin', module: 'user' },
   '/redemption-codes': { section: 'admin', module: 'redemption' },
+  '/aipdd-transit-orders': {
+    section: 'admin',
+    module: 'aipdd_transit_orders',
+  },
   '/subscriptions': { section: 'admin', module: 'subscription' },
   '/system-settings': { section: 'admin', module: 'setting' },
   '/system-settings/site': { section: 'admin', module: 'setting' },

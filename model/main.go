@@ -296,12 +296,7 @@ func migrateDB() error {
 		&UserOAuthBinding{},
 		&PerfMetric{},
 		&AIPDDCatalogSnapshot{},
-		&AIPDDFinanceOrder{},
-		&AIPDDFinanceMovement{},
-		&AIPDDFinanceInbox{},
-		&AIPDDFinanceOutbox{},
-		&AIPDDFinanceCursor{},
-		&AIPDDFinanceExportJob{},
+		&AIPDDTransitOrder{},
 	)
 	if err != nil {
 		return err
@@ -380,12 +375,7 @@ func migrateDBFast() error {
 		{&UserOAuthBinding{}, "UserOAuthBinding"},
 		{&PerfMetric{}, "PerfMetric"},
 		{&AIPDDCatalogSnapshot{}, "AIPDDCatalogSnapshot"},
-		{&AIPDDFinanceOrder{}, "AIPDDFinanceOrder"},
-		{&AIPDDFinanceMovement{}, "AIPDDFinanceMovement"},
-		{&AIPDDFinanceInbox{}, "AIPDDFinanceInbox"},
-		{&AIPDDFinanceOutbox{}, "AIPDDFinanceOutbox"},
-		{&AIPDDFinanceCursor{}, "AIPDDFinanceCursor"},
-		{&AIPDDFinanceExportJob{}, "AIPDDFinanceExportJob"},
+		{&AIPDDTransitOrder{}, "AIPDDTransitOrder"},
 	}
 	// 动态计算migration数量，确保errChan缓冲区足够大
 	errChan := make(chan error, len(migrations))
