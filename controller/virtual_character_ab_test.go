@@ -39,20 +39,19 @@ func TestParseVirtualCharacterCatalogValidatesVersionDuplicatesAndURLs(t *testin
 	require.ErrorContains(t, err, "invalid cover_url")
 }
 
-func TestValidateVolcCharacterAssetUploadEnforcesTypeAndLimits(t *testing.T) {
-	header := &multipart.FileHeader{Filename: "actor.mp4", Size: 50 << 20, Header: textproto.MIMEHeader{"Content-Type": []string{"video/mp4"}}}
-	typeName, mimeType, err := validateVolcCharacterAssetUpload(header, "Video")
+func TestValidateVolcCharacterImageUploadEnforcesTypeAndLimits(t *testing.T) {
+	header := &multipart.FileHeader{Filename: "actor.webp", Size: 30 << 20, Header: textproto.MIMEHeader{"Content-Type": []string{"image/webp"}}}
+	mimeType, err := validateVolcCharacterImageUpload(header)
 	require.NoError(t, err)
-	require.Equal(t, model.VirtualCharacterAssetTypeVideo, typeName)
-	require.Equal(t, "video/mp4", mimeType)
+	require.Equal(t, "image/webp", mimeType)
 
 	header.Size++
-	_, _, err = validateVolcCharacterAssetUpload(header, "Video")
-	require.ErrorContains(t, err, "50 MB")
-	header.Filename = "actor.exe"
+	_, err = validateVolcCharacterImageUpload(header)
+	require.ErrorContains(t, err, "30 MB")
+	header.Filename = "actor.mp4"
 	header.Size = 1
-	_, _, err = validateVolcCharacterAssetUpload(header, "Video")
-	require.ErrorContains(t, err, "extension")
+	_, err = validateVolcCharacterImageUpload(header)
+	require.ErrorContains(t, err, "must be JPG")
 }
 
 func TestValidationCallbackRejectsTokenMismatchAndReplay(t *testing.T) {
@@ -202,7 +201,6 @@ func TestCreateVirtualCharacterRequiresComplianceAndRollsBackOnGroupFailure(t *t
 	db := setupVirtualCharacterControllerTestDB(t)
 	require.NoError(t, db.AutoMigrate(
 		&model.VirtualCharacter{},
-		&model.VirtualCharacterAsset{},
 		&model.VirtualCharacterProviderAccount{},
 		&model.VirtualCharacterCleanupJob{},
 	))
@@ -283,17 +281,13 @@ func TestCreateVirtualCharacterRequiresComplianceAndRollsBackOnGroupFailure(t *t
 	}, "actor.png", "image/png", []byte("png-bytes")))
 	require.Equal(t, http.StatusCreated, okRecorder.Code)
 
-	var active model.VirtualCharacter
-	require.NoError(t, db.Where("user_id = ? AND name = ?", 77, "Actor Two").First(&active).Error)
-	require.Equal(t, model.VirtualCharacterStatusActive, active.Status)
-	require.Equal(t, "group-ok-2", active.ProviderGroupID)
-	require.NotNil(t, active.Slot)
-	require.NotNil(t, active.PrimaryAssetID)
-	require.Contains(t, active.CoverURL, "/preview")
-	var asset model.VirtualCharacterAsset
-	require.NoError(t, db.Where("character_id = ?", active.ID).First(&asset).Error)
-	require.Equal(t, "asset-primary-1", asset.ProviderAssetID)
-	require.True(t, asset.IsPrimary)
-	require.Equal(t, model.VirtualCharacterAssetTypeImage, asset.AssetType)
-	require.Equal(t, active.CoverURL, asset.CoverURL)
+	var creating model.VirtualCharacter
+	require.NoError(t, db.Where("user_id = ? AND name = ?", 77, "Actor Two").First(&creating).Error)
+	require.Equal(t, model.VirtualCharacterStatusCreating, creating.Status)
+	require.Equal(t, "group-ok-2", creating.ProviderGroupID)
+	require.Equal(t, "asset-primary-1", creating.ProviderAssetID)
+	require.Equal(t, "file-staging-1", creating.StagingFileID)
+	require.Equal(t, "image/png", creating.MimeType)
+	require.NotNil(t, creating.Slot)
+	require.Contains(t, creating.CoverURL, "/preview")
 }

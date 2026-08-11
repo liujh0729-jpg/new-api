@@ -28,8 +28,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { Field, FieldDescription, FieldLabel } from '@/components/ui/field'
+import {
+  Field,
+  FieldDescription,
+  FieldGroup,
+  FieldLabel,
+} from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
+import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
 import { createVirtualCharacter } from '../api'
 import { errorMessage, splitTags } from './utils'
@@ -56,7 +62,7 @@ export function CreateVirtualCharacterDialog(props: {
   const onSubmit = async (event: FormEvent) => {
     event.preventDefault()
     if (!file) {
-      toast.error(t('Primary image is required'))
+      toast.error(t('Character image is required'))
       return
     }
     setSubmitting(true)
@@ -67,12 +73,12 @@ export function CreateVirtualCharacterDialog(props: {
         tags: splitTags(tags),
         file,
       })
-      toast.success(t('Virtual character created'))
+      toast.success(t('Character uploaded'))
       reset()
       props.onOpenChange(false)
       await props.onCreated()
     } catch (error) {
-      toast.error(errorMessage(error, t('Failed to create virtual character')))
+      toast.error(errorMessage(error, t('Failed to upload character')))
     } finally {
       setSubmitting(false)
     }
@@ -87,65 +93,67 @@ export function CreateVirtualCharacterDialog(props: {
     <Dialog open={props.open} onOpenChange={changeOpen}>
       <DialogContent className='sm:max-w-lg'>
         <DialogHeader>
-          <DialogTitle>{t('Create virtual character')}</DialogTitle>
+          <DialogTitle>{t('Upload character')}</DialogTitle>
           <DialogDescription>
             {t(
-              'Creates a private Volc AIGC character with a primary image asset. You can upload more character-related assets after creation.'
+              'Upload one image for this character. A new image must be uploaded as a new character.'
             )}
           </DialogDescription>
         </DialogHeader>
         <form className='flex flex-col gap-4' onSubmit={onSubmit}>
-          <Field>
-            <FieldLabel htmlFor='virtual-character-name'>
-              {t('Name')}
-            </FieldLabel>
-            <Input
-              id='virtual-character-name'
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-              required
-              maxLength={191}
-            />
-          </Field>
-          <Field>
-            <FieldLabel htmlFor='virtual-character-description'>
-              {t('Description')}
-            </FieldLabel>
-            <Textarea
-              id='virtual-character-description'
-              value={description}
-              onChange={(event) => setDescription(event.target.value)}
-              rows={3}
-            />
-          </Field>
-          <Field>
-            <FieldLabel htmlFor='virtual-character-tags'>
-              {t('Tags (comma separated)')}
-            </FieldLabel>
-            <Input
-              id='virtual-character-tags'
-              value={tags}
-              onChange={(event) => setTags(event.target.value)}
-              placeholder={t('female, young, casual')}
-            />
-          </Field>
-          <Field>
-            <FieldLabel htmlFor='virtual-character-primary-image'>
-              {t('Primary image')}
-            </FieldLabel>
-            <Input
-              id='virtual-character-primary-image'
-              type='file'
-              accept='image/jpeg,image/png,image/webp,image/gif,image/heic,.jpg,.jpeg,.png,.webp,.gif,.heic'
-              required
-              onChange={(event) => setFile(event.target.files?.[0] ?? null)}
-            />
-            <FieldDescription>
-              {t(
-                'This image becomes the character subject asset (asset://). Images up to 30 MB.'
-              )}
-            </FieldDescription>
-          </Field>
+          <FieldGroup>
+            <Field>
+              <FieldLabel htmlFor='virtual-character-name'>
+                {t('Name')}
+              </FieldLabel>
+              <Input
+                id='virtual-character-name'
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+                required
+                maxLength={191}
+              />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor='virtual-character-description'>
+                {t('Description')}
+              </FieldLabel>
+              <Textarea
+                id='virtual-character-description'
+                value={description}
+                onChange={(event) => setDescription(event.target.value)}
+                rows={3}
+              />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor='virtual-character-tags'>
+                {t('Tags (comma separated)')}
+              </FieldLabel>
+              <Input
+                id='virtual-character-tags'
+                value={tags}
+                onChange={(event) => setTags(event.target.value)}
+                placeholder={t('female, young, casual')}
+              />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor='virtual-character-primary-image'>
+                {t('Character image')}
+              </FieldLabel>
+              <Input
+                id='virtual-character-primary-image'
+                type='file'
+                accept='image/jpeg,image/png,image/webp,image/gif,image/heic,.jpg,.jpeg,.png,.webp,.gif,.heic'
+                required
+                onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+              />
+              <FieldDescription>
+                {t(
+                  'This image is the character subject reference (asset://). Images up to 30 MB.'
+                )}
+              </FieldDescription>
+            </Field>
+          </FieldGroup>
           <DialogFooter>
             <Button
               type='button'
@@ -155,7 +163,8 @@ export function CreateVirtualCharacterDialog(props: {
               {t('Cancel')}
             </Button>
             <Button type='submit' disabled={submitting || !file}>
-              {t('Create')}
+              {submitting ? <Spinner /> : null}
+              {t('Upload')}
             </Button>
           </DialogFooter>
         </form>

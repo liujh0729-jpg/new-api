@@ -12,11 +12,15 @@ import (
 func cleanupVirtualCharacterABTables(t *testing.T) {
 	t.Helper()
 	for _, table := range []string{"virtual_character_cleanup_jobs", "virtual_character_catalog_imports", "virtual_character_validation_sessions", "virtual_character_assets", "virtual_character_provider_accounts", "virtual_character_tasks", "virtual_character_user_limits", "virtual_characters"} {
-		require.NoError(t, DB.Exec("DELETE FROM "+table).Error)
+		if DB.Migrator().HasTable(table) {
+			require.NoError(t, DB.Exec("DELETE FROM "+table).Error)
+		}
 	}
 	t.Cleanup(func() {
 		for _, table := range []string{"virtual_character_cleanup_jobs", "virtual_character_catalog_imports", "virtual_character_validation_sessions", "virtual_character_assets", "virtual_character_provider_accounts", "virtual_character_tasks", "virtual_character_user_limits", "virtual_characters"} {
-			DB.Exec("DELETE FROM " + table)
+			if DB.Migrator().HasTable(table) {
+				DB.Exec("DELETE FROM " + table)
+			}
 		}
 	})
 }
@@ -27,24 +31,19 @@ func TestMigrateVirtualCharacterABDataOfflinesPublicAndDeletesLegacyPrivateOnly(
 	legacyPrivate := &VirtualCharacter{UserID: 10, Scope: VirtualCharacterScopePrivate, SourceType: VirtualCharacterSourceAIPDD, Name: "fictional", Status: VirtualCharacterStatusActive, AIPDDAssetID: 91, AIPDDFileID: "file-91"}
 	slot := 1
 	aigcSlot := 1
-	realPrivate := &VirtualCharacter{UserID: 11, Slot: &slot, Scope: VirtualCharacterScopePrivate, SourceType: VirtualCharacterSourceVolcRealPerson, Name: "actor", Status: VirtualCharacterStatusActive, ProviderAccountID: 3, ProviderGroupID: "group-real"}
-	aigcPrivate := &VirtualCharacter{UserID: 12, Slot: &aigcSlot, Scope: VirtualCharacterScopePrivate, SourceType: VirtualCharacterSourceVolcAIGC, Name: "virtual", Status: VirtualCharacterStatusActive, ProviderAccountID: 3, ProviderGroupID: "group-aigc"}
+	realPrivate := &VirtualCharacter{UserID: 11, Slot: &slot, Scope: VirtualCharacterScopePrivate, SourceType: VirtualCharacterSourceVolcRealPerson, Name: "actor", Status: VirtualCharacterStatusActive, ProviderAccountID: 3, ProviderGroupID: "group-real", ProviderAssetID: "asset-real"}
+	aigcPrivate := &VirtualCharacter{UserID: 12, Slot: &aigcSlot, Scope: VirtualCharacterScopePrivate, SourceType: VirtualCharacterSourceVolcAIGC, Name: "virtual", Status: VirtualCharacterStatusActive, ProviderAccountID: 3, ProviderGroupID: "group-aigc", ProviderAssetID: "asset-aigc"}
 	require.NoError(t, DB.Create(publicItem).Error)
 	require.NoError(t, DB.Create(legacyPrivate).Error)
 	require.NoError(t, DB.Create(realPrivate).Error)
 	require.NoError(t, DB.Create(aigcPrivate).Error)
-	require.NoError(t, DB.Create(&VirtualCharacterAsset{CharacterID: realPrivate.ID, ProviderAccountID: 3, ProviderAssetID: "asset-real", Name: "face", AssetType: VirtualCharacterAssetTypeImage, Status: VirtualCharacterAssetStatusActive, IsPrimary: true}).Error)
-	require.NoError(t, DB.Create(&VirtualCharacterAsset{CharacterID: aigcPrivate.ID, ProviderAccountID: 3, ProviderAssetID: "asset-aigc", Name: "primary", AssetType: VirtualCharacterAssetTypeImage, Status: VirtualCharacterAssetStatusActive, IsPrimary: true}).Error)
 
 	require.NoError(t, MigrateVirtualCharacterABData())
 	var migrated VirtualCharacter
 	require.NoError(t, DB.First(&migrated, publicItem.ID).Error)
 	require.Equal(t, VirtualCharacterSourceVolcPreset, migrated.SourceType)
 	require.Equal(t, VirtualCharacterStatusOffline, migrated.Status)
-	require.NotNil(t, migrated.PrimaryAssetID)
-	var asset VirtualCharacterAsset
-	require.NoError(t, DB.First(&asset, *migrated.PrimaryAssetID).Error)
-	require.Equal(t, "asset-public", asset.ProviderAssetID)
+	require.Equal(t, "asset-public", migrated.ProviderAssetID)
 
 	var missing VirtualCharacter
 	require.True(t, errors.Is(DB.Unscoped().First(&missing, legacyPrivate.ID).Error, gorm.ErrRecordNotFound))
@@ -91,10 +90,8 @@ func TestApplyVirtualCharacterCatalogAtomicallyReplacesActiveSet(t *testing.T) {
 	require.Equal(t, 1, second.Offlined)
 
 	findCharacter := func(providerAssetID string) VirtualCharacter {
-		var asset VirtualCharacterAsset
-		require.NoError(t, DB.Where("provider_asset_id = ?", providerAssetID).First(&asset).Error)
 		var character VirtualCharacter
-		require.NoError(t, DB.First(&character, asset.CharacterID).Error)
+		require.NoError(t, DB.Where("provider_asset_id = ?", providerAssetID).First(&character).Error)
 		return character
 	}
 	a, b, c := findCharacter("asset-a"), findCharacter("asset-b"), findCharacter("asset-c")
@@ -182,26 +179,165 @@ func TestCompleteValidationCreatesOneActorGroupAndIsReplaySafe(t *testing.T) {
 	require.EqualValues(t, 1, count)
 }
 
-func TestPrimaryAssetAndDeleteOutboxRemainConsistent(t *testing.T) {
+func TestCollapseAssetsKeepsOneImageAndQueuesEveryExtra(t *testing.T) {
 	cleanupVirtualCharacterABTables(t)
+	require.NoError(t, DB.AutoMigrate(&legacyVirtualCharacterAsset{}))
+	if !DB.Migrator().HasColumn(&legacyVirtualCharacterPrimary{}, "PrimaryAssetID") {
+		require.NoError(t, DB.Exec("ALTER TABLE virtual_characters ADD COLUMN primary_asset_id integer").Error)
+	}
 	slot := 1
-	character := &VirtualCharacter{UserID: 77, Slot: &slot, Scope: VirtualCharacterScopePrivate, SourceType: VirtualCharacterSourceVolcRealPerson, Name: "Actor", Status: VirtualCharacterStatusActive, ValidationStatus: VirtualCharacterValidationAccepted, ProviderAccountID: 4, ProviderGroupID: "group-4"}
+	character := &VirtualCharacter{UserID: 77, Slot: &slot, Scope: VirtualCharacterScopePrivate, SourceType: VirtualCharacterSourceVolcAIGC, Name: "Actor", Status: VirtualCharacterStatusActive, ValidationStatus: VirtualCharacterValidationAccepted, ProviderAccountID: 4, ProviderGroupID: "group-4"}
 	require.NoError(t, DB.Create(character).Error)
-	first := &VirtualCharacterAsset{CharacterID: character.ID, ProviderAccountID: 4, ProviderAssetID: "asset-1", Name: "One", AssetType: VirtualCharacterAssetTypeImage, Status: VirtualCharacterAssetStatusActive}
-	second := &VirtualCharacterAsset{CharacterID: character.ID, ProviderAccountID: 4, ProviderAssetID: "asset-2", Name: "Two", AssetType: VirtualCharacterAssetTypeImage, Status: VirtualCharacterAssetStatusActive}
-	require.NoError(t, CreateVirtualCharacterAsset(first))
-	require.NoError(t, CreateVirtualCharacterAsset(second))
-	require.NoError(t, SetVirtualCharacterPrimaryAsset(character.ID, second.ID, 77))
+	publicPreset := &VirtualCharacter{Scope: VirtualCharacterScopePublic, SourceType: VirtualCharacterSourceVolcPreset, Name: "Preset", Status: VirtualCharacterStatusActive, ProviderAssetID: "catalog-asset"}
+	require.NoError(t, DB.Create(publicPreset).Error)
+	noImageSlot := 2
+	noImage := &VirtualCharacter{UserID: 78, Slot: &noImageSlot, Scope: VirtualCharacterScopePrivate, SourceType: VirtualCharacterSourceVolcAIGC, Name: "Audio only", Status: VirtualCharacterStatusActive, ProviderAccountID: 4, ProviderGroupID: "group-audio-only"}
+	require.NoError(t, DB.Create(noImage).Error)
+	processingSlot := 3
+	processingCharacter := &VirtualCharacter{UserID: 79, Slot: &processingSlot, Scope: VirtualCharacterScopePrivate, SourceType: VirtualCharacterSourceVolcAIGC, Name: "Processing", Status: VirtualCharacterStatusActive, ProviderAccountID: 4, ProviderGroupID: "group-processing"}
+	require.NoError(t, DB.Create(processingCharacter).Error)
+	failedSlot := 4
+	failedCharacter := &VirtualCharacter{UserID: 80, Slot: &failedSlot, Scope: VirtualCharacterScopePrivate, SourceType: VirtualCharacterSourceVolcAIGC, Name: "Failed", Status: VirtualCharacterStatusActive, ProviderAccountID: 4, ProviderGroupID: "group-failed"}
+	require.NoError(t, DB.Create(failedCharacter).Error)
+	video := &legacyVirtualCharacterAsset{CharacterID: character.ID, ProviderAccountID: 4, ProviderAssetID: "video-primary", AssetType: "Video", Status: "Active", IsPrimary: true, StagingFileID: "file-video"}
+	activeImage := &legacyVirtualCharacterAsset{CharacterID: character.ID, ProviderAccountID: 4, ProviderAssetID: "image-keep", AssetType: "Image", Status: "Active", StagingFileID: "file-keep", MimeType: "image/png", FileSize: 123}
+	deletedImage := &legacyVirtualCharacterAsset{CharacterID: character.ID, ProviderAccountID: 4, ProviderAssetID: "image-deleted", AssetType: "Image", Status: "Active", StagingFileID: "file-deleted", DeletedAt: gorm.DeletedAt{Time: time.Now(), Valid: true}}
+	require.NoError(t, DB.Create(video).Error)
+	require.NoError(t, DB.Create(activeImage).Error)
+	require.NoError(t, DB.Create(deletedImage).Error)
+	require.NoError(t, DB.Create(&legacyVirtualCharacterAsset{CharacterID: noImage.ID, ProviderAccountID: 4, ProviderAssetID: "audio-extra", AssetType: "Audio", Status: "Active", StagingFileID: "file-audio"}).Error)
+	require.NoError(t, DB.Create(&legacyVirtualCharacterAsset{CharacterID: processingCharacter.ID, ProviderAccountID: 4, ProviderAssetID: "image-processing", AssetType: "Image", Status: "Processing", NextPollAt: 123}).Error)
+	require.NoError(t, DB.Create(&legacyVirtualCharacterAsset{CharacterID: failedCharacter.ID, ProviderAccountID: 4, ProviderAssetID: "image-failed", AssetType: "Image", Status: "Failed", LastError: "provider rejected"}).Error)
+	require.NoError(t, DB.Model(&legacyVirtualCharacterPrimary{}).Where("id = ?", character.ID).Update("primary_asset_id", video.ID).Error)
 
-	var primaryCount int64
-	require.NoError(t, DB.Model(&VirtualCharacterAsset{}).Where("character_id = ? AND is_primary = ?", character.ID, true).Count(&primaryCount).Error)
-	require.EqualValues(t, 1, primaryCount)
-	require.ErrorIs(t, BeginVirtualCharacterAssetDelete(character.ID, second.ID, 77), ErrVirtualCharacterPrimaryAssetProtected)
-	require.NoError(t, BeginVirtualCharacterAssetDelete(character.ID, first.ID, 77))
+	stats, err := GetVirtualCharacterCollapsePreflightStats()
+	require.NoError(t, err)
+	require.EqualValues(t, 6, stats.LegacyAssets)
+	require.EqualValues(t, 4, stats.CharactersWithLegacyAssets)
+	require.EqualValues(t, 2, stats.MinimumExtraAssets)
+	require.EqualValues(t, 1, stats.SoftDeletedAssets)
+	require.NoError(t, MigrateVirtualCharacterCollapseAssets())
+	require.False(t, DB.Migrator().HasTable(&legacyVirtualCharacterAsset{}))
+	var migratedPreset VirtualCharacter
+	require.NoError(t, DB.First(&migratedPreset, publicPreset.ID).Error)
+	require.Equal(t, "catalog-asset", migratedPreset.ProviderAssetID)
+	require.Equal(t, VirtualCharacterStatusOffline, migratedPreset.Status)
+	var migratedNoImage VirtualCharacter
+	require.NoError(t, DB.First(&migratedNoImage, noImage.ID).Error)
+	require.Equal(t, VirtualCharacterStatusFailed, migratedNoImage.Status)
+	require.Nil(t, migratedNoImage.Slot)
+	require.Contains(t, migratedNoImage.LastError, "no usable image")
+	var migratedProcessing VirtualCharacter
+	require.NoError(t, DB.First(&migratedProcessing, processingCharacter.ID).Error)
+	require.Equal(t, VirtualCharacterStatusCreating, migratedProcessing.Status)
+	require.EqualValues(t, 123, migratedProcessing.AssetNextPollAt)
+	var migratedFailed VirtualCharacter
+	require.NoError(t, DB.First(&migratedFailed, failedCharacter.ID).Error)
+	require.Equal(t, VirtualCharacterStatusFailed, migratedFailed.Status)
+	require.Nil(t, migratedFailed.Slot)
+	require.Equal(t, "provider rejected", migratedFailed.LastError)
+	var failedJobs []VirtualCharacterCleanupJob
+	require.NoError(t, DB.Where("character_id = ?", failedCharacter.ID).Find(&failedJobs).Error)
+	failedTargets := make(map[string]bool, len(failedJobs))
+	for _, job := range failedJobs {
+		failedTargets[job.TargetType+":"+job.TargetID] = true
+	}
+	require.True(t, failedTargets["volc_asset:image-failed"])
+	require.True(t, failedTargets["volc_group:group-failed"])
 	var refreshed VirtualCharacter
 	require.NoError(t, DB.First(&refreshed, character.ID).Error)
-	require.NotNil(t, refreshed.PrimaryAssetID)
-	require.Equal(t, second.ID, *refreshed.PrimaryAssetID)
-	var job VirtualCharacterCleanupJob
-	require.NoError(t, DB.Where("asset_id = ? AND target_type = ?", first.ID, "volc_asset").First(&job).Error)
+	require.Equal(t, "image-keep", refreshed.ProviderAssetID)
+	require.Equal(t, "file-keep", refreshed.StagingFileID)
+	require.Equal(t, "image/png", refreshed.MimeType)
+	require.EqualValues(t, 123, refreshed.FileSize)
+	require.Equal(t, VirtualCharacterStatusActive, refreshed.Status)
+	require.NotNil(t, refreshed.Slot)
+
+	var jobs []VirtualCharacterCleanupJob
+	require.NoError(t, DB.Where("character_id = ?", character.ID).Order("id ASC").Find(&jobs).Error)
+	targets := make(map[string]bool, len(jobs))
+	for _, job := range jobs {
+		targets[job.TargetType+":"+job.TargetID] = true
+	}
+	require.True(t, targets["volc_asset:video-primary"])
+	require.True(t, targets["aipdd_file:file-video"])
+	require.True(t, targets["volc_asset:image-deleted"])
+	require.True(t, targets["aipdd_file:file-deleted"])
+	require.False(t, targets["volc_asset:image-keep"])
+	var noImageJobs []VirtualCharacterCleanupJob
+	require.NoError(t, DB.Where("character_id = ?", noImage.ID).Find(&noImageJobs).Error)
+	noImageTargets := make(map[string]bool, len(noImageJobs))
+	for _, job := range noImageJobs {
+		noImageTargets[job.TargetType+":"+job.TargetID] = true
+	}
+	require.True(t, noImageTargets["volc_asset:audio-extra"])
+	require.True(t, noImageTargets["aipdd_file:file-audio"])
+	require.True(t, noImageTargets["volc_group:group-audio-only"])
+
+	// A repeated startup is a no-op after the old table has been removed.
+	require.NoError(t, MigrateVirtualCharacterCollapseAssets())
+}
+
+func TestSelectLegacyVirtualCharacterAssetHandlesDanglingAndFailedPrimary(t *testing.T) {
+	failedID := int64(2)
+	danglingID := int64(99)
+	assets := []legacyVirtualCharacterAsset{
+		{ID: 1, ProviderAssetID: "processing", AssetType: "Image", Status: "Processing"},
+		{ID: failedID, ProviderAssetID: "failed", AssetType: "Image", Status: "Failed"},
+		{ID: 3, ProviderAssetID: "unknown", AssetType: "Image", Status: "Unknown"},
+	}
+	require.Equal(t, int64(1), selectLegacyVirtualCharacterAsset(assets, &danglingID).ID)
+	require.Equal(t, failedID, selectLegacyVirtualCharacterAsset(assets, &failedID).ID)
+}
+
+func TestBeginVirtualCharacterGroupDeleteQueuesImageFileBeforeGroup(t *testing.T) {
+	cleanupVirtualCharacterABTables(t)
+	slot := 1
+	character := &VirtualCharacter{
+		UserID: 88, Slot: &slot, Scope: VirtualCharacterScopePrivate,
+		SourceType: VirtualCharacterSourceVolcAIGC, Status: VirtualCharacterStatusActive,
+		ProviderAccountID: 5, ProviderGroupID: "group-delete", ProviderAssetID: "image-delete", StagingFileID: "file-delete",
+	}
+	require.NoError(t, DB.Create(character).Error)
+	require.NoError(t, BeginVirtualCharacterGroupDelete(character.ID, character.UserID))
+
+	var refreshed VirtualCharacter
+	require.NoError(t, DB.First(&refreshed, character.ID).Error)
+	require.Equal(t, VirtualCharacterStatusDeleting, refreshed.Status)
+	require.Nil(t, refreshed.Slot)
+	var jobs []VirtualCharacterCleanupJob
+	require.NoError(t, DB.Where("character_id = ?", character.ID).Order("id ASC").Find(&jobs).Error)
+	require.Len(t, jobs, 3)
+	require.Equal(t, "volc_asset", jobs[0].TargetType)
+	require.Equal(t, "aipdd_file", jobs[1].TargetType)
+	require.Equal(t, "volc_group", jobs[2].TargetType)
+	pending, err := HasIncompleteVirtualCharacterCleanupJobs(character.ID, jobs[2].ID)
+	require.NoError(t, err)
+	require.True(t, pending)
+	require.NoError(t, CompleteVirtualCharacterCleanupJob(jobs[0].ID))
+	require.NoError(t, CompleteVirtualCharacterCleanupJob(jobs[1].ID))
+	pending, err = HasIncompleteVirtualCharacterCleanupJobs(character.ID, jobs[2].ID)
+	require.NoError(t, err)
+	require.False(t, pending)
+}
+
+func TestVirtualCharacterImageTerminalTransitionsReleaseFailedSlot(t *testing.T) {
+	cleanupVirtualCharacterABTables(t)
+	activeSlot := 1
+	active := &VirtualCharacter{UserID: 89, Slot: &activeSlot, Scope: VirtualCharacterScopePrivate, SourceType: VirtualCharacterSourceVolcAIGC, Status: VirtualCharacterStatusCreating, ProviderAssetID: "image-active"}
+	require.NoError(t, DB.Create(active).Error)
+	require.NoError(t, MarkVirtualCharacterImageTerminal(active.ID, true, "ignored"))
+	require.NoError(t, DB.First(active, active.ID).Error)
+	require.Equal(t, VirtualCharacterStatusActive, active.Status)
+	require.NotNil(t, active.Slot)
+	require.Empty(t, active.LastError)
+
+	failedSlot := 2
+	failed := &VirtualCharacter{UserID: 89, Slot: &failedSlot, Scope: VirtualCharacterScopePrivate, SourceType: VirtualCharacterSourceVolcAIGC, Status: VirtualCharacterStatusCreating, ProviderAssetID: "image-failed"}
+	require.NoError(t, DB.Create(failed).Error)
+	require.NoError(t, MarkVirtualCharacterImageTerminal(failed.ID, false, "provider rejected"))
+	require.NoError(t, DB.First(failed, failed.ID).Error)
+	require.Equal(t, VirtualCharacterStatusFailed, failed.Status)
+	require.Nil(t, failed.Slot)
+	require.Equal(t, "provider rejected", failed.LastError)
 }

@@ -65,10 +65,10 @@ export function DeleteCharacterDialog({
     >
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>{t('Delete this actor group?')}</AlertDialogTitle>
+          <AlertDialogTitle>{t('Delete this character?')}</AlertDialogTitle>
           <AlertDialogDescription>
             {t(
-              'All assets are hidden immediately. Provider asset and group deletion continues with retries in the background.'
+              'The character is hidden immediately. Its image and provider group are deleted in the background with automatic retries.'
             )}
           </AlertDialogDescription>
         </AlertDialogHeader>

@@ -521,16 +521,12 @@ func RelayTask(c *gin.Context) {
 		}
 		if !characterLinkCreated {
 			link := &model.VirtualCharacterTask{
-				TaskID:         relayInfo.PublicTaskID,
-				UserID:         relayInfo.UserId,
-				CharacterID:    item.ID,
-				CharacterName:  item.Name,
-				CharacterScope: item.Scope,
-			}
-			if asset, assetBound := middleware.GetBoundVirtualCharacterAsset(c); assetBound {
-				link.CharacterAssetID = asset.ID
-				link.CharacterAssetName = asset.Name
-				link.ProviderAssetID = asset.ProviderAssetID
+				TaskID:          relayInfo.PublicTaskID,
+				UserID:          relayInfo.UserId,
+				CharacterID:     item.ID,
+				CharacterName:   item.Name,
+				CharacterScope:  item.Scope,
+				ProviderAssetID: item.ProviderAssetID,
 			}
 			if createErr := model.CreateVirtualCharacterTaskLink(link); createErr != nil {
 				respondTaskError(c, service.TaskErrorWrapperLocal(createErr, "character_task_link_failed", http.StatusInternalServerError))

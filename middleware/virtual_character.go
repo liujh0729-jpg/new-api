@@ -11,11 +11,10 @@ import (
 )
 
 const (
-	VirtualCharacterContextKey      = "virtual_character"
-	VirtualCharacterAssetContextKey = "virtual_character_asset"
-	VirtualCharacterTaskIDKey       = "virtual_character_task_id"
-	VirtualCharacterTaskClaimedKey  = "virtual_character_task_claimed"
-	virtualCharacterTaskFailureKey  = "virtual_character_task_failure"
+	VirtualCharacterContextKey     = "virtual_character"
+	VirtualCharacterTaskIDKey      = "virtual_character_task_id"
+	VirtualCharacterTaskClaimedKey = "virtual_character_task_claimed"
+	virtualCharacterTaskFailureKey = "virtual_character_task_failure"
 )
 
 func BindVirtualCharacter() gin.HandlerFunc {
@@ -26,19 +25,11 @@ func BindVirtualCharacter() gin.HandlerFunc {
 			return
 		}
 		if req.CharacterID == nil {
-			if req.CharacterAssetID != nil {
-				abortVirtualCharacterBinding(c, http.StatusBadRequest, "character_id_required", "character_asset_id requires character_id")
-				return
-			}
 			c.Next()
 			return
 		}
 		if *req.CharacterID <= 0 {
 			abortVirtualCharacterBinding(c, http.StatusBadRequest, "invalid_character_id", "character_id must be a positive integer")
-			return
-		}
-		if req.CharacterAssetID != nil && *req.CharacterAssetID <= 0 {
-			abortVirtualCharacterBinding(c, http.StatusBadRequest, "invalid_character_asset_id", "character_asset_id must be a positive integer")
 			return
 		}
 		if !model.IsVirtualCharacterSeedanceModel(strings.TrimSpace(req.Model)) {
@@ -58,17 +49,8 @@ func BindVirtualCharacter() gin.HandlerFunc {
 			abortVirtualCharacterBinding(c, http.StatusConflict, "character_unavailable", "character is not available for new tasks")
 			return
 		}
-		assetID := int64(0)
-		if req.CharacterAssetID != nil {
-			assetID = *req.CharacterAssetID
-		}
-		asset, item, err := model.GetVirtualCharacterAssetForUser(item.ID, assetID, c.GetInt("id"))
-		if err != nil {
-			abortVirtualCharacterBinding(c, http.StatusNotFound, "character_asset_not_found", "character asset not found")
-			return
-		}
-		if asset.Status != model.VirtualCharacterAssetStatusActive || strings.TrimSpace(asset.ProviderAssetID) == "" {
-			abortVirtualCharacterBinding(c, http.StatusConflict, "character_asset_unavailable", "character asset is not active")
+		if strings.TrimSpace(item.ProviderAssetID) == "" {
+			abortVirtualCharacterBinding(c, http.StatusConflict, "character_unavailable", "character image is not active")
 			return
 		}
 		account, err := model.GetEnabledVirtualCharacterProviderAccount()
@@ -90,8 +72,7 @@ func BindVirtualCharacter() gin.HandlerFunc {
 		taskID := model.GenerateTaskID()
 		if err := model.CreateVirtualCharacterTaskLink(&model.VirtualCharacterTask{
 			TaskID: taskID, UserID: c.GetInt("id"), CharacterID: item.ID,
-			CharacterName: item.Name, CharacterScope: item.Scope, CharacterAssetID: asset.ID,
-			CharacterAssetName: asset.Name, ProviderAssetID: asset.ProviderAssetID,
+			CharacterName: item.Name, CharacterScope: item.Scope, ProviderAssetID: item.ProviderAssetID,
 		}); err != nil {
 			abortVirtualCharacterBinding(c, http.StatusInternalServerError, "character_task_link_failed", err.Error())
 			return
@@ -111,14 +92,14 @@ func BindVirtualCharacter() gin.HandlerFunc {
 		// Re-check after registering the in-flight task. A delete/offline action
 		// that won the race blocks this request; a later action sees the link and
 		// waits for the task to reach a terminal state before source cleanup.
-		latestAsset, latest, err := model.GetVirtualCharacterAssetForUser(item.ID, asset.ID, c.GetInt("id"))
-		if err != nil || latest.Status != model.VirtualCharacterStatusActive || latestAsset.Status != model.VirtualCharacterAssetStatusActive ||
-			latest.Scope != item.Scope || latestAsset.ProviderAssetID != asset.ProviderAssetID || (latest.Scope == model.VirtualCharacterScopePrivate && latest.UserID != c.GetInt("id")) {
+		latest, err := model.GetAccessibleVirtualCharacter(item.ID, c.GetInt("id"))
+		if err != nil || latest.Status != model.VirtualCharacterStatusActive || latest.Scope != item.Scope ||
+			latest.ProviderAssetID != item.ProviderAssetID || (latest.Scope == model.VirtualCharacterScopePrivate && latest.UserID != c.GetInt("id")) {
 			abortVirtualCharacterBinding(c, http.StatusConflict, "character_unavailable", "character is not available for new tasks")
 			return
 		}
-		item, asset = latest, latestAsset
-		referenceURL := "asset://" + strings.TrimPrefix(strings.TrimSpace(asset.ProviderAssetID), "asset://")
+		item = latest
+		referenceURL := "asset://" + strings.TrimPrefix(strings.TrimSpace(item.ProviderAssetID), "asset://")
 
 		req.Images = []string{referenceURL}
 		req.Image = ""
@@ -135,19 +116,13 @@ func BindVirtualCharacter() gin.HandlerFunc {
 			abortVirtualCharacterBinding(c, http.StatusInternalServerError, "character_bind_failed", err.Error())
 			return
 		}
+		// The rewritten body is JSON even when the client submitted multipart.
+		// Updating the media type keeps downstream validators from trying to parse
+		// the injected JSON payload with the original multipart boundary.
+		c.Request.Header.Set("Content-Type", "application/json")
 		c.Set(VirtualCharacterContextKey, item)
-		c.Set(VirtualCharacterAssetContextKey, asset)
 		c.Next()
 	}
-}
-
-func GetBoundVirtualCharacterAsset(c *gin.Context) (*model.VirtualCharacterAsset, bool) {
-	value, exists := c.Get(VirtualCharacterAssetContextKey)
-	if !exists {
-		return nil, false
-	}
-	item, ok := value.(*model.VirtualCharacterAsset)
-	return item, ok && item != nil
 }
 
 func GetBoundVirtualCharacter(c *gin.Context) (*model.VirtualCharacter, bool) {

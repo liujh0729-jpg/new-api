@@ -698,24 +698,23 @@ type TaskRelayInfo struct {
 }
 
 type TaskSubmitReq struct {
-	Prompt           string                 `json:"prompt"`
-	Model            string                 `json:"model,omitempty"`
-	CharacterID      *int64                 `json:"character_id,omitempty"`
-	CharacterAssetID *int64                 `json:"character_asset_id,omitempty"`
-	Mode             string                 `json:"mode,omitempty"`
-	ClientTaskID     string                 `json:"client_task_id,omitempty"`
-	Image            string                 `json:"image,omitempty"`
-	ImageTail        string                 `json:"image_tail,omitempty"`
-	FirstFrame       string                 `json:"first_frame,omitempty"`
-	LastFrame        string                 `json:"last_frame,omitempty"`
-	Images           []string               `json:"images,omitempty"`
-	Size             string                 `json:"size,omitempty"`
-	N                *int                   `json:"n,omitempty"`
-	ImageCount       *int                   `json:"image_count,omitempty"`
-	Duration         int                    `json:"duration,omitempty"`
-	Seconds          string                 `json:"seconds,omitempty"`
-	InputReference   string                 `json:"input_reference,omitempty"`
-	Metadata         map[string]interface{} `json:"metadata,omitempty"`
+	Prompt         string                 `json:"prompt"`
+	Model          string                 `json:"model,omitempty"`
+	CharacterID    *int64                 `json:"character_id,omitempty"`
+	Mode           string                 `json:"mode,omitempty"`
+	ClientTaskID   string                 `json:"client_task_id,omitempty"`
+	Image          string                 `json:"image,omitempty"`
+	ImageTail      string                 `json:"image_tail,omitempty"`
+	FirstFrame     string                 `json:"first_frame,omitempty"`
+	LastFrame      string                 `json:"last_frame,omitempty"`
+	Images         []string               `json:"images,omitempty"`
+	Size           string                 `json:"size,omitempty"`
+	N              *int                   `json:"n,omitempty"`
+	ImageCount     *int                   `json:"image_count,omitempty"`
+	Duration       int                    `json:"duration,omitempty"`
+	Seconds        string                 `json:"seconds,omitempty"`
+	InputReference string                 `json:"input_reference,omitempty"`
+	Metadata       map[string]interface{} `json:"metadata,omitempty"`
 }
 
 func (t *TaskSubmitReq) GetPrompt() string {
@@ -729,8 +728,9 @@ func (t *TaskSubmitReq) HasImage() bool {
 func (t *TaskSubmitReq) UnmarshalJSON(data []byte) error {
 	type Alias TaskSubmitReq
 	aux := &struct {
-		Metadata json.RawMessage `json:"metadata,omitempty"`
-		Duration json.RawMessage `json:"duration,omitempty"`
+		Metadata    json.RawMessage `json:"metadata,omitempty"`
+		Duration    json.RawMessage `json:"duration,omitempty"`
+		CharacterID json.RawMessage `json:"character_id,omitempty"`
 		*Alias
 	}{
 		Alias: (*Alias)(t),
@@ -738,6 +738,22 @@ func (t *TaskSubmitReq) UnmarshalJSON(data []byte) error {
 
 	if err := common.Unmarshal(data, &aux); err != nil {
 		return err
+	}
+	t.CharacterID = nil
+	if len(aux.CharacterID) > 0 && string(aux.CharacterID) != "null" {
+		var characterID int64
+		if err := common.Unmarshal(aux.CharacterID, &characterID); err != nil {
+			var raw string
+			if stringErr := common.Unmarshal(aux.CharacterID, &raw); stringErr != nil {
+				return fmt.Errorf("character_id must be an integer")
+			}
+			parsed, parseErr := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
+			if parseErr != nil {
+				return fmt.Errorf("character_id must be an integer")
+			}
+			characterID = parsed
+		}
+		t.CharacterID = &characterID
 	}
 
 	if len(aux.Duration) > 0 {

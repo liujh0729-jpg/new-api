@@ -169,6 +169,8 @@ export const TASK_ACTIONS = {
   FIRST_TAIL_GENERATE: 'firstTailGenerate', // 首尾生视频
   REFERENCE_GENERATE: 'referenceGenerate', // 参照生视频
   REMIX_GENERATE: 'remixGenerate', // 视频 Remix
+  // Character library video (backend model.VirtualCharacterTaskAction)
+  VIRTUAL_CHARACTER_VIDEO: 'virtual_character_video',
 } as const
 
 /**
@@ -282,6 +284,10 @@ export const TASK_ACTION_MAPPINGS: Record<string, StatusMapping> = {
   },
   [TASK_ACTIONS.REMIX_GENERATE]: {
     label: 'Video Remix',
+    variant: 'blue',
+  },
+  [TASK_ACTIONS.VIRTUAL_CHARACTER_VIDEO]: {
+    label: 'Character Video',
     variant: 'blue',
   },
 }

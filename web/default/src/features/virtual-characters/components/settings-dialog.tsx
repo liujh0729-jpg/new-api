@@ -85,7 +85,6 @@ function buildSettingsForm(settings?: VirtualCharacterSettings) {
     global_limit: settings?.global_limit ?? 100,
     account_asset_cap:
       preset?.account_asset_cap ?? settings?.account_asset_cap ?? 50,
-    max_assets_per_character: settings?.max_assets_per_character ?? 10,
   }
 }
 
@@ -99,7 +98,6 @@ function settingsFormKey(settings?: VirtualCharacterSettings): string {
     settings.project_name,
     settings.global_limit,
     settings.account_asset_cap,
-    settings.max_assets_per_character,
     settings.access_key_masked,
     settings.secret_key_masked,
   ].join('|')
@@ -342,10 +340,10 @@ function SettingsDialogForm({
                   }}
                 >
                   <NativeSelectOption value='free'>
-                    {t('Free tier (50 assets / 3 QPM)')}
+                    {t('Free tier (50 characters / 3 QPM)')}
                   </NativeSelectOption>
                   <NativeSelectOption value='paid'>
-                    {t('Paid tier (1M assets / 120 QPM)')}
+                    {t('Paid tier (1M characters / 120 QPM)')}
                   </NativeSelectOption>
                   <NativeSelectOption value='custom'>
                     {t('Custom limits')}
@@ -382,31 +380,8 @@ function SettingsDialogForm({
                   </FieldDescription>
                 </Field>
                 <Field>
-                  <FieldLabel htmlFor='provider-max-assets-per-character'>
-                    {t('Max assets per character')}
-                  </FieldLabel>
-                  <Input
-                    id='provider-max-assets-per-character'
-                    type='number'
-                    min={1}
-                    max={100}
-                    value={form.max_assets_per_character}
-                    onChange={(event) =>
-                      setForm({
-                        ...form,
-                        max_assets_per_character: Number(event.target.value),
-                      })
-                    }
-                  />
-                  <FieldDescription>
-                    {t(
-                      'Maximum related assets each character can hold on this site.'
-                    )}
-                  </FieldDescription>
-                </Field>
-                <Field>
                   <FieldLabel htmlFor='provider-asset-cap'>
-                    {t('Account asset cap')}
+                    {t('Account character capacity')}
                   </FieldLabel>
                   <Input
                     id='provider-asset-cap'

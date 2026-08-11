@@ -3,9 +3,20 @@ package common
 import (
 	"testing"
 
+	rootcommon "github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/stretchr/testify/require"
 )
+
+func TestTaskSubmitReqAcceptsMultipartStyleCharacterIDAndIgnoresLegacyAssetID(t *testing.T) {
+	var req TaskSubmitReq
+	require.NoError(t, rootcommon.Unmarshal([]byte(`{"character_id":"12","character_asset_id":"34","model":"seedance"}`), &req))
+	require.NotNil(t, req.CharacterID)
+	require.EqualValues(t, 12, *req.CharacterID)
+	payload, err := rootcommon.Marshal(req)
+	require.NoError(t, err)
+	require.NotContains(t, string(payload), "character_asset_id")
+}
 
 func TestRelayInfoGetFinalRequestRelayFormatPrefersExplicitFinal(t *testing.T) {
 	info := &RelayInfo{

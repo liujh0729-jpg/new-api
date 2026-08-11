@@ -22,9 +22,8 @@ const (
 	VirtualCharacterSourceVolcAIGC       = "volc_aigc"
 	VirtualCharacterSourceVolcRealPerson = "volc_real_person"
 
-	VirtualCharacterDefaultAccountAssetCap       = 50
-	VirtualCharacterDefaultCreateAssetQPM        = 3
-	VirtualCharacterDefaultMaxAssetsPerCharacter = 10
+	VirtualCharacterDefaultAccountAssetCap = 50
+	VirtualCharacterDefaultCreateAssetQPM  = 3
 
 	// Volc Assets account quota plans (local guardrails; not queried from Volc).
 	VirtualCharacterQuotaPlanFree   = "free"
@@ -108,13 +107,16 @@ type VirtualCharacter struct {
 	Status            string         `json:"status" gorm:"type:varchar(20);index"`
 	ValidationStatus  string         `json:"validation_status" gorm:"type:varchar(20);index"`
 	CoverURL          string         `json:"cover_url,omitempty" gorm:"type:text"`
-	AIPDDAssetID      int64          `json:"-" gorm:"index"`                                         // deprecated: legacy private fictional path
-	AIPDDFileID       string         `json:"-" gorm:"type:varchar(191);index"`                       // deprecated: legacy private fictional path
-	VolcAssetID       string         `json:"volc_asset_id,omitempty" gorm:"type:varchar(191);index"` // deprecated: use VirtualCharacterAsset.ProviderAssetID
-	PublicChannelID   int            `json:"public_channel_id,omitempty" gorm:"index"`               // deprecated
+	AIPDDAssetID      int64          `json:"-" gorm:"index"`                   // deprecated: legacy private fictional path
+	AIPDDFileID       string         `json:"-" gorm:"type:varchar(191);index"` // deprecated: legacy private fictional path
+	VolcAssetID       string         `json:"-" gorm:"type:varchar(191);index"` // deprecated: one-time migration source for ProviderAssetID
+	PublicChannelID   int            `json:"-" gorm:"index"`                   // deprecated legacy catalog field
 	ProviderAccountID int            `json:"provider_account_id,omitempty" gorm:"index"`
 	ProviderGroupID   string         `json:"provider_group_id,omitempty" gorm:"type:varchar(191);index"`
-	PrimaryAssetID    *int64         `json:"primary_asset_id,omitempty" gorm:"index"`
+	ProviderAssetID   string         `json:"provider_asset_id,omitempty" gorm:"type:varchar(191);index"`
+	StagingFileID     string         `json:"-" gorm:"type:varchar(191);index"`
+	AssetPollAttempts int            `json:"-"`
+	AssetNextPollAt   int64          `json:"-" gorm:"index"`
 	CatalogVersion    string         `json:"catalog_version,omitempty" gorm:"type:varchar(191);index"`
 	MimeType          string         `json:"mime_type,omitempty" gorm:"type:varchar(100)"`
 	FileSize          int64          `json:"file_size,omitempty"`
@@ -136,25 +138,23 @@ type VirtualCharacterUserLimit struct {
 // VirtualCharacterTask is both the role snapshot used by task history and a
 // small recovery outbox for the gap between upstream acceptance and Task insert.
 type VirtualCharacterTask struct {
-	ID                 int64  `json:"id" gorm:"primaryKey;autoIncrement"`
-	TaskID             string `json:"task_id" gorm:"type:varchar(191);uniqueIndex"`
-	UserID             int    `json:"user_id" gorm:"index"`
-	CharacterID        int64  `json:"character_id" gorm:"index"`
-	CharacterName      string `json:"character_name" gorm:"type:varchar(191)"`
-	CharacterScope     string `json:"character_scope" gorm:"type:varchar(16)"`
-	CharacterAssetID   int64  `json:"character_asset_id,omitempty" gorm:"index"`
-	CharacterAssetName string `json:"character_asset_name,omitempty" gorm:"type:varchar(191)"`
-	ProviderAssetID    string `json:"provider_asset_id,omitempty" gorm:"type:varchar(191)"`
-	Status             string `json:"status" gorm:"type:varchar(20);index"`
-	UpstreamTaskID     string `json:"-" gorm:"type:varchar(191)"`
-	ChannelID          int    `json:"-" gorm:"index"`
-	TaskPayloadJSON    string `json:"-" gorm:"type:text"`
-	LastError          string `json:"last_error,omitempty" gorm:"type:text"`
-	RetryCount         int    `json:"-"`
-	NextRetryAt        int64  `json:"-" gorm:"index"`
-	TerminalCheckedAt  int64  `json:"-" gorm:"index"`
-	CreatedAt          int64  `json:"created_at" gorm:"autoCreateTime;index"`
-	UpdatedAt          int64  `json:"updated_at" gorm:"autoUpdateTime"`
+	ID                int64  `json:"id" gorm:"primaryKey;autoIncrement"`
+	TaskID            string `json:"task_id" gorm:"type:varchar(191);uniqueIndex"`
+	UserID            int    `json:"user_id" gorm:"index"`
+	CharacterID       int64  `json:"character_id" gorm:"index"`
+	CharacterName     string `json:"character_name" gorm:"type:varchar(191)"`
+	CharacterScope    string `json:"character_scope" gorm:"type:varchar(16)"`
+	ProviderAssetID   string `json:"provider_asset_id,omitempty" gorm:"type:varchar(191)"`
+	Status            string `json:"status" gorm:"type:varchar(20);index"`
+	UpstreamTaskID    string `json:"-" gorm:"type:varchar(191)"`
+	ChannelID         int    `json:"-" gorm:"index"`
+	TaskPayloadJSON   string `json:"-" gorm:"type:text"`
+	LastError         string `json:"last_error,omitempty" gorm:"type:text"`
+	RetryCount        int    `json:"-"`
+	NextRetryAt       int64  `json:"-" gorm:"index"`
+	TerminalCheckedAt int64  `json:"-" gorm:"index"`
+	CreatedAt         int64  `json:"created_at" gorm:"autoCreateTime;index"`
+	UpdatedAt         int64  `json:"updated_at" gorm:"autoUpdateTime"`
 }
 
 func GetVirtualCharacterGlobalLimit() int {
@@ -181,20 +181,6 @@ func GetVirtualCharacterAccountAssetCap() int {
 	}
 	if limit > 5000000 {
 		return 5000000
-	}
-	return limit
-}
-
-func GetVirtualCharacterMaxAssetsPerCharacter() int {
-	common.OptionMapRWMutex.RLock()
-	raw := strings.TrimSpace(common.OptionMap["VirtualCharacterMaxAssetsPerCharacter"])
-	common.OptionMapRWMutex.RUnlock()
-	limit, err := strconv.Atoi(raw)
-	if err != nil || limit <= 0 {
-		return VirtualCharacterDefaultMaxAssetsPerCharacter
-	}
-	if limit > 100 {
-		return 100
 	}
 	return limit
 }

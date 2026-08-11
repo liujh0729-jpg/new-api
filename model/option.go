@@ -59,7 +59,6 @@ func InitOptionMap() {
 	common.OptionMap["TaskEnabled"] = strconv.FormatBool(common.TaskEnabled)
 	common.OptionMap["VirtualCharacterLimit"] = strconv.Itoa(VirtualCharacterDefaultLimit)
 	common.OptionMap["VirtualCharacterAccountAssetCap"] = strconv.Itoa(VirtualCharacterDefaultAccountAssetCap)
-	common.OptionMap["VirtualCharacterMaxAssetsPerCharacter"] = strconv.Itoa(VirtualCharacterDefaultMaxAssetsPerCharacter)
 	common.OptionMap["VirtualCharacterAIPDDCatalogLastSyncAt"] = "0"
 	common.OptionMap["DataExportEnabled"] = strconv.FormatBool(common.DataExportEnabled)
 	common.OptionMap["ChannelDisableThreshold"] = strconv.FormatFloat(common.ChannelDisableThreshold, 'f', -1, 64)

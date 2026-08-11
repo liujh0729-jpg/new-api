@@ -19,27 +19,10 @@ For commercial licensing, please contact support@quantumnous.com
 export type VirtualCharacterScope = 'public' | 'private'
 export type VirtualCharacterStatus =
   'creating' | 'active' | 'blocked' | 'offline' | 'deleting' | 'failed'
-export type VirtualCharacterAssetStatus =
-  'Processing' | 'Active' | 'Failed' | 'Deleting'
 export type VirtualCharacterValidationSessionStatus =
   'pending' | 'succeeded' | 'failed' | 'expired'
 export type VirtualCharacterSourceType =
   'volc_preset' | 'volc_aigc' | 'volc_real_person'
-
-export interface VirtualCharacterAsset {
-  id: number
-  name: string
-  asset_type: 'Image' | 'Video' | 'Audio'
-  status: VirtualCharacterAssetStatus
-  is_primary: boolean
-  cover_url?: string
-  mime_type?: string
-  file_size?: number
-  last_error?: string
-  provider_asset_id?: string
-  created_at: number
-  updated_at: number
-}
 
 export interface VirtualCharacter {
   id: number
@@ -57,8 +40,9 @@ export interface VirtualCharacter {
   status: VirtualCharacterStatus
   validation_status: 'unverified' | 'accepted' | 'rejected'
   cover_url?: string
-  primary_asset_id?: number
-  assets: VirtualCharacterAsset[]
+  provider_asset_id?: string
+  mime_type?: string
+  file_size?: number
   created_at: number
   updated_at: number
   last_error?: string
@@ -96,14 +80,11 @@ export interface VirtualCharacterListData {
 
 export interface VirtualCharacterConfig {
   image_max_mb: number
-  video_max_mb: number
-  audio_max_mb: number
   task_retention_days: number
   official_enabled: boolean
   virtual_enabled: boolean
   real_person_enabled: boolean
   account_asset_cap?: number
-  max_assets_per_character?: number
 }
 
 export interface VirtualCharacterValidationSession {
@@ -122,8 +103,6 @@ export interface VirtualCharacterTask {
   character_id: number
   character_name: string
   character_scope: VirtualCharacterScope
-  character_asset_id?: number
-  character_asset_name?: string
   provider_asset_id?: string
   link_status: string
   created_at: number
@@ -166,7 +145,6 @@ export interface VirtualCharacterSettings {
   last_checked_at?: number
   global_limit: number
   account_asset_cap: number
-  max_assets_per_character: number
   catalog?: {
     version: string
     content_hash: string
@@ -193,7 +171,6 @@ export interface VirtualCharacterAIPDDCatalogSyncResult {
 
 export interface CharacterVideoInput {
   character_id: number
-  character_asset_id?: number
   model: string
   prompt: string
   duration: number

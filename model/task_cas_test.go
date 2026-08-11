@@ -53,7 +53,6 @@ func TestMain(m *testing.M) {
 		&VirtualCharacter{},
 		&VirtualCharacterUserLimit{},
 		&VirtualCharacterTask{},
-		&VirtualCharacterAsset{},
 		&VirtualCharacterValidationSession{},
 		&VirtualCharacterProviderAccount{},
 		&VirtualCharacterCatalogImport{},

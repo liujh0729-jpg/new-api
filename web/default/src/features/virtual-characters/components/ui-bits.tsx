@@ -17,13 +17,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useTranslation } from 'react-i18next'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Field, FieldLabel } from '@/components/ui/field'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
-import type { VirtualCharacterAssetStatus } from '../types'
 
 export function ToggleField({
   label,
@@ -42,30 +40,15 @@ export function ToggleField({
   )
 }
 
-function assetStatusVariant(status: VirtualCharacterAssetStatus) {
-  if (status === 'Active') return 'default'
-  if (status === 'Failed') return 'destructive'
-  return 'secondary'
-}
-
-export function AssetStatusBadge({
-  status,
-}: {
-  status: VirtualCharacterAssetStatus
-}) {
-  const { t } = useTranslation()
-  return <Badge variant={assetStatusVariant(status)}>{t(status)}</Badge>
-}
-
 export function CharacterGridSkeleton() {
   return (
-    <div className='grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4'>
-      {[0, 1, 2, 3].map((item) => (
+    <div className='grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6'>
+      {[0, 1, 2, 3, 4, 5].map((item) => (
         <Card key={item}>
-          <Skeleton className='aspect-[4/3] w-full' />
-          <CardContent className='flex flex-col gap-3 pt-5'>
-            <Skeleton className='h-5 w-1/2' />
-            <Skeleton className='h-4 w-full' />
+          <Skeleton className='aspect-[3/4] w-full' />
+          <CardContent className='flex flex-col gap-1.5 px-2.5 pt-2.5 pb-2.5'>
+            <Skeleton className='h-3.5 w-1/2' />
+            <Skeleton className='h-3 w-full' />
           </CardContent>
         </Card>
       ))}

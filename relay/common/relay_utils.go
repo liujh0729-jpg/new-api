@@ -186,9 +186,11 @@ func ValidateMultipartDirect(c *gin.Context, info *RelayInfo) *dto.TaskError {
 
 func isKnownTaskField(field string) bool {
 	knownFields := map[string]bool{
-		"prompt":             true,
-		"model":              true,
-		"character_id":       true,
+		"prompt":       true,
+		"model":        true,
+		"character_id": true,
+		// Legacy compatibility: recognize and discard this removed field instead
+		// of forwarding it through multipart metadata.
 		"character_asset_id": true,
 		"mode":               true,
 		"client_task_id":     true,

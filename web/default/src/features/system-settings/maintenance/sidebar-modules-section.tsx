@@ -85,7 +85,7 @@ export function SidebarModulesSection({
       characters: {
         title: t('Character Library'),
         description: t(
-          'Official and private Volc character assets for Seedance video generation. Disabled by default.'
+          'Official and uploaded Volc characters for Seedance video generation. Disabled by default.'
         ),
       },
       test_bench: {

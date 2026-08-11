@@ -22,7 +22,6 @@ import type {
   CharacterVideoInput,
   VirtualCharacter,
   VirtualCharacterAIPDDCatalogSyncResult,
-  VirtualCharacterAsset,
   VirtualCharacterConfig,
   VirtualCharacterListData,
   VirtualCharacterListParams,
@@ -104,11 +103,8 @@ export async function createVirtualCharacter(input: {
   return res.data
 }
 
-export function virtualCharacterAssetPreviewURL(
-  characterId: number,
-  assetId: number
-): string {
-  return `/api/virtual-characters/${characterId}/assets/${assetId}/preview`
+export function virtualCharacterPreviewURL(characterId: number): string {
+  return `/api/virtual-characters/${characterId}/preview`
 }
 
 export async function createValidationSession(input: {
@@ -129,43 +125,6 @@ export async function getValidationSession(
 ): Promise<ApiResponse<VirtualCharacterValidationSession>> {
   const res = await api.get(
     `/api/virtual-characters/validation-sessions/${encodeURIComponent(id)}`
-  )
-  return res.data
-}
-
-export async function uploadVirtualCharacterAsset(input: {
-  characterId: number
-  file: File
-  name: string
-  assetType: 'Image' | 'Video' | 'Audio'
-}): Promise<ApiResponse<VirtualCharacterAsset>> {
-  const form = new FormData()
-  form.append('file', input.file)
-  form.append('name', input.name)
-  form.append('asset_type', input.assetType)
-  const res = await api.post(
-    `/api/virtual-characters/${input.characterId}/assets`,
-    form
-  )
-  return res.data
-}
-
-export async function setPrimaryVirtualCharacterAsset(
-  characterId: number,
-  assetId: number
-): Promise<ApiResponse<{ character_id: number; asset_id: number }>> {
-  const res = await api.put(
-    `/api/virtual-characters/${characterId}/assets/${assetId}/primary`
-  )
-  return res.data
-}
-
-export async function deleteVirtualCharacterAsset(
-  characterId: number,
-  assetId: number
-): Promise<ApiResponse<{ id: number; status: string }>> {
-  const res = await api.delete(
-    `/api/virtual-characters/${characterId}/assets/${assetId}`
   )
   return res.data
 }
@@ -205,7 +164,6 @@ export async function createCharacterVideo(
     '/pg/video/generations',
     {
       character_id: input.character_id,
-      character_asset_id: input.character_asset_id,
       model: input.model,
       prompt,
       duration: input.duration,
@@ -236,7 +194,6 @@ export async function updateVirtualCharacterSettings(input: {
   project_name: string
   global_limit: number
   account_asset_cap: number
-  max_assets_per_character: number
 }): Promise<ApiResponse<VirtualCharacterSettings>> {
   const res = await api.put('/api/virtual-characters/admin/settings', input)
   return res.data

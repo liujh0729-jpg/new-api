@@ -86,9 +86,7 @@ export function CreateRealPersonDialog({
           <Alert>
             <AlertTitle>{t('Validation protects portrait rights')}</AlertTitle>
             <AlertDescription>
-              {t(
-                'Only the validated user may upload assets into this actor group.'
-              )}
+              {t('Only the validated user may use this actor group.')}
             </AlertDescription>
           </Alert>
           <FieldGroup>

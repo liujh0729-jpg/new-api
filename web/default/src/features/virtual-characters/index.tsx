@@ -72,7 +72,6 @@ import {
 } from './constants'
 import type {
   VirtualCharacter,
-  VirtualCharacterAsset,
   VirtualCharacterValidationSession,
 } from './types'
 
@@ -103,7 +102,6 @@ export function VirtualCharacters() {
     useState<CharacterImagePreview | null>(null)
   const [generateTarget, setGenerateTarget] = useState<{
     character: VirtualCharacter
-    asset?: VirtualCharacterAsset
   } | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<VirtualCharacter | null>(
     null
@@ -135,8 +133,8 @@ export function VirtualCharacters() {
     queryKey: virtualCharacterQueryKeys.list(privateListParams),
     queryFn: () => listVirtualCharacters(privateListParams),
     refetchInterval: (query) =>
-      query.state.data?.data.page.items.some((item) =>
-        item.assets?.some((asset) => asset.status === 'Processing')
+      query.state.data?.data.page.items.some(
+        (item) => item.status === 'creating'
       )
         ? 5000
         : false,
@@ -235,7 +233,7 @@ export function VirtualCharacters() {
               onClick={() => setCreateVirtualOpen(true)}
             >
               <HugeiconsIcon icon={Add01Icon} data-icon='inline-start' />
-              {t('Create virtual character')}
+              {t('Upload character')}
             </Button>
           )}
           {/* Real-person create entry is intentionally omitted: the backend hard-disables
@@ -370,7 +368,7 @@ export function VirtualCharacters() {
               </Button>
               {tab === 'private' && privateQuery.data && (
                 <Badge variant='outline'>
-                  {t('{{used}} of {{limit}} actor groups', {
+                  {t('{{used}} of {{limit}} characters', {
                     used: privateQuery.data.data.used ?? 0,
                     limit: privateQuery.data.data.limit ?? 0,
                   })}
@@ -424,7 +422,7 @@ export function VirtualCharacters() {
                       <CardDescription>
                         {tab === 'public'
                           ? t(
-                              'The authoritative official catalog has no matching active assets.'
+                              'The authoritative official catalog has no matching active characters.'
                             )
                           : t('Create your first private virtual character.')}
                       </CardDescription>
@@ -433,16 +431,12 @@ export function VirtualCharacters() {
                 )
               }
               return (
-                <div className='grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4'>
+                <div className='grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6'>
                   {characters.map((item) => (
                     <CharacterCard
                       key={item.id}
                       item={item}
-                      onOpen={() =>
-                        item.scope === 'private'
-                          ? setDetailID(item.id)
-                          : setGenerateTarget({ character: item })
-                      }
+                      onOpen={() => setDetailID(item.id)}
                       onPreview={setImagePreview}
                       onGenerate={() => setGenerateTarget({ character: item })}
                       onDelete={() => setDeleteTarget(item)}
@@ -495,9 +489,6 @@ export function VirtualCharacters() {
       />
       <CharacterDetailDialog
         characterID={detailID}
-        maxAssetsPerCharacter={
-          configQuery.data?.data.max_assets_per_character ?? 10
-        }
         onClose={() => setDetailID(null)}
       />
       <CharacterImagePreviewDialog

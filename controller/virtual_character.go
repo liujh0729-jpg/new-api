@@ -236,12 +236,7 @@ func UpdateVirtualCharacter(c *gin.Context) {
 	}
 	item.Name, item.Description, item.TagsJSON = metadata.Name, metadata.Description, tagsJSON
 	item.UpdatedAt = time.Now().Unix()
-	response, responseErr := virtualCharacterGroupToResponse(item, true)
-	if responseErr != nil {
-		virtualCharacterError(c, http.StatusInternalServerError, "update_failed", responseErr.Error())
-		return
-	}
-	common.ApiSuccess(c, response)
+	common.ApiSuccess(c, virtualCharacterGroupToResponse(item))
 }
 
 func DeleteVirtualCharacter(c *gin.Context) {
@@ -260,56 +255,7 @@ func DeleteVirtualCharacter(c *gin.Context) {
 }
 
 func PreviewVirtualCharacter(c *gin.Context) {
-	item, err := getAccessibleVirtualCharacterParam(c, c.GetInt("id"))
-	if err != nil {
-		virtualCharacterLookupError(c, err)
-		return
-	}
-	if item.Scope != model.VirtualCharacterScopePrivate || strings.TrimSpace(item.AIPDDFileID) == "" || item.Status == model.VirtualCharacterStatusDeleting {
-		virtualCharacterError(c, http.StatusNotFound, "preview_not_found", "character preview is unavailable")
-		return
-	}
-	storage, err := service.NewAIPDDVirtualCharacterStorage()
-	if err != nil {
-		virtualCharacterError(c, http.StatusServiceUnavailable, "storage_unavailable", err.Error())
-		return
-	}
-	signed, err := storage.SignFile(c.Request.Context(), item.AIPDDFileID)
-	if err != nil {
-		virtualCharacterError(c, http.StatusBadGateway, "preview_sign_failed", err.Error())
-		return
-	}
-	req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, signed.URL, nil)
-	if err != nil {
-		virtualCharacterError(c, http.StatusBadGateway, "preview_request_failed", err.Error())
-		return
-	}
-	resp, err := (&http.Client{Timeout: 90 * time.Second}).Do(req)
-	if err != nil {
-		virtualCharacterError(c, http.StatusBadGateway, "preview_fetch_failed", err.Error())
-		return
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		virtualCharacterError(c, http.StatusBadGateway, "preview_fetch_failed", fmt.Sprintf("storage returned %d", resp.StatusCode))
-		return
-	}
-	if resp.ContentLength > virtualCharacterImageMaxBytes {
-		virtualCharacterError(c, http.StatusBadGateway, "preview_too_large", "stored preview exceeds 30 MB")
-		return
-	}
-	mimeType := item.MimeType
-	if value := strings.TrimSpace(resp.Header.Get("Content-Type")); value != "" {
-		mimeType = value
-	}
-	c.Header("Content-Type", mimeType)
-	c.Header("Cache-Control", "private, no-store")
-	c.Header("X-Content-Type-Options", "nosniff")
-	c.Status(http.StatusOK)
-	written, copyErr := io.Copy(c.Writer, io.LimitReader(resp.Body, virtualCharacterImageMaxBytes+1))
-	if copyErr != nil || written > virtualCharacterImageMaxBytes {
-		return
-	}
+	previewVirtualCharacter(c)
 }
 
 func GetVirtualCharacterTaskHistory(c *gin.Context) {
@@ -334,8 +280,7 @@ func GetVirtualCharacterTaskHistory(c *gin.Context) {
 		link := &links[i]
 		entry := gin.H{
 			"task_id": link.TaskID, "character_id": link.CharacterID, "character_name": link.CharacterName,
-			"character_scope": link.CharacterScope, "character_asset_id": link.CharacterAssetID,
-			"character_asset_name": link.CharacterAssetName, "provider_asset_id": link.ProviderAssetID,
+			"character_scope": link.CharacterScope, "provider_asset_id": link.ProviderAssetID,
 			"link_status": link.Status, "created_at": link.CreatedAt,
 		}
 		if task, exists := taskMap[link.TaskID]; exists {

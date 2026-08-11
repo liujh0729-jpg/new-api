@@ -1,7 +1,9 @@
 package middleware
 
 import (
+	"bytes"
 	"fmt"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -36,13 +38,13 @@ func TestVirtualCharacterRequestHasExternalReferences(t *testing.T) {
 	}
 }
 
-func TestBindVirtualCharacterUsesActiveOwnedAsset(t *testing.T) {
+func TestBindVirtualCharacterUsesActiveOwnedImageAndIgnoresLegacyAssetID(t *testing.T) {
 	previousDB := model.DB
 	previousSecret := common.CryptoSecret
 	previousConfigured := common.CryptoSecretConfigured
 	db, err := gorm.Open(sqlite.Open("file:middleware_virtual_character?mode=memory&cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&model.VirtualCharacter{}, &model.VirtualCharacterAsset{}, &model.VirtualCharacterProviderAccount{}, &model.VirtualCharacterTask{}))
+	require.NoError(t, db.AutoMigrate(&model.VirtualCharacter{}, &model.VirtualCharacterProviderAccount{}, &model.VirtualCharacterTask{}))
 	model.DB = db
 	common.CryptoSecret = strings.Repeat("k", 32)
 	common.CryptoSecretConfigured = true
@@ -58,11 +60,8 @@ func TestBindVirtualCharacterUsesActiveOwnedAsset(t *testing.T) {
 	account := &model.VirtualCharacterProviderAccount{ID: 1, Enabled: true, OfficialEnabled: true, RealPersonEnabled: true, Region: "cn-beijing", ProjectName: "default"}
 	require.NoError(t, db.Create(account).Error)
 	slot := 1
-	character := &model.VirtualCharacter{UserID: 101, Slot: &slot, Scope: model.VirtualCharacterScopePrivate, SourceType: model.VirtualCharacterSourceVolcAIGC, Name: "Virtual", Status: model.VirtualCharacterStatusActive, ValidationStatus: model.VirtualCharacterValidationAccepted, ProviderAccountID: account.ID, ProviderGroupID: "group-1"}
+	character := &model.VirtualCharacter{UserID: 101, Slot: &slot, Scope: model.VirtualCharacterScopePrivate, SourceType: model.VirtualCharacterSourceVolcAIGC, Name: "Virtual", Status: model.VirtualCharacterStatusActive, ValidationStatus: model.VirtualCharacterValidationAccepted, ProviderAccountID: account.ID, ProviderGroupID: "group-1", ProviderAssetID: "provider-asset-1"}
 	require.NoError(t, db.Create(character).Error)
-	asset := &model.VirtualCharacterAsset{CharacterID: character.ID, ProviderAccountID: account.ID, ProviderAssetID: "provider-asset-1", Name: "Look 1", AssetType: model.VirtualCharacterAssetTypeImage, Status: model.VirtualCharacterAssetStatusActive, IsPrimary: true}
-	require.NoError(t, db.Create(asset).Error)
-	require.NoError(t, db.Model(character).Update("primary_asset_id", asset.ID).Error)
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
@@ -71,14 +70,17 @@ func TestBindVirtualCharacterUsesActiveOwnedAsset(t *testing.T) {
 		var req relaycommon.TaskSubmitReq
 		require.NoError(t, common.UnmarshalBodyReusable(c, &req))
 		require.Equal(t, []string{"asset://provider-asset-1"}, req.Images)
-		boundAsset, ok := GetBoundVirtualCharacterAsset(c)
+		require.Equal(t, "application/json", c.GetHeader("Content-Type"))
+		_, leakedLegacyAssetID := req.Metadata["character_asset_id"]
+		require.False(t, leakedLegacyAssetID)
+		boundCharacter, ok := GetBoundVirtualCharacter(c)
 		require.True(t, ok)
-		require.Equal(t, asset.ID, boundAsset.ID)
+		require.Equal(t, character.ID, boundCharacter.ID)
 		c.Set(VirtualCharacterTaskClaimedKey, true)
 		c.Status(http.StatusNoContent)
 	})
 
-	body := fmt.Sprintf(`{"character_id":%d,"character_asset_id":%d,"model":"doubao-seedance-2-0-260128","prompt":"test"}`, character.ID, asset.ID)
+	body := fmt.Sprintf(`{"character_id":%d,"character_asset_id":999999,"model":"doubao-seedance-2-0-260128","prompt":"test"}`, character.ID)
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodPost, "/v1/video/generations", strings.NewReader(body))
 	request.Header.Set("Content-Type", "application/json")
@@ -86,19 +88,33 @@ func TestBindVirtualCharacterUsesActiveOwnedAsset(t *testing.T) {
 	require.Equal(t, http.StatusNoContent, recorder.Code)
 	var link model.VirtualCharacterTask
 	require.NoError(t, db.Where("character_id = ?", character.ID).First(&link).Error)
-	require.Equal(t, asset.ID, link.CharacterAssetID)
-	require.Equal(t, asset.ProviderAssetID, link.ProviderAssetID)
+	require.Equal(t, character.ProviderAssetID, link.ProviderAssetID)
+
+	// Multipart clients may continue sending the removed character_asset_id.
+	// It is discarded, and the rewritten request is delivered downstream as JSON.
+	multipartBody := &bytes.Buffer{}
+	writer := multipart.NewWriter(multipartBody)
+	require.NoError(t, writer.WriteField("character_id", fmt.Sprintf("%d", character.ID)))
+	require.NoError(t, writer.WriteField("character_asset_id", "999999"))
+	require.NoError(t, writer.WriteField("model", "doubao-seedance-2-0-260128"))
+	require.NoError(t, writer.WriteField("prompt", "multipart test"))
+	require.NoError(t, writer.Close())
+	multipartRecorder := httptest.NewRecorder()
+	multipartRequest := httptest.NewRequest(http.MethodPost, "/v1/video/generations", multipartBody)
+	multipartRequest.Header.Set("Content-Type", writer.FormDataContentType())
+	router.ServeHTTP(multipartRecorder, multipartRequest)
+	require.Equal(t, http.StatusNoContent, multipartRecorder.Code, multipartRecorder.Body.String())
 
 	// Non-Seedance models are rejected.
 	badRecorder := httptest.NewRecorder()
-	badBody := fmt.Sprintf(`{"character_id":%d,"character_asset_id":%d,"model":"other-video","prompt":"test"}`, character.ID, asset.ID)
+	badBody := fmt.Sprintf(`{"character_id":%d,"character_asset_id":999999,"model":"other-video","prompt":"test"}`, character.ID)
 	badRequest := httptest.NewRequest(http.MethodPost, "/v1/video/generations", strings.NewReader(badBody))
 	badRequest.Header.Set("Content-Type", "application/json")
 	router.ServeHTTP(badRecorder, badRequest)
 	require.Equal(t, http.StatusBadRequest, badRecorder.Code)
 	require.Contains(t, badRecorder.Body.String(), "Seedance")
 
-	// The same asset is invisible to another user.
+	// The same private character is invisible to another user.
 	otherRouter := gin.New()
 	otherRouter.Use(func(c *gin.Context) { c.Set("id", 202) }, BindVirtualCharacter())
 	otherRouter.POST("/v1/video/generations", func(c *gin.Context) { c.Status(http.StatusNoContent) })
@@ -115,7 +131,7 @@ func TestBindVirtualCharacterBlocksReservedRealPersonSource(t *testing.T) {
 	previousConfigured := common.CryptoSecretConfigured
 	db, err := gorm.Open(sqlite.Open("file:middleware_virtual_character_source?mode=memory&cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&model.VirtualCharacter{}, &model.VirtualCharacterAsset{}, &model.VirtualCharacterProviderAccount{}, &model.VirtualCharacterTask{}))
+	require.NoError(t, db.AutoMigrate(&model.VirtualCharacter{}, &model.VirtualCharacterProviderAccount{}, &model.VirtualCharacterTask{}))
 	model.DB = db
 	common.CryptoSecret = strings.Repeat("k", 32)
 	common.CryptoSecretConfigured = true
@@ -137,22 +153,16 @@ func TestBindVirtualCharacterBlocksReservedRealPersonSource(t *testing.T) {
 	character := &model.VirtualCharacter{
 		UserID: 303, Slot: &slot, Scope: model.VirtualCharacterScopePrivate,
 		SourceType: model.VirtualCharacterSourceVolcRealPerson, Name: "Actor", Status: model.VirtualCharacterStatusActive,
-		ValidationStatus: model.VirtualCharacterValidationAccepted, ProviderAccountID: account.ID, ProviderGroupID: "group-real",
+		ValidationStatus: model.VirtualCharacterValidationAccepted, ProviderAccountID: account.ID, ProviderGroupID: "group-real", ProviderAssetID: "asset-real",
 	}
 	require.NoError(t, db.Create(character).Error)
-	asset := &model.VirtualCharacterAsset{
-		CharacterID: character.ID, ProviderAccountID: account.ID, ProviderAssetID: "asset-real",
-		Name: "Look", AssetType: model.VirtualCharacterAssetTypeImage, Status: model.VirtualCharacterAssetStatusActive, IsPrimary: true,
-	}
-	require.NoError(t, db.Create(asset).Error)
-	require.NoError(t, db.Model(character).Update("primary_asset_id", asset.ID).Error)
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.Use(func(c *gin.Context) { c.Set("id", 303) }, BindVirtualCharacter())
 	router.POST("/v1/video/generations", func(c *gin.Context) { c.Status(http.StatusNoContent) })
 
-	body := fmt.Sprintf(`{"character_id":%d,"character_asset_id":%d,"model":"doubao-seedance-2-0-260128","prompt":"test"}`, character.ID, asset.ID)
+	body := fmt.Sprintf(`{"character_id":%d,"model":"doubao-seedance-2-0-260128","prompt":"test"}`, character.ID)
 	recorder := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/video/generations", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -167,7 +177,7 @@ func TestBindVirtualCharacterAllowsOfficialPresetSource(t *testing.T) {
 	previousConfigured := common.CryptoSecretConfigured
 	db, err := gorm.Open(sqlite.Open("file:middleware_virtual_character_preset?mode=memory&cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&model.VirtualCharacter{}, &model.VirtualCharacterAsset{}, &model.VirtualCharacterProviderAccount{}, &model.VirtualCharacterTask{}))
+	require.NoError(t, db.AutoMigrate(&model.VirtualCharacter{}, &model.VirtualCharacterProviderAccount{}, &model.VirtualCharacterTask{}))
 	model.DB = db
 	common.CryptoSecret = strings.Repeat("k", 32)
 	common.CryptoSecretConfigured = true
@@ -188,22 +198,16 @@ func TestBindVirtualCharacterAllowsOfficialPresetSource(t *testing.T) {
 	character := &model.VirtualCharacter{
 		Scope: model.VirtualCharacterScopePublic, SourceType: model.VirtualCharacterSourceVolcPreset,
 		Name: "Preset", Status: model.VirtualCharacterStatusActive,
-		ValidationStatus: model.VirtualCharacterValidationAccepted, ProviderAccountID: account.ID,
+		ValidationStatus: model.VirtualCharacterValidationAccepted, ProviderAccountID: account.ID, ProviderAssetID: "asset-preset",
 	}
 	require.NoError(t, db.Create(character).Error)
-	asset := &model.VirtualCharacterAsset{
-		CharacterID: character.ID, ProviderAccountID: account.ID, ProviderAssetID: "asset-preset",
-		Name: "Look", AssetType: model.VirtualCharacterAssetTypeImage, Status: model.VirtualCharacterAssetStatusActive, IsPrimary: true,
-	}
-	require.NoError(t, db.Create(asset).Error)
-	require.NoError(t, db.Model(character).Update("primary_asset_id", asset.ID).Error)
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.Use(func(c *gin.Context) { c.Set("id", 404) }, BindVirtualCharacter())
 	router.POST("/v1/video/generations", func(c *gin.Context) { c.Status(http.StatusNoContent) })
 
-	body := fmt.Sprintf(`{"character_id":%d,"character_asset_id":%d,"model":"doubao-seedance-2-0-260128","prompt":"test"}`, character.ID, asset.ID)
+	body := fmt.Sprintf(`{"character_id":%d,"model":"doubao-seedance-2-0-260128","prompt":"test"}`, character.ID)
 	recorder := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/video/generations", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")

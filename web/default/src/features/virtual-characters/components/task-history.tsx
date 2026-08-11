@@ -49,7 +49,7 @@ export function TaskHistory({
           <CardTitle>{t('No character tasks yet')}</CardTitle>
           <CardDescription>
             {t(
-              'Tasks created from official or real-person assets will appear here.'
+              'Tasks created from official or uploaded characters will appear here.'
             )}
           </CardDescription>
         </CardHeader>
@@ -73,13 +73,7 @@ export function TaskHistory({
               <div className='flex flex-wrap items-start justify-between gap-3'>
                 <div>
                   <CardTitle>{item.character_name}</CardTitle>
-                  <CardDescription>
-                    {item.character_asset_name
-                      ? t('Asset: {{name}}', {
-                          name: item.character_asset_name,
-                        })
-                      : item.task_id}
-                  </CardDescription>
+                  <CardDescription>{item.task_id}</CardDescription>
                 </div>
                 <Badge variant={failure ? 'destructive' : 'secondary'}>
                   {taskStatusLabel(item.task?.status || item.link_status, t)}

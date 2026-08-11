@@ -34,12 +34,11 @@ import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
 import { createCharacterVideo } from '../api'
-import type { VirtualCharacter, VirtualCharacterAsset } from '../types'
+import type { VirtualCharacter } from '../types'
 import { errorMessage } from './utils'
 
 type GenerateTarget = {
   character: VirtualCharacter
-  asset?: VirtualCharacterAsset
 }
 
 export function GenerateDialog(props: {
@@ -55,7 +54,7 @@ export function GenerateDialog(props: {
     >
       {props.target ? (
         <GenerateDialogForm
-          key={`${props.target.character.id}-${props.target.asset?.id ?? 0}-${props.models.join(',')}`}
+          key={`${props.target.character.id}-${props.models.join(',')}`}
           target={props.target}
           models={props.models}
           onClose={props.onClose}
@@ -78,9 +77,6 @@ function GenerateDialogForm(props: {
   const [duration, setDuration] = useState(5)
   const [ratio, setRatio] = useState('16:9')
   const [resolution, setResolution] = useState('720p')
-  const [assetID, setAssetID] = useState<number | undefined>(
-    props.target.asset?.id ?? props.target.character.primary_asset_id
-  )
   const [busy, setBusy] = useState(false)
 
   const submit = async (event: FormEvent) => {
@@ -89,7 +85,6 @@ function GenerateDialogForm(props: {
     try {
       const response = await createCharacterVideo({
         character_id: props.target.character.id,
-        character_asset_id: assetID,
         model: modelName,
         prompt,
         duration,
@@ -106,11 +101,6 @@ function GenerateDialogForm(props: {
     }
   }
 
-  const assets =
-    props.target.character.assets?.filter(
-      (asset) => asset.status === 'Active'
-    ) ?? []
-
   return (
     <DialogContent>
       <form className='flex flex-col gap-5' onSubmit={submit}>
@@ -122,31 +112,11 @@ function GenerateDialogForm(props: {
           </DialogTitle>
           <DialogDescription>
             {t(
-              'Choose a Seedance model available to your account. The selected character asset is sent as an asset:// reference.'
+              'Choose a Seedance model available to your account. The character image is sent as an asset:// reference.'
             )}
           </DialogDescription>
         </DialogHeader>
         <FieldGroup>
-          {props.target.character.scope === 'private' && assets.length > 0 && (
-            <Field>
-              <FieldLabel htmlFor='generation-asset'>
-                {t('Character-related asset')}
-              </FieldLabel>
-              <NativeSelect
-                id='generation-asset'
-                className='w-full'
-                value={assetID ?? ''}
-                onChange={(event) => setAssetID(Number(event.target.value))}
-              >
-                {assets.map((asset) => (
-                  <NativeSelectOption key={asset.id} value={asset.id}>
-                    {asset.name}
-                    {asset.is_primary ? ` · ${t('Primary')}` : ''}
-                  </NativeSelectOption>
-                ))}
-              </NativeSelect>
-            </Field>
-          )}
           <Field>
             <FieldLabel htmlFor='generation-model'>{t('Model')}</FieldLabel>
             <NativeSelect
@@ -229,15 +199,7 @@ function GenerateDialogForm(props: {
           <Button type='button' variant='outline' onClick={props.onClose}>
             {t('Cancel')}
           </Button>
-          <Button
-            type='submit'
-            disabled={
-              busy ||
-              !modelName ||
-              !prompt ||
-              (props.target.character.scope === 'private' && !assetID)
-            }
-          >
+          <Button type='submit' disabled={busy || !modelName || !prompt}>
             {busy && <Spinner />}
             {t('Create video')}
           </Button>

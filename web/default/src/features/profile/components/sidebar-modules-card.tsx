@@ -67,7 +67,7 @@ export function SidebarModulesCard() {
         {
           key: 'characters',
           title: t('Character Library'),
-          description: t('Official and private character assets'),
+          description: t('Official and uploaded characters'),
         },
         {
           key: 'chat',

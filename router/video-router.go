@@ -8,6 +8,18 @@ import (
 )
 
 func SetVideoRouter(router *gin.Engine) {
+	// API-key virtual character lifecycle endpoints. The dashboard keeps using
+	// /api/virtual-characters with TokenOrUserAuth, while external clients get a
+	// conventional /v1 entry point backed by the exact same business handlers.
+	virtualCharacterV1Router := router.Group("/v1/virtual-characters")
+	virtualCharacterV1Router.Use(middleware.RouteTag("relay"))
+	virtualCharacterV1Router.Use(middleware.SystemPerformanceCheck())
+	virtualCharacterV1Router.Use(middleware.TokenAuth())
+	{
+		virtualCharacterV1Router.POST("", middleware.UserUploadRateLimit(), controller.CreateVirtualCharacter)
+		virtualCharacterV1Router.GET("/:id", controller.GetVirtualCharacterGroup)
+	}
+
 	// Video proxy: accepts either session auth (dashboard) or token auth (API clients)
 	videoProxyRouter := router.Group("/v1")
 	videoProxyRouter.Use(middleware.RouteTag("relay"))

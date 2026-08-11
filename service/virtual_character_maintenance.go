@@ -47,89 +47,90 @@ func runVirtualCharacterMaintenance() {
 		common.SysError("mark orphaned virtual characters for cleanup: " + err.Error())
 	}
 	cleanupVirtualCharacters(now)
-	pollVirtualCharacterAssets(now)
+	pollVirtualCharacterImageActivation(now)
 	cleanupVirtualCharacterJobs(now)
 	if err := model.DeleteExpiredVirtualCharacterTaskLinks(now.Add(-virtualCharacterTaskRetention).Unix()); err != nil {
 		common.SysError("delete expired virtual character task links: " + err.Error())
 	}
 }
 
-func pollVirtualCharacterAssets(now time.Time) {
-	assets, err := model.ListVirtualCharacterAssetsToPoll(now.Unix(), virtualCharacterMaintenanceBatch)
+func pollVirtualCharacterImageActivation(now time.Time) {
+	characters, err := model.ListVirtualCharactersToPoll(now.Unix(), virtualCharacterMaintenanceBatch)
 	if err != nil {
-		common.SysError("list virtual character assets to poll: " + err.Error())
+		common.SysError("list virtual characters to poll: " + err.Error())
 		return
 	}
 	account, err := model.GetEnabledVirtualCharacterProviderAccount()
 	if err != nil {
-		for i := range assets {
-			retryVirtualCharacterAssetPoll(&assets[i], now, errors.New("provider account is unavailable"))
+		for i := range characters {
+			retryVirtualCharacterImagePoll(&characters[i], now, errors.New("provider account is unavailable"))
 		}
 		return
 	}
 	client, err := NewVolcAssetClient(account)
 	if err != nil {
-		for i := range assets {
-			retryVirtualCharacterAssetPoll(&assets[i], now, err)
+		for i := range characters {
+			retryVirtualCharacterImagePoll(&characters[i], now, err)
 		}
 		return
 	}
-	for i := range assets {
-		asset := &assets[i]
-		if asset.ProviderAccountID != account.ID {
-			retryVirtualCharacterAssetPoll(asset, now, errors.New("asset provider account is not enabled"))
+	for i := range characters {
+		character := &characters[i]
+		if character.ProviderAccountID != account.ID {
+			retryVirtualCharacterImagePoll(character, now, errors.New("asset provider account is not enabled"))
 			continue
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
-		result, callErr := client.GetAsset(ctx, asset.ProviderAssetID, account.ProjectName)
+		result, callErr := client.GetAsset(ctx, character.ProviderAssetID, account.ProjectName)
 		cancel()
 		if callErr != nil {
-			retryVirtualCharacterAssetPoll(asset, now, callErr)
+			retryVirtualCharacterImagePoll(character, now, callErr)
 			continue
 		}
 		switch strings.ToLower(strings.TrimSpace(result.Status)) {
 		case "processing", "creating", "pending":
-			attempts := asset.PollAttempts + 1
-			_ = model.RetryVirtualCharacterAssetPoll(asset.ID, attempts, now.Add(virtualCharacterRetryDelay(attempts)).Unix(), "")
+			attempts := character.AssetPollAttempts + 1
+			_ = model.RetryVirtualCharacterImagePoll(character.ID, attempts, now.Add(virtualCharacterRetryDelay(attempts)).Unix(), "")
 		case "active":
-			finishVirtualCharacterAssetPoll(asset, model.VirtualCharacterAssetStatusActive, "")
+			finishVirtualCharacterImagePoll(character, true, "")
 		case "failed", "error":
 			reason := strings.TrimSpace(result.Error)
 			if reason == "" {
 				reason = "Volc asset processing failed"
 			}
-			finishVirtualCharacterAssetPoll(asset, model.VirtualCharacterAssetStatusFailed, common.MaskSensitiveInfo(reason))
+			finishVirtualCharacterImagePoll(character, false, common.MaskSensitiveInfo(reason))
 		default:
-			retryVirtualCharacterAssetPoll(asset, now, fmt.Errorf("unexpected Volc asset status %q", result.Status))
+			retryVirtualCharacterImagePoll(character, now, fmt.Errorf("unexpected Volc asset status %q", result.Status))
 		}
 	}
 }
 
-func finishVirtualCharacterAssetPoll(asset *model.VirtualCharacterAsset, status, reason string) {
-	stagingFileID := asset.StagingFileID
-	if err := model.MarkVirtualCharacterAssetTerminal(asset.ID, status, reason); err != nil {
-		common.SysError(fmt.Sprintf("mark virtual character asset %d terminal: %v", asset.ID, err))
+func finishVirtualCharacterImagePoll(character *model.VirtualCharacter, active bool, reason string) {
+	if err := model.MarkVirtualCharacterImageTerminal(character.ID, active, reason); err != nil {
+		common.SysError(fmt.Sprintf("mark virtual character %d terminal: %v", character.ID, err))
 		return
 	}
-	// Retain staging for Active assets so character covers and asset previews keep working.
-	if status == model.VirtualCharacterAssetStatusActive || strings.TrimSpace(stagingFileID) == "" {
+	// Retain staging for Active characters so their private preview remains available.
+	if active {
 		return
 	}
-	storage, err := NewAIPDDVirtualCharacterStorage()
-	if err == nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-		err = storage.DeleteFile(ctx, stagingFileID)
-		cancel()
-	}
-	if err != nil {
-		_ = model.CreateVirtualCharacterCleanupJob(&model.VirtualCharacterCleanupJob{CharacterID: asset.CharacterID, AssetID: asset.ID, TargetType: "aipdd_file", TargetID: stagingFileID, LastError: common.MaskSensitiveInfo(err.Error())})
+	now := time.Now().Unix()
+	for targetType, targetID := range map[string]string{
+		"volc_asset": character.ProviderAssetID,
+		"aipdd_file": character.StagingFileID,
+		"volc_group": character.ProviderGroupID,
+	} {
+		_ = model.CreateVirtualCharacterCleanupJob(&model.VirtualCharacterCleanupJob{
+			CharacterID: character.ID, ProviderAccountID: character.ProviderAccountID,
+			TargetType: targetType, TargetID: targetID, NextAttemptAt: now,
+		})
 	}
 }
 
-func retryVirtualCharacterAssetPoll(asset *model.VirtualCharacterAsset, now time.Time, err error) {
-	attempts := asset.PollAttempts + 1
-	if updateErr := model.RetryVirtualCharacterAssetPoll(asset.ID, attempts, now.Add(virtualCharacterRetryDelay(attempts)).Unix(), common.MaskSensitiveInfo(err.Error())); updateErr != nil {
-		common.SysError(fmt.Sprintf("retry virtual character asset poll %d: %v", asset.ID, updateErr))
+func retryVirtualCharacterImagePoll(character *model.VirtualCharacter, now time.Time, err error) {
+	attempts := character.AssetPollAttempts + 1
+	if updateErr := model.RetryVirtualCharacterImagePoll(character.ID, attempts, now.Add(virtualCharacterRetryDelay(attempts)).Unix(), common.MaskSensitiveInfo(err.Error())); updateErr != nil {
+		common.SysError(fmt.Sprintf("retry virtual character asset poll %d: %v", character.ID, updateErr))
 	}
 }
 
@@ -148,6 +149,10 @@ func cleanupVirtualCharacterJobs(now time.Time) {
 		}
 		if err := model.CompleteVirtualCharacterCleanupJob(job.ID); err != nil {
 			common.SysError(fmt.Sprintf("complete virtual character cleanup job %d: %v", job.ID, err))
+			continue
+		}
+		if err := finalizeDeletedVirtualCharacterIfReady(job.CharacterID); err != nil {
+			common.SysError(fmt.Sprintf("finalize virtual character cleanup %d: %v", job.CharacterID, err))
 		}
 	}
 }
@@ -171,7 +176,15 @@ func executeVirtualCharacterCleanupJob(job *model.VirtualCharacterCleanupJob) er
 		if err != nil {
 			return err
 		}
-		return storage.DeleteFile(ctx, job.TargetID)
+		if err := storage.DeleteFile(ctx, job.TargetID); err != nil {
+			return err
+		}
+		if job.CharacterID > 0 {
+			return model.DB.Model(&model.VirtualCharacter{}).
+				Where("id = ? AND staging_file_id = ?", job.CharacterID, job.TargetID).
+				Updates(map[string]any{"staging_file_id": "", "cover_url": ""}).Error
+		}
+		return nil
 	case "volc_asset", "volc_group":
 		account, err := model.GetEnabledVirtualCharacterProviderAccount()
 		if err != nil || account.ID != job.ProviderAccountID {
@@ -186,22 +199,45 @@ func executeVirtualCharacterCleanupJob(job *model.VirtualCharacterCleanupJob) er
 			if isVolcNotFoundError(err) {
 				err = nil
 			}
-			if err == nil && job.AssetID > 0 {
-				err = model.DB.Unscoped().Delete(&model.VirtualCharacterAsset{}, job.AssetID).Error
+			if err == nil && job.CharacterID > 0 {
+				err = model.DB.Model(&model.VirtualCharacter{}).
+					Where("id = ? AND provider_asset_id = ?", job.CharacterID, job.TargetID).
+					Update("provider_asset_id", "").Error
 			}
 			return err
+		}
+		pending, err := model.HasIncompleteVirtualCharacterCleanupJobs(job.CharacterID, job.ID)
+		if err != nil {
+			return err
+		}
+		if pending {
+			return errors.New("character cleanup dependencies are still pending")
 		}
 		err = client.DeleteAssetGroup(ctx, job.TargetID, account.ProjectName)
 		if isVolcNotFoundError(err) {
 			err = nil
 		}
 		if err == nil && job.CharacterID > 0 {
-			err = model.DB.Unscoped().Delete(&model.VirtualCharacter{}, job.CharacterID).Error
+			err = model.DB.Model(&model.VirtualCharacter{}).
+				Where("id = ? AND provider_group_id = ?", job.CharacterID, job.TargetID).
+				Update("provider_group_id", "").Error
 		}
 		return err
 	default:
 		return fmt.Errorf("unsupported cleanup target type %s", job.TargetType)
 	}
+}
+
+func finalizeDeletedVirtualCharacterIfReady(characterID int64) error {
+	if characterID <= 0 {
+		return nil
+	}
+	pending, err := model.HasIncompleteVirtualCharacterCleanupJobs(characterID, 0)
+	if err != nil || pending {
+		return err
+	}
+	return model.DB.Unscoped().Where("id = ? AND status = ?", characterID, model.VirtualCharacterStatusDeleting).
+		Delete(&model.VirtualCharacter{}).Error
 }
 
 func isVolcNotFoundError(err error) bool {
@@ -277,26 +313,11 @@ func cleanupVirtualCharacters(now time.Time) {
 			retryVirtualCharacterCleanup(item, now, err)
 			continue
 		}
-		if item.AIPDDAssetID > 0 || strings.TrimSpace(item.AIPDDFileID) != "" {
-			storage, storageErr := NewAIPDDVirtualCharacterStorage()
-			if storageErr != nil {
-				retryVirtualCharacterCleanup(item, now, storageErr)
-				continue
-			}
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-			err = storage.DeleteDigitalAsset(ctx, item.AIPDDAssetID)
-			if err == nil {
-				err = storage.DeleteFile(ctx, item.AIPDDFileID)
-			}
-			cancel()
-			if err != nil {
-				retryVirtualCharacterCleanup(item, now, err)
-				continue
-			}
-		}
-		if err := model.CompleteVirtualCharacterCleanup(item.ID); err != nil {
+		if err := finalizeDeletedVirtualCharacterIfReady(item.ID); err != nil {
 			retryVirtualCharacterCleanup(item, now, err)
+			continue
 		}
+		_ = model.RetryVirtualCharacterCleanup(item.ID, item.CleanupAttempts, now.Add(time.Hour).Unix(), item.LastError)
 	}
 }
 
@@ -304,18 +325,18 @@ func enqueueVirtualCharacterProviderCleanup(item *model.VirtualCharacter, now ti
 	if item == nil {
 		return nil
 	}
-	assets, err := model.ListVirtualCharacterAssets(item.ID, true)
-	if err != nil {
-		return err
-	}
-	for i := range assets {
-		asset := &assets[i]
-		if strings.TrimSpace(asset.ProviderAssetID) == "" {
-			continue
-		}
+	if strings.TrimSpace(item.ProviderAssetID) != "" {
 		if err := model.CreateVirtualCharacterCleanupJob(&model.VirtualCharacterCleanupJob{
-			CharacterID: item.ID, AssetID: asset.ID, ProviderAccountID: asset.ProviderAccountID,
-			TargetType: "volc_asset", TargetID: asset.ProviderAssetID, Status: model.VirtualCharacterCleanupPending, NextAttemptAt: now.Unix(),
+			CharacterID: item.ID, ProviderAccountID: item.ProviderAccountID,
+			TargetType: "volc_asset", TargetID: item.ProviderAssetID, Status: model.VirtualCharacterCleanupPending, NextAttemptAt: now.Unix(),
+		}); err != nil {
+			return err
+		}
+	}
+	if strings.TrimSpace(item.StagingFileID) != "" {
+		if err := model.CreateVirtualCharacterCleanupJob(&model.VirtualCharacterCleanupJob{
+			CharacterID: item.ID, ProviderAccountID: item.ProviderAccountID,
+			TargetType: "aipdd_file", TargetID: item.StagingFileID, Status: model.VirtualCharacterCleanupPending, NextAttemptAt: now.Unix(),
 		}); err != nil {
 			return err
 		}
@@ -323,7 +344,7 @@ func enqueueVirtualCharacterProviderCleanup(item *model.VirtualCharacter, now ti
 	if strings.TrimSpace(item.ProviderGroupID) != "" {
 		if err := model.CreateVirtualCharacterCleanupJob(&model.VirtualCharacterCleanupJob{
 			CharacterID: item.ID, ProviderAccountID: item.ProviderAccountID,
-			TargetType: "volc_group", TargetID: item.ProviderGroupID, Status: model.VirtualCharacterCleanupPending, NextAttemptAt: now.Unix() + 5,
+			TargetType: "volc_group", TargetID: item.ProviderGroupID, Status: model.VirtualCharacterCleanupPending, NextAttemptAt: now.Unix(),
 		}); err != nil {
 			return err
 		}

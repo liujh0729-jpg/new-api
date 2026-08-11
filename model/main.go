@@ -270,7 +270,6 @@ func migrateDB() error {
 		&VirtualCharacter{},
 		&VirtualCharacterUserLimit{},
 		&VirtualCharacterTask{},
-		&VirtualCharacterAsset{},
 		&VirtualCharacterValidationSession{},
 		&VirtualCharacterProviderAccount{},
 		&VirtualCharacterCatalogImport{},
@@ -325,6 +324,9 @@ func migrateDB() error {
 	if err := MigrateVirtualCharacterABData(); err != nil {
 		return err
 	}
+	if err := MigrateVirtualCharacterCollapseAssets(); err != nil {
+		return err
+	}
 	if err := BackfillVirtualCharacterStructuredFacets(); err != nil {
 		return err
 	}
@@ -352,7 +354,6 @@ func migrateDBFast() error {
 		{&VirtualCharacter{}, "VirtualCharacter"},
 		{&VirtualCharacterUserLimit{}, "VirtualCharacterUserLimit"},
 		{&VirtualCharacterTask{}, "VirtualCharacterTask"},
-		{&VirtualCharacterAsset{}, "VirtualCharacterAsset"},
 		{&VirtualCharacterValidationSession{}, "VirtualCharacterValidationSession"},
 		{&VirtualCharacterProviderAccount{}, "VirtualCharacterProviderAccount"},
 		{&VirtualCharacterCatalogImport{}, "VirtualCharacterCatalogImport"},
@@ -425,6 +426,9 @@ func migrateDBFast() error {
 		return err
 	}
 	if err := MigrateVirtualCharacterABData(); err != nil {
+		return err
+	}
+	if err := MigrateVirtualCharacterCollapseAssets(); err != nil {
 		return err
 	}
 	if err := BackfillVirtualCharacterStructuredFacets(); err != nil {
