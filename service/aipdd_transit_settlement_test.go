@@ -59,6 +59,38 @@ func TestApplyAIPDDTransitSettlementResponseAcceptsOfficialTopLevelShape(t *test
 	require.EqualValues(t, 1_600_000, *order.SourceChargeRMBMic)
 }
 
+func TestSyncAIPDDTaskFinanceFromUpstreamSettlesOfficialBody(t *testing.T) {
+	previousDB := model.DB
+	dsn := fmt.Sprintf("file:aipdd-transit-sync-%d?mode=memory&cache=shared", time.Now().UnixNano())
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	model.DB = db
+	t.Cleanup(func() { model.DB = previousDB })
+	require.NoError(t, db.AutoMigrate(&model.AIPDDTransitOrder{}))
+
+	const orderID = "newapi-order-realtime-1"
+	require.NoError(t, model.EnsureAIPDDTransitOrder(
+		"11111111-2222-4333-8444-555555555555", orderID, 1, 2, 3, 0, "AP Seedance-2.0 轻量版"))
+	task := &model.Task{
+		Quota: 109589,
+		PrivateData: model.TaskPrivateData{
+			AIPDDFinance: &relaycommon.AIPDDFinanceContext{PlatformOrderID: orderID, ChannelID: 3},
+		},
+	}
+
+	SyncAIPDDTaskFinanceFromUpstream(
+		task,
+		[]byte(`{"id":"cgt-1","status":"succeeded","settlement":{"status":"settled","charged_points":800,"charged_rmb":"8.000000"}}`),
+		&relaycommon.TaskInfo{Status: model.TaskStatusSuccess},
+	)
+
+	order, err := model.GetAIPDDTransitOrder(orderID)
+	require.NoError(t, err)
+	require.Equal(t, model.AIPDDTransitSettled, order.Status)
+	require.EqualValues(t, 800, *order.SourceChargeAWCoin)
+	require.EqualValues(t, 8_000_000, *order.SourceChargeRMBMic)
+}
+
 func TestFetchAIPDDTransitSettlementUsesTheSelectedMultiKeyAndMinimalIdentity(t *testing.T) {
 	previousDB := model.DB
 	previousClient := httpClient

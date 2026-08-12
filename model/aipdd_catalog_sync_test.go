@@ -171,7 +171,7 @@ func TestApplyAIPDDCatalogDoesNotCreatePricingOptions(t *testing.T) {
 	catalog := aipddTestCatalog("seedance-price-revision", "task-model", "llm-model")
 	catalog.Capabilities = []aipddcatalog.AtomicCapability{{
 		ID: "AP Seedance", Code: "seedance", Name: "AP Seedance", AdapterCode: "seedance",
-		EndpointType: "openai-video", TaskKind: "video_generation", Available: true,
+		EndpointType: "openai-video", TaskKind: "video_generation", Available: aipddcatalog.BoolPtr(true),
 		Execution: aipddcatalog.AtomicExecution{Protocol: "seedance_official", Path: "/api/v3/contents/generations/tasks"},
 		Pricing: aipddcatalog.AtomicPricing{
 			PricingModel: "per_second", Currency: "awcoin", PricingBasis: "display", Enabled: true,
@@ -222,7 +222,7 @@ func TestApplyAIPDDCatalogKeepsDisabledModelsInDBAndChannel(t *testing.T) {
 		aipddcatalog.AtomicCapability{
 			ID: "unavailable-task", Code: "unavailable-task", Name: "unavailable-task",
 			AdapterCode: "comfyui", EndpointType: "image-generation", TaskKind: "text_to_image",
-			Available: false,
+			Available: aipddcatalog.BoolPtr(false),
 			Execution: aipddcatalog.AtomicExecution{Protocol: "shared_task", Path: "/shared-tasks/tasks"},
 			Pricing: aipddcatalog.AtomicPricing{
 				PricingModel: "per_call", Currency: "awcoin", Enabled: true,
@@ -232,7 +232,7 @@ func TestApplyAIPDDCatalogKeepsDisabledModelsInDBAndChannel(t *testing.T) {
 		aipddcatalog.AtomicCapability{
 			ID: "pricing-disabled-task", Code: "pricing-disabled-task", Name: "pricing-disabled-task",
 			AdapterCode: "comfyui", EndpointType: "audio-speech", TaskKind: "text_to_speech",
-			Available: true,
+			Available: aipddcatalog.BoolPtr(true),
 			Execution: aipddcatalog.AtomicExecution{Protocol: "shared_task", Path: "/shared-tasks/tasks"},
 			Pricing: aipddcatalog.AtomicPricing{
 				PricingModel: "per_call", Currency: "awcoin", Enabled: false,
@@ -341,7 +341,7 @@ func aipddTestCatalog(revision, taskModel, llmModel string) aipddcatalog.AtomicC
 		},
 		Capabilities: []aipddcatalog.AtomicCapability{{
 			ID: taskModel, Code: taskModel, Name: taskModel, AdapterCode: "comfyui",
-			EndpointType: "image-generation", TaskKind: "text_to_image", Available: true,
+			EndpointType: "image-generation", TaskKind: "text_to_image", Available: aipddcatalog.BoolPtr(true),
 			Execution: aipddcatalog.AtomicExecution{Protocol: "shared_task", Path: "/shared-tasks/tasks"},
 			Pricing: aipddcatalog.AtomicPricing{
 				PricingModel: "per_call", Currency: "awcoin", Enabled: true,

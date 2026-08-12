@@ -243,7 +243,7 @@ func TestEnsureAIPDDDefaultsRestoresRuntimeSnapshotWhenSyncDisabled(t *testing.T
 	catalog := aipddTestCatalog("snapshot-runtime-revision", "unused-task", "unused-llm")
 	catalog.Capabilities = []aipddcatalog.AtomicCapability{{
 		ID: modelName, Code: "seedance", Name: modelName, AdapterCode: "seedance",
-		EndpointType: "openai-video", TaskKind: "video_generation", Available: true,
+		EndpointType: "openai-video", TaskKind: "video_generation", Available: aipddcatalog.BoolPtr(true),
 		Execution: aipddcatalog.AtomicExecution{Protocol: "seedance_official", Path: "/api/v3/contents/generations/tasks"},
 		Pricing: aipddcatalog.AtomicPricing{
 			PricingModel: "per_second", Currency: "awcoin", PricingBasis: "display", Enabled: true,

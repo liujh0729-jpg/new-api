@@ -95,6 +95,7 @@ func applyAIPDDCatalog(catalog aipddcatalog.AtomicCatalog, baseURL, apiKey strin
 	// boundary defensive so a catalog assembled by another caller cannot
 	// reintroduce an intentionally unsupported AIPDD family.
 	catalog.FilterExcluded()
+	catalog.NormalizePerUnitChargeUnits()
 	if err := catalog.Validate(); err != nil {
 		return AIPDDCatalogSyncResult{}, err
 	}

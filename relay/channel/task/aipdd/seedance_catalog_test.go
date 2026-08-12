@@ -437,10 +437,13 @@ func TestSeedanceOfficialBusinessErrorsUseHTTPStatus(t *testing.T) {
 		name       string
 		body       string
 		statusCode int
+		code       string
+		category   string
+		retryable  bool
 	}{
-		{"client error", `{"code":400,"message":"invalid resolution"}`, http.StatusBadRequest},
-		{"server error", `{"code":500,"message":"internal error"}`, http.StatusBadGateway},
-		{"nested client error", `{"error":{"code":422,"message":"invalid content"}}`, http.StatusUnprocessableEntity},
+		{"client error", `{"code":400,"message":"invalid resolution"}`, http.StatusBadRequest, relaycommon.AIPDDErrorCodeInvalidRequest, "invalid_request", false},
+		{"server error", `{"code":500,"message":"internal error"}`, http.StatusBadGateway, relaycommon.AIPDDErrorCodeUpstreamUnavailable, "upstream_unavailable", true},
+		{"nested client error", `{"error":{"code":422,"message":"invalid content"}}`, http.StatusUnprocessableEntity, relaycommon.AIPDDErrorCodeInvalidRequest, "invalid_request", false},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -449,7 +452,12 @@ func TestSeedanceOfficialBusinessErrorsUseHTTPStatus(t *testing.T) {
 			_, _, taskErr := adaptor.DoResponse(ctx, resp, info)
 			require.NotNil(t, taskErr)
 			require.Equal(t, test.statusCode, taskErr.StatusCode)
-			require.Equal(t, "seedance_task_create_failed", taskErr.Code)
+			require.Equal(t, test.code, taskErr.Code)
+			details, ok := taskErr.Data.(map[string]any)
+			require.True(t, ok)
+			require.Equal(t, "aipdd", details["provider"])
+			require.Equal(t, test.category, details["category"])
+			require.Equal(t, test.retryable, details["retryable"])
 		})
 	}
 }

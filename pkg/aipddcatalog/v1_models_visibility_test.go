@@ -10,16 +10,20 @@ func TestV1ModelsListHiddenNamesUsesAvailableAndPricingEnabled(t *testing.T) {
 	catalog := AtomicCatalog{
 		Capabilities: []AtomicCapability{
 			{
-				ID: "enabled-task", Available: true,
+				ID: "enabled-task", Available: BoolPtr(true),
 				Pricing: AtomicPricing{Enabled: true},
 			},
 			{
-				ID: "unavailable-task", Available: false,
+				ID: "unavailable-task", Available: BoolPtr(false),
 				Pricing: AtomicPricing{Enabled: true},
 			},
 			{
-				ID: "pricing-disabled-task", Available: true,
+				ID: "pricing-disabled-task", Available: BoolPtr(true),
 				Pricing: AtomicPricing{Enabled: false},
+			},
+			{
+				ID: "omitted-available-task",
+				Pricing: AtomicPricing{Enabled: true},
 			},
 		},
 		Models: []AtomicModel{
@@ -44,6 +48,7 @@ func TestV1ModelsListHiddenNamesUsesAvailableAndPricingEnabled(t *testing.T) {
 		"unavailable-llm",
 		"unavailable-task",
 	}, catalog.V1ModelsListHiddenNames())
+	require.NotContains(t, catalog.V1ModelsListHiddenNames(), "omitted-available-task")
 }
 
 func TestV1ModelsListHiddenRuntimeStateDoesNotHideWhenUnset(t *testing.T) {
@@ -68,7 +73,7 @@ func TestV1ModelsListHiddenRuntimeStateDoesNotHideWhenUnset(t *testing.T) {
 func TestV1ModelsListHiddenNamesIgnoresModelsAbsentFromCatalog(t *testing.T) {
 	catalog := AtomicCatalog{
 		Capabilities: []AtomicCapability{{
-			ID: "only-known", Available: false,
+			ID: "only-known", Available: BoolPtr(false),
 			Pricing: AtomicPricing{Enabled: false},
 		}},
 	}

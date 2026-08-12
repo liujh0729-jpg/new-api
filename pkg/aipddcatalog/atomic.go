@@ -57,7 +57,9 @@ type AtomicCapability struct {
 	InputModalities  []string        `json:"inputModalities"`
 	OutputModalities []string        `json:"outputModalities"`
 	Params           ScriptParams    `json:"params"`
-	Available        bool            `json:"available"`
+	// Available is optional. Java ComfyUI entries historically omitted it;
+	// a missing or null value must not be treated as false.
+	Available        *bool           `json:"available"`
 	Execution        AtomicExecution `json:"execution"`
 	Pricing          AtomicPricing   `json:"pricing"`
 }
@@ -114,10 +116,48 @@ func FetchAtomic(ctx context.Context, client *http.Client, baseURL, apiKey strin
 		return AtomicCatalog{}, err
 	}
 	envelope.Data.FilterExcluded()
+	envelope.Data.NormalizePerUnitChargeUnits()
 	if err := envelope.Data.Validate(); err != nil {
 		return AtomicCatalog{}, err
 	}
 	return envelope.Data, nil
+}
+
+// NormalizePerUnitChargeUnits fills chargeConfig.unit=second when a shared-compute
+// snapshot only recorded unitLabel=second. Without this, one LTX row rejects the
+// entire catalog and Seedance pricing never loads.
+func (catalog *AtomicCatalog) NormalizePerUnitChargeUnits() {
+	if catalog == nil {
+		return
+	}
+	for i := range catalog.Capabilities {
+		pricing := &catalog.Capabilities[i].Pricing
+		if !strings.EqualFold(strings.TrimSpace(pricing.PricingModel), "per_unit") {
+			continue
+		}
+		if pricing.ChargeConfig == nil {
+			continue
+		}
+		if strings.TrimSpace(anyToString(pricing.ChargeConfig["unit"])) != "" {
+			continue
+		}
+		if !strings.EqualFold(strings.TrimSpace(anyToString(pricing.ChargeConfig["unitLabel"])), "second") {
+			continue
+		}
+		pricing.ChargeConfig["unit"] = "second"
+	}
+}
+
+func anyToString(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return typed
+	default:
+		if value == nil {
+			return ""
+		}
+		return fmt.Sprint(value)
+	}
 }
 
 func (catalog *AtomicCatalog) FilterExcluded() {
@@ -361,5 +401,6 @@ func UnmarshalAtomic(data []byte) (AtomicCatalog, error) {
 		return catalog, err
 	}
 	catalog.FilterExcluded()
+	catalog.NormalizePerUnitChargeUnits()
 	return catalog, catalog.Validate()
 }

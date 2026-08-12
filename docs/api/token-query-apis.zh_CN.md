@@ -191,16 +191,21 @@ curl -sS 'https://susciyuan.com/api/log/token?p=1&page_size=20' \
 
 字段是否出现取决于请求类型与计费路径：
 
-| 字段 | 说明 |
-| --- | --- |
-| `model_ratio` / `group_ratio` / `completion_ratio` | 倍率 |
-| `model_price` | 模型单价 |
-| `cache_tokens` / `cache_ratio` | 缓存相关 |
-| `pre_consumed_quota` | 预扣额度 |
-| `actual_quota` | 实际结算额度（任务等场景） |
-| `request_path` | 请求路径 |
-| `billing_source` | 计费来源 |
-| `billing_mode` | 计费模式（如分层表达式） |
+| 字段 | JSON 类型 | 说明 |
+| --- | --- | --- |
+| `model_ratio` | number | 模型倍率，可含小数 |
+| `group_ratio` | number | 分组倍率，可含小数 |
+| `completion_ratio` | number | 输出倍率，可含小数 |
+| `model_price` | number | 模型单价，可含小数 |
+| `cache_tokens` | number | 缓存 token 数，整数 |
+| `cache_ratio` | number | 缓存倍率，可含小数 |
+| `pre_consumed_quota` | number | 预扣额度，整数 |
+| `actual_quota` | number | 实际结算额度，整数（任务等场景） |
+| `request_path` | string | 请求路径 |
+| `billing_source` | string | 计费来源，如 `wallet`、`subscription` |
+| `billing_mode` | string | 计费模式，如 `tiered_expr`、`task_pricing` |
+
+> JSON 规范中的整数和小数均属于 `number` 类型；表格在说明中进一步标注了数值语义。
 
 ### 注意
 

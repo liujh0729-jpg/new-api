@@ -764,9 +764,9 @@ func TestListModelsHidesDisabledAIPDDCatalogModelsOnly(t *testing.T) {
 
 	catalog := aipddcatalog.AtomicCatalog{
 		Capabilities: []aipddcatalog.AtomicCapability{
-			{ID: enabledTask, Available: true, Pricing: aipddcatalog.AtomicPricing{Enabled: true}},
-			{ID: unavailableTask, Available: false, Pricing: aipddcatalog.AtomicPricing{Enabled: true}},
-			{ID: pricingDisabledTask, Available: true, Pricing: aipddcatalog.AtomicPricing{Enabled: false}},
+			{ID: enabledTask, Available: aipddcatalog.BoolPtr(true), Pricing: aipddcatalog.AtomicPricing{Enabled: true}},
+			{ID: unavailableTask, Available: aipddcatalog.BoolPtr(false), Pricing: aipddcatalog.AtomicPricing{Enabled: true}},
+			{ID: pricingDisabledTask, Available: aipddcatalog.BoolPtr(true), Pricing: aipddcatalog.AtomicPricing{Enabled: false}},
 		},
 	}
 	aipddcatalog.SetV1ModelsListHidden(catalog.V1ModelsListHiddenNames())

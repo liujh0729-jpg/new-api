@@ -14,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/require"
 )
 
 func TestBuildRequestHeaderIncludesFinanceIdentity(t *testing.T) {
@@ -66,7 +67,7 @@ func TestAIPDDTaskSnapshotPersistsImageMediaMetadata(t *testing.T) {
 	}
 }
 
-func TestConvertToOpenAIVideoPreservesSeedanceOfficialFailure(t *testing.T) {
+func TestConvertToOpenAIVideoNormalizesSeedanceOfficialFailure(t *testing.T) {
 	task := &model.Task{
 		TaskID:   "task_seedance_failure",
 		Status:   model.TaskStatusFailure,
@@ -93,12 +94,95 @@ func TestConvertToOpenAIVideoPreservesSeedanceOfficialFailure(t *testing.T) {
 	if response.Error == nil {
 		t.Fatal("expected official Seedance error to be present")
 	}
-	if response.Error.Code != "content_policy_violation" {
-		t.Fatalf("unexpected error code: %q", response.Error.Code)
+	require.Equal(t, relaycommon.AIPDDErrorCodeContentPolicy, response.Error.Code)
+	require.Equal(t, "aipdd", response.Error.Provider)
+	require.Equal(t, "content_safety", response.Error.Category)
+	require.Equal(t, "content_policy_violation", response.Error.UpstreamCode)
+	require.NotNil(t, response.Error.Retryable)
+	require.False(t, *response.Error.Retryable)
+	require.Contains(t, response.Error.Message, "内容安全审核")
+	require.NotContains(t, response.Error.Message, "reference media")
+}
+
+func TestConvertToOpenAIVideoLocalizesSeedanceCopyrightFailure(t *testing.T) {
+	task := &model.Task{
+		TaskID:   "task_seedance_copyright_failure",
+		Status:   model.TaskStatusFailure,
+		Progress: "100%",
+		Properties: model.Properties{
+			OriginModelName: "AP Seedance-2.0 标准版",
+		},
+		Data: json.RawMessage(`{
+			"id":"upstream-seedance-task",
+			"status":"failed",
+			"error":{
+				"code":"InputImageSensitiveContentDetected.PolicyViolation",
+				"message":"The request failed because the input image 'content[1]' may be related to copyright restrictions. Request id: req-copyright-1"
+			}
+		}`),
 	}
-	if response.Error.Message != "The reference media violates the content policy." {
-		t.Fatalf("unexpected error message: %q", response.Error.Message)
+
+	data, err := (&TaskAdaptor{}).ConvertToOpenAIVideo(task)
+	if err != nil {
+		t.Fatalf("ConvertToOpenAIVideo returned error: %v", err)
 	}
+
+	var response dto.OpenAIVideo
+	if err := common.Unmarshal(data, &response); err != nil {
+		t.Fatalf("decode converted response: %v", err)
+	}
+	require.NotNil(t, response.Error)
+	require.Equal(t, "InputImageSensitiveContentDetected.PolicyViolation", response.Error.Code)
+	require.Equal(t, "content[1]", response.Error.Param)
+	require.Equal(t, "req-copyright-1", response.Error.RequestID)
+	require.Equal(t, "aipdd", response.Error.Provider)
+	require.Equal(t, "copyright_policy", response.Error.Category)
+	require.Empty(t, response.Error.UpstreamCode)
+	require.NotNil(t, response.Error.Retryable)
+	require.False(t, *response.Error.Retryable)
+	require.Contains(t, response.Error.Message, "第 2 个输入内容中的图片")
+	require.Contains(t, response.Error.Message, "版权限制")
+	require.NotContains(t, response.Error.Message, "The request failed")
+}
+
+func TestConvertToOpenAIVideoMasksSuperResolutionFailure(t *testing.T) {
+	task := &model.Task{
+		TaskID:   "task_seedance_upscale_failure",
+		Status:   model.TaskStatusFailure,
+		Progress: "100%",
+		Properties: model.Properties{
+			OriginModelName: "AP Seedance-2.0 标准版",
+		},
+		Data: json.RawMessage(`{
+			"id":"upstream-seedance-task",
+			"status":"failed",
+			"error":{
+				"code":"SeedVR2UpscaleFailed",
+				"message":"seedvr2-upscale worker failed while loading the super-resolution model. Request id: req-internal-1"
+			}
+		}`),
+	}
+
+	data, err := (&TaskAdaptor{}).ConvertToOpenAIVideo(task)
+	if err != nil {
+		t.Fatalf("ConvertToOpenAIVideo returned error: %v", err)
+	}
+
+	var response dto.OpenAIVideo
+	if err := common.Unmarshal(data, &response); err != nil {
+		t.Fatalf("decode converted response: %v", err)
+	}
+	require.NotNil(t, response.Error)
+	require.Equal(t, relaycommon.PublicTaskProcessingFailedCode, response.Error.Code)
+	require.Equal(t, "req-internal-1", response.Error.RequestID)
+	require.Equal(t, "aipdd", response.Error.Provider)
+	require.Equal(t, "task_processing", response.Error.Category)
+	require.Empty(t, response.Error.UpstreamCode)
+	require.NotNil(t, response.Error.Retryable)
+	require.True(t, *response.Error.Retryable)
+	require.NotContains(t, strings.ToLower(response.Error.Message), "seedvr")
+	require.NotContains(t, strings.ToLower(response.Error.Message), "upscale")
+	require.NotContains(t, response.Error.Message, "超分")
 }
 
 func TestConvertToRequestPayloadBuildsIndexTTSContent(t *testing.T) {

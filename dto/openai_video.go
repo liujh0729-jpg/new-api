@@ -48,6 +48,12 @@ func NewOpenAIVideo() *OpenAIVideo {
 }
 
 type OpenAIVideoError struct {
-	Message string `json:"message"`
-	Code    string `json:"code"`
+	Message      string `json:"message"`
+	Code         string `json:"code"`
+	Param        string `json:"param,omitempty"`
+	RequestID    string `json:"request_id,omitempty"`
+	Provider     string `json:"provider,omitempty"`
+	Category     string `json:"category,omitempty"`
+	UpstreamCode string `json:"upstream_code,omitempty"`
+	Retryable    *bool  `json:"retryable,omitempty"`
 }

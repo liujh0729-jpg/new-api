@@ -211,3 +211,53 @@ func TestAtomicCatalogRejectsUnsupportedPerUnitChargeUnit(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "unsupported charge unit")
 }
+
+func TestAtomicCatalogNormalizesMissingPerUnitSecondUnit(t *testing.T) {
+	catalog := AtomicCatalog{
+		SchemaVersion: 1,
+		Revision:      "revision-normalize-unit",
+		AWCoinRate:    AtomicAWCoinRate{RMBPerAWCoin: 0.0001, USDPerAWCoin: 0.00001},
+		Capabilities: []AtomicCapability{{
+			ID:          "aipdd_ltx_2.3",
+			AdapterCode: "comfyui",
+			Execution:   AtomicExecution{Protocol: "shared_task", Path: "/shared-tasks/tasks"},
+			Pricing: AtomicPricing{
+				PricingModel: "per_unit", Currency: "awcoin", Enabled: true,
+				ChargeConfig: map[string]any{"unitLabel": "second", "amount": float64(4000), "minSeconds": float64(1)},
+			},
+		}},
+	}
+
+	catalog.NormalizePerUnitChargeUnits()
+	require.NoError(t, catalog.Validate())
+	require.Equal(t, "second", catalog.Capabilities[0].Pricing.ChargeConfig["unit"])
+	runtimeCapabilities := catalog.RuntimeCapabilities()
+	require.Len(t, runtimeCapabilities, 1)
+	require.Equal(t, constant.AIPDDBillingTypeDurationSeconds, runtimeCapabilities[0].BillingType)
+	require.Equal(t, float64(4000), runtimeCapabilities[0].TaskCost)
+}
+
+func TestFetchAtomicNormalizesMissingPerUnitSecondUnit(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, AtomicCatalogPath, r.URL.Path)
+		_, _ = w.Write([]byte(`{
+			"code":0,"message":"ok","data":{
+				"schemaVersion":1,"revision":"revision-normalize-fetch","generatedAt":"2026-08-13T00:00:00",
+				"awcoinRate":{"rmbPerAwcoin":0.01,"usdPerAwcoin":0.0015,"updatedAt":"2026-08-13T00:00:00"},
+				"capabilities":[
+					{"id":"aipdd_ltx_2.3","code":"aipdd_ltx_2.3","adapterCode":"comfyui",
+					 "execution":{"protocol":"shared_task","path":"/shared-tasks/tasks"},
+					 "pricing":{"pricingModel":"per_unit","currency":"awcoin","enabled":true,
+					            "chargeConfig":{"amount":4000,"unitLabel":"second","minSeconds":1}}}
+				],
+				"models":[]
+			}
+		}`))
+	}))
+	defer server.Close()
+
+	catalog, err := FetchAtomic(context.Background(), server.Client(), server.URL, "sk-test")
+	require.NoError(t, err)
+	require.Equal(t, "second", catalog.Capabilities[0].Pricing.ChargeConfig["unit"])
+	require.Equal(t, []string{"aipdd_ltx_2.3"}, catalog.ModelNames())
+}

@@ -47,37 +47,72 @@ func sanitizeUpstreamErrorMessage(message string) string {
 	return message
 }
 
-func taskErrorFromUpstreamResponse(responseBody []byte, statusCode int) *dto.TaskError {
+func taskErrorFromUpstreamResponse(responseBody []byte, statusCode int, aipddProvider ...bool) *dto.TaskError {
+	isAIPDD := len(aipddProvider) > 0 && aipddProvider[0]
+	normalizeError := func(code, message, param, requestID string) relaycommon.PublicUpstreamTaskError {
+		if isAIPDD {
+			return relaycommon.NormalizeAIPDDTaskError(
+				code,
+				message,
+				param,
+				requestID,
+				statusCode,
+				relaycommon.AIPDDTaskErrorOperationCreate,
+			)
+		}
+		return relaycommon.NormalizeUpstreamTaskError(code, message, param, requestID)
+	}
 	var errorResponse dto.GeneralErrorResponse
 	if err := common.Unmarshal(responseBody, &errorResponse); err == nil {
 		if upstreamError := errorResponse.TryToOpenAIError(); upstreamError != nil {
-			code := "fail_to_fetch_task"
+			rawCode := "fail_to_fetch_task"
 			if upstreamError.Code != nil {
 				if upstreamCode := strings.TrimSpace(fmt.Sprint(upstreamError.Code)); upstreamCode != "" {
-					code = upstreamCode
+					rawCode = upstreamCode
 				}
 			}
-			message := sanitizeUpstreamErrorMessage(upstreamError.Message)
-			taskErr := service.TaskErrorWrapper(errors.New(message), code, statusCode)
-			details := make(map[string]any, 3)
-			if errorType := strings.TrimSpace(upstreamError.Type); errorType != "" {
-				details["type"] = errorType
-			}
-			if param := strings.TrimSpace(upstreamError.Param); param != "" {
-				details["param"] = param
-			}
+			rawMessage := sanitizeUpstreamErrorMessage(upstreamError.Message)
+			param := strings.TrimSpace(upstreamError.Param)
+			requestID := ""
 			var requestIDs struct {
 				RequestID      string `json:"request_id"`
 				CamelRequestID string `json:"requestId"`
 			}
 			if err := common.Unmarshal(responseBody, &requestIDs); err == nil {
-				requestID := strings.TrimSpace(requestIDs.RequestID)
+				requestID = strings.TrimSpace(requestIDs.RequestID)
 				if requestID == "" {
 					requestID = strings.TrimSpace(requestIDs.CamelRequestID)
 				}
-				if requestID != "" {
-					details["request_id"] = requestID
+			}
+
+			publicError := normalizeError(rawCode, rawMessage, param, requestID)
+			if param == "" {
+				param = publicError.Param
+			}
+			if requestID == "" {
+				requestID = publicError.RequestID
+			}
+			code, message := rawCode, rawMessage
+			if publicError.Matched {
+				code, message = publicError.Code, publicError.Message
+			}
+
+			taskErr := service.TaskErrorWrapper(errors.New(rawMessage), code, statusCode)
+			taskErr.Message = message
+			details := make(map[string]any, 3)
+			if errorType := strings.TrimSpace(upstreamError.Type); errorType != "" && !publicError.HideRaw {
+				details["type"] = errorType
+			}
+			if publicError.Matched {
+				for key, value := range publicError.Data() {
+					details[key] = value
 				}
+			}
+			if param != "" {
+				details["param"] = param
+			}
+			if requestID != "" {
+				details["request_id"] = requestID
 			}
 			if len(details) > 0 {
 				taskErr.Data = details
@@ -86,8 +121,17 @@ func taskErrorFromUpstreamResponse(responseBody []byte, statusCode int) *dto.Tas
 		}
 	}
 
-	message := sanitizeUpstreamErrorMessage(string(responseBody))
-	return service.TaskErrorWrapper(fmt.Errorf("%s", message), "fail_to_fetch_task", statusCode)
+	rawMessage := sanitizeUpstreamErrorMessage(string(responseBody))
+	taskErr := service.TaskErrorWrapper(fmt.Errorf("%s", rawMessage), "fail_to_fetch_task", statusCode)
+	publicError := normalizeError("", rawMessage, "", "")
+	if publicError.Matched {
+		taskErr.Code = publicError.Code
+		taskErr.Message = publicError.Message
+		if data := publicError.Data(); len(data) > 0 {
+			taskErr.Data = data
+		}
+	}
+	return taskErr
 }
 
 func isValidClientPublicTaskID(taskID string) bool {
@@ -425,7 +469,8 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	}
 	if resp != nil && resp.StatusCode != http.StatusOK {
 		responseBody, _ := io.ReadAll(resp.Body)
-		return nil, taskErrorFromUpstreamResponse(responseBody, resp.StatusCode)
+		isAIPDD := platform == constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeAIPDD))
+		return nil, taskErrorFromUpstreamResponse(responseBody, resp.StatusCode, isAIPDD)
 	}
 
 	// 10. 返回 OtherRatios 给下游（header 必须在 DoResponse 写 body 之前设置）
@@ -682,6 +727,7 @@ func tryRealtimeFetch(task *model.Task, isOpenAIVideoAPI bool, mediaType string)
 
 	if channelModel.Type == constant.ChannelTypeAIPDD {
 		task.Data = body
+		service.SyncAIPDDTaskFinanceFromUpstream(task, body, ti)
 	}
 
 	// 将上游最新状态更新到 task
@@ -1052,6 +1098,42 @@ func mapTaskStatusToSimple(status model.TaskStatus) string {
 func TaskModel2Dto(task *model.Task) *dto.TaskDto {
 	output := extractTaskOutputURLs(task)
 	mediaInfo := resolveTaskMediaInfo(task, "")
+	failReason := task.FailReason
+	taskData := task.Data
+	if task.Status == model.TaskStatusFailure {
+		errorMessage := strings.TrimSpace(failReason + "\n" + string(taskData))
+		var publicError relaycommon.PublicUpstreamTaskError
+		isAIPDDTask := task.Platform == constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeAIPDD)) ||
+			task.PrivateData.AIPDDExecution != nil
+		if isAIPDDTask {
+			publicError = relaycommon.NormalizeAIPDDTaskError(
+				"",
+				errorMessage,
+				"",
+				"",
+				0,
+				relaycommon.AIPDDTaskErrorOperationExecute,
+			)
+		} else {
+			publicError = relaycommon.NormalizeUpstreamTaskError("", errorMessage, "", "")
+		}
+		if publicError.Matched {
+			failReason = publicError.Message
+			errorData := map[string]any{
+				"code":    publicError.Code,
+				"message": publicError.Message,
+			}
+			for key, value := range publicError.Data() {
+				errorData[key] = value
+			}
+			if sanitizedData, err := common.Marshal(map[string]any{
+				"status": "failed",
+				"error":  errorData,
+			}); err == nil {
+				taskData = sanitizedData
+			}
+		}
+	}
 	resultURL := ""
 	if task.Status == model.TaskStatusSuccess {
 		resultURL = task.GetResultURL()
@@ -1075,7 +1157,7 @@ func TaskModel2Dto(task *model.Task) *dto.TaskDto {
 		Quota:            task.Quota,
 		Action:           task.Action,
 		Status:           string(task.Status),
-		FailReason:       task.FailReason,
+		FailReason:       failReason,
 		ResultURL:        resultURL,
 		SubmitTime:       task.SubmitTime,
 		StartTime:        task.StartTime,
@@ -1089,7 +1171,7 @@ func TaskModel2Dto(task *model.Task) *dto.TaskDto {
 		MediaType:        mediaInfo.MediaType,
 		TaskKind:         mediaInfo.TaskKind,
 		OutputModalities: mediaInfo.OutputModalities,
-		Data:             task.Data,
+		Data:             taskData,
 	}
 }
 

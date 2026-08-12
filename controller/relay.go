@@ -723,12 +723,78 @@ const (
 // respondTaskError 统一输出 Task 错误响应（含 429 / 上游余额不足等提示改写）。
 // 改写只影响返回给客户端的 Message；taskErr.Error 仍保留上游原文，供管理端错误日志排查。
 func respondTaskError(c *gin.Context, taskErr *dto.TaskError) {
-	if taskErr.StatusCode == http.StatusTooManyRequests {
+	publicErrorNormalized := normalizePublicTaskError(taskErr)
+	if !publicErrorNormalized && taskErr.StatusCode == http.StatusTooManyRequests {
 		taskErr.Message = taskUpstreamOverloadedMessage
-	} else if shouldMaskUpstreamBalanceTaskError(taskErr) {
+	} else if !publicErrorNormalized && shouldMaskUpstreamBalanceTaskError(taskErr) {
 		taskErr.Message = taskUpstreamConfigChangedMessage
 	}
 	c.JSON(taskErr.StatusCode, taskErr)
+}
+
+// normalizePublicTaskError applies documented Seedance messages at the final
+// response boundary and prevents internal super-resolution model details from
+// leaking even if an upstream adapter did not normalize them earlier.
+func normalizePublicTaskError(taskErr *dto.TaskError) bool {
+	if taskErr == nil {
+		return false
+	}
+	rawError := ""
+	if taskErr.Error != nil {
+		rawError = taskErr.Error.Error()
+	}
+	rawData := ""
+	if taskErr.Data != nil {
+		rawData = fmt.Sprint(taskErr.Data)
+	}
+	isSuperResolutionError := relaycommon.IsSuperResolutionTaskError(taskErr.Code, taskErr.Message, rawError, rawData)
+	if taskErr.LocalError && !isSuperResolutionError {
+		return false
+	}
+	// AIPDD adapters attach provider/category/retryable when an error has
+	// already passed through the public taxonomy. Preserve that message instead
+	// of replacing it with the generic 429 or balance fallback below.
+	if !isSuperResolutionError && isNormalizedAIPDDTaskError(taskErr) {
+		return true
+	}
+	publicError := relaycommon.NormalizeUpstreamTaskError(
+		taskErr.Code,
+		strings.TrimSpace(taskErr.Message+"\n"+rawError+"\n"+rawData),
+		"",
+		"",
+	)
+	if !publicError.Matched {
+		return false
+	}
+
+	taskErr.Code = publicError.Code
+	taskErr.Message = publicError.Message
+	if publicError.HideRaw {
+		taskErr.Data = nil
+	}
+	if safeData := publicError.Data(); len(safeData) > 0 {
+		if existing, ok := taskErr.Data.(map[string]any); ok && !publicError.HideRaw {
+			for key, value := range safeData {
+				existing[key] = value
+			}
+			taskErr.Data = existing
+		} else {
+			taskErr.Data = safeData
+		}
+	}
+	return true
+}
+
+func isNormalizedAIPDDTaskError(taskErr *dto.TaskError) bool {
+	if taskErr == nil || !strings.HasPrefix(strings.ToLower(strings.TrimSpace(taskErr.Code)), "aipdd_") {
+		return false
+	}
+	details, ok := taskErr.Data.(map[string]any)
+	if !ok {
+		return false
+	}
+	provider, ok := details["provider"].(string)
+	return ok && strings.EqualFold(strings.TrimSpace(provider), "aipdd")
 }
 
 // shouldMaskUpstreamBalanceTaskError 识别上游渠道账户余额/积分不足（非本站用户额度不足）。

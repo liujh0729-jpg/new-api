@@ -88,11 +88,13 @@ type taskDetailResponse struct {
 // the official endpoint returns the task directly at the top level, while the
 // legacy AIPDD endpoint wraps it in data.
 type seedanceOfficialTaskResponse struct {
-	ID      string `json:"id"`
-	Status  string `json:"status"`
-	Code    any    `json:"code"`
-	Message string `json:"message"`
-	Content struct {
+	ID             string `json:"id"`
+	Status         string `json:"status"`
+	Code           any    `json:"code"`
+	Message        string `json:"message"`
+	RequestID      string `json:"request_id"`
+	CamelRequestID string `json:"requestId"`
+	Content        struct {
 		VideoURL string `json:"video_url"`
 	} `json:"content"`
 	Error any `json:"error"`
@@ -451,18 +453,27 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 			return "", nil, service.TaskErrorWrapper(errors.Wrapf(err, "body: %s", responseBody), "unmarshal_response_body_failed", http.StatusInternalServerError)
 		}
 		if strings.TrimSpace(official.ID) == "" {
-			message, _ := seedanceOfficialErrorDetails(official)
-			message = firstNonEmpty(message, "Seedance task creation failed")
+			rawMessage, rawCode := seedanceOfficialErrorDetails(official)
+			rawMessage = firstNonEmpty(rawMessage, "Seedance task creation failed")
 			statusCode := http.StatusBadGateway
 			businessCode := positiveIntValue(official.Code)
 			if businessCode == 0 {
-				_, errorCode := seedanceOfficialErrorDetails(official)
-				businessCode = positiveIntValue(errorCode)
+				businessCode = positiveIntValue(rawCode)
 			}
 			if businessCode >= http.StatusBadRequest && businessCode < http.StatusInternalServerError {
 				statusCode = businessCode
 			}
-			return "", nil, service.TaskErrorWrapper(fmt.Errorf("%s", message), "seedance_task_create_failed", statusCode)
+			taskErr := service.TaskErrorWrapper(
+				fmt.Errorf("%s", rawMessage),
+				"seedance_task_create_failed",
+				statusCode,
+			)
+			applyPublicUpstreamTaskError(taskErr, seedanceOfficialPublicError(
+				official,
+				relaycommon.AIPDDTaskErrorOperationCreate,
+				statusCode,
+			))
+			return "", nil, taskErr
 		}
 		writeCreateTaskResponse(c, info, cfg)
 		return official.ID, responseBody, nil
@@ -473,7 +484,16 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 		return "", nil, service.TaskErrorWrapper(errors.Wrapf(err, "body: %s", responseBody), "unmarshal_response_body_failed", http.StatusInternalServerError)
 	}
 	if aipddResp.Code != 0 && aipddResp.Code != http.StatusOK {
-		return "", nil, service.TaskErrorWrapper(fmt.Errorf("%s", aipddResp.Message), "aipdd_task_create_failed", http.StatusBadGateway)
+		taskErr := service.TaskErrorWrapper(fmt.Errorf("%s", aipddResp.Message), "aipdd_task_create_failed", http.StatusBadGateway)
+		applyPublicUpstreamTaskError(taskErr, relaycommon.NormalizeAIPDDTaskError(
+			fmt.Sprint(aipddResp.Code),
+			aipddResp.Message,
+			"",
+			"",
+			aipddResp.Code,
+			relaycommon.AIPDDTaskErrorOperationCreate,
+		))
+		return "", nil, taskErr
 	}
 	upstreamTaskID := firstNonEmpty(aipddResp.Data.ID, aipddResp.Data.TaskID)
 	if strings.TrimSpace(upstreamTaskID) == "" {
@@ -689,9 +709,19 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		case "succeeded", "completed":
 			info.Status, info.Progress, info.Url = model.TaskStatusSuccess, taskcommon.ProgressComplete, official.Content.VideoURL
 		case "failed", "cancelled", "canceled":
-			message, code := seedanceOfficialErrorDetails(official)
-			info.Status, info.Progress, info.Reason = model.TaskStatusFailure, taskcommon.ProgressComplete, firstNonEmpty(message, "Seedance task failed")
-			info.Code = positiveIntValue(code)
+			rawMessage, rawCode := seedanceOfficialErrorDetails(official)
+			publicError := relaycommon.NormalizeUpstreamTaskError(
+				rawCode,
+				rawMessage,
+				"",
+				firstNonEmpty(official.RequestID, official.CamelRequestID),
+			)
+			message := firstNonEmpty(rawMessage, "Seedance task failed")
+			if publicError.Matched {
+				message = publicError.Message
+			}
+			info.Status, info.Progress, info.Reason = model.TaskStatusFailure, taskcommon.ProgressComplete, message
+			info.Code = positiveIntValue(rawCode)
 		default:
 			info.Status, info.Progress = model.TaskStatusInProgress, taskcommon.ProgressInProgress
 		}
@@ -771,7 +801,6 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		taskInfo.Status = model.TaskStatusInProgress
 		taskInfo.Progress = taskcommon.ProgressInProgress
 	}
-
 	return taskInfo, nil
 }
 
@@ -868,10 +897,26 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, erro
 			openAIVideo.SetMetadata("url", official.Content.VideoURL)
 		}
 		if isSeedanceOfficialFailure(official.Status) || originTask.Status == model.TaskStatusFailure {
-			message, code := seedanceOfficialErrorDetails(official)
+			rawMessage, rawCode := seedanceOfficialErrorDetails(official)
+			message := firstNonEmpty(rawMessage, originTask.FailReason, "Seedance task failed")
+			code := firstNonEmpty(rawCode, "seedance_task_failed")
+			publicError := seedanceOfficialPublicError(
+				official,
+				relaycommon.AIPDDTaskErrorOperationExecute,
+				0,
+			)
+			if publicError.Matched {
+				message, code = publicError.Message, publicError.Code
+			}
 			openAIVideo.Error = &dto.OpenAIVideoError{
-				Message: firstNonEmpty(message, originTask.FailReason, "Seedance task failed"),
-				Code:    firstNonEmpty(code, "seedance_task_failed"),
+				Message:      message,
+				Code:         code,
+				Param:        publicError.Param,
+				RequestID:    publicError.RequestID,
+				Provider:     publicError.Provider,
+				Category:     publicError.Category,
+				UpstreamCode: publicError.UpstreamCode,
+				Retryable:    publicError.RetryableValue(),
 			}
 		}
 		return common.Marshal(openAIVideo)
@@ -884,15 +929,53 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, erro
 			openAIVideo.SetMetadata("urls", urls)
 		}
 		if originTask.Status == model.TaskStatusFailure {
+			message := firstNonEmpty(taskResultText(aipddResultPayload(detail.Data)), detail.Data.Message, originTask.FailReason, "AIPDD task failed")
+			code := "aipdd_task_failed"
+			publicError := relaycommon.NormalizeAIPDDTaskError(
+				"",
+				message,
+				"",
+				"",
+				0,
+				relaycommon.AIPDDTaskErrorOperationExecute,
+			)
+			if publicError.Matched {
+				message, code = publicError.Message, publicError.Code
+			}
 			openAIVideo.Error = &dto.OpenAIVideoError{
-				Message: firstNonEmpty(taskResultText(aipddResultPayload(detail.Data)), detail.Data.Message, originTask.FailReason, "AIPDD task failed"),
-				Code:    "aipdd_task_failed",
+				Message:      message,
+				Code:         code,
+				Param:        publicError.Param,
+				RequestID:    publicError.RequestID,
+				Provider:     publicError.Provider,
+				Category:     publicError.Category,
+				UpstreamCode: publicError.UpstreamCode,
+				Retryable:    publicError.RetryableValue(),
 			}
 		}
 	} else if originTask.Status == model.TaskStatusFailure {
+		message := firstNonEmpty(originTask.FailReason, "AIPDD task failed")
+		code := "aipdd_task_failed"
+		publicError := relaycommon.NormalizeAIPDDTaskError(
+			"",
+			message,
+			"",
+			"",
+			0,
+			relaycommon.AIPDDTaskErrorOperationExecute,
+		)
+		if publicError.Matched {
+			message, code = publicError.Message, publicError.Code
+		}
 		openAIVideo.Error = &dto.OpenAIVideoError{
-			Message: firstNonEmpty(originTask.FailReason, "AIPDD task failed"),
-			Code:    "aipdd_task_failed",
+			Message:      message,
+			Code:         code,
+			Param:        publicError.Param,
+			RequestID:    publicError.RequestID,
+			Provider:     publicError.Provider,
+			Category:     publicError.Category,
+			UpstreamCode: publicError.UpstreamCode,
+			Retryable:    publicError.RetryableValue(),
 		}
 	}
 
@@ -917,6 +1000,29 @@ func seedanceOfficialErrorDetails(response seedanceOfficialTaskResponse) (string
 		code = anyToString(response.Code)
 	}
 	return strings.TrimSpace(message), strings.TrimSpace(code)
+}
+
+func seedanceOfficialPublicError(
+	response seedanceOfficialTaskResponse,
+	operation relaycommon.AIPDDTaskErrorOperation,
+	statusCode int,
+) relaycommon.PublicUpstreamTaskError {
+	message, code := seedanceOfficialErrorDetails(response)
+	requestID := firstNonEmpty(response.RequestID, response.CamelRequestID)
+	return relaycommon.NormalizeAIPDDTaskError(code, message, "", requestID, statusCode, operation)
+}
+
+func applyPublicUpstreamTaskError(taskErr *dto.TaskError, publicError relaycommon.PublicUpstreamTaskError) {
+	if taskErr == nil || !publicError.Matched {
+		return
+	}
+	taskErr.Code = publicError.Code
+	taskErr.Message = publicError.Message
+	if data := publicError.Data(); len(data) > 0 {
+		taskErr.Data = data
+	} else if publicError.HideRaw {
+		taskErr.Data = nil
+	}
 }
 
 func seedanceOfficialErrorValue(value any) (string, string) {

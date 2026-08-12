@@ -123,6 +123,38 @@ func fetchAIPDDTransitSettlement(finance *relaycommon.AIPDDFinanceContext) error
 	return applyAIPDDTransitSettlementPayload(finance.PlatformOrderID, &settlement)
 }
 
+// SyncAIPDDTaskFinanceFromUpstream applies an embedded Seedance/AIPDD settlement
+// and, once the task is terminal, fetches Java settlement if NewAPI is still PENDING.
+// GET /v1/videos realtime fetch can persist SUCCESS before the background poller
+// runs; without this, the poller skips billing and aipdd_transit_order stays PENDING.
+func SyncAIPDDTaskFinanceFromUpstream(task *model.Task, responseBody []byte, taskResult *relaycommon.TaskInfo) {
+	if task == nil || taskResult == nil || !IsAIPDDFinanceEnabled() {
+		return
+	}
+	finance := task.PrivateData.AIPDDFinance
+	if finance == nil {
+		return
+	}
+	if err := ApplyAIPDDTransitSettlementResponse(finance, responseBody); err != nil {
+		common.SysError("apply AIPDD realtime settlement failed: " + err.Error())
+	}
+	if taskResult.Status != model.TaskStatusSuccess && taskResult.Status != model.TaskStatusFailure {
+		return
+	}
+	if order, err := model.GetAIPDDTransitOrder(finance.PlatformOrderID); err == nil && order.Status == model.AIPDDTransitSettled {
+		return
+	}
+	status := "CHARGED"
+	quota := task.Quota
+	if taskResult.Status == model.TaskStatusFailure {
+		status = "REFUNDED"
+		quota = 0
+	}
+	if err := RecordTaskAIPDDFinanceSettlement(task, quota, status); err != nil {
+		common.SysError("record AIPDD realtime settlement failed: " + err.Error())
+	}
+}
+
 func applyAIPDDTransitSettlementPayload(platformOrderID string, settlement *aipddTransitSettlementPayload) error {
 	if settlement == nil || settlement.ChargedPoints == nil || strings.TrimSpace(settlement.ChargedRMB) == "" {
 		return errors.New("AIPDD transit settlement is missing charged amount")
