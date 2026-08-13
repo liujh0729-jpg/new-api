@@ -183,3 +183,18 @@ func TestTaskModel2DtoDoesNotExposeFailureReasonAsResultURL(t *testing.T) {
 	require.Empty(t, taskDTO.ResultURL)
 	require.Equal(t, "no worker accepted the task", taskDTO.FailReason)
 }
+
+func TestTaskModel2DtoExposesQuotaCNYFromBillingSnapshot(t *testing.T) {
+	taskDTO := TaskModel2Dto(&model.Task{
+		Quota: 5000,
+		PrivateData: model.TaskPrivateData{
+			BillingContext: &model.TaskBillingContext{
+				QuotaPerUnit:    500000,
+				USDExchangeRate: 7.3,
+			},
+		},
+	})
+
+	require.Equal(t, 5000, taskDTO.Quota)
+	require.Equal(t, 0.073, taskDTO.QuotaCNY)
+}

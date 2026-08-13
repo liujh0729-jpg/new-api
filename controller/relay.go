@@ -645,6 +645,8 @@ func RelayTask(c *gin.Context) {
 			OtherRatios:     relayInfo.PriceData.OtherRatios,
 			OriginModelName: relayInfo.OriginModelName,
 			PerCallBilling:  isTaskPerCallBilling(relayInfo),
+			QuotaPerUnit:    common.QuotaPerUnit,
+			USDExchangeRate: operation_setting.USDExchangeRate,
 		}
 		if quote := relayInfo.TaskPricingQuote; quote != nil {
 			task.PrivateData.BillingContext.GroupRatio = quote.GroupRatio

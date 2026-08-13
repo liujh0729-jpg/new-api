@@ -134,6 +134,7 @@ curl -sS 'https://susciyuan.com/api/log/token?p=1&page_size=20' \
         "token_name": "default",
         "model_name": "gpt-4o",
         "quota": 1200,
+        "quota_cny": 0.01752,
         "prompt_tokens": 100,
         "completion_tokens": 50,
         "use_time": 3,
@@ -144,7 +145,7 @@ curl -sS 'https://susciyuan.com/api/log/token?p=1&page_size=20' \
         "group": "default",
         "ip": "1.2.3.4",
         "request_id": "req_xxx",
-        "other": "{\"model_ratio\":1,\"group_ratio\":1,\"pre_consumed_quota\":1500}"
+        "other": "{\"model_ratio\":1,\"group_ratio\":1,\"pre_consumed_quota\":1500,\"quota_per_unit\":500000,\"usd_exchange_rate\":7.3}"
       }
     ]
   }
@@ -164,6 +165,7 @@ curl -sS 'https://susciyuan.com/api/log/token?p=1&page_size=20' \
 | `token_name` | string | 令牌名称 |
 | `model_name` | string | 模型名 |
 | `quota` | int | 本次额度 |
+| `quota_cny` | number | 本次额度对应的人民币等值，四舍五入到 6 位小数；消费或退款方向需结合 `type` 判断 |
 | `prompt_tokens` | int | 输入 token |
 | `completion_tokens` | int | 输出 token |
 | `use_time` | int | 耗时（秒） |
@@ -204,6 +206,8 @@ curl -sS 'https://susciyuan.com/api/log/token?p=1&page_size=20' \
 | `request_path` | string | 请求路径 |
 | `billing_source` | string | 计费来源，如 `wallet`、`subscription` |
 | `billing_mode` | string | 计费模式，如 `tiered_expr`、`task_pricing` |
+| `quota_per_unit` | number | 计费发生时的额度兑美元快照，即 1 美元对应的额度数 |
+| `usd_exchange_rate` | number | 计费发生时的美元兑人民币汇率快照 |
 
 > JSON 规范中的整数和小数均属于 `number` 类型；表格在说明中进一步标注了数值语义。
 
@@ -211,7 +215,8 @@ curl -sS 'https://susciyuan.com/api/log/token?p=1&page_size=20' \
 
 1. 不会返回同账号下其他 API Key 的日志。
 2. `other` 是字符串，客户端需自行反序列化。
-3. 需要时间/模型等更细过滤时，请使用控制台登录态接口（如 `/api/log/self`）。
+3. `quota_cny = quota / quota_per_unit × usd_exchange_rate`。新日志使用计费时快照；旧日志没有快照时按查询时的站点配置换算。
+4. 需要时间/模型等更细过滤时，请使用控制台登录态接口（如 `/api/log/self`）。
 
 ---
 
@@ -286,6 +291,7 @@ curl -sS 'https://susciyuan.com/api/task/token?task_id=task_abc123' \
         "group": "default",
         "channel_id": 0,
         "quota": 50000,
+        "quota_cny": 0.73,
         "action": "MUSIC",
         "status": "SUCCESS",
         "fail_reason": "",
@@ -325,7 +331,8 @@ curl -sS 'https://susciyuan.com/api/task/token?task_id=task_abc123' \
 | `user_id` | int | 用户 ID |
 | `group` | string | 分组 |
 | `channel_id` | int | 渠道 ID；用户侧查询通常为 `0` |
-| `quota` | int | 任务额度 |
+| `quota` | int | 任务计费额度；任务失败时可能退还，不等同于最终净支出 |
+| `quota_cny` | number | 任务额度对应的人民币等值，四舍五入到 6 位小数 |
 | `action` | string | 动作类型 |
 | `status` | string | 状态 |
 | `fail_reason` | string | 失败原因 |
@@ -345,6 +352,7 @@ curl -sS 'https://susciyuan.com/api/task/token?task_id=task_abc123' \
 1. 返回的是用户全部任务，不是「仅当前 Key 创建的任务」。
 2. 不要依赖 `channel_id` 做渠道识别（用户侧会被省略加载）。
 3. `result_url` / `output` 是否有值取决于任务是否成功及结果是否已回写。
+4. 新任务的 `quota_cny` 使用任务提交时的计费配置快照；旧任务没有快照时按查询时的站点配置换算。
 
 ---
 

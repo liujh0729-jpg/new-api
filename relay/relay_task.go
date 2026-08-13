@@ -1155,6 +1155,7 @@ func TaskModel2Dto(task *model.Task) *dto.TaskDto {
 		Group:            task.Group,
 		ChannelId:        task.ChannelId,
 		Quota:            task.Quota,
+		QuotaCNY:         task.GetQuotaCNY(),
 		Action:           task.Action,
 		Status:           string(task.Status),
 		FailReason:       failReason,

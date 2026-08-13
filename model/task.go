@@ -10,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	commonRelay "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 )
 
 type TaskStatus string
@@ -141,6 +142,24 @@ type TaskBillingContext struct {
 	SaleUSD           float64            `json:"sale_usd,omitempty"`
 	HasReferenceVideo bool               `json:"has_reference_video,omitempty"`
 	Resolution        string             `json:"resolution,omitempty"`
+	QuotaPerUnit      float64            `json:"quota_per_unit,omitempty"`
+	USDExchangeRate   float64            `json:"usd_exchange_rate,omitempty"`
+}
+
+// GetQuotaCNY returns the task quota's CNY equivalent using the billing-time
+// currency snapshot. Legacy tasks fall back to the current site settings.
+func (t *Task) GetQuotaCNY() float64 {
+	quotaPerUnit := common.QuotaPerUnit
+	usdExchangeRate := operation_setting.USDExchangeRate
+	if billingContext := t.PrivateData.BillingContext; billingContext != nil {
+		if billingContext.QuotaPerUnit > 0 {
+			quotaPerUnit = billingContext.QuotaPerUnit
+		}
+		if billingContext.USDExchangeRate > 0 {
+			usdExchangeRate = billingContext.USDExchangeRate
+		}
+	}
+	return common.QuotaToCNY(t.Quota, quotaPerUnit, usdExchangeRate)
 }
 
 // GetUpstreamTaskID 获取上游真实 task ID（用于与 provider 通信）
@@ -425,6 +444,13 @@ func (Task *Task) Update() error {
 	var err error
 	err = DB.Save(Task).Error
 	return err
+}
+
+func (t *Task) UpdateQuota() error {
+	if t.ID == 0 {
+		return nil
+	}
+	return DB.Model(t).Update("quota", t.Quota).Error
 }
 
 // UpdateWithStatus performs a conditional UPDATE guarded by fromStatus (CAS).

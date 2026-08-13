@@ -8,6 +8,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
@@ -17,26 +18,77 @@ import (
 )
 
 type Log struct {
-	Id               int    `json:"id" gorm:"index:idx_created_at_id,priority:1;index:idx_user_id_id,priority:2"`
-	UserId           int    `json:"user_id" gorm:"index;index:idx_user_id_id,priority:1"`
-	CreatedAt        int64  `json:"created_at" gorm:"bigint;index:idx_created_at_id,priority:2;index:idx_created_at_type"`
-	Type             int    `json:"type" gorm:"index:idx_created_at_type"`
-	Content          string `json:"content"`
-	Username         string `json:"username" gorm:"index;index:index_username_model_name,priority:2;default:''"`
-	TokenName        string `json:"token_name" gorm:"index;default:''"`
-	ModelName        string `json:"model_name" gorm:"index;index:index_username_model_name,priority:1;default:''"`
-	Quota            int    `json:"quota" gorm:"default:0"`
-	PromptTokens     int    `json:"prompt_tokens" gorm:"default:0"`
-	CompletionTokens int    `json:"completion_tokens" gorm:"default:0"`
-	UseTime          int    `json:"use_time" gorm:"default:0"`
-	IsStream         bool   `json:"is_stream"`
-	ChannelId        int    `json:"channel" gorm:"index"`
-	ChannelName      string `json:"channel_name" gorm:"->"`
-	TokenId          int    `json:"token_id" gorm:"default:0;index"`
-	Group            string `json:"group" gorm:"index"`
-	Ip               string `json:"ip" gorm:"index;default:''"`
-	RequestId        string `json:"request_id,omitempty" gorm:"type:varchar(64);index:idx_logs_request_id;default:''"`
-	Other            string `json:"other"`
+	Id               int     `json:"id" gorm:"index:idx_created_at_id,priority:1;index:idx_user_id_id,priority:2"`
+	UserId           int     `json:"user_id" gorm:"index;index:idx_user_id_id,priority:1"`
+	CreatedAt        int64   `json:"created_at" gorm:"bigint;index:idx_created_at_id,priority:2;index:idx_created_at_type"`
+	Type             int     `json:"type" gorm:"index:idx_created_at_type"`
+	Content          string  `json:"content"`
+	Username         string  `json:"username" gorm:"index;index:index_username_model_name,priority:2;default:''"`
+	TokenName        string  `json:"token_name" gorm:"index;default:''"`
+	ModelName        string  `json:"model_name" gorm:"index;index:index_username_model_name,priority:1;default:''"`
+	Quota            int     `json:"quota" gorm:"default:0"`
+	QuotaCNY         float64 `json:"quota_cny" gorm:"-"`
+	PromptTokens     int     `json:"prompt_tokens" gorm:"default:0"`
+	CompletionTokens int     `json:"completion_tokens" gorm:"default:0"`
+	UseTime          int     `json:"use_time" gorm:"default:0"`
+	IsStream         bool    `json:"is_stream"`
+	ChannelId        int     `json:"channel" gorm:"index"`
+	ChannelName      string  `json:"channel_name" gorm:"->"`
+	TokenId          int     `json:"token_id" gorm:"default:0;index"`
+	Group            string  `json:"group" gorm:"index"`
+	Ip               string  `json:"ip" gorm:"index;default:''"`
+	RequestId        string  `json:"request_id,omitempty" gorm:"type:varchar(64);index:idx_logs_request_id;default:''"`
+	Other            string  `json:"other"`
+}
+
+func otherNumber(other map[string]interface{}, key string) float64 {
+	value, ok := other[key]
+	if !ok {
+		return 0
+	}
+	switch number := value.(type) {
+	case float64:
+		return number
+	case float32:
+		return float64(number)
+	case int:
+		return float64(number)
+	case int64:
+		return float64(number)
+	default:
+		return 0
+	}
+}
+
+func quotaCurrencySnapshot(other map[string]interface{}) map[string]interface{} {
+	if other == nil {
+		other = make(map[string]interface{})
+	}
+	if otherNumber(other, "quota_per_unit") <= 0 {
+		other["quota_per_unit"] = common.QuotaPerUnit
+	}
+	if otherNumber(other, "usd_exchange_rate") <= 0 {
+		other["usd_exchange_rate"] = operation_setting.USDExchangeRate
+	}
+	return other
+}
+
+func (l *Log) setQuotaCNY() {
+	other, _ := common.StrToMap(l.Other)
+	quotaPerUnit := otherNumber(other, "quota_per_unit")
+	usdExchangeRate := otherNumber(other, "usd_exchange_rate")
+	if quotaPerUnit <= 0 {
+		quotaPerUnit = common.QuotaPerUnit
+	}
+	if usdExchangeRate <= 0 {
+		usdExchangeRate = operation_setting.USDExchangeRate
+	}
+	l.QuotaCNY = common.QuotaToCNY(l.Quota, quotaPerUnit, usdExchangeRate)
+}
+
+func (l *Log) AfterFind(_ *gorm.DB) error {
+	l.setQuotaCNY()
+	return nil
 }
 
 // don't use iota, avoid change log type value
@@ -225,6 +277,7 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 		// Align with task delta-settlement logs: actual_quota mirrors the settled quota.
 		params.Other["actual_quota"] = params.Quota
 	}
+	params.Other = quotaCurrencySnapshot(params.Other)
 	otherStr := common.MapToJsonStr(params.Other)
 	// 判断是否需要记录 IP
 	needRecordIp := false
@@ -292,6 +345,7 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 			tokenName = token.Name
 		}
 	}
+	params.Other = quotaCurrencySnapshot(params.Other)
 	log := &Log{
 		UserId:    params.UserId,
 		Username:  username,
