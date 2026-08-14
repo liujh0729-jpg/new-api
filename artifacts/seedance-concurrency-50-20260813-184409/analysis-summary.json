@@ -1,0 +1,465 @@
+{
+  "test": {
+    "batch_id": "20260813-184409",
+    "target": "https://susciyuan.com",
+    "model": "AP Seedance-2.0 轻量版",
+    "configuration": {
+      "group": "default",
+      "resolution": "480p",
+      "ratio": "16:9",
+      "duration_seconds": 4
+    },
+    "browser_probe_tasks": 1,
+    "simultaneous_api_tasks": 49,
+    "total_tasks": 50
+  },
+  "outcome": {
+    "database_task_rows": 50,
+    "database_status_counts": {
+      "SUCCESS": 50
+    },
+    "success_rate_percent": 100.0,
+    "request_count_before": 35,
+    "request_count_after": 85,
+    "balance_cny_before": 1359.35,
+    "balance_cny_after": 1295.35,
+    "actual_cost_cny": 64.0,
+    "average_cost_cny_per_task": 1.28,
+    "batch_quota": 4383550
+  },
+  "performance": {
+    "concurrent_submission_attempts": 49,
+    "concurrent_submission_accepted": 49,
+    "concurrent_terminal_success": 49,
+    "concurrent_terminal_failure": 0,
+    "submission_latency_seconds": {
+      "count": 49,
+      "min": 7.211739,
+      "p50": 8.300082,
+      "p95": 10.6653286,
+      "p99": 12.03683216,
+      "mean": 8.745677938775511,
+      "max": 12.12512
+    },
+    "queue_seconds_approx": {
+      "count": 49,
+      "min": 5.654752492904663,
+      "p50": 116.81521773338318,
+      "p95": 208.37883429527272,
+      "p99": 222.63472730636593,
+      "mean": 101.24319098433669,
+      "max": 228.30339670181274
+    },
+    "generation_seconds_approx": {
+      "count": 49,
+      "min": 100.1506998538971,
+      "p50": 138.55214190483093,
+      "p95": 170.18784918785093,
+      "p99": 197.91256457328785,
+      "mean": 142.4713073263363,
+      "max": 209.5914590358734
+    },
+    "total_seconds": {
+      "count": 49,
+      "min": 141.76915884017944,
+      "p50": 259.12498021125793,
+      "p95": 367.7615411758423,
+      "p99": 375.9897582054138,
+      "mean": 252.4601974389991,
+      "max": 376.5791392326355
+    },
+    "generation_to_video_ratio": {
+      "count": 49,
+      "min": 25.037674963474274,
+      "p50": 34.63803547620773,
+      "p95": 42.54696229696273,
+      "p99": 49.47814114332196,
+      "mean": 35.617826831584075,
+      "max": 52.39786475896835
+    },
+    "concurrent_makespan_seconds": 376.5813937187195,
+    "effective_tasks_per_minute": 7.807077165888813,
+    "effective_output_video_seconds_per_wall_second": 0.5204718110592542,
+    "max_observed_queued": 33,
+    "max_observed_in_progress": 29,
+    "polling_events": 909
+  },
+  "servers": {
+    "newapi": {
+      "host_label": "newapi",
+      "host": "14.103.100.4",
+      "sample_count_total": 495,
+      "sample_count_active": 187,
+      "sample_errors": 0,
+      "sample_latency_ms": {
+        "count": 187,
+        "min": 1146.399,
+        "p50": 1650.673,
+        "p95": 2007.1390000000001,
+        "p99": 2028.8055199999983,
+        "mean": 1659.0100695187164,
+        "max": 2157.783
+      },
+      "cpu_percent": {
+        "count": 187,
+        "min": 1.2499999999999956,
+        "p50": 2.985074626865669,
+        "p95": 4.651886792452828,
+        "p99": 5.841341834971884,
+        "mean": 2.838195617171408,
+        "max": 8.22942643391521
+      },
+      "baseline_cpu_percent_mean": 2.370037414387825,
+      "memory_used_bytes": {
+        "count": 187,
+        "min": 935038976.0,
+        "p50": 957931520.0,
+        "p95": 986178355.2,
+        "p99": 994348400.64,
+        "mean": 959412979.6791444,
+        "max": 998080512.0
+      },
+      "memory_used_percent": {
+        "count": 187,
+        "min": 11.414101363456135,
+        "p50": 11.693552620986795,
+        "p95": 12.038364172638776,
+        "p99": 12.138096621434796,
+        "mean": 11.7116369269651,
+        "max": 12.18365482644672
+      },
+      "baseline_memory_used_percent_mean": 11.698616436877414,
+      "load_1m": {
+        "count": 187,
+        "min": 0.0,
+        "p50": 0.0,
+        "p95": 0.07,
+        "p99": 0.1413999999999999,
+        "mean": 0.011390374331550802,
+        "max": 0.15
+      },
+      "baseline_load_1m_mean": 0.06413793103448276,
+      "load_5m": {
+        "count": 187,
+        "min": 0.01,
+        "p50": 0.02,
+        "p95": 0.05,
+        "p99": 0.05,
+        "mean": 0.02518716577540107,
+        "max": 0.05
+      },
+      "swap_used_bytes_max": 0,
+      "network_rx_bytes_delta": 13975222,
+      "network_tx_bytes_delta": 17692657,
+      "disk_read_bytes_delta": 159744,
+      "disk_write_bytes_delta": 26251264,
+      "containers": {
+        "new-api": {
+          "cpu_percent": {
+            "count": 187,
+            "min": 0.0,
+            "p50": 0.12,
+            "p95": 1.7819999999999994,
+            "p99": 2.8741999999999996,
+            "mean": 0.3779679144385027,
+            "max": 3.01
+          },
+          "memory_bytes": {
+            "count": 187,
+            "min": 47196405.76,
+            "p50": 49513758.72,
+            "p95": 49608130.56,
+            "p99": 49629102.08,
+            "mean": 49250717.5426738,
+            "max": 49629102.08
+          },
+          "memory_percent": {
+            "count": 187,
+            "min": 0.58,
+            "p50": 0.6,
+            "p95": 0.61,
+            "p99": 0.61,
+            "mean": 0.6008021390374331,
+            "max": 0.61
+          },
+          "pids_max": 6
+        },
+        "new-api-postgres": {
+          "cpu_percent": {
+            "count": 187,
+            "min": 0.0,
+            "p50": 0.18,
+            "p95": 4.417,
+            "p99": 4.786799999999998,
+            "mean": 1.0525133689839572,
+            "max": 5.47
+          },
+          "memory_bytes": {
+            "count": 187,
+            "min": 42561699.84,
+            "p50": 47007662.08,
+            "p95": 58888028.16,
+            "p99": 59328430.08,
+            "mean": 48555573.33561497,
+            "max": 59380858.88
+          },
+          "memory_percent": {
+            "count": 187,
+            "min": 0.52,
+            "p50": 0.57,
+            "p95": 0.72,
+            "p99": 0.72,
+            "mean": 0.5921390374331551,
+            "max": 0.72
+          },
+          "pids_max": 19
+        },
+        "new-api-redis": {
+          "cpu_percent": {
+            "count": 187,
+            "min": 0.04,
+            "p50": 0.06,
+            "p95": 0.22499999999999942,
+            "p99": 0.27139999999999986,
+            "mean": 0.07550802139037434,
+            "max": 0.31
+          },
+          "memory_bytes": {
+            "count": 187,
+            "min": 13589544.96,
+            "p50": 13600030.72,
+            "p95": 13600030.72,
+            "p99": 13610516.48,
+            "mean": 13599918.572834227,
+            "max": 13610516.48
+          },
+          "memory_percent": {
+            "count": 187,
+            "min": 0.17,
+            "p50": 0.17,
+            "p95": 0.17,
+            "p99": 0.17,
+            "mean": 0.17,
+            "max": 0.17
+          },
+          "pids_max": 7
+        }
+      }
+    },
+    "upstream-aipdd": {
+      "host_label": "upstream-aipdd",
+      "host": "8.219.81.18",
+      "sample_count_total": 495,
+      "sample_count_active": 187,
+      "sample_errors": 0,
+      "sample_latency_ms": {
+        "count": 187,
+        "min": 1863.178,
+        "p50": 2013.474,
+        "p95": 2030.6615,
+        "p99": 2068.46828,
+        "mean": 2004.5632673796792,
+        "max": 2098.125
+      },
+      "cpu_percent": {
+        "count": 187,
+        "min": 30.15075376884422,
+        "p50": 33.79396984924623,
+        "p95": 43.38163270125392,
+        "p99": 50.570308989442644,
+        "mean": 35.4413529866203,
+        "max": 55.18987341772152
+      },
+      "baseline_cpu_percent_mean": 33.389897002199326,
+      "memory_used_bytes": {
+        "count": 187,
+        "min": 2948419584.0,
+        "p50": 2997223424.0,
+        "p95": 3023761817.6,
+        "p99": 3029474263.04,
+        "mean": 2997310447.5721927,
+        "max": 3034836992.0
+      },
+      "memory_used_percent": {
+        "count": 187,
+        "min": 38.67432671881061,
+        "p50": 39.3144851492915,
+        "p95": 39.66258842137952,
+        "p99": 39.737518388100945,
+        "mean": 39.31562663474407,
+        "max": 39.807861134780886
+      },
+      "baseline_memory_used_percent_mean": 38.73935874516609,
+      "load_1m": {
+        "count": 187,
+        "min": 1.27,
+        "p50": 1.44,
+        "p95": 1.587,
+        "p99": 1.65,
+        "mean": 1.4496256684491977,
+        "max": 1.65
+      },
+      "baseline_load_1m_mean": 1.3924137931034484,
+      "load_5m": {
+        "count": 187,
+        "min": 1.36,
+        "p50": 1.4,
+        "p95": 1.44,
+        "p99": 1.4613999999999998,
+        "mean": 1.4018181818181819,
+        "max": 1.47
+      },
+      "swap_used_bytes_max": 0,
+      "network_rx_bytes_delta": 55528049,
+      "network_tx_bytes_delta": 51519820,
+      "disk_read_bytes_delta": 1880064,
+      "disk_write_bytes_delta": 222908416,
+      "containers": {
+        "new-api": {
+          "cpu_percent": {
+            "count": 187,
+            "min": 0.0,
+            "p50": 0.0,
+            "p95": 0.43,
+            "p99": 1.10219999999999,
+            "mean": 0.09518716577540107,
+            "max": 2.35
+          },
+          "memory_bytes": {
+            "count": 187,
+            "min": 24410849.28,
+            "p50": 25081937.92,
+            "p95": 26487029.76,
+            "p99": 26612858.88,
+            "mean": 25139189.04812834,
+            "max": 26612858.88
+          },
+          "memory_percent": {
+            "count": 187,
+            "min": 0.32,
+            "p50": 0.33,
+            "p95": 0.35,
+            "p99": 0.35,
+            "mean": 0.3304812834224599,
+            "max": 0.35
+          },
+          "pids_max": 7
+        },
+        "new-api-postgres": {
+          "cpu_percent": {
+            "count": 187,
+            "min": 0.0,
+            "p50": 0.01,
+            "p95": 8.587999999999997,
+            "p99": 10.301599999999986,
+            "mean": 1.7193048128342245,
+            "max": 13.23
+          },
+          "memory_bytes": {
+            "count": 187,
+            "min": 39195770.88,
+            "p50": 40454062.08,
+            "p95": 40669020.16,
+            "p99": 43169873.92,
+            "mean": 40537499.5713369,
+            "max": 43169873.92
+          },
+          "memory_percent": {
+            "count": 187,
+            "min": 0.51,
+            "p50": 0.53,
+            "p95": 0.53,
+            "p99": 0.57,
+            "mean": 0.5309090909090909,
+            "max": 0.57
+          },
+          "pids_max": 13
+        },
+        "new-api-redis": {
+          "cpu_percent": {
+            "count": 187,
+            "min": 0.2,
+            "p50": 0.28,
+            "p95": 0.3769999999999999,
+            "p99": 0.5977999999999963,
+            "mean": 0.2993048128342246,
+            "max": 2.25
+          },
+          "memory_bytes": {
+            "count": 187,
+            "min": 14250147.84,
+            "p50": 14250147.84,
+            "p95": 14433648.639999997,
+            "p99": 14512291.84,
+            "mean": 14264166.235721925,
+            "max": 14512291.84
+          },
+          "memory_percent": {
+            "count": 187,
+            "min": 0.19,
+            "p50": 0.19,
+            "p95": 0.19,
+            "p99": 0.19,
+            "mean": 0.19,
+            "max": 0.19
+          },
+          "pids_max": 9
+        }
+      }
+    }
+  },
+  "limitations": [
+    "The browser playground serializes one video per conversation, so the batch consists of one browser probe plus 49 requests released simultaneously through the same public /v1/videos path.",
+    "Queue and generation phase boundaries are approximated from 5-second task polling.",
+    "Server metrics cover gateway hosts and containers; GPU workers behind the upstream platform were not exposed on the supplied hosts."
+  ],
+  "capacity_forecast": {
+    "model": "饱和吞吐排队模型：批次完成时间 = max(生成时间下限, 并发任务数 / 完成吞吐)",
+    "measured_throughput_tasks_per_minute": 7.807077165888813,
+    "estimated_service_slots": {
+      "lower": 18,
+      "upper": 22,
+      "basis": "实测吞吐 × 生成阶段平均/P95耗时"
+    },
+    "recommended_peak_concurrency": 45,
+    "predicted_max_concurrency": 65,
+    "prediction_assumption": "将 10 分钟作为批次清空上限，并采用 6.5 任务/分钟的保守吞吐",
+    "risk_boundary_concurrency": 100,
+    "risk_boundary_minutes": {
+      "conservative": 15.384615384615385,
+      "baseline": 12.808890942813589,
+      "optimistic": 11.11111111111111
+    },
+    "slo_capacity": {
+      "5_minutes": {
+        "conservative": 32,
+        "baseline": 39,
+        "optimistic": 45
+      },
+      "6_minutes": {
+        "conservative": 39,
+        "baseline": 47,
+        "optimistic": 54
+      },
+      "10_minutes": {
+        "conservative": 65,
+        "baseline": 78,
+        "optimistic": 90
+      }
+    },
+    "scenarios": {
+      "保守情景": {
+        "rate": 6.5,
+        "floor_minutes": 2.8365
+      },
+      "实测基准": {
+        "rate": 7.807077165888813,
+        "floor_minutes": 2.3745
+      },
+      "乐观情景": {
+        "rate": 9.0,
+        "floor_minutes": 2.0
+      }
+    }
+  }
+}

@@ -5,8 +5,10 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 )
 
@@ -19,61 +21,110 @@ const (
 
 func BindVirtualCharacter() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		if c.Request.Method != http.MethodPost {
+			c.Next()
+			return
+		}
 		var req relaycommon.TaskSubmitReq
 		if err := common.UnmarshalBodyReusable(c, &req); err != nil {
 			abortVirtualCharacterBinding(c, http.StatusBadRequest, "invalid_request", err.Error())
 			return
 		}
-		if req.CharacterID == nil {
-			c.Next()
+		raw := make(map[string]interface{})
+		if strings.HasPrefix(strings.ToLower(c.GetHeader("Content-Type")), "application/json") {
+			if err := common.UnmarshalBodyReusable(c, &raw); err != nil {
+				abortVirtualCharacterBinding(c, http.StatusBadRequest, "invalid_request", err.Error())
+				return
+			}
+		}
+		assetIDs, err := virtualCharacterAssetReferenceIDs(req, raw)
+		if err != nil {
+			abortVirtualCharacterBinding(c, http.StatusBadRequest, "invalid_asset_reference", err.Error())
 			return
 		}
-		if *req.CharacterID <= 0 {
-			abortVirtualCharacterBinding(c, http.StatusBadRequest, "invalid_character_id", "character_id must be a positive integer")
+		if req.CharacterID == nil && len(assetIDs) == 0 {
+			c.Next()
 			return
 		}
 		if !model.IsVirtualCharacterSeedanceModel(strings.TrimSpace(req.Model)) {
 			abortVirtualCharacterBinding(c, http.StatusBadRequest, "character_model_not_allowed", "character video requires a Seedance model")
 			return
 		}
-		if virtualCharacterRequestHasExternalReferences(req) {
-			abortVirtualCharacterBinding(c, http.StatusBadRequest, "character_reference_conflict", "character_id cannot be combined with other reference media")
-			return
-		}
-		item, err := model.GetAccessibleVirtualCharacter(*req.CharacterID, c.GetInt("id"))
-		if err != nil {
-			abortVirtualCharacterBinding(c, http.StatusNotFound, "character_not_found", "character not found")
-			return
-		}
-		if item.Status != model.VirtualCharacterStatusActive {
-			abortVirtualCharacterBinding(c, http.StatusConflict, "character_unavailable", "character is not available for new tasks")
-			return
-		}
-		if strings.TrimSpace(item.ProviderAssetID) == "" {
-			abortVirtualCharacterBinding(c, http.StatusConflict, "character_unavailable", "character image is not active")
-			return
-		}
-		account, err := model.GetEnabledVirtualCharacterProviderAccount()
-		if err != nil || !common.HasStableCryptoSecret() || account.ID != item.ProviderAccountID {
-			abortVirtualCharacterBinding(c, http.StatusServiceUnavailable, "character_provider_unavailable", "virtual character provider is unavailable")
-			return
-		}
-		switch item.SourceType {
-		case model.VirtualCharacterSourceVolcAIGC, model.VirtualCharacterSourceVolcPreset:
-			// Official presets and user-created virtual characters follow the library master switch.
-		case model.VirtualCharacterSourceVolcRealPerson:
-			abortVirtualCharacterBinding(c, http.StatusServiceUnavailable, "character_feature_disabled", "real-person virtual characters are not available yet")
-			return
-		default:
-			abortVirtualCharacterBinding(c, http.StatusServiceUnavailable, "character_feature_disabled", "unsupported virtual character source")
-			return
+		userID := c.GetInt("id")
+		selectedChannelID := common.GetContextKeyInt(c, constant.ContextKeyChannelId)
+		characters := make([]*model.VirtualCharacter, 0, len(assetIDs)+1)
+		snapshots := make(map[int64]string, len(assetIDs)+1)
+		var item *model.VirtualCharacter
+		if req.CharacterID != nil {
+			if *req.CharacterID <= 0 {
+				abortVirtualCharacterBinding(c, http.StatusBadRequest, "invalid_character_id", "character_id must be a positive integer")
+				return
+			}
+			if virtualCharacterRequestHasExternalReferences(req) || virtualCharacterRawContentHasReference(raw) {
+				abortVirtualCharacterBinding(c, http.StatusBadRequest, "character_reference_conflict", "character_id cannot be combined with other reference media")
+				return
+			}
+			item, err = model.GetAccessibleVirtualCharacter(*req.CharacterID, userID)
+			if err != nil {
+				abortVirtualCharacterBinding(c, http.StatusNotFound, "character_not_found", "character not found")
+				return
+			}
+			if item.SourceType == model.VirtualCharacterSourceVolcRealPerson && selectedChannelID <= 0 {
+				abortVirtualCharacterBinding(c, http.StatusServiceUnavailable, "character_provider_unavailable", "video channel selection is unavailable")
+				return
+			}
+			snapshot, authErr := service.AuthorizeVirtualCharacterForVideo(c.Request.Context(), item, userID, selectedChannelID)
+			if authErr != nil {
+				abortVirtualCharacterBinding(c, authErr.Status, authErr.Code, authErr.Message)
+				return
+			}
+			characters = append(characters, item)
+			snapshots[item.ID] = snapshot
+			referenceURL := "asset://" + strings.TrimPrefix(strings.TrimSpace(item.ProviderAssetID), "asset://")
+			req.Images = []string{referenceURL}
+			req.Image = ""
+			req.ImageTail = ""
+			req.FirstFrame = ""
+			req.LastFrame = ""
+			req.InputReference = ""
+			payload, marshalErr := common.Marshal(req)
+			if marshalErr != nil {
+				abortVirtualCharacterBinding(c, http.StatusInternalServerError, "character_bind_failed", marshalErr.Error())
+				return
+			}
+			if replaceErr := common.ReplaceRequestBody(c, payload); replaceErr != nil {
+				abortVirtualCharacterBinding(c, http.StatusInternalServerError, "character_bind_failed", replaceErr.Error())
+				return
+			}
+			c.Request.Header.Set("Content-Type", "application/json")
+		} else {
+			for _, assetID := range assetIDs {
+				candidate, lookupErr := model.GetRegisteredVirtualCharacterByProviderAssetID(assetID)
+				if lookupErr != nil {
+					abortVirtualCharacterBinding(c, http.StatusNotFound, "asset_reference_not_registered", "asset reference is not registered in the character library")
+					return
+				}
+				if candidate.SourceType == model.VirtualCharacterSourceVolcRealPerson && selectedChannelID <= 0 {
+					abortVirtualCharacterBinding(c, http.StatusServiceUnavailable, "character_provider_unavailable", "video channel selection is unavailable")
+					return
+				}
+				snapshot, authErr := service.AuthorizeVirtualCharacterForVideo(c.Request.Context(), candidate, userID, selectedChannelID)
+				if authErr != nil {
+					abortVirtualCharacterBinding(c, authErr.Status, authErr.Code, authErr.Message)
+					return
+				}
+				characters = append(characters, candidate)
+				snapshots[candidate.ID] = snapshot
+			}
+			item = characters[0]
 		}
 
 		taskID := model.GenerateTaskID()
-		if err := model.CreateVirtualCharacterTaskLink(&model.VirtualCharacterTask{
-			TaskID: taskID, UserID: c.GetInt("id"), CharacterID: item.ID,
+		if err := model.CreateVirtualCharacterTaskBinding(&model.VirtualCharacterTask{
+			TaskID: taskID, UserID: userID, CharacterID: item.ID,
 			CharacterName: item.Name, CharacterScope: item.Scope, ProviderAssetID: item.ProviderAssetID,
-		}); err != nil {
+			AuthorizationSnapshotJSON: snapshots[item.ID],
+		}, characters, snapshots); err != nil {
 			abortVirtualCharacterBinding(c, http.StatusInternalServerError, "character_task_link_failed", err.Error())
 			return
 		}
@@ -92,34 +143,23 @@ func BindVirtualCharacter() gin.HandlerFunc {
 		// Re-check after registering the in-flight task. A delete/offline action
 		// that won the race blocks this request; a later action sees the link and
 		// waits for the task to reach a terminal state before source cleanup.
-		latest, err := model.GetAccessibleVirtualCharacter(item.ID, c.GetInt("id"))
-		if err != nil || latest.Status != model.VirtualCharacterStatusActive || latest.Scope != item.Scope ||
-			latest.ProviderAssetID != item.ProviderAssetID || (latest.Scope == model.VirtualCharacterScopePrivate && latest.UserID != c.GetInt("id")) {
-			abortVirtualCharacterBinding(c, http.StatusConflict, "character_unavailable", "character is not available for new tasks")
-			return
+		for index, original := range characters {
+			latest, lookupErr := model.GetVirtualCharacterByID(original.ID)
+			if lookupErr != nil || latest.ProviderAssetID != original.ProviderAssetID || latest.SourceType != original.SourceType {
+				_ = model.RollbackVirtualCharacterTaskBinding(taskID)
+				abortVirtualCharacterBinding(c, http.StatusConflict, "character_unavailable", "character is not available for new tasks")
+				return
+			}
+			if _, authErr := service.AuthorizeVirtualCharacterForVideo(c.Request.Context(), latest, userID, selectedChannelID); authErr != nil {
+				_ = model.RollbackVirtualCharacterTaskBinding(taskID)
+				abortVirtualCharacterBinding(c, authErr.Status, authErr.Code, authErr.Message)
+				return
+			}
+			characters[index] = latest
+			if index == 0 {
+				item = latest
+			}
 		}
-		item = latest
-		referenceURL := "asset://" + strings.TrimPrefix(strings.TrimSpace(item.ProviderAssetID), "asset://")
-
-		req.Images = []string{referenceURL}
-		req.Image = ""
-		req.ImageTail = ""
-		req.FirstFrame = ""
-		req.LastFrame = ""
-		req.InputReference = ""
-		payload, err := common.Marshal(req)
-		if err != nil {
-			abortVirtualCharacterBinding(c, http.StatusInternalServerError, "character_bind_failed", err.Error())
-			return
-		}
-		if err := common.ReplaceRequestBody(c, payload); err != nil {
-			abortVirtualCharacterBinding(c, http.StatusInternalServerError, "character_bind_failed", err.Error())
-			return
-		}
-		// The rewritten body is JSON even when the client submitted multipart.
-		// Updating the media type keeps downstream validators from trying to parse
-		// the injected JSON payload with the original multipart boundary.
-		c.Request.Header.Set("Content-Type", "application/json")
 		c.Set(VirtualCharacterContextKey, item)
 		c.Next()
 	}
@@ -151,8 +191,119 @@ func virtualCharacterRequestHasExternalReferences(req relaycommon.TaskSubmitReq)
 	if !exists || content == nil {
 		return false
 	}
-	items, ok := content.([]interface{})
-	return !ok || len(items) > 0
+	switch content.(type) {
+	case []interface{}, map[string]interface{}:
+	default:
+		return true
+	}
+	return virtualCharacterContentHasReference(content)
+}
+
+func virtualCharacterAssetReferenceIDs(req relaycommon.TaskSubmitReq, raw map[string]interface{}) ([]string, error) {
+	values := make([]string, 0, len(req.Images)+8)
+	values = append(values, req.Images...)
+	values = append(values, req.Image, req.ImageTail, req.FirstFrame, req.LastFrame, req.InputReference)
+	if req.Metadata != nil {
+		collectVirtualCharacterAssetReferenceValues(req.Metadata["content"], &values)
+	}
+	for _, key := range []string{"image", "image_tail", "first_frame", "last_frame", "input_reference", "images"} {
+		collectVirtualCharacterAssetReferenceValues(raw[key], &values)
+	}
+	collectVirtualCharacterAssetReferenceValues(raw["content"], &values)
+	collectVirtualCharacterAssetReferenceValues(raw["metadata"], &values)
+	result := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if !strings.HasPrefix(strings.ToLower(value), "asset://") {
+			continue
+		}
+		assetID := strings.TrimSpace(value[len("asset://"):])
+		if assetID == "" || strings.ContainsAny(assetID, " \t\r\n?#/") {
+			return nil, &virtualCharacterAssetReferenceError{value: value}
+		}
+		if _, exists := seen[assetID]; exists {
+			continue
+		}
+		seen[assetID] = struct{}{}
+		result = append(result, assetID)
+	}
+	return result, nil
+}
+
+type virtualCharacterAssetReferenceError struct{ value string }
+
+func (e *virtualCharacterAssetReferenceError) Error() string {
+	return "invalid asset reference: " + e.value
+}
+
+func collectVirtualCharacterAssetReferenceValues(value interface{}, result *[]string) {
+	switch typed := value.(type) {
+	case string:
+		*result = append(*result, typed)
+	case []string:
+		*result = append(*result, typed...)
+	case []interface{}:
+		for _, item := range typed {
+			collectVirtualCharacterAssetReferenceValues(item, result)
+		}
+	case map[string]interface{}:
+		for key, item := range typed {
+			switch strings.ToLower(strings.TrimSpace(key)) {
+			case "url", "image_url", "video_url", "input_reference", "image", "images", "source":
+				collectVirtualCharacterAssetReferenceValues(item, result)
+			case "content":
+				collectVirtualCharacterAssetReferenceValues(item, result)
+			}
+		}
+	}
+}
+
+func virtualCharacterRawContentHasReference(raw map[string]interface{}) bool {
+	if raw == nil {
+		return false
+	}
+	if virtualCharacterContentHasReference(raw["content"]) {
+		return true
+	}
+	if metadata, ok := raw["metadata"].(map[string]interface{}); ok {
+		return virtualCharacterContentHasReference(metadata)
+	}
+	return false
+}
+
+func virtualCharacterContentHasReference(value interface{}) bool {
+	switch typed := value.(type) {
+	case nil:
+		return false
+	case []interface{}:
+		for _, item := range typed {
+			if virtualCharacterContentHasReference(item) {
+				return true
+			}
+		}
+		return false
+	case map[string]interface{}:
+		if blockType, ok := typed["type"].(string); ok {
+			blockType = strings.ToLower(strings.TrimSpace(blockType))
+			if strings.Contains(blockType, "image") || strings.Contains(blockType, "video") || strings.Contains(blockType, "audio") {
+				return true
+			}
+		}
+		for key, item := range typed {
+			switch strings.ToLower(strings.TrimSpace(key)) {
+			case "url", "image_url", "video_url", "input_reference", "image", "images", "source":
+				if item != nil {
+					return true
+				}
+			case "content":
+				if virtualCharacterContentHasReference(item) {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 func abortVirtualCharacterBinding(c *gin.Context, status int, code, message string) {

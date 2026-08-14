@@ -18,6 +18,10 @@ func SetVideoRouter(router *gin.Engine) {
 	{
 		virtualCharacterV1Router.GET("", controller.ListVirtualCharacterGroups)
 		virtualCharacterV1Router.POST("", middleware.UserUploadRateLimit(), controller.CreateVirtualCharacter)
+		virtualCharacterV1Router.POST("/validation-sessions", controller.CreateVirtualCharacterValidationSession)
+		virtualCharacterV1Router.GET("/validation-sessions/:id", controller.GetVirtualCharacterValidationSession)
+		virtualCharacterV1Router.POST("/:id/sync", controller.SyncRealPersonVirtualCharacter)
+		virtualCharacterV1Router.DELETE("/:id", controller.DeleteVirtualCharacterGroup)
 		virtualCharacterV1Router.GET("/:id", controller.GetVirtualCharacterGroup)
 	}
 
@@ -35,12 +39,12 @@ func SetVideoRouter(router *gin.Engine) {
 	{
 		videoV1Router.POST("/video/generations", middleware.BindVirtualCharacter(), controller.RelayTask)
 		videoV1Router.GET("/video/generations/:task_id", controller.RelayTaskFetch)
-		videoV1Router.POST("/videos/:video_id/remix", controller.RelayTask)
+		videoV1Router.POST("/videos/:video_id/remix", middleware.BindVirtualCharacter(), controller.RelayTask)
 	}
 	// openai compatible API video routes
 	// docs: https://platform.openai.com/docs/api-reference/videos/create
 	{
-		videoV1Router.POST("/videos", controller.RelayTask)
+		videoV1Router.POST("/videos", middleware.BindVirtualCharacter(), controller.RelayTask)
 		videoV1Router.GET("/videos/:task_id", controller.RelayTaskFetch)
 	}
 
@@ -48,8 +52,8 @@ func SetVideoRouter(router *gin.Engine) {
 	klingV1Router.Use(middleware.RouteTag("relay"))
 	klingV1Router.Use(middleware.KlingRequestConvert(), middleware.TokenAuth(), middleware.Distribute())
 	{
-		klingV1Router.POST("/videos/text2video", controller.RelayTask)
-		klingV1Router.POST("/videos/image2video", controller.RelayTask)
+		klingV1Router.POST("/videos/text2video", middleware.BindVirtualCharacter(), controller.RelayTask)
+		klingV1Router.POST("/videos/image2video", middleware.BindVirtualCharacter(), controller.RelayTask)
 		klingV1Router.GET("/videos/text2video/:task_id", controller.RelayTaskFetch)
 		klingV1Router.GET("/videos/image2video/:task_id", controller.RelayTaskFetch)
 	}
@@ -60,6 +64,6 @@ func SetVideoRouter(router *gin.Engine) {
 	jimengOfficialGroup.Use(middleware.JimengRequestConvert(), middleware.TokenAuth(), middleware.Distribute())
 	{
 		// Maps to: /?Action=CVSync2AsyncSubmitTask&Version=2022-08-31 and /?Action=CVSync2AsyncGetResult&Version=2022-08-31
-		jimengOfficialGroup.POST("/", controller.RelayTask)
+		jimengOfficialGroup.POST("/", middleware.BindVirtualCharacter(), controller.RelayTask)
 	}
 }

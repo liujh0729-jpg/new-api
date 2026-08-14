@@ -44,6 +44,7 @@ export const virtualCharacterQueryKeys = {
       params.gender ?? '',
       params.ageBand ?? '',
       params.status ?? '',
+      params.sourceType ?? '',
     ] as const,
   detail: (id: number) =>
     [...virtualCharacterQueryKeys.all, 'detail', id] as const,
@@ -69,6 +70,7 @@ export async function listVirtualCharacters(
       gender: params.gender || undefined,
       age_band: params.ageBand || undefined,
       status: params.status || undefined,
+      source_type: params.sourceType || undefined,
     },
   })
   return res.data
@@ -112,6 +114,15 @@ export async function createValidationSession(input: {
   description: string
   tags: string[]
   language: 'zh' | 'en'
+  authorization: {
+    valid_until: number
+    commercial_use_allowed: boolean
+    purposes: string[]
+    regions: string[]
+    platforms: string[]
+    industries: string[]
+    agreement_accepted: boolean
+  }
 }): Promise<ApiResponse<VirtualCharacterValidationSession>> {
   const res = await api.post(
     '/api/virtual-characters/validation-sessions',
@@ -141,6 +152,13 @@ export async function deleteVirtualCharacter(
   id: number
 ): Promise<ApiResponse<{ id: number; status: string }>> {
   const res = await api.delete(`/api/virtual-characters/${id}`)
+  return res.data
+}
+
+export async function syncRealPersonVirtualCharacter(
+  id: number
+): Promise<ApiResponse<VirtualCharacter>> {
+  const res = await api.post(`/api/virtual-characters/${id}/sync`)
   return res.data
 }
 
@@ -193,6 +211,9 @@ export async function updateVirtualCharacterSettings(input: {
   region: string
   project_name: string
   global_limit: number
+  real_person_limit: number
+  real_person_enabled: boolean
+  channel_id: number
   account_asset_cap: number
 }): Promise<ApiResponse<VirtualCharacterSettings>> {
   const res = await api.put('/api/virtual-characters/admin/settings', input)

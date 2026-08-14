@@ -8,8 +8,10 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/gin-gonic/gin"
@@ -44,7 +46,7 @@ func TestBindVirtualCharacterUsesActiveOwnedImageAndIgnoresLegacyAssetID(t *test
 	previousConfigured := common.CryptoSecretConfigured
 	db, err := gorm.Open(sqlite.Open("file:middleware_virtual_character?mode=memory&cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&model.VirtualCharacter{}, &model.VirtualCharacterProviderAccount{}, &model.VirtualCharacterTask{}))
+	require.NoError(t, db.AutoMigrate(&model.VirtualCharacter{}, &model.VirtualCharacterProviderAccount{}, &model.VirtualCharacterTask{}, &model.VirtualCharacterAuthorization{}, &model.VirtualCharacterTaskReference{}))
 	model.DB = db
 	common.CryptoSecret = strings.Repeat("k", 32)
 	common.CryptoSecretConfigured = true
@@ -125,13 +127,13 @@ func TestBindVirtualCharacterUsesActiveOwnedImageAndIgnoresLegacyAssetID(t *test
 	require.Equal(t, http.StatusNotFound, otherRecorder.Code)
 }
 
-func TestBindVirtualCharacterBlocksReservedRealPersonSource(t *testing.T) {
+func TestBindVirtualCharacterAllowsAuthorizedRealPersonSource(t *testing.T) {
 	previousDB := model.DB
 	previousSecret := common.CryptoSecret
 	previousConfigured := common.CryptoSecretConfigured
 	db, err := gorm.Open(sqlite.Open("file:middleware_virtual_character_source?mode=memory&cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&model.VirtualCharacter{}, &model.VirtualCharacterProviderAccount{}, &model.VirtualCharacterTask{}))
+	require.NoError(t, db.AutoMigrate(&model.VirtualCharacter{}, &model.VirtualCharacterProviderAccount{}, &model.VirtualCharacterTask{}, &model.VirtualCharacterAuthorization{}, &model.VirtualCharacterTaskReference{}))
 	model.DB = db
 	common.CryptoSecret = strings.Repeat("k", 32)
 	common.CryptoSecretConfigured = true
@@ -146,20 +148,30 @@ func TestBindVirtualCharacterBlocksReservedRealPersonSource(t *testing.T) {
 
 	account := &model.VirtualCharacterProviderAccount{
 		ID: 1, Enabled: true, OfficialEnabled: false, VirtualEnabled: true, RealPersonEnabled: true,
-		Region: "cn-beijing", ProjectName: "default",
+		Region: "cn-beijing", ProjectName: "default", ChannelID: 7,
 	}
 	require.NoError(t, db.Create(account).Error)
 	slot := 1
 	character := &model.VirtualCharacter{
-		UserID: 303, Slot: &slot, Scope: model.VirtualCharacterScopePrivate,
+		UserID: 303, RealPersonSlot: &slot, Scope: model.VirtualCharacterScopePrivate,
 		SourceType: model.VirtualCharacterSourceVolcRealPerson, Name: "Actor", Status: model.VirtualCharacterStatusActive,
 		ValidationStatus: model.VirtualCharacterValidationAccepted, ProviderAccountID: account.ID, ProviderGroupID: "group-real", ProviderAssetID: "asset-real",
 	}
 	require.NoError(t, db.Create(character).Error)
+	now := time.Now().Unix()
+	require.NoError(t, db.Create(&model.VirtualCharacterAuthorization{
+		CharacterID: character.ID, UserID: character.UserID, Status: model.VirtualCharacterAuthorizationActive,
+		ValidFrom: now - 60, ValidUntil: now + 3600, ProviderGroupType: model.VirtualCharacterRealPersonGroupType,
+		ProviderGroupStatus: "Active", ProviderAssetStatus: "Active", ProviderCheckedAt: now,
+		AgreementReference: "session-1", ConsentReceiptHash: strings.Repeat("a", 64), HolderScopeAcceptedAt: now - 120,
+	}).Error)
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	router.Use(func(c *gin.Context) { c.Set("id", 303) }, BindVirtualCharacter())
+	router.Use(func(c *gin.Context) {
+		c.Set("id", 303)
+		common.SetContextKey(c, constant.ContextKeyChannelId, 7)
+	}, BindVirtualCharacter())
 	router.POST("/v1/video/generations", func(c *gin.Context) { c.Status(http.StatusNoContent) })
 
 	body := fmt.Sprintf(`{"character_id":%d,"model":"doubao-seedance-2-0-260128","prompt":"test"}`, character.ID)
@@ -167,8 +179,7 @@ func TestBindVirtualCharacterBlocksReservedRealPersonSource(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/video/generations", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	router.ServeHTTP(recorder, req)
-	require.Equal(t, http.StatusServiceUnavailable, recorder.Code)
-	require.Contains(t, recorder.Body.String(), "not available yet")
+	require.Equal(t, http.StatusNoContent, recorder.Code, recorder.Body.String())
 }
 
 func TestBindVirtualCharacterAllowsOfficialPresetSource(t *testing.T) {
@@ -177,7 +188,7 @@ func TestBindVirtualCharacterAllowsOfficialPresetSource(t *testing.T) {
 	previousConfigured := common.CryptoSecretConfigured
 	db, err := gorm.Open(sqlite.Open("file:middleware_virtual_character_preset?mode=memory&cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&model.VirtualCharacter{}, &model.VirtualCharacterProviderAccount{}, &model.VirtualCharacterTask{}))
+	require.NoError(t, db.AutoMigrate(&model.VirtualCharacter{}, &model.VirtualCharacterProviderAccount{}, &model.VirtualCharacterTask{}, &model.VirtualCharacterAuthorization{}, &model.VirtualCharacterTaskReference{}))
 	model.DB = db
 	common.CryptoSecret = strings.Repeat("k", 32)
 	common.CryptoSecretConfigured = true
@@ -213,4 +224,90 @@ func TestBindVirtualCharacterAllowsOfficialPresetSource(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	router.ServeHTTP(recorder, req)
 	require.Equal(t, http.StatusNoContent, recorder.Code)
+}
+
+func TestBindVirtualCharacterAuthorizesMixedDirectAssetReferences(t *testing.T) {
+	previousDB := model.DB
+	previousSecret := common.CryptoSecret
+	previousConfigured := common.CryptoSecretConfigured
+	db, err := gorm.Open(sqlite.Open("file:middleware_virtual_character_direct_assets?mode=memory&cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(
+		&model.VirtualCharacter{}, &model.VirtualCharacterProviderAccount{}, &model.VirtualCharacterTask{},
+		&model.VirtualCharacterAuthorization{}, &model.VirtualCharacterTaskReference{},
+	))
+	model.DB = db
+	common.CryptoSecret = strings.Repeat("d", 32)
+	common.CryptoSecretConfigured = true
+	t.Cleanup(func() {
+		model.DB = previousDB
+		common.CryptoSecret = previousSecret
+		common.CryptoSecretConfigured = previousConfigured
+		if sqlDB, dbErr := db.DB(); dbErr == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
+	account := &model.VirtualCharacterProviderAccount{
+		ID: 1, Enabled: true, OfficialEnabled: true, VirtualEnabled: true, RealPersonEnabled: true,
+		Region: "cn-beijing", ProjectName: "default", ChannelID: 54,
+	}
+	require.NoError(t, db.Create(account).Error)
+	preset := &model.VirtualCharacter{
+		Scope: model.VirtualCharacterScopePublic, SourceType: model.VirtualCharacterSourceVolcPreset,
+		Name: "Preset", Status: model.VirtualCharacterStatusActive, ValidationStatus: model.VirtualCharacterValidationAccepted,
+		ProviderAccountID: account.ID, ProviderAssetID: "asset-preset",
+	}
+	require.NoError(t, db.Create(preset).Error)
+	slot := 1
+	realPerson := &model.VirtualCharacter{
+		UserID: 701, RealPersonSlot: &slot, Scope: model.VirtualCharacterScopePrivate,
+		SourceType: model.VirtualCharacterSourceVolcRealPerson, Name: "Actor", Status: model.VirtualCharacterStatusActive,
+		ValidationStatus: model.VirtualCharacterValidationAccepted, ProviderAccountID: account.ID,
+		ProviderGroupID: "group-real", ProviderAssetID: "asset-real",
+	}
+	require.NoError(t, db.Create(realPerson).Error)
+	now := time.Now().Unix()
+	require.NoError(t, db.Create(&model.VirtualCharacterAuthorization{
+		CharacterID: realPerson.ID, UserID: realPerson.UserID, Status: model.VirtualCharacterAuthorizationActive,
+		ValidFrom: now - 60, ValidUntil: now + 3600, ProviderGroupType: model.VirtualCharacterRealPersonGroupType,
+		ProviderGroupStatus: "Active", ProviderAssetStatus: "Active", ProviderCheckedAt: now,
+		AgreementReference: "session-2", ConsentReceiptHash: strings.Repeat("b", 64), HolderScopeAcceptedAt: now - 120,
+	}).Error)
+
+	newRouter := func(userID int) *gin.Engine {
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("id", userID)
+			common.SetContextKey(c, constant.ContextKeyChannelId, 54)
+		}, BindVirtualCharacter())
+		router.POST("/v1/videos", func(c *gin.Context) {
+			c.Set(VirtualCharacterTaskClaimedKey, true)
+			c.Status(http.StatusNoContent)
+		})
+		return router
+	}
+	body := `{"model":"doubao-seedance-2-0-260128","prompt":"test","content":[{"type":"image_url","image_url":{"url":"asset://asset-preset"},"role":"reference_image"},{"type":"image_url","image_url":{"url":"asset://asset-real"},"role":"reference_image"}]}`
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	newRouter(realPerson.UserID).ServeHTTP(recorder, request)
+	require.Equal(t, http.StatusNoContent, recorder.Code, recorder.Body.String())
+	var references []model.VirtualCharacterTaskReference
+	require.NoError(t, db.Order("character_id ASC").Find(&references).Error)
+	require.Len(t, references, 2)
+	require.NotEmpty(t, references[1].AuthorizationSnapshotJSON)
+
+	forbidden := httptest.NewRecorder()
+	forbiddenRequest := httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(body))
+	forbiddenRequest.Header.Set("Content-Type", "application/json")
+	newRouter(702).ServeHTTP(forbidden, forbiddenRequest)
+	require.Equal(t, http.StatusForbidden, forbidden.Code, forbidden.Body.String())
+
+	unknownBody := `{"model":"doubao-seedance-2-0-260128","prompt":"test","content":[{"type":"image_url","image_url":{"url":"asset://asset-unknown"}}]}`
+	unknown := httptest.NewRecorder()
+	unknownRequest := httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(unknownBody))
+	unknownRequest.Header.Set("Content-Type", "application/json")
+	newRouter(realPerson.UserID).ServeHTTP(unknown, unknownRequest)
+	require.Equal(t, http.StatusNotFound, unknown.Code, unknown.Body.String())
 }

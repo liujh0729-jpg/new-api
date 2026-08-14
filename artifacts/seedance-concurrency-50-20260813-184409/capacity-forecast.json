@@ -1,0 +1,49 @@
+{
+  "model": "饱和吞吐排队模型：批次完成时间 = max(生成时间下限, 并发任务数 / 完成吞吐)",
+  "measured_throughput_tasks_per_minute": 7.807077165888813,
+  "estimated_service_slots": {
+    "lower": 18,
+    "upper": 22,
+    "basis": "实测吞吐 × 生成阶段平均/P95耗时"
+  },
+  "recommended_peak_concurrency": 45,
+  "predicted_max_concurrency": 65,
+  "prediction_assumption": "将 10 分钟作为批次清空上限，并采用 6.5 任务/分钟的保守吞吐",
+  "risk_boundary_concurrency": 100,
+  "risk_boundary_minutes": {
+    "conservative": 15.384615384615385,
+    "baseline": 12.808890942813589,
+    "optimistic": 11.11111111111111
+  },
+  "slo_capacity": {
+    "5_minutes": {
+      "conservative": 32,
+      "baseline": 39,
+      "optimistic": 45
+    },
+    "6_minutes": {
+      "conservative": 39,
+      "baseline": 47,
+      "optimistic": 54
+    },
+    "10_minutes": {
+      "conservative": 65,
+      "baseline": 78,
+      "optimistic": 90
+    }
+  },
+  "scenarios": {
+    "保守情景": {
+      "rate": 6.5,
+      "floor_minutes": 2.8365
+    },
+    "实测基准": {
+      "rate": 7.807077165888813,
+      "floor_minutes": 2.3745
+    },
+    "乐观情景": {
+      "rate": 9.0,
+      "floor_minutes": 2.0
+    }
+  }
+}

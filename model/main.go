@@ -271,6 +271,8 @@ func migrateDB() error {
 		&VirtualCharacterUserLimit{},
 		&VirtualCharacterTask{},
 		&VirtualCharacterValidationSession{},
+		&VirtualCharacterAuthorization{},
+		&VirtualCharacterTaskReference{},
 		&VirtualCharacterProviderAccount{},
 		&VirtualCharacterCatalogImport{},
 		&VirtualCharacterCleanupJob{},
@@ -325,6 +327,9 @@ func migrateDB() error {
 	if err := BackfillVirtualCharacterStructuredFacets(); err != nil {
 		return err
 	}
+	if err := NormalizeLegacyRealPersonSlots(); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -350,6 +355,8 @@ func migrateDBFast() error {
 		{&VirtualCharacterUserLimit{}, "VirtualCharacterUserLimit"},
 		{&VirtualCharacterTask{}, "VirtualCharacterTask"},
 		{&VirtualCharacterValidationSession{}, "VirtualCharacterValidationSession"},
+		{&VirtualCharacterAuthorization{}, "VirtualCharacterAuthorization"},
+		{&VirtualCharacterTaskReference{}, "VirtualCharacterTaskReference"},
 		{&VirtualCharacterProviderAccount{}, "VirtualCharacterProviderAccount"},
 		{&VirtualCharacterCatalogImport{}, "VirtualCharacterCatalogImport"},
 		{&VirtualCharacterCleanupJob{}, "VirtualCharacterCleanupJob"},
@@ -422,6 +429,9 @@ func migrateDBFast() error {
 		return err
 	}
 	if err := BackfillVirtualCharacterStructuredFacets(); err != nil {
+		return err
+	}
+	if err := NormalizeLegacyRealPersonSlots(); err != nil {
 		return err
 	}
 	common.SysLog("database migrated")

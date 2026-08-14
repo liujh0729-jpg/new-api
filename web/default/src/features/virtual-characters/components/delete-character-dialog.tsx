@@ -49,7 +49,11 @@ export function DeleteCharacterDialog({
     setBusy(true)
     try {
       await deleteVirtualCharacter(target.id)
-      toast.success(t('Character deletion queued'))
+      toast.success(
+        target.source_type === 'volc_real_person'
+          ? t('Authorization revocation queued')
+          : t('Character deletion queued')
+      )
       onClose()
       onDeleted()
     } catch (error) {
@@ -65,17 +69,27 @@ export function DeleteCharacterDialog({
     >
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>{t('Delete this character?')}</AlertDialogTitle>
+          <AlertDialogTitle>
+            {target?.source_type === 'volc_real_person'
+              ? t('Revoke this real-person authorization?')
+              : t('Delete this character?')}
+          </AlertDialogTitle>
           <AlertDialogDescription>
-            {t(
-              'The character is hidden immediately. Its image and provider group are deleted in the background with automatic retries.'
-            )}
+            {target?.source_type === 'volc_real_person'
+              ? t(
+                  'New video requests are blocked immediately. In-flight tasks may finish, then the Asset and verified group are deleted with automatic retries.'
+                )
+              : t(
+                  'The character is hidden immediately. Its image and provider group are deleted in the background with automatic retries.'
+                )}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel>{t('Cancel')}</AlertDialogCancel>
           <AlertDialogAction disabled={busy} onClick={remove}>
-            {t('Delete')}
+            {target?.source_type === 'volc_real_person'
+              ? t('Revoke authorization')
+              : t('Delete')}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

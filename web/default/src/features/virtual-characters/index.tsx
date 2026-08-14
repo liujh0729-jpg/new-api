@@ -25,6 +25,7 @@ import {
 } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 import { useAuthStore } from '@/stores/auth-store'
 import { ROLE } from '@/lib/roles'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -47,6 +48,7 @@ import {
   getVirtualCharacterHistory,
   getVirtualCharacterSettings,
   listVirtualCharacters,
+  syncRealPersonVirtualCharacter,
   virtualCharacterQueryKeys,
 } from './api'
 import { CharacterCard } from './components/character-card'
@@ -62,6 +64,7 @@ import { GenerateDialog } from './components/generate-dialog'
 import { SettingsDialog } from './components/settings-dialog'
 import { TaskHistory } from './components/task-history'
 import { CharacterGridSkeleton, Pagination } from './components/ui-bits'
+import { errorMessage } from './components/utils'
 import { ValidationDialog } from './components/validation-dialog'
 import {
   VIRTUAL_CHARACTER_AGE_BANDS,
@@ -75,7 +78,7 @@ import type {
   VirtualCharacterValidationSession,
 } from './types'
 
-type LibraryTab = 'public' | 'private' | 'history'
+type LibraryTab = 'public' | 'virtual' | 'real' | 'history'
 const CHARACTER_PAGE_SIZE = 12
 
 export function VirtualCharacters() {
@@ -85,7 +88,8 @@ export function VirtualCharacters() {
   const isAdmin = userRole >= ROLE.ADMIN
   const [tab, setTab] = useState<LibraryTab>('public')
   const [publicPage, setPublicPage] = useState(1)
-  const [privatePage, setPrivatePage] = useState(1)
+  const [virtualPage, setVirtualPage] = useState(1)
+  const [realPage, setRealPage] = useState(1)
   const [historyPage, setHistoryPage] = useState(1)
   const [keywordInput, setKeywordInput] = useState('')
   const [keyword, setKeyword] = useState('')
@@ -117,24 +121,43 @@ export function VirtualCharacters() {
     gender,
     ageBand,
   }
-  const privateListParams = {
+  const virtualListParams = {
     scope: 'private' as const,
-    page: privatePage,
+    page: virtualPage,
     pageSize: CHARACTER_PAGE_SIZE,
     keyword,
     status: statusFilter === 'all' ? '' : statusFilter,
+    sourceType: 'volc_aigc' as const,
+  }
+  const realListParams = {
+    scope: 'private' as const,
+    page: realPage,
+    pageSize: CHARACTER_PAGE_SIZE,
+    keyword,
+    status: statusFilter === 'all' ? '' : statusFilter,
+    sourceType: 'volc_real_person' as const,
   }
 
   const publicQuery = useQuery({
     queryKey: virtualCharacterQueryKeys.list(publicListParams),
     queryFn: () => listVirtualCharacters(publicListParams),
   })
-  const privateQuery = useQuery({
-    queryKey: virtualCharacterQueryKeys.list(privateListParams),
-    queryFn: () => listVirtualCharacters(privateListParams),
+  const virtualQuery = useQuery({
+    queryKey: virtualCharacterQueryKeys.list(virtualListParams),
+    queryFn: () => listVirtualCharacters(virtualListParams),
     refetchInterval: (query) =>
       query.state.data?.data.page.items.some(
         (item) => item.status === 'creating'
+      )
+        ? 5000
+        : false,
+  })
+  const realQuery = useQuery({
+    queryKey: virtualCharacterQueryKeys.list(realListParams),
+    queryFn: () => listVirtualCharacters(realListParams),
+    refetchInterval: (query) =>
+      query.state.data?.data.page.items.some(
+        (item) => item.status === 'creating' || item.status === 'deleting'
       )
         ? 5000
         : false,
@@ -169,23 +192,28 @@ export function VirtualCharacters() {
 
   const currentPage = (() => {
     if (tab === 'public') return publicQuery.data?.data.page
-    if (tab === 'private') return privateQuery.data?.data.page
+    if (tab === 'virtual') return virtualQuery.data?.data.page
+    if (tab === 'real') return realQuery.data?.data.page
     return historyQuery.data?.data.page
   })()
   const characters =
     tab === 'public'
       ? (publicQuery.data?.data.page.items ?? [])
-      : (privateQuery.data?.data.page.items ?? [])
+      : tab === 'virtual'
+        ? (virtualQuery.data?.data.page.items ?? [])
+        : (realQuery.data?.data.page.items ?? [])
   const loading = (() => {
     if (tab === 'public') return publicQuery.isLoading
-    if (tab === 'private') return privateQuery.isLoading
+    if (tab === 'virtual') return virtualQuery.isLoading
+    if (tab === 'real') return realQuery.isLoading
     return historyQuery.isLoading
   })()
 
   const applyKeywordSearch = () => {
     setKeyword(keywordInput.trim())
     setPublicPage(1)
-    setPrivatePage(1)
+    setVirtualPage(1)
+    setRealPage(1)
   }
 
   const resetFilters = () => {
@@ -196,13 +224,24 @@ export function VirtualCharacters() {
     setAgeBand('')
     setStatusFilter('all')
     setPublicPage(1)
-    setPrivatePage(1)
+    setVirtualPage(1)
+    setRealPage(1)
   }
 
   const refreshAll = async () => {
     await queryClient.invalidateQueries({
       queryKey: virtualCharacterQueryKeys.all,
     })
+  }
+
+  const syncRealPerson = async (item: VirtualCharacter) => {
+    try {
+      await syncRealPersonVirtualCharacter(item.id)
+      toast.success(t('Real-person provider status synchronized'))
+      await refreshAll()
+    } catch (error) {
+      toast.error(errorMessage(error, t('Failed to synchronize provider status')))
+    }
   }
 
   return (
@@ -222,13 +261,13 @@ export function VirtualCharacters() {
               {t('Library settings')}
             </Button>
           )}
-          {tab === 'private' && (
+          {tab === 'virtual' && (
             <Button
               size='sm'
               disabled={
                 !configQuery.data?.data.virtual_enabled ||
-                (privateQuery.data?.data.used ?? 0) >=
-                  (privateQuery.data?.data.limit ?? 0)
+                (virtualQuery.data?.data.used ?? 0) >=
+                  (virtualQuery.data?.data.limit ?? 0)
               }
               onClick={() => setCreateVirtualOpen(true)}
             >
@@ -236,10 +275,20 @@ export function VirtualCharacters() {
               {t('Upload character')}
             </Button>
           )}
-          {/* Real-person create entry is intentionally omitted: the backend hard-disables
-              real_person_enabled until that flow ships. CreateRealPersonDialog /
-              ValidationDialog stay mounted for ?validation_session= deep links and
-              onRetry; restore a gated Actions button when the API flag is live again. */}
+          {tab === 'real' && (
+            <Button
+              size='sm'
+              disabled={
+                !configQuery.data?.data.real_person_enabled ||
+                (realQuery.data?.data.real_person_used ?? 0) >=
+                  (realQuery.data?.data.real_person_limit ?? 0)
+              }
+              onClick={() => setCreateOpen(true)}
+            >
+              <HugeiconsIcon icon={Add01Icon} data-icon='inline-start' />
+              {t('Add real person')}
+            </Button>
+          )}
         </SectionPageLayout.Actions>
         <SectionPageLayout.Content>
           <div className='flex flex-col gap-4'>
@@ -251,7 +300,8 @@ export function VirtualCharacters() {
                 <TabsTrigger value='public'>
                   {t('Public characters')}
                 </TabsTrigger>
-                <TabsTrigger value='private'>{t('My characters')}</TabsTrigger>
+                <TabsTrigger value='virtual'>{t('My virtual characters')}</TabsTrigger>
+                <TabsTrigger value='real'>{t('My real people')}</TabsTrigger>
                 <TabsTrigger value='history'>{t('Task history')}</TabsTrigger>
               </TabsList>
             </Tabs>
@@ -326,12 +376,13 @@ export function VirtualCharacters() {
                       </NativeSelect>
                     </>
                   )}
-                  {tab === 'private' && (
+                  {(tab === 'virtual' || tab === 'real') && (
                     <NativeSelect
                       value={statusFilter}
                       onChange={(event) => {
                         setStatusFilter(event.target.value)
-                        setPrivatePage(1)
+                        setVirtualPage(1)
+                        setRealPage(1)
                       }}
                     >
                       <NativeSelectOption value='all'>
@@ -366,11 +417,19 @@ export function VirtualCharacters() {
                 <HugeiconsIcon icon={RefreshIcon} data-icon='inline-start' />
                 {t('Refresh')}
               </Button>
-              {tab === 'private' && privateQuery.data && (
+              {tab === 'virtual' && virtualQuery.data && (
                 <Badge variant='outline'>
                   {t('{{used}} of {{limit}} characters', {
-                    used: privateQuery.data.data.used ?? 0,
-                    limit: privateQuery.data.data.limit ?? 0,
+                    used: virtualQuery.data.data.used ?? 0,
+                    limit: virtualQuery.data.data.limit ?? 0,
+                  })}
+                </Badge>
+              )}
+              {tab === 'real' && realQuery.data && (
+                <Badge variant='outline'>
+                  {t('{{used}} of {{limit}} real people', {
+                    used: realQuery.data.data.real_person_used ?? 0,
+                    limit: realQuery.data.data.real_person_limit ?? 0,
                   })}
                 </Badge>
               )}
@@ -390,7 +449,7 @@ export function VirtualCharacters() {
                   </AlertDescription>
                 </Alert>
               )}
-            {tab === 'private' &&
+            {tab === 'virtual' &&
               configQuery.isSuccess &&
               !configQuery.data?.data.virtual_enabled && (
                 <Alert variant='destructive'>
@@ -398,6 +457,18 @@ export function VirtualCharacters() {
                   <AlertDescription>
                     {t(
                       'An administrator must enable the character library and configure the Volc provider first.'
+                    )}
+                  </AlertDescription>
+                </Alert>
+              )}
+            {tab === 'real' &&
+              configQuery.isSuccess &&
+              !configQuery.data?.data.real_person_enabled && (
+                <Alert variant='destructive'>
+                  <AlertTitle>{t('Real-person library is disabled')}</AlertTitle>
+                  <AlertDescription>
+                    {t(
+                      'An administrator must enable the Premium real-person Assets API and bind the matching Doubao video channel.'
                     )}
                   </AlertDescription>
                 </Alert>
@@ -424,7 +495,9 @@ export function VirtualCharacters() {
                           ? t(
                               'The authoritative official catalog has no matching active characters.'
                             )
-                          : t('Create your first private virtual character.')}
+                          : tab === 'virtual'
+                            ? t('Create your first private virtual character.')
+                            : t('Complete identity authorization to add your first real person.')}
                       </CardDescription>
                     </CardHeader>
                   </Card>
@@ -440,6 +513,7 @@ export function VirtualCharacters() {
                       onPreview={setImagePreview}
                       onGenerate={() => setGenerateTarget({ character: item })}
                       onDelete={() => setDeleteTarget(item)}
+                      onSync={() => void syncRealPerson(item)}
                     />
                   ))}
                 </div>
@@ -453,7 +527,8 @@ export function VirtualCharacters() {
                 pageSize={currentPage.page_size}
                 onChange={(page) => {
                   if (tab === 'public') setPublicPage(page)
-                  else if (tab === 'private') setPrivatePage(page)
+                  else if (tab === 'virtual') setVirtualPage(page)
+                  else if (tab === 'real') setRealPage(page)
                   else setHistoryPage(page)
                 }}
               />
@@ -484,6 +559,7 @@ export function VirtualCharacters() {
         }}
         onSucceeded={async (characterID) => {
           await refreshAll()
+          setTab('real')
           if (characterID) setDetailID(characterID)
         }}
       />

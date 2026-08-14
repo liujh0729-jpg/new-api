@@ -85,6 +85,7 @@ type VirtualCharacterListFilter struct {
 	AgeMin      *int
 	AgeMax      *int
 	Status      string
+	SourceType  string
 }
 
 // VirtualCharacter stores role-library metadata. Private provider binary content
@@ -93,6 +94,7 @@ type VirtualCharacter struct {
 	ID                int64          `json:"id" gorm:"primaryKey;autoIncrement"`
 	UserID            int            `json:"user_id" gorm:"index;uniqueIndex:uk_virtual_character_user_slot"`
 	Slot              *int           `json:"-" gorm:"uniqueIndex:uk_virtual_character_user_slot"`
+	RealPersonSlot    *int           `json:"-" gorm:"uniqueIndex:uk_virtual_character_real_user_slot"`
 	Scope             string         `json:"scope" gorm:"type:varchar(16);index"`
 	Name              string         `json:"name" gorm:"type:varchar(191);index"`
 	Description       string         `json:"description" gorm:"type:text"`
@@ -138,23 +140,24 @@ type VirtualCharacterUserLimit struct {
 // VirtualCharacterTask is both the role snapshot used by task history and a
 // small recovery outbox for the gap between upstream acceptance and Task insert.
 type VirtualCharacterTask struct {
-	ID                int64  `json:"id" gorm:"primaryKey;autoIncrement"`
-	TaskID            string `json:"task_id" gorm:"type:varchar(191);uniqueIndex"`
-	UserID            int    `json:"user_id" gorm:"index"`
-	CharacterID       int64  `json:"character_id" gorm:"index"`
-	CharacterName     string `json:"character_name" gorm:"type:varchar(191)"`
-	CharacterScope    string `json:"character_scope" gorm:"type:varchar(16)"`
-	ProviderAssetID   string `json:"provider_asset_id,omitempty" gorm:"type:varchar(191)"`
-	Status            string `json:"status" gorm:"type:varchar(20);index"`
-	UpstreamTaskID    string `json:"-" gorm:"type:varchar(191)"`
-	ChannelID         int    `json:"-" gorm:"index"`
-	TaskPayloadJSON   string `json:"-" gorm:"type:text"`
-	LastError         string `json:"last_error,omitempty" gorm:"type:text"`
-	RetryCount        int    `json:"-"`
-	NextRetryAt       int64  `json:"-" gorm:"index"`
-	TerminalCheckedAt int64  `json:"-" gorm:"index"`
-	CreatedAt         int64  `json:"created_at" gorm:"autoCreateTime;index"`
-	UpdatedAt         int64  `json:"updated_at" gorm:"autoUpdateTime"`
+	ID                        int64  `json:"id" gorm:"primaryKey;autoIncrement"`
+	TaskID                    string `json:"task_id" gorm:"type:varchar(191);uniqueIndex"`
+	UserID                    int    `json:"user_id" gorm:"index"`
+	CharacterID               int64  `json:"character_id" gorm:"index"`
+	CharacterName             string `json:"character_name" gorm:"type:varchar(191)"`
+	CharacterScope            string `json:"character_scope" gorm:"type:varchar(16)"`
+	ProviderAssetID           string `json:"provider_asset_id,omitempty" gorm:"type:varchar(191)"`
+	AuthorizationSnapshotJSON string `json:"-" gorm:"type:text"`
+	Status                    string `json:"status" gorm:"type:varchar(20);index"`
+	UpstreamTaskID            string `json:"-" gorm:"type:varchar(191)"`
+	ChannelID                 int    `json:"-" gorm:"index"`
+	TaskPayloadJSON           string `json:"-" gorm:"type:text"`
+	LastError                 string `json:"last_error,omitempty" gorm:"type:text"`
+	RetryCount                int    `json:"-"`
+	NextRetryAt               int64  `json:"-" gorm:"index"`
+	TerminalCheckedAt         int64  `json:"-" gorm:"index"`
+	CreatedAt                 int64  `json:"created_at" gorm:"autoCreateTime;index"`
+	UpdatedAt                 int64  `json:"updated_at" gorm:"autoUpdateTime"`
 }
 
 func GetVirtualCharacterGlobalLimit() int {
@@ -277,7 +280,7 @@ func ReservePrivateVirtualCharacter(userID int, name, description, tagsJSON, mim
 func CountActivePrivateVirtualCharacters(userID int) (int64, error) {
 	var count int64
 	err := DB.Model(&VirtualCharacter{}).
-		Where("user_id = ? AND scope = ? AND slot IS NOT NULL", userID, VirtualCharacterScopePrivate).
+		Where("user_id = ? AND scope = ? AND source_type <> ? AND slot IS NOT NULL", userID, VirtualCharacterScopePrivate, VirtualCharacterSourceVolcRealPerson).
 		Count(&count).Error
 	return count, err
 }
@@ -348,6 +351,9 @@ func applyVirtualCharacterListFilter(query *gorm.DB, filter VirtualCharacterList
 	}
 	if status := strings.TrimSpace(filter.Status); status != "" {
 		query = query.Where("status = ?", status)
+	}
+	if sourceType := strings.TrimSpace(filter.SourceType); sourceType != "" {
+		query = query.Where("source_type = ?", sourceType)
 	}
 	return query
 }
@@ -544,17 +550,27 @@ func ListVirtualCharactersPendingCleanup(now int64, limit int) ([]VirtualCharact
 }
 
 func MarkOrphanedVirtualCharactersForCleanup(now int64) error {
-	activeUserIDs := DB.Model(&User{}).Select("id")
-	return DB.Model(&VirtualCharacter{}).
-		Where("scope = ? AND status <> ?", VirtualCharacterScopePrivate, VirtualCharacterStatusDeleting).
-		Where("user_id NOT IN (?)", activeUserIDs).
-		Updates(map[string]any{
-			"slot":            nil,
-			"status":          VirtualCharacterStatusDeleting,
-			"last_error":      "owning account was deleted",
-			"cleanup_next_at": now,
-			"updated_at":      now,
-		}).Error
+	return DB.Transaction(func(tx *gorm.DB) error {
+		activeUserIDs := tx.Model(&User{}).Select("id")
+		if err := tx.Model(&VirtualCharacter{}).
+			Where("scope = ? AND status <> ?", VirtualCharacterScopePrivate, VirtualCharacterStatusDeleting).
+			Where("user_id NOT IN (?)", activeUserIDs).
+			Updates(map[string]any{
+				"slot": nil, "real_person_slot": nil,
+				"status": VirtualCharacterStatusDeleting, "last_error": "owning account was deleted",
+				"cleanup_next_at": now, "updated_at": now,
+			}).Error; err != nil {
+			return err
+		}
+		orphanedRealPeople := tx.Model(&VirtualCharacter{}).Select("id").
+			Where("scope = ? AND source_type = ? AND status = ?", VirtualCharacterScopePrivate, VirtualCharacterSourceVolcRealPerson, VirtualCharacterStatusDeleting)
+		return tx.Model(&VirtualCharacterAuthorization{}).
+			Where("character_id IN (?) AND status NOT IN ?", orphanedRealPeople, []string{VirtualCharacterAuthorizationRevoked, VirtualCharacterAuthorizationExpired}).
+			Updates(map[string]any{
+				"status": VirtualCharacterAuthorizationRevoked, "revoked_at": now,
+				"last_error": "owning account was deleted", "updated_at": now,
+			}).Error
+	})
 }
 
 func RetryVirtualCharacterCleanup(itemID int64, attempts int, nextAt int64, lastError string) error {
@@ -844,9 +860,12 @@ func HasUnfinishedVirtualCharacterTasks(characterID int64) (bool, error) {
 		return false, err
 	}
 	if len(taskIDs) == 0 {
-		return false, nil
+		return HasUnfinishedVirtualCharacterReferenceTasks(characterID)
 	}
 	var count int64
 	err := DB.Model(&Task{}).Where("task_id IN ? AND status NOT IN ?", taskIDs, []TaskStatus{TaskStatusSuccess, TaskStatusFailure}).Count(&count).Error
-	return count > 0, err
+	if err != nil || count > 0 {
+		return count > 0, err
+	}
+	return HasUnfinishedVirtualCharacterReferenceTasks(characterID)
 }

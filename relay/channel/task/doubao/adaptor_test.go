@@ -4,6 +4,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	rootcommon "github.com/QuantumNous/new-api/common"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/gin-gonic/gin"
 )
@@ -231,6 +232,61 @@ func TestConvertToRequestPayloadPreservesReferenceRoles(t *testing.T) {
 		if payload.Content[i].Role != want {
 			t.Fatalf("content[%d].Role = %q, want %q; content=%#v", i, payload.Content[i].Role, want, payload.Content)
 		}
+	}
+}
+
+func TestTopLevelContentTextIsValidatedAndTakesPriorityOverPrompt(t *testing.T) {
+	var req relaycommon.TaskSubmitReq
+	err := rootcommon.Unmarshal([]byte(`{
+        "model":"doubao-seedance-2-0-fast-260128",
+        "prompt":"legacy prompt",
+        "content":[
+            {"type":"text","text":"official content"},
+            {"type":"image_url","image_url":{"url":"https://example.com/reference.png"}}
+        ]
+    }`), &req)
+	if err != nil {
+		t.Fatalf("unmarshal request returned error: %v", err)
+	}
+	if err := validateSeedanceRequest(req); err != nil {
+		t.Fatalf("validateSeedanceRequest returned error: %v", err)
+	}
+
+	payload, err := (&TaskAdaptor{}).convertToRequestPayload(&req)
+	if err != nil {
+		t.Fatalf("convertToRequestPayload returned error: %v", err)
+	}
+	if len(payload.Content) != 2 {
+		t.Fatalf("content length = %d, want 2; content=%#v", len(payload.Content), payload.Content)
+	}
+	if payload.Content[0].Type != "text" || payload.Content[0].Text != "official content" {
+		t.Fatalf("top-level text content was not preserved: %#v", payload.Content[0])
+	}
+	for _, item := range payload.Content {
+		if item.Text == "legacy prompt" {
+			t.Fatalf("prompt should not override non-empty content: %#v", payload.Content)
+		}
+	}
+}
+
+func TestTopLevelContentTextWithoutPromptIsAccepted(t *testing.T) {
+	var req relaycommon.TaskSubmitReq
+	if err := rootcommon.Unmarshal([]byte(`{
+        "model":"doubao-seedance-2-0-fast-260128",
+        "content":[{"type":"text","text":"text-only content"}]
+    }`), &req); err != nil {
+		t.Fatalf("unmarshal request returned error: %v", err)
+	}
+	if err := validateSeedanceRequest(req); err != nil {
+		t.Fatalf("validateSeedanceRequest returned error: %v", err)
+	}
+
+	payload, err := (&TaskAdaptor{}).convertToRequestPayload(&req)
+	if err != nil {
+		t.Fatalf("convertToRequestPayload returned error: %v", err)
+	}
+	if len(payload.Content) != 1 || payload.Content[0].Text != "text-only content" {
+		t.Fatalf("text-only content was not forwarded: %#v", payload.Content)
 	}
 }
 

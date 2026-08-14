@@ -727,6 +727,7 @@ func (t *TaskSubmitReq) UnmarshalJSON(data []byte) error {
 	type Alias TaskSubmitReq
 	aux := &struct {
 		Metadata    json.RawMessage `json:"metadata,omitempty"`
+		Content     json.RawMessage `json:"content,omitempty"`
 		Duration    json.RawMessage `json:"duration,omitempty"`
 		CharacterID json.RawMessage `json:"character_id,omitempty"`
 		*Alias
@@ -781,7 +782,6 @@ func (t *TaskSubmitReq) UnmarshalJSON(data []byte) error {
 			var metadataObj map[string]interface{}
 			if err := common.Unmarshal([]byte(metadataStr), &metadataObj); err == nil {
 				t.Metadata = metadataObj
-				return nil
 			}
 		}
 
@@ -791,7 +791,38 @@ func (t *TaskSubmitReq) UnmarshalJSON(data []byte) error {
 		}
 	}
 
+	// content is a documented top-level task field. Keep it in the shared
+	// metadata map so task adaptors that already consume metadata.content see
+	// the same value as the original request. A non-empty top-level content
+	// takes precedence over metadata.content; an empty array does not hide a
+	// usable metadata fallback.
+	if len(aux.Content) > 0 && string(aux.Content) != "null" {
+		var content any
+		if err := common.Unmarshal(aux.Content, &content); err != nil {
+			return fmt.Errorf("invalid content: %w", err)
+		}
+		if hasNonEmptyTaskContent(content) {
+			if t.Metadata == nil {
+				t.Metadata = make(map[string]interface{})
+			}
+			t.Metadata["content"] = content
+		}
+	}
+
 	return nil
+}
+
+func hasNonEmptyTaskContent(value any) bool {
+	switch typed := value.(type) {
+	case nil:
+		return false
+	case []any:
+		return len(typed) > 0
+	case string:
+		return strings.TrimSpace(typed) != ""
+	default:
+		return true
+	}
 }
 func (t *TaskSubmitReq) UnmarshalMetadata(v any) error {
 	metadata := t.Metadata

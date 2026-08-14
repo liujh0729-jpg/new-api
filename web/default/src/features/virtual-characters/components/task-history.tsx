@@ -87,6 +87,19 @@ export function TaskHistory({
                   <AlertDescription>{failure}</AlertDescription>
                 </Alert>
               )}
+              {(item.references?.length ?? 0) > 1 && (
+                <div className='flex flex-wrap gap-2'>
+                  {item.references?.map((reference) => (
+                    <Badge
+                      key={`${item.task_id}-${reference.character_id}`}
+                      variant='outline'
+                      title={`asset://${reference.provider_asset_id}`}
+                    >
+                      {reference.character_name}
+                    </Badge>
+                  ))}
+                </div>
+              )}
               <div className='flex flex-wrap gap-2'>
                 {item.task?.result_url && (
                   <Button

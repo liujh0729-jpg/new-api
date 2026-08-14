@@ -382,6 +382,7 @@ func SetApiRouter(router *gin.Engine) {
 		}
 
 		apiRouter.GET("/virtual-characters/validation/launch/:id", controller.LaunchVirtualCharacterValidation)
+		apiRouter.POST("/virtual-characters/validation/launch/:id", controller.LaunchVirtualCharacterValidation)
 		apiRouter.GET("/virtual-characters/validation/callback", controller.VirtualCharacterValidationCallback)
 
 		virtualCharacterRoute := apiRouter.Group("/virtual-characters")
@@ -395,6 +396,7 @@ func SetApiRouter(router *gin.Engine) {
 			virtualCharacterRoute.POST("/validation-sessions", controller.CreateVirtualCharacterValidationSession)
 			virtualCharacterRoute.GET("/validation-sessions/:id", controller.GetVirtualCharacterValidationSession)
 			virtualCharacterRoute.GET("/:id/preview", controller.PreviewVirtualCharacter)
+			virtualCharacterRoute.POST("/:id/sync", controller.SyncRealPersonVirtualCharacter)
 			virtualCharacterRoute.GET("/:id", controller.GetVirtualCharacterGroup)
 			virtualCharacterRoute.PUT("/:id", controller.UpdateVirtualCharacter)
 			virtualCharacterRoute.DELETE("/:id", controller.DeleteVirtualCharacterGroup)

@@ -48,9 +48,14 @@ func runVirtualCharacterMaintenance() {
 	}
 	cleanupVirtualCharacters(now)
 	pollVirtualCharacterImageActivation(now)
+	refreshRealPersonProviderStates(now)
+	expireVirtualCharacterValidationSessions(now)
 	cleanupVirtualCharacterJobs(now)
 	if err := model.DeleteExpiredVirtualCharacterTaskLinks(now.Add(-virtualCharacterTaskRetention).Unix()); err != nil {
 		common.SysError("delete expired virtual character task links: " + err.Error())
+	}
+	if err := model.DeleteExpiredVirtualCharacterTaskReferences(now.Add(-virtualCharacterTaskRetention).Unix()); err != nil {
+		common.SysError("delete expired virtual character task references: " + err.Error())
 	}
 }
 
@@ -76,6 +81,15 @@ func pollVirtualCharacterImageActivation(now time.Time) {
 	}
 	for i := range characters {
 		character := &characters[i]
+		if character.SourceType == model.VirtualCharacterSourceVolcRealPerson {
+			ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+			_, callErr := SyncRealPersonVirtualCharacter(ctx, character.ID)
+			cancel()
+			if callErr != nil {
+				retryVirtualCharacterImagePoll(character, now, callErr)
+			}
+			continue
+		}
 		if character.ProviderAccountID != account.ID {
 			retryVirtualCharacterImagePoll(character, now, errors.New("asset provider account is not enabled"))
 			continue
@@ -101,6 +115,55 @@ func pollVirtualCharacterImageActivation(now time.Time) {
 			finishVirtualCharacterImagePoll(character, false, common.MaskSensitiveInfo(reason))
 		default:
 			retryVirtualCharacterImagePoll(character, now, fmt.Errorf("unexpected Volc asset status %q", result.Status))
+		}
+	}
+}
+
+func refreshRealPersonProviderStates(now time.Time) {
+	items, err := model.ListRealPersonVirtualCharactersDueForProviderCheck(now.Unix(), now.Add(-realPersonProviderStateTTL).Unix(), virtualCharacterMaintenanceBatch)
+	if err != nil {
+		common.SysError("list real-person characters for provider check: " + err.Error())
+		return
+	}
+	account, accountErr := model.GetEnabledVirtualCharacterProviderAccount()
+	for i := range items {
+		character := &items[i]
+		authorization, err := model.GetVirtualCharacterAuthorization(character.ID)
+		if err != nil {
+			continue
+		}
+		if authorization.ValidUntil <= now.Unix() {
+			if err := model.ExpireRealPersonAuthorization(character.ID, "authorization expired"); err != nil {
+				common.SysError(fmt.Sprintf("expire real-person authorization %d: %v", character.ID, err))
+			}
+			continue
+		}
+		if accountErr != nil || account.ID != character.ProviderAccountID {
+			_ = model.BlockRealPersonVirtualCharacter(character.ID, model.VirtualCharacterAuthorizationProviderUnavailable, "provider account is unavailable")
+			continue
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+		if strings.TrimSpace(character.ProviderAssetID) == "" {
+			_, err = SyncRealPersonVirtualCharacter(ctx, character.ID)
+		} else {
+			_, err = RefreshRealPersonVirtualCharacterState(ctx, character, account)
+		}
+		cancel()
+		if err != nil {
+			common.SysError(fmt.Sprintf("refresh real-person provider state %d: %v", character.ID, err))
+		}
+	}
+}
+
+func expireVirtualCharacterValidationSessions(now time.Time) {
+	items, err := model.ListExpiredPendingVirtualCharacterValidationSessions(now.Unix(), virtualCharacterMaintenanceBatch)
+	if err != nil {
+		common.SysError("list expired real-person validation sessions: " + err.Error())
+		return
+	}
+	for i := range items {
+		if err := model.FailReservedVirtualCharacterValidation(items[i].ID, model.VirtualCharacterValidationExpired, "expired", "validation session expired"); err != nil {
+			common.SysError("expire real-person validation session: " + err.Error())
 		}
 	}
 }

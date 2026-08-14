@@ -17,9 +17,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useState, type FormEvent } from 'react'
-import { useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+import { searchChannels } from '@/features/channels/api'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import {
@@ -85,6 +86,9 @@ function buildSettingsForm(settings?: VirtualCharacterSettings) {
     global_limit: settings?.global_limit ?? 100,
     account_asset_cap:
       preset?.account_asset_cap ?? settings?.account_asset_cap ?? 50,
+    real_person_enabled: settings?.real_person_enabled ?? false,
+    real_person_limit: settings?.real_person_limit ?? 5,
+    channel_id: settings?.channel_id ?? 0,
   }
 }
 
@@ -98,6 +102,9 @@ function settingsFormKey(settings?: VirtualCharacterSettings): string {
     settings.project_name,
     settings.global_limit,
     settings.account_asset_cap,
+    settings.real_person_enabled,
+    settings.real_person_limit,
+    settings.channel_id,
     settings.access_key_masked,
     settings.secret_key_masked,
   ].join('|')
@@ -137,6 +144,11 @@ function SettingsDialogForm({
 }) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
+  const videoChannelsQuery = useQuery({
+    queryKey: ['virtual-characters', 'doubao-video-channels'],
+    queryFn: () =>
+      searchChannels({ type: 54, status: 'enabled', page_size: 100 }),
+  })
   const [form, setForm] = useState(() => buildSettingsForm(settings))
   // Track which action is running so only its own button shows a spinner, while all
   // three stay disabled for the duration.
@@ -257,6 +269,18 @@ function SettingsDialogForm({
                 checked={form.enabled}
                 onChange={(checked) => setForm({ ...form, enabled: checked })}
               />
+              <ToggleField
+                label={t('Enable real-person characters')}
+                checked={form.real_person_enabled}
+                onChange={(checked) =>
+                  setForm({ ...form, real_person_enabled: checked })
+                }
+              />
+              <FieldDescription>
+                {t(
+                  'Requires Volc Premium real-person Assets API access. The selected Doubao video channel must belong to the same Volc account as the AK/SK below.'
+                )}
+              </FieldDescription>
               <div className='grid gap-4 sm:grid-cols-2'>
                 <Field>
                   <FieldLabel htmlFor='provider-ak'>
@@ -313,6 +337,42 @@ function SettingsDialogForm({
                       setForm({ ...form, project_name: event.target.value })
                     }
                   />
+                </Field>
+                <Field data-disabled={!form.real_person_enabled}>
+                  <FieldLabel htmlFor='provider-video-channel'>
+                    {t('Real-person video channel')}
+                  </FieldLabel>
+                  <NativeSelect
+                    id='provider-video-channel'
+                    className='w-full'
+                    disabled={!form.real_person_enabled}
+                    value={String(form.channel_id || 0)}
+                    onChange={(event) =>
+                      setForm({
+                        ...form,
+                        channel_id: Number(event.target.value),
+                      })
+                    }
+                  >
+                    <NativeSelectOption value='0'>
+                      {t('Select a Doubao video channel')}
+                    </NativeSelectOption>
+                    {(videoChannelsQuery.data?.data?.items ?? []).map(
+                      (channel) => (
+                        <NativeSelectOption
+                          key={channel.id}
+                          value={String(channel.id)}
+                        >
+                          #{channel.id} · {channel.name}
+                        </NativeSelectOption>
+                      )
+                    )}
+                  </NativeSelect>
+                  <FieldDescription>
+                    {t(
+                      'Every real-person video request is pinned to this channel after ownership and authorization checks.'
+                    )}
+                  </FieldDescription>
                 </Field>
               </div>
               <Field>
@@ -377,6 +437,27 @@ function SettingsDialogForm({
                     {t(
                       'Per-user character group limit on this site (not the Volc plan).'
                     )}
+                  </FieldDescription>
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor='provider-real-person-quota'>
+                    {t('Default real-person quota')}
+                  </FieldLabel>
+                  <Input
+                    id='provider-real-person-quota'
+                    type='number'
+                    min={1}
+                    max={1000}
+                    value={form.real_person_limit}
+                    onChange={(event) =>
+                      setForm({
+                        ...form,
+                        real_person_limit: Number(event.target.value),
+                      })
+                    }
+                  />
+                  <FieldDescription>
+                    {t('Independent per-user limit for verified real people.')}
                   </FieldDescription>
                 </Field>
                 <Field>

@@ -28,18 +28,22 @@ type VolcValidationSessionResult struct {
 }
 
 type VolcAssetResult struct {
-	ID        string
-	GroupID   string
-	Name      string
-	AssetType string
-	Status    string
-	Error     string
+	ID          string
+	GroupID     string
+	Name        string
+	AssetType   string
+	Status      string
+	Error       string
+	URL         string
+	ProjectName string
 }
 
 type VolcAssetGroupResult struct {
-	ID     string
-	Name   string
-	Status string
+	ID          string
+	Name        string
+	Status      string
+	GroupType   string
+	ProjectName string
 }
 
 type VolcAssetClient interface {
@@ -51,9 +55,11 @@ type VolcAssetClient interface {
 	UpdateAsset(ctx context.Context, assetID, name, projectName string) error
 	GetAsset(ctx context.Context, assetID, projectName string) (*VolcAssetResult, error)
 	ListAssets(ctx context.Context, groupID, projectName string) ([]VolcAssetResult, error)
+	ListAssetsByGroupType(ctx context.Context, groupID, groupType, projectName string) ([]VolcAssetResult, error)
 	DeleteAsset(ctx context.Context, assetID, projectName string) error
 	DeleteAssetGroup(ctx context.Context, groupID, projectName string) error
 	ListAssetGroups(ctx context.Context, projectName string) ([]VolcAssetGroupResult, error)
+	ListAssetGroupsByType(ctx context.Context, groupType, projectName string) ([]VolcAssetGroupResult, error)
 	GetAssetGroup(ctx context.Context, groupID, projectName string) (*VolcAssetGroupResult, error)
 }
 
@@ -217,8 +223,16 @@ func (c *volcAssetClient) GetAsset(ctx context.Context, assetID, projectName str
 }
 
 func (c *volcAssetClient) ListAssets(ctx context.Context, groupID, projectName string) ([]VolcAssetResult, error) {
+	return c.ListAssetsByGroupType(ctx, groupID, "AIGC", projectName)
+}
+
+func (c *volcAssetClient) ListAssetsByGroupType(ctx context.Context, groupID, groupType, projectName string) ([]VolcAssetResult, error) {
+	groupType = strings.TrimSpace(groupType)
+	if groupType == "" {
+		return nil, errors.New("asset group type is required")
+	}
 	filter := map[string]interface{}{
-		"GroupType": "AIGC",
+		"GroupType": groupType,
 	}
 	if groupID = strings.TrimSpace(groupID); groupID != "" {
 		filter["GroupIds"] = []string{groupID}
@@ -247,10 +261,18 @@ func (c *volcAssetClient) DeleteAssetGroup(ctx context.Context, groupID, project
 }
 
 func (c *volcAssetClient) ListAssetGroups(ctx context.Context, projectName string) ([]VolcAssetGroupResult, error) {
+	return c.ListAssetGroupsByType(ctx, "AIGC", projectName)
+}
+
+func (c *volcAssetClient) ListAssetGroupsByType(ctx context.Context, groupType, projectName string) ([]VolcAssetGroupResult, error) {
+	groupType = strings.TrimSpace(groupType)
+	if groupType == "" {
+		return nil, errors.New("asset group type is required")
+	}
 	// Volc requires Filter.GroupType for ListAssetGroups.
 	body := map[string]interface{}{
 		"Filter": map[string]interface{}{
-			"GroupType": "AIGC",
+			"GroupType": groupType,
 		},
 		"PageNumber":  1,
 		"PageSize":    10,
@@ -268,7 +290,7 @@ func (c *volcAssetClient) GetAssetGroup(ctx context.Context, groupID, projectNam
 	if err != nil {
 		return nil, err
 	}
-	return &VolcAssetGroupResult{ID: findString(result, "GroupId", "GroupID", "Id", "ID"), Name: findString(result, "Name"), Status: findString(result, "Status")}, nil
+	return parseVolcAssetGroup(result), nil
 }
 
 func (c *volcAssetClient) call(ctx context.Context, action string, body map[string]interface{}, qps int) (map[string]interface{}, error) {
@@ -379,7 +401,12 @@ func isRetryableVolcError(err error) bool {
 }
 
 func parseVolcAsset(result map[string]interface{}) *VolcAssetResult {
-	return &VolcAssetResult{ID: findString(result, "Id", "ID", "AssetId", "AssetID"), GroupID: findString(result, "GroupId", "GroupID"), Name: findString(result, "Name"), AssetType: findString(result, "AssetType", "Type"), Status: findString(result, "Status"), Error: findString(result, "Error", "Message", "FailReason")}
+	return &VolcAssetResult{
+		ID: findString(result, "Id", "ID", "AssetId", "AssetID"), GroupID: findString(result, "GroupId", "GroupID"),
+		Name: findString(result, "Name"), AssetType: findString(result, "AssetType", "Type"),
+		Status: findString(result, "Status"), Error: findString(result, "Error", "Message", "FailReason", "FailedReason"),
+		URL: findString(result, "URL", "Url"), ProjectName: findString(result, "ProjectName"),
+	}
 }
 
 func parseVolcAssets(result map[string]interface{}) []VolcAssetResult {
@@ -395,9 +422,17 @@ func parseVolcAssetGroups(result map[string]interface{}) []VolcAssetGroupResult 
 	items := findObjectSlice(result, "AssetGroups", "Groups", "Items", "Data")
 	groups := make([]VolcAssetGroupResult, 0, len(items))
 	for _, item := range items {
-		groups = append(groups, VolcAssetGroupResult{ID: findString(item, "GroupId", "GroupID", "Id", "ID"), Name: findString(item, "Name"), Status: findString(item, "Status")})
+		groups = append(groups, *parseVolcAssetGroup(item))
 	}
 	return groups
+}
+
+func parseVolcAssetGroup(result map[string]interface{}) *VolcAssetGroupResult {
+	return &VolcAssetGroupResult{
+		ID: findString(result, "GroupId", "GroupID", "Id", "ID"), Name: findString(result, "Name"),
+		Status: findString(result, "Status"), GroupType: findString(result, "GroupType"),
+		ProjectName: findString(result, "ProjectName"),
+	}
 }
 
 func findString(value map[string]interface{}, keys ...string) string {

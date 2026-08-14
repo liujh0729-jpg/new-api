@@ -201,17 +201,24 @@ type seedanceReferenceCounts struct {
 	images int
 	videos int
 	audios int
+	texts  int
 }
 
 func validateSeedanceRequest(req relaycommon.TaskSubmitReq) error {
 	counts := countSeedanceReferences(req)
 	total := counts.images + counts.videos + counts.audios
 	prompt := strings.TrimSpace(req.Prompt)
-	if prompt == "" && total == 0 {
+	if prompt == "" && counts.texts == 0 && total == 0 {
 		return fmt.Errorf("prompt or reference media is required")
 	}
 
 	if !isSeedance20Model(req.Model) {
+		if hasNonEmptyContent(req.Metadata) {
+			if counts.texts == 0 {
+				return fmt.Errorf("prompt is required when content has no text item")
+			}
+			return nil
+		}
 		if prompt == "" {
 			return fmt.Errorf("prompt is required")
 		}
@@ -263,6 +270,11 @@ func countSeedanceReferences(req relaycommon.TaskSubmitReq) seedanceReferenceCou
 			continue
 		}
 		switch strings.TrimSpace(fmt.Sprint(itemMap["type"])) {
+		case "text":
+			if strings.TrimSpace(fmt.Sprint(itemMap["text"])) != "" {
+				counts.texts++
+			}
+			continue
 		case "image_url":
 			counts.images++
 			continue
@@ -396,6 +408,7 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*
 	}
 
 	metadata := req.Metadata
+	explicitContent := hasNonEmptyContent(metadata)
 	if err := taskcommon.UnmarshalMetadata(metadata, &r); err != nil {
 		return nil, errors.Wrap(err, "unmarshal metadata failed")
 	}
@@ -408,8 +421,13 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*
 		r.Duration = lo.ToPtr(dto.IntValue(sec))
 	}
 
-	r.Content = lo.Reject(r.Content, func(c ContentItem, _ int) bool { return c.Type == "text" })
-	if strings.TrimSpace(req.Prompt) != "" {
+	// A non-empty content array is authoritative. Preserve its text and media
+	// items, and only synthesize a text item from prompt when content is absent
+	// or contains no usable items.
+	r.Content = lo.Reject(r.Content, func(c ContentItem, _ int) bool {
+		return c.Type == "text" && strings.TrimSpace(c.Text) == ""
+	})
+	if !explicitContent && strings.TrimSpace(req.Prompt) != "" {
 		r.Content = append(r.Content, ContentItem{
 			Type: "text",
 			Text: req.Prompt,
@@ -417,6 +435,24 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*
 	}
 
 	return &r, nil
+}
+
+func hasNonEmptyContent(metadata map[string]interface{}) bool {
+	if metadata == nil {
+		return false
+	}
+	value, ok := metadata["content"]
+	if !ok || value == nil {
+		return false
+	}
+	switch typed := value.(type) {
+	case []interface{}:
+		return len(typed) > 0
+	case string:
+		return strings.TrimSpace(typed) != ""
+	default:
+		return true
+	}
 }
 
 func resolveBillingDurationSeconds(req relaycommon.TaskSubmitReq) int {

@@ -11,18 +11,48 @@ import (
 
 func cleanupVirtualCharacterABTables(t *testing.T) {
 	t.Helper()
-	for _, table := range []string{"virtual_character_cleanup_jobs", "virtual_character_catalog_imports", "virtual_character_validation_sessions", "virtual_character_assets", "virtual_character_provider_accounts", "virtual_character_tasks", "virtual_character_user_limits", "virtual_characters"} {
+	for _, table := range []string{"virtual_character_task_references", "virtual_character_authorizations", "virtual_character_cleanup_jobs", "virtual_character_catalog_imports", "virtual_character_validation_sessions", "virtual_character_assets", "virtual_character_provider_accounts", "virtual_character_tasks", "virtual_character_user_limits", "virtual_characters"} {
 		if DB.Migrator().HasTable(table) {
 			require.NoError(t, DB.Exec("DELETE FROM "+table).Error)
 		}
 	}
 	t.Cleanup(func() {
-		for _, table := range []string{"virtual_character_cleanup_jobs", "virtual_character_catalog_imports", "virtual_character_validation_sessions", "virtual_character_assets", "virtual_character_provider_accounts", "virtual_character_tasks", "virtual_character_user_limits", "virtual_characters"} {
+		for _, table := range []string{"virtual_character_task_references", "virtual_character_authorizations", "virtual_character_cleanup_jobs", "virtual_character_catalog_imports", "virtual_character_validation_sessions", "virtual_character_assets", "virtual_character_provider_accounts", "virtual_character_tasks", "virtual_character_user_limits", "virtual_characters"} {
 			if DB.Migrator().HasTable(table) {
 				DB.Exec("DELETE FROM " + table)
 			}
 		}
 	})
+}
+
+func TestNormalizeLegacyRealPeopleBlocksOnlyRowsWithoutAuthorization(t *testing.T) {
+	cleanupVirtualCharacterABTables(t)
+	require.NoError(t, DB.AutoMigrate(&VirtualCharacterAuthorization{}))
+	legacySlot := 1
+	legacy := &VirtualCharacter{UserID: 501, Slot: &legacySlot, Scope: VirtualCharacterScopePrivate, SourceType: VirtualCharacterSourceVolcRealPerson, Name: "Legacy", Status: VirtualCharacterStatusActive}
+	activeSlot := 1
+	active := &VirtualCharacter{UserID: 502, RealPersonSlot: &activeSlot, Scope: VirtualCharacterScopePrivate, SourceType: VirtualCharacterSourceVolcRealPerson, Name: "Active", Status: VirtualCharacterStatusActive}
+	require.NoError(t, DB.Create(legacy).Error)
+	require.NoError(t, DB.Create(active).Error)
+	now := time.Now().Unix()
+	require.NoError(t, DB.Create(&VirtualCharacterAuthorization{CharacterID: active.ID, UserID: active.UserID, Status: VirtualCharacterAuthorizationActive, ValidFrom: now - 60, ValidUntil: now + 3600}).Error)
+
+	require.NoError(t, NormalizeLegacyRealPersonSlots())
+	require.NoError(t, NormalizeLegacyRealPersonSlots())
+
+	var blocked VirtualCharacter
+	require.NoError(t, DB.First(&blocked, legacy.ID).Error)
+	require.Equal(t, VirtualCharacterStatusBlocked, blocked.Status)
+	require.Nil(t, blocked.Slot)
+	require.Nil(t, blocked.RealPersonSlot)
+	var legacyAuthorization VirtualCharacterAuthorization
+	require.NoError(t, DB.Where("character_id = ?", legacy.ID).First(&legacyAuthorization).Error)
+	require.Equal(t, VirtualCharacterAuthorizationFailed, legacyAuthorization.Status)
+
+	var unchanged VirtualCharacter
+	require.NoError(t, DB.First(&unchanged, active.ID).Error)
+	require.Equal(t, VirtualCharacterStatusActive, unchanged.Status)
+	require.NotNil(t, unchanged.RealPersonSlot)
 }
 
 func TestMigrateVirtualCharacterABDataOfflinesPublicAndDeletesLegacyPrivateOnly(t *testing.T) {

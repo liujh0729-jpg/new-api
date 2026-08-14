@@ -35,10 +35,22 @@ func setVirtualCharacterTestLimit(t *testing.T, limit string) {
 
 func cleanupVirtualCharacterTables(t *testing.T) {
 	t.Helper()
+	if DB.Migrator().HasTable(&VirtualCharacterTaskReference{}) {
+		require.NoError(t, DB.Exec("DELETE FROM virtual_character_task_references").Error)
+	}
+	if DB.Migrator().HasTable(&VirtualCharacterAuthorization{}) {
+		require.NoError(t, DB.Exec("DELETE FROM virtual_character_authorizations").Error)
+	}
 	require.NoError(t, DB.Exec("DELETE FROM virtual_character_tasks").Error)
 	require.NoError(t, DB.Exec("DELETE FROM virtual_character_user_limits").Error)
 	require.NoError(t, DB.Exec("DELETE FROM virtual_characters").Error)
 	t.Cleanup(func() {
+		if DB.Migrator().HasTable(&VirtualCharacterTaskReference{}) {
+			DB.Exec("DELETE FROM virtual_character_task_references")
+		}
+		if DB.Migrator().HasTable(&VirtualCharacterAuthorization{}) {
+			DB.Exec("DELETE FROM virtual_character_authorizations")
+		}
 		DB.Exec("DELETE FROM virtual_character_tasks")
 		DB.Exec("DELETE FROM virtual_character_user_limits")
 		DB.Exec("DELETE FROM virtual_characters")
@@ -132,6 +144,27 @@ func TestRecoverVirtualCharacterTaskCreatesTaskExactlyOnce(t *testing.T) {
 	var count int64
 	require.NoError(t, DB.Model(&Task{}).Where("task_id = ?", task.TaskID).Count(&count).Error)
 	require.EqualValues(t, 1, count)
+}
+
+func TestTaskBindingProtectsEveryReferencedCharacterUntilRollback(t *testing.T) {
+	cleanupVirtualCharacterTables(t)
+	require.NoError(t, DB.AutoMigrate(&VirtualCharacterAuthorization{}, &VirtualCharacterTaskReference{}))
+	first := &VirtualCharacter{UserID: 606, Scope: VirtualCharacterScopePrivate, SourceType: VirtualCharacterSourceVolcAIGC, Name: "First", Status: VirtualCharacterStatusActive}
+	second := &VirtualCharacter{UserID: 606, Scope: VirtualCharacterScopePrivate, SourceType: VirtualCharacterSourceVolcRealPerson, Name: "Second", Status: VirtualCharacterStatusActive}
+	require.NoError(t, DB.Create(first).Error)
+	require.NoError(t, DB.Create(second).Error)
+	taskID := "vc-multi-reference-submitting"
+	require.NoError(t, CreateVirtualCharacterTaskBinding(&VirtualCharacterTask{
+		TaskID: taskID, UserID: 606, CharacterID: first.ID, CharacterName: first.Name, CharacterScope: first.Scope,
+	}, []*VirtualCharacter{first, second}, map[int64]string{first.ID: `{}`, second.ID: `{}`}))
+
+	unfinished, err := HasUnfinishedVirtualCharacterTasks(second.ID)
+	require.NoError(t, err)
+	require.True(t, unfinished)
+	require.NoError(t, RollbackVirtualCharacterTaskBinding(taskID))
+	unfinished, err = HasUnfinishedVirtualCharacterTasks(second.ID)
+	require.NoError(t, err)
+	require.False(t, unfinished)
 }
 
 func TestNormalizeVirtualCharacterQuotaPlan(t *testing.T) {

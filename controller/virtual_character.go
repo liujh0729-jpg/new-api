@@ -275,6 +275,11 @@ func GetVirtualCharacterTaskHistory(c *gin.Context) {
 		virtualCharacterError(c, http.StatusInternalServerError, "history_failed", err.Error())
 		return
 	}
+	referenceMap, err := model.ListVirtualCharacterTaskReferences(c.GetInt("id"), taskIDs)
+	if err != nil {
+		virtualCharacterError(c, http.StatusInternalServerError, "history_failed", err.Error())
+		return
+	}
 	items := make([]gin.H, 0, len(links))
 	for i := range links {
 		link := &links[i]
@@ -283,6 +288,22 @@ func GetVirtualCharacterTaskHistory(c *gin.Context) {
 			"character_scope": link.CharacterScope, "provider_asset_id": link.ProviderAssetID,
 			"link_status": link.Status, "created_at": link.CreatedAt,
 		}
+		references := make([]gin.H, 0, len(referenceMap[link.TaskID]))
+		for _, reference := range referenceMap[link.TaskID] {
+			item := gin.H{
+				"character_id": reference.CharacterID, "character_name": reference.CharacterName,
+				"character_scope": reference.CharacterScope, "source_type": reference.SourceType,
+				"provider_asset_id": reference.ProviderAssetID,
+			}
+			if strings.TrimSpace(reference.AuthorizationSnapshotJSON) != "" {
+				var snapshot map[string]any
+				if err := common.UnmarshalJsonStr(reference.AuthorizationSnapshotJSON, &snapshot); err == nil {
+					item["authorization_snapshot"] = snapshot
+				}
+			}
+			references = append(references, item)
+		}
+		entry["references"] = references
 		if task, exists := taskMap[link.TaskID]; exists {
 			entry["task"] = relayTaskToSafeDTO(task)
 		} else if link.LastError != "" {

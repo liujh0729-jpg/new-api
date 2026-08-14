@@ -25,13 +25,13 @@ func VideoGenerations(c *gin.Context) {
 
 // VideoGenerationsTaskId
 // @Summary 查询视频
-// @Description 根据任务ID查询视频生成任务的状态和结果
+// @Description 根据任务 ID 查询兼容视频生成任务的状态和结果。该路径返回通用的 code/data 封装；实时查询通常使用 queued/processing/succeeded/failed，无法实时查询时可能返回内部大写状态。需要 OpenAI Video 格式请使用 /v1/videos/{task_id}。
 // @Tags Video
 // @Accept json
 // @Produce json
 // @Security BearerAuth
 // @Param task_id path string true "Task ID"
-// @Success 200 {object} dto.VideoTaskResponse "任务状态和结果"
+// @Success 200 {object} map[string]interface{} "通用任务状态和结果"
 // @Failure 400 {object} dto.OpenAIError "请求参数错误"
 // @Failure 401 {object} dto.OpenAIError "未授权"
 // @Failure 403 {object} dto.OpenAIError "无权限"

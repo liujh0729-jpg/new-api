@@ -14,12 +14,14 @@ type fakeVolcUniversalCaller struct {
 	responses []*map[string]interface{}
 	errors    []error
 	inputs    []map[string]interface{}
+	actions   []string
 	calls     int
 }
 
-func (f *fakeVolcUniversalCaller) DoCall(_ universal.RequestUniversal, input *map[string]interface{}) (*map[string]interface{}, error) {
+func (f *fakeVolcUniversalCaller) DoCall(info universal.RequestUniversal, input *map[string]interface{}) (*map[string]interface{}, error) {
 	index := f.calls
 	f.calls++
+	f.actions = append(f.actions, info.Action)
 	if input != nil {
 		copied := make(map[string]interface{}, len(*input))
 		for key, value := range *input {
@@ -122,4 +124,34 @@ func TestVolcAssetClientListAssetsUsesFilterGroupIds(t *testing.T) {
 	filter, ok := fake.inputs[0]["Filter"].(map[string]interface{})
 	require.True(t, ok)
 	require.Equal(t, []string{"group-1"}, filter["GroupIds"])
+}
+
+func TestVolcAssetClientUsesLivenessFaceContractForRealPersonAssets(t *testing.T) {
+	groupResponse := map[string]interface{}{"Result": map[string]interface{}{
+		"Id": "group-real-1", "Name": "Actor", "GroupType": "LivenessFace", "ProjectName": "default",
+	}}
+	assetResponse := map[string]interface{}{"Result": map[string]interface{}{
+		"Items": []interface{}{map[string]interface{}{
+			"Id": "asset-real-1", "GroupId": "group-real-1", "AssetType": "Image",
+			"Status": "Active", "URL": "https://ark-media-asset.tos-cn-beijing.volces.com/preview.png", "ProjectName": "default",
+		}},
+	}}
+	fake := &fakeVolcUniversalCaller{responses: []*map[string]interface{}{&groupResponse, &assetResponse}}
+	client := &volcAssetClient{client: fake, limiter: &volcAccountRateLimiter{lastRun: make(map[string]time.Time)}}
+
+	group, err := client.GetAssetGroup(context.Background(), "group-real-1", "default")
+	require.NoError(t, err)
+	require.Equal(t, "LivenessFace", group.GroupType)
+	require.Equal(t, "default", group.ProjectName)
+
+	assets, err := client.ListAssetsByGroupType(context.Background(), "group-real-1", "LivenessFace", "default")
+	require.NoError(t, err)
+	require.Len(t, assets, 1)
+	require.Equal(t, "asset-real-1", assets[0].ID)
+	require.Equal(t, "Image", assets[0].AssetType)
+	require.Equal(t, "https://ark-media-asset.tos-cn-beijing.volces.com/preview.png", assets[0].URL)
+	require.Equal(t, []string{"GetAssetGroup", "ListAssets"}, fake.actions)
+	filter := fake.inputs[1]["Filter"].(map[string]interface{})
+	require.Equal(t, "LivenessFace", filter["GroupType"])
+	require.Equal(t, []string{"group-real-1"}, filter["GroupIds"])
 }

@@ -24,6 +24,36 @@ export type VirtualCharacterValidationSessionStatus =
 export type VirtualCharacterSourceType =
   'volc_preset' | 'volc_aigc' | 'volc_real_person'
 
+export type VirtualCharacterAuthorizationStatus =
+  | 'pending'
+  | 'synchronizing'
+  | 'active'
+  | 'ambiguous'
+  | 'provider_unavailable'
+  | 'expired'
+  | 'revoked'
+  | 'failed'
+
+export interface VirtualCharacterAuthorization {
+  status: VirtualCharacterAuthorizationStatus
+  valid_from: number
+  valid_until: number
+  commercial_use_allowed: boolean
+  purposes: string[]
+  regions: string[]
+  platforms: string[]
+  industries: string[]
+  agreement_version: string
+  holder_scope_accepted_at?: number
+  provider_group_status?: string
+  provider_asset_status?: string
+  provider_checked_at?: number
+  authorized_at?: number
+  revoked_at?: number
+  expired_at?: number
+  last_error?: string
+}
+
 export interface VirtualCharacter {
   id: number
   scope: VirtualCharacterScope
@@ -46,6 +76,7 @@ export interface VirtualCharacter {
   created_at: number
   updated_at: number
   last_error?: string
+  authorization?: VirtualCharacterAuthorization
 }
 
 export interface VirtualCharacterListParams {
@@ -57,6 +88,7 @@ export interface VirtualCharacterListParams {
   gender?: string
   ageBand?: string
   status?: string
+  sourceType?: VirtualCharacterSourceType
 }
 
 export interface PageData<T> {
@@ -76,6 +108,8 @@ export interface VirtualCharacterListData {
   page: PageData<VirtualCharacter>
   used?: number
   limit?: number
+  real_person_used?: number
+  real_person_limit?: number
 }
 
 export interface VirtualCharacterConfig {
@@ -85,6 +119,7 @@ export interface VirtualCharacterConfig {
   virtual_enabled: boolean
   real_person_enabled: boolean
   account_asset_cap?: number
+  real_person_limit?: number
 }
 
 export interface VirtualCharacterValidationSession {
@@ -107,6 +142,26 @@ export interface VirtualCharacterTask {
   link_status: string
   created_at: number
   error?: string
+  references?: Array<{
+    character_id: number
+    character_name: string
+    character_scope: VirtualCharacterScope
+    source_type: VirtualCharacterSourceType
+    provider_asset_id: string
+    authorization_snapshot?: {
+      authorization_status?: string
+      authorization_from?: number
+      authorization_until?: number
+      commercial_use_allowed?: boolean
+      purposes?: string[]
+      regions?: string[]
+      platforms?: string[]
+      industries?: string[]
+      holder_scope_accepted_at?: number
+      provider_checked_at?: number
+      captured_at: number
+    }
+  }>
   task?: {
     task_id: string
     status: string
@@ -144,6 +199,10 @@ export interface VirtualCharacterSettings {
   last_check_error?: string
   last_checked_at?: number
   global_limit: number
+  real_person_limit: number
+  real_person_enabled: boolean
+  virtual_enabled: boolean
+  channel_id: number
   account_asset_cap: number
   catalog?: {
     version: string

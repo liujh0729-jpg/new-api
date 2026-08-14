@@ -26,6 +26,7 @@ import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
   Dialog,
   DialogContent,
@@ -46,7 +47,7 @@ import {
   virtualCharacterQueryKeys,
 } from '../api'
 import type { VirtualCharacter } from '../types'
-import { errorMessage, statusLabel } from './utils'
+import { authorizationStatusLabel, errorMessage, statusLabel } from './utils'
 
 export function CharacterDetailDialog({
   characterID,
@@ -245,6 +246,75 @@ function CharacterDetailContent({
           </Field>
         </FieldGroup>
       </div>
+      {character.source_type === 'volc_real_person' &&
+      character.authorization ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>{t('Portrait authorization')}</CardTitle>
+          </CardHeader>
+          <CardContent className='grid gap-3 text-sm sm:grid-cols-2'>
+            <div>
+              <p className='text-muted-foreground'>{t('Authorization status')}</p>
+              <p>{authorizationStatusLabel(character.authorization.status, t)}</p>
+            </div>
+            <div>
+              <p className='text-muted-foreground'>{t('Valid period')}</p>
+              <p>
+                {new Date(
+                  character.authorization.valid_from * 1000
+                ).toLocaleString()}{' '}
+                –{' '}
+                {new Date(
+                  character.authorization.valid_until * 1000
+                ).toLocaleString()}
+              </p>
+            </div>
+            <div>
+              <p className='text-muted-foreground'>{t('Authorized purposes')}</p>
+              <p>{character.authorization.purposes.join(', ') || '-'}</p>
+            </div>
+            <div>
+              <p className='text-muted-foreground'>{t('Authorized regions')}</p>
+              <p>{character.authorization.regions.join(', ') || '-'}</p>
+            </div>
+            <div>
+              <p className='text-muted-foreground'>{t('Authorized platforms')}</p>
+              <p>{character.authorization.platforms.join(', ') || '-'}</p>
+            </div>
+            <div>
+              <p className='text-muted-foreground'>
+                {t('Authorized industries (optional)')}
+              </p>
+              <p>{character.authorization.industries.join(', ') || '-'}</p>
+            </div>
+            <div>
+              <p className='text-muted-foreground'>{t('Commercial use')}</p>
+              <p>
+                {character.authorization.commercial_use_allowed
+                  ? t('Allowed')
+                  : t('Not allowed')}
+              </p>
+            </div>
+            <div>
+              <p className='text-muted-foreground'>{t('Provider state')}</p>
+              <p>
+                {character.authorization.provider_group_status || '-'} /{' '}
+                {character.authorization.provider_asset_status || '-'}
+              </p>
+            </div>
+            <div>
+              <p className='text-muted-foreground'>{t('Last provider check')}</p>
+              <p>
+                {character.authorization.provider_checked_at
+                  ? new Date(
+                      character.authorization.provider_checked_at * 1000
+                    ).toLocaleString()
+                  : '-'}
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
       {editable ? (
         <div className='flex justify-end'>
           <Button type='submit' disabled={busy || !name.trim()}>

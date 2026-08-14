@@ -21,6 +21,7 @@ import {
   Copy01Icon,
   Delete02Icon,
   MagicWand01Icon,
+  RefreshIcon,
   Tick02Icon,
 } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
@@ -48,12 +49,14 @@ export function CharacterCard({
   onPreview,
   onGenerate,
   onDelete,
+  onSync,
 }: {
   item: VirtualCharacter
   onOpen: () => void
   onPreview: (preview: CharacterImagePreview) => void
   onGenerate: () => void
   onDelete: () => void
+  onSync?: () => void
 }) {
   const { t } = useTranslation()
   const { copiedText, copyToClipboard } = useCopyToClipboard()
@@ -68,7 +71,11 @@ export function CharacterCard({
     : ''
   const isUploading = item.status === 'creating'
   const canGenerate =
-    item.status === 'active' && !isUploading && Boolean(providerAssetID)
+    item.status === 'active' &&
+    !isUploading &&
+    Boolean(providerAssetID) &&
+    (item.source_type !== 'volc_real_person' ||
+      item.authorization?.status === 'active')
   const facetMeta = virtualCharacterFacetMeta(item)
   return (
     <Card className='gap-0 overflow-hidden py-0'>
@@ -166,6 +173,22 @@ export function CharacterCard({
             {facetMeta ? (
               <p className='text-muted-foreground text-[11px]'>{facetMeta}</p>
             ) : null}
+            {item.source_type === 'volc_real_person' && item.authorization ? (
+              <div className='flex flex-wrap gap-1'>
+                <Badge variant='outline' className='px-1.5 py-0 text-[10px]'>
+                  {t('Authorized until {{time}}', {
+                    time: new Date(
+                      item.authorization.valid_until * 1000
+                    ).toLocaleDateString(),
+                  })}
+                </Badge>
+                <Badge variant='outline' className='px-1.5 py-0 text-[10px]'>
+                  {item.authorization.commercial_use_allowed
+                    ? t('Commercial use')
+                    : t('Non-commercial use')}
+                </Badge>
+              </div>
+            ) : null}
             <div className='flex min-h-4 flex-wrap gap-1'>
               {item.tags.length > 0 ? (
                 item.tags.map((tag) => (
@@ -194,6 +217,20 @@ export function CharacterCard({
           >
             {t('Details')}
           </Button>
+          {item.source_type === 'volc_real_person' &&
+            item.status !== 'deleting' &&
+            item.authorization?.status !== 'expired' &&
+            item.authorization?.status !== 'revoked' && (
+              <Button
+                size='icon-sm'
+                variant='outline'
+                className='size-6'
+                onClick={onSync}
+              >
+                <HugeiconsIcon icon={RefreshIcon} />
+                <span className='sr-only'>{t('Sync provider status')}</span>
+              </Button>
+            )}
           <Button
             size='sm'
             className='h-6 px-1.5 text-[11px]'

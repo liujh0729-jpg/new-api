@@ -13,7 +13,7 @@
 | 文本（同步/流式） | AIPDD 目录中的 Ollama 模型（如 `qwen3:8b`） | `POST /v1/chat/completions` 直接返回 |
 | 图片（同步） | 千问 `qwen-image` / `qwen-image-edit` 系列 | `POST /v1/images/generations` 或 `POST /v1/images/edits` 直接返回 |
 | 图片（异步） | Flux 图生图 / 文生图、AIPDD 千问单/双/三参考图编辑 | 创建后轮询，`succeeded` 后取结果 |
-| 视频（异步） | Wan2.2、LTX、MimicMotion、Latentsync、AP Seedance | 创建后轮询，`completed`（`/v1/videos`）或 `succeeded`（兼容路径）后取结果 |
+| 视频（异步） | Wan2.2、LTX、MimicMotion、Latentsync、AP Seedance | 创建后轮询；`/v1/videos` 使用 `completed`，兼容路径实时查询使用 `succeeded`，非实时分支也可能返回内部大写状态 |
 | 音频（异步） | IndexTTS | 创建后轮询，`succeeded` 后取结果 |
 
 AIPDD 异步图片、视频、音频模型不能使用 `/v1/chat/completions` 或 `/v1/responses`；Ollama 文本模型应使用 `/v1/chat/completions`。
@@ -36,7 +36,7 @@ AIPDD 异步图片、视频、音频模型不能使用 `/v1/chat/completions` �
 1. 调用创建接口提交任务。
 2. 保存响应中的 `id` 或 `task_id`（公开任务 ID，按字符串保存）。
 3. 每隔 5～15 秒调用对应查询接口。
-4. 状态为 `succeeded` 或 `completed` 后读取结果 URL；失败时读取 `error`。
+4. 状态为 `succeeded`、`completed` 或内部成功状态 `SUCCESS` 后读取结果 URL；失败时读取 `error`。
 
 > 模型 ID 以 `aipdd_qwen_image_edit_` 开头的三种千问参考图编辑能力属于异步任务，使用 `/v1/images/generations` 创建和查询，不使用同步的 `/v1/images/edits` 调用方式。
 
@@ -542,7 +542,7 @@ curl "$BASE_URL/v1/audio/speech" \
 ### 4.13 AP Seedance 2.0 视频
 
 接口：`POST /v1/videos` 或 `POST /v1/video/generations`  
-查询：`GET /v1/videos/{task_id}`（兼容 `GET /v1/video/generations/{task_id}`）
+查询：`GET /v1/videos/{task_id}`（OpenAI 风格，推荐）或 `GET /v1/video/generations/{task_id}`（兼容路径，返回通用 `code/data` 封装）
 
 执行协议为 `seedance_official` 时，NewAPI 会归一化请求并转发到 Seedance 官方任务接口。
 
@@ -758,12 +758,14 @@ curl "$BASE_URL/v1/videos" \
 
 #### 4.13.5 角色图片 `asset://` 与角色库引用
 
-Seedance 2.0 支持引用火山托管角色图片。**上游官方写法**是把素材 ID 写成 `asset://{asset_id}`，放在 `content` 的 `image_url.url`（`role` 为 `reference_image`）中；NewAPI 会原样转发。NewAPI 角色库采用“一角色一图”，上传新图片必须创建新角色，不支持在已有角色下追加或替换图片。
+Seedance 2.0 支持引用火山托管角色图片。**上游官方写法**是把素材 ID 写成 `asset://{asset_id}`，放在 `content` 的 `image_url.url`（`role` 为 `reference_image`）中。NewAPI 会先把每个 `asset://` 反查到本地角色库并鉴权，再转发上游；未知或重复注册的 Asset ID 会被拒绝。NewAPI 角色库采用“一角色一图”，上传新图片必须创建新角色，不支持在已有角色下追加或替换图片。
+
+真人形象使用独立的私有授权链路：肖像权人须查看并确认用途、地区、平台、行业、商业使用和有效期，再完成火山 H5 身份核验；系统随后从 `LivenessFace` Group 中确认唯一 Active Image Asset。完整设计及管理员前置条件见 [真人形象素材库实施说明](real-person-character-library.zh_CN.md)。
 
 使用 API Key 上传角色：
 
 - 创建：`POST /v1/virtual-characters`，请求格式为 `multipart/form-data`。
-- 列表：`GET /v1/virtual-characters?scope=public` 查询公开角色；`scope=private` 查询当前 API Key 用户的私有角色。不传 `scope` 时默认为 `public`。
+- 列表：`GET /v1/virtual-characters?scope=public` 查询公开角色；`scope=private` 查询当前 API Key 用户的私有角色。可用 `source_type=volc_aigc` 或 `source_type=volc_real_person` 区分“我的虚拟形象”和“我的真人”。不传 `scope` 时默认为 `public`。
 - 查询：`GET /v1/virtual-characters/{id}`，轮询响应中的 `data.status`；正常状态流转为 `creating → active`，终态失败为 `failed`，并在 `data.last_error` 中返回原因。
 - 鉴权：以上接口均使用 `Authorization: Bearer $NEW_API_TOKEN`。角色归属于 API Key 对应的用户，并沿用该用户的角色配额与上传限流。
 - 字段：`name` 和 `file` 必填；`description`、`tags` 可选。`tags` 可传 JSON 字符串数组或逗号分隔文本。
@@ -819,8 +821,8 @@ curl "$BASE_URL/v1/virtual-characters/12" \
 
 | 引用方式 | 字段 | 适用创建接口 | 说明 |
 | --- | --- | --- | --- |
-| 官方 `asset://` | `content[].image_url.url`，或简写 `images` / `image` | `POST /v1/videos`、`POST /v1/video/generations` | 传火山侧素材 ID，**请求里请写完整** `asset://{asset_id}`（`asset_id` 即角色库中的 `provider_asset_id`） |
-| NewAPI 角色库 | `character_id` | **仅** `POST /v1/video/generations`（控制台为 `POST /pg/video/generations`） | 平台内部角色 ID；中间件读取角色的唯一 `provider_asset_id`，注入 `images: ["asset://..."]` 后再转发上游 |
+| 已注册 `asset://` | `content[].image_url.url`，或简写 `images` / `image` | 支持 Seedance 的视频创建入口 | 传角色库中已唯一注册的火山素材 ID，**请求里请写完整** `asset://{asset_id}`；每个 ID 都会反查所有权、授权期限和火山状态 |
+| NewAPI 角色库 | `character_id` | 支持 Seedance 的视频创建入口；控制台为 `POST /pg/video/generations` | 平台内部角色 ID；中间件读取角色的唯一 `provider_asset_id`，注入 `images: ["asset://..."]` 后再转发上游 |
 
 两种 ID 不要混用：
 
@@ -832,11 +834,11 @@ curl "$BASE_URL/v1/virtual-characters/12" \
 约束：
 
 1. 提示词用「图片1」「图片2」按顺序指代表材，**不要**在文案里写 `asset://` 原文。
-2. `asset://` 与公网 HTTPS 参考图可在同一 `content` 中混用；仍须遵守 [4.13.3](#4133-content-项与参考素材) 的「参考素材模式 / 首尾帧模式」二选一，不可与 `first_frame`/`last_frame` 混用。
+2. 多个已注册 `asset://` 可在同一 `content` 中组合，并会逐一鉴权和写入任务审计；它也可与公网 HTTPS 参考图混用。仍须遵守 [4.13.3](#4133-content-项与参考素材) 的「参考素材模式 / 首尾帧模式」二选一，不可与 `first_frame`/`last_frame` 混用。
 3. 使用 `character_id` 时：**不要**再同时传 `image` / `images` / `first_frame` / `last_frame` / `input_reference`，也不要再传非空的 `metadata.content`；否则返回 `character_reference_conflict`。
-4. `character_id` **不会**作用在 `POST /v1/videos` 上；该路径请直接传 `asset://` 或普通 URL。
+4. 真人角色无论通过 `character_id` 还是直接 `asset://` 使用，都必须属于当前用户、授权未过期、授权证据完整，并与管理员绑定的豆包视频通道及火山账号/项目一致。
 5. 旧请求中的 `character_asset_id` 会被静默忽略；JSON 与 multipart 请求都不会将其转发到 metadata 或上游。
-6. 模型必须是当前账号可用的 Seedance 2.0 档位；角色及其唯一图片须为可访问且状态为 Active。
+6. 模型必须是当前账号可用的 Seedance 档位；角色及其唯一图片须为可访问且状态为 Active。直接 `asset://` 必须先同步或创建到本地角色库，不能用它绕过真人授权链路。
 
 官方 `asset://` 示例（可用 `/v1/videos`）：
 
@@ -991,6 +993,8 @@ curl "$BASE_URL/v1/audio/speech/$TASK_ID" \
 }
 ```
 
+如果渠道不支持实时查询，兼容路径会返回任务记录的通用 DTO，例如 `data.status` 可能是 `IN_PROGRESS` 或 `SUCCESS`，而不是上例中的小写状态。客户端处理兼容路径时应同时接受这两组值；如果需要固定的 OpenAI 状态枚举，请使用 `GET /v1/videos/{task_id}`。
+
 结果读取顺序建议：`data.output` → `data.url` → `data.metadata.urls` → `data.metadata.url`。
 
 ### 7.2 `/v1/videos/{task_id}` 查询响应
@@ -1034,6 +1038,13 @@ OpenAI Video 风格：
 | `succeeded` | 图片/音频/兼容视频路径查询 | 完成，可取结果 |
 | `completed` | `GET /v1/videos/{task_id}` | 完成，可取结果 |
 | `failed` | 全部 | 失败，读取 `error` |
+| `NOT_START` | 兼容路径非实时查询 | 尚未开始 |
+| `SUBMITTED` | 兼容路径非实时查询 | 已提交 |
+| `QUEUED` | 兼容路径非实时查询 | 排队中 |
+| `IN_PROGRESS` | 兼容路径非实时查询 | 处理中 |
+| `SUCCESS` | 兼容路径非实时查询 | 已完成，可取结果 |
+| `FAILURE` | 兼容路径非实时查询 | 失败，读取错误信息 |
+| `UNKNOWN` | 兼容路径非实时查询 | 未知状态 |
 
 创建接口返回 200 只表示任务已提交，不代表生成成功，必须轮询到终态。
 

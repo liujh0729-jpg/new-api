@@ -18,6 +18,23 @@ func TestTaskSubmitReqAcceptsMultipartStyleCharacterIDAndIgnoresLegacyAssetID(t 
 	require.NotContains(t, string(payload), "character_asset_id")
 }
 
+func TestTaskSubmitReqPromotesTopLevelContentOverMetadataContent(t *testing.T) {
+	var req TaskSubmitReq
+	require.NoError(t, rootcommon.Unmarshal([]byte(`{
+        "model":"doubao-seedance-2-0-fast-260128",
+        "prompt":"legacy prompt",
+        "content":[{"type":"text","text":"official content"}],
+        "metadata":{"content":[{"type":"text","text":"metadata content"}],"resolution":"720p"}
+    }`), &req))
+
+	content, ok := req.Metadata["content"].([]any)
+	require.True(t, ok)
+	require.Len(t, content, 1)
+	item, ok := content[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "official content", item["text"])
+}
+
 func TestRelayInfoGetFinalRequestRelayFormatPrefersExplicitFinal(t *testing.T) {
 	info := &RelayInfo{
 		RelayFormat:             types.RelayFormatOpenAI,

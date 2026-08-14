@@ -25,25 +25,26 @@ const (
 )
 
 type VirtualCharacterValidationSession struct {
-	ID                  string `json:"id" gorm:"type:varchar(64);primaryKey"`
-	UserID              int    `json:"user_id" gorm:"index"`
-	ProviderAccountID   int    `json:"provider_account_id" gorm:"index"`
-	Status              string `json:"status" gorm:"type:varchar(20);index"`
-	StateHash           string `json:"-" gorm:"type:varchar(64);uniqueIndex"`
-	EncryptedBytedToken string `json:"-" gorm:"type:text"`
-	EncryptedH5Link     string `json:"-" gorm:"type:text"`
-	Name                string `json:"name" gorm:"type:varchar(191)"`
-	Description         string `json:"description" gorm:"type:text"`
-	TagsJSON            string `json:"-" gorm:"type:text"`
-	Language            string `json:"language" gorm:"type:varchar(16)"`
-	ProviderGroupID     string `json:"provider_group_id,omitempty" gorm:"type:varchar(191);index"`
-	CharacterID         int64  `json:"character_id,omitempty" gorm:"index"`
-	ResultCode          string `json:"result_code,omitempty" gorm:"type:varchar(64)"`
-	LastError           string `json:"last_error,omitempty" gorm:"type:text"`
-	ExpiresAt           int64  `json:"expires_at" gorm:"index"`
-	ConsumedAt          int64  `json:"consumed_at,omitempty" gorm:"index"`
-	CreatedAt           int64  `json:"created_at" gorm:"autoCreateTime;index"`
-	UpdatedAt           int64  `json:"updated_at" gorm:"autoUpdateTime"`
+	ID                    string `json:"id" gorm:"type:varchar(64);primaryKey"`
+	UserID                int    `json:"user_id" gorm:"index"`
+	ProviderAccountID     int    `json:"provider_account_id" gorm:"index"`
+	Status                string `json:"status" gorm:"type:varchar(20);index"`
+	StateHash             string `json:"-" gorm:"type:varchar(64);uniqueIndex"`
+	EncryptedBytedToken   string `json:"-" gorm:"type:text"`
+	EncryptedH5Link       string `json:"-" gorm:"type:text"`
+	Name                  string `json:"name" gorm:"type:varchar(191)"`
+	Description           string `json:"description" gorm:"type:text"`
+	TagsJSON              string `json:"-" gorm:"type:text"`
+	Language              string `json:"language" gorm:"type:varchar(16)"`
+	ProviderGroupID       string `json:"provider_group_id,omitempty" gorm:"type:varchar(191);index"`
+	CharacterID           int64  `json:"character_id,omitempty" gorm:"index"`
+	HolderScopeAcceptedAt int64  `json:"holder_scope_accepted_at,omitempty" gorm:"index"`
+	ResultCode            string `json:"result_code,omitempty" gorm:"type:varchar(64)"`
+	LastError             string `json:"last_error,omitempty" gorm:"type:text"`
+	ExpiresAt             int64  `json:"expires_at" gorm:"index"`
+	ConsumedAt            int64  `json:"consumed_at,omitempty" gorm:"index"`
+	CreatedAt             int64  `json:"created_at" gorm:"autoCreateTime;index"`
+	UpdatedAt             int64  `json:"updated_at" gorm:"autoUpdateTime"`
 }
 
 type VirtualCharacterProviderAccount struct {
@@ -270,7 +271,8 @@ func virtualCharacterPreviewPath(characterID int64) string {
 
 func ListVirtualCharactersToPoll(now int64, limit int) ([]VirtualCharacter, error) {
 	var characters []VirtualCharacter
-	err := DB.Where("status = ? AND provider_asset_id <> ? AND asset_next_poll_at <= ?", VirtualCharacterStatusCreating, "", now).
+	err := DB.Where("status = ? AND asset_next_poll_at <= ? AND ((source_type = ? AND provider_group_id <> ?) OR provider_asset_id <> ?)",
+		VirtualCharacterStatusCreating, now, VirtualCharacterSourceVolcRealPerson, "", "").
 		Order("asset_next_poll_at ASC, id ASC").Limit(limit).Find(&characters).Error
 	return characters, err
 }
@@ -309,11 +311,37 @@ func CreateVirtualCharacterValidationSession(session *VirtualCharacterValidation
 	return DB.Create(session).Error
 }
 
+func AcceptVirtualCharacterHolderScope(sessionID string) error {
+	now := time.Now().Unix()
+	return DB.Transaction(func(tx *gorm.DB) error {
+		var session VirtualCharacterValidationSession
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", strings.TrimSpace(sessionID)).First(&session).Error; err != nil {
+			return err
+		}
+		if session.Status != VirtualCharacterValidationPending || session.ExpiresAt <= now || session.CharacterID <= 0 {
+			return errors.New("validation session is no longer pending")
+		}
+		var authorization VirtualCharacterAuthorization
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("character_id = ? AND user_id = ?", session.CharacterID, session.UserID).First(&authorization).Error; err != nil {
+			return err
+		}
+		if authorization.Status != VirtualCharacterAuthorizationPending || authorization.ValidUntil <= now {
+			return errors.New("real-person authorization is no longer pending")
+		}
+		if err := tx.Model(&session).Updates(map[string]any{"holder_scope_accepted_at": now, "updated_at": now}).Error; err != nil {
+			return err
+		}
+		return tx.Model(&authorization).Updates(map[string]any{
+			"holder_scope_accepted_at": now, "updated_at": now,
+		}).Error
+	})
+}
+
 func GetOwnedVirtualCharacterValidationSession(id string, userID int) (*VirtualCharacterValidationSession, error) {
 	var item VirtualCharacterValidationSession
 	err := DB.Where("id = ? AND user_id = ?", strings.TrimSpace(id), userID).First(&item).Error
 	if err == nil && item.Status == VirtualCharacterValidationPending && item.ExpiresAt <= time.Now().Unix() {
-		_ = DB.Model(&item).Updates(map[string]any{"status": VirtualCharacterValidationExpired, "last_error": "validation session expired", "updated_at": time.Now().Unix()}).Error
+		_ = FailReservedVirtualCharacterValidation(item.ID, VirtualCharacterValidationExpired, "expired", "validation session expired")
 		item.Status = VirtualCharacterValidationExpired
 		item.LastError = "validation session expired"
 	}
@@ -328,13 +356,15 @@ func GetVirtualCharacterValidationSessionByStateHash(stateHash string) (*Virtual
 
 func MarkVirtualCharacterValidationFailed(id, resultCode, reason string) error {
 	return DB.Model(&VirtualCharacterValidationSession{}).Where("id = ? AND status = ?", id, VirtualCharacterValidationPending).Updates(map[string]any{
-		"status": VirtualCharacterValidationFailed, "result_code": resultCode, "last_error": reason, "consumed_at": time.Now().Unix(), "updated_at": time.Now().Unix(),
+		"status": VirtualCharacterValidationFailed, "result_code": resultCode, "last_error": reason, "consumed_at": time.Now().Unix(),
+		"encrypted_byted_token": "", "encrypted_h5_link": "", "updated_at": time.Now().Unix(),
 	}).Error
 }
 
 func MarkVirtualCharacterValidationExpired(id string) error {
 	return DB.Model(&VirtualCharacterValidationSession{}).Where("id = ? AND status = ?", id, VirtualCharacterValidationPending).Updates(map[string]any{
-		"status": VirtualCharacterValidationExpired, "result_code": "expired", "last_error": "validation session expired", "consumed_at": time.Now().Unix(), "updated_at": time.Now().Unix(),
+		"status": VirtualCharacterValidationExpired, "result_code": "expired", "last_error": "validation session expired", "consumed_at": time.Now().Unix(),
+		"encrypted_byted_token": "", "encrypted_h5_link": "", "updated_at": time.Now().Unix(),
 	}).Error
 }
 

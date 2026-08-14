@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import type {
   VirtualCharacter,
+  VirtualCharacterAuthorizationStatus,
   VirtualCharacterStatus,
   VirtualCharacterValidationSession,
 } from '../types'
@@ -27,6 +28,24 @@ export function splitTags(value: string): string[] {
     .split(',')
     .map((tag) => tag.trim())
     .filter(Boolean)
+}
+
+export function authorizationStatusLabel(
+  status: VirtualCharacterAuthorizationStatus,
+  t: (key: string) => string
+): string {
+  return t(
+    {
+      pending: 'Pending',
+      synchronizing: 'Creating',
+      active: 'Active',
+      ambiguous: 'Blocked',
+      provider_unavailable: 'Blocked',
+      expired: 'Expired',
+      revoked: 'Offline',
+      failed: 'Failed',
+    }[status]
+  )
 }
 
 export function errorMessage(error: unknown, fallback: string): string {

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/textproto"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -123,7 +124,7 @@ func TestValidationCallbackRejectsTokenMismatchAndReplay(t *testing.T) {
 	link, err := common.EncryptSensitiveValue("https://example.com/h5")
 	require.NoError(t, err)
 	state := "callback-state"
-	session := &model.VirtualCharacterValidationSession{ID: "session-security", UserID: 88, Status: model.VirtualCharacterValidationPending, StateHash: hashValidationState(state), EncryptedBytedToken: token, EncryptedH5Link: link, Name: "Actor", TagsJSON: "[]", ExpiresAt: time.Now().Add(time.Minute).Unix()}
+	session := &model.VirtualCharacterValidationSession{ID: "session-security", UserID: 88, Status: model.VirtualCharacterValidationPending, StateHash: hashValidationState(state), EncryptedBytedToken: token, EncryptedH5Link: link, Name: "Actor", TagsJSON: "[]", HolderScopeAcceptedAt: time.Now().Unix(), ExpiresAt: time.Now().Add(time.Minute).Unix()}
 	require.NoError(t, model.DB.Create(session).Error)
 
 	gin.SetMode(gin.TestMode)
@@ -147,6 +148,61 @@ func TestValidationCallbackRejectsTokenMismatchAndReplay(t *testing.T) {
 	require.Equal(t, http.StatusFound, replay.Code)
 	require.NoError(t, model.DB.Where("id = ?", session.ID).First(&stored).Error)
 	require.Equal(t, model.VirtualCharacterValidationFailed, stored.Status)
+}
+
+func TestValidationLaunchRequiresPortraitHolderScopeAcceptance(t *testing.T) {
+	db := setupVirtualCharacterControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.VirtualCharacter{}, &model.VirtualCharacterAuthorization{}, &model.VirtualCharacterValidationSession{}))
+	previousSecret := common.CryptoSecret
+	previousConfigured := common.CryptoSecretConfigured
+	common.CryptoSecret = strings.Repeat("h", 32)
+	common.CryptoSecretConfigured = true
+	t.Cleanup(func() {
+		common.CryptoSecret = previousSecret
+		common.CryptoSecretConfigured = previousConfigured
+	})
+
+	character := &model.VirtualCharacter{UserID: 89, Scope: model.VirtualCharacterScopePrivate, SourceType: model.VirtualCharacterSourceVolcRealPerson, Name: "Actor <One>", Status: model.VirtualCharacterStatusCreating}
+	require.NoError(t, db.Create(character).Error)
+	now := time.Now().Unix()
+	require.NoError(t, db.Create(&model.VirtualCharacterAuthorization{
+		CharacterID: character.ID, UserID: character.UserID, Status: model.VirtualCharacterAuthorizationPending,
+		ValidFrom: now, ValidUntil: now + 3600, PurposesJSON: `["Product <demo>"]`, RegionsJSON: `["CN"]`, PlatformsJSON: `["Web"]`,
+	}).Error)
+	encryptedLink, err := common.EncryptSensitiveValue("https://verify.example.com/private-token")
+	require.NoError(t, err)
+	state := "scope-state"
+	session := &model.VirtualCharacterValidationSession{
+		ID: "session-scope", UserID: character.UserID, CharacterID: character.ID, Status: model.VirtualCharacterValidationPending,
+		StateHash: hashValidationState(state), EncryptedH5Link: encryptedLink, Name: character.Name, Language: "en", ExpiresAt: now + 600,
+	}
+	require.NoError(t, db.Create(session).Error)
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.GET("/launch/:id", LaunchVirtualCharacterValidation)
+	router.POST("/launch/:id", LaunchVirtualCharacterValidation)
+	getRecorder := httptest.NewRecorder()
+	router.ServeHTTP(getRecorder, httptest.NewRequest(http.MethodGet, "/launch/"+session.ID+"?state="+state, nil))
+	require.Equal(t, http.StatusOK, getRecorder.Code)
+	require.Contains(t, getRecorder.Body.String(), "Product &lt;demo&gt;")
+	require.NotContains(t, getRecorder.Body.String(), "private-token")
+	require.Equal(t, "no-store", getRecorder.Header().Get("Cache-Control"))
+
+	form := url.Values{"state": {state}, "accepted": {"1"}}
+	postRequest := httptest.NewRequest(http.MethodPost, "/launch/"+session.ID, strings.NewReader(form.Encode()))
+	postRequest.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	postRecorder := httptest.NewRecorder()
+	router.ServeHTTP(postRecorder, postRequest)
+	require.Equal(t, http.StatusFound, postRecorder.Code)
+	require.Equal(t, "https://verify.example.com/private-token", postRecorder.Header().Get("Location"))
+
+	var stored model.VirtualCharacterValidationSession
+	require.NoError(t, db.First(&stored, "id = ?", session.ID).Error)
+	require.Greater(t, stored.HolderScopeAcceptedAt, int64(0))
+	var authorization model.VirtualCharacterAuthorization
+	require.NoError(t, db.Where("character_id = ?", character.ID).First(&authorization).Error)
+	require.Equal(t, stored.HolderScopeAcceptedAt, authorization.HolderScopeAcceptedAt)
 }
 
 func TestValidationSessionEndpointHidesOtherUsersSessions(t *testing.T) {
@@ -203,11 +259,17 @@ func (s *stubVolcAssetClient) GetAsset(context.Context, string, string) (*servic
 func (s *stubVolcAssetClient) ListAssets(context.Context, string, string) ([]service.VolcAssetResult, error) {
 	return nil, nil
 }
+func (s *stubVolcAssetClient) ListAssetsByGroupType(context.Context, string, string, string) ([]service.VolcAssetResult, error) {
+	return nil, nil
+}
 func (s *stubVolcAssetClient) DeleteAsset(context.Context, string, string) error { return nil }
 func (s *stubVolcAssetClient) DeleteAssetGroup(context.Context, string, string) error {
 	return nil
 }
 func (s *stubVolcAssetClient) ListAssetGroups(context.Context, string) ([]service.VolcAssetGroupResult, error) {
+	return nil, nil
+}
+func (s *stubVolcAssetClient) ListAssetGroupsByType(context.Context, string, string) ([]service.VolcAssetGroupResult, error) {
 	return nil, nil
 }
 func (s *stubVolcAssetClient) GetAssetGroup(context.Context, string, string) (*service.VolcAssetGroupResult, error) {

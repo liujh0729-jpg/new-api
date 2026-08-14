@@ -690,7 +690,7 @@
       "get": {
         "summary": "获取视频任务状态 ",
         "deprecated": false,
-        "description": "OpenAI 兼容的视频任务状态查询接口。\n\n返回视频任务的详细状态信息。\n",
+        "description": "OpenAI 兼容的视频任务状态查询接口。\n\n返回视频任务的详细状态信息。`status` 使用 OpenAI 状态枚举：`queued`（排队中）、`in_progress`（生成中）、`completed`（已完成）、`failed`（失败）。\n",
         "operationId": "getVideo",
         "tags": [
           "视频生成/Sora兼容格式"
@@ -725,7 +725,14 @@
                       "type": "string"
                     },
                     "status": {
-                      "type": "string"
+                      "type": "string",
+                      "description": "OpenAI 视频任务状态",
+                      "enum": [
+                        "queued",
+                        "in_progress",
+                        "completed",
+                        "failed"
+                      ]
                     },
                     "progress": {
                       "type": "integer"
@@ -1227,7 +1234,7 @@
       "get": {
         "summary": "获取视频生成任务状态",
         "deprecated": false,
-        "description": "查询视频生成任务的状态和结果。\n\n任务状态：\n- `queued`: 排队中\n- `in_progress`: 生成中\n- `completed`: 已完成\n- `failed`: 失败\n",
+        "description": "查询兼容视频生成任务的状态和结果。此兼容路径返回通用任务封装 `{code, data}`，不是 `/v1/videos/{task_id}` 的 OpenAI Video 顶层对象。\n\n`data.status` 会随查询分支变化：实时查询通常返回 `queued`、`processing`、`succeeded`、`failed`；无法实时查询时会返回任务记录中的内部状态 `NOT_START`、`SUBMITTED`、`QUEUED`、`IN_PROGRESS`、`SUCCESS`、`FAILURE` 或 `UNKNOWN`。需要稳定使用 OpenAI 状态枚举时，请改用 `/v1/videos/{task_id}`。\n",
         "operationId": "getVideoGeneration",
         "tags": [
           "视频生成"
@@ -1250,7 +1257,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/VideoTaskResponse"
+                  "$ref": "#/components/schemas/VideoGenerationTaskFetchResponse"
                 }
               }
             },
@@ -4383,6 +4390,75 @@
             "$ref": "#/components/schemas/VideoTaskError"
           }
         }
+      },
+      "VideoGenerationTaskFetchResponse": {
+        "type": "object",
+        "description": "兼容视频路径的通用任务查询响应。返回结构固定为 code/data，但 data 字段会根据实时查询或任务记录包含不同的扩展字段。",
+        "properties": {
+          "code": {
+            "type": "string",
+            "example": "success"
+          },
+          "message": {
+            "type": "string"
+          },
+          "data": {
+            "type": "object",
+            "description": "任务状态和结果。实时查询与非实时查询可能包含不同的扩展字段。",
+            "properties": {
+              "task_id": {
+                "type": "string",
+                "description": "公开任务 ID"
+              },
+              "status": {
+                "type": "string",
+                "description": "实时查询通常返回小写状态；无法实时查询时返回内部任务状态。",
+                "enum": [
+                  "queued",
+                  "processing",
+                  "succeeded",
+                  "failed",
+                  "NOT_START",
+                  "SUBMITTED",
+                  "QUEUED",
+                  "IN_PROGRESS",
+                  "SUCCESS",
+                  "FAILURE",
+                  "UNKNOWN"
+                ],
+                "example": "processing"
+              },
+              "error": {
+                "description": "失败原因；可能为 null、字符串或对象。",
+                "nullable": true
+              },
+              "url": {
+                "type": "string",
+                "description": "成功时的结果 URL"
+              },
+              "format": {
+                "type": "string",
+                "description": "成功结果的媒体格式"
+              },
+              "output": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "结果 URL 列表"
+              },
+              "metadata": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            },
+            "additionalProperties": true
+          }
+        },
+        "required": [
+          "code",
+          "data"
+        ]
       },
       "VideoTaskMetadata": {
         "type": "object",
