@@ -31,7 +31,6 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
@@ -91,11 +90,6 @@ export function CharacterDetailDialog({
             onRefresh={() => query.refetch()}
           />
         )}
-        <DialogFooter>
-          <Button variant='outline' onClick={onClose}>
-            {t('Close')}
-          </Button>
-        </DialogFooter>
       </DialogContent>
     </Dialog>
   )

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -380,4 +381,85 @@ func TestCreateVirtualCharacterRequiresComplianceAndRollsBackOnGroupFailure(t *t
 	require.Equal(t, "image/png", creating.MimeType)
 	require.NotNil(t, creating.Slot)
 	require.Contains(t, creating.CoverURL, "/preview")
+}
+
+func TestUploadRealPersonVirtualCharacterAssetCreatesSelectedProviderAsset(t *testing.T) {
+	db := setupVirtualCharacterControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(
+		&model.VirtualCharacterAuthorization{},
+		&model.VirtualCharacterProviderAccount{},
+		&model.VirtualCharacterCleanupJob{},
+	))
+
+	previousSecret := common.CryptoSecret
+	previousConfigured := common.CryptoSecretConfigured
+	previousOptions := common.OptionMap
+	previousFactory := newVolcAssetClientForVirtualCharacters
+	previousStaging := newVirtualCharacterStagingStorage
+	common.CryptoSecret = strings.Repeat("r", 32)
+	common.CryptoSecretConfigured = true
+	common.OptionMap = map[string]string{"VirtualCharacterAccountAssetCap": "50"}
+	newVirtualCharacterStagingStorage = func() (virtualCharacterStagingStorage, error) {
+		return &stubVirtualCharacterStagingStorage{}, nil
+	}
+	newVolcAssetClientForVirtualCharacters = func(*model.VirtualCharacterProviderAccount) (service.VolcAssetClient, error) {
+		return &stubVolcAssetClient{createAssetID: "real-asset-1"}, nil
+	}
+	t.Cleanup(func() {
+		common.CryptoSecret = previousSecret
+		common.CryptoSecretConfigured = previousConfigured
+		common.OptionMap = previousOptions
+		newVolcAssetClientForVirtualCharacters = previousFactory
+		newVirtualCharacterStagingStorage = previousStaging
+	})
+
+	account := &model.VirtualCharacterProviderAccount{
+		ID: 1, Enabled: true, RealPersonEnabled: true, Region: "cn-beijing", ProjectName: "default",
+	}
+	require.NoError(t, db.Create(account).Error)
+	slot := 1
+	character := &model.VirtualCharacter{
+		UserID: 77, RealPersonSlot: &slot, Scope: model.VirtualCharacterScopePrivate,
+		SourceType: model.VirtualCharacterSourceVolcRealPerson, Name: "Verified Actor",
+		Status: model.VirtualCharacterStatusCreating, ValidationStatus: model.VirtualCharacterValidationAccepted,
+		ProviderAccountID: account.ID, ProviderGroupID: "verified-group-1",
+	}
+	require.NoError(t, db.Create(character).Error)
+	now := time.Now().Unix()
+	require.NoError(t, db.Create(&model.VirtualCharacterAuthorization{
+		CharacterID: character.ID, UserID: character.UserID,
+		Status:                model.VirtualCharacterAuthorizationSynchronizing,
+		HolderScopeAcceptedAt: now, ConsentReceiptHash: strings.Repeat("a", 64),
+		ProviderGroupStatus: "Active", ProviderAssetStatus: model.VirtualCharacterProviderAssetAwaitingUpload,
+	}).Error)
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.POST("/api/virtual-characters/:id/asset", func(c *gin.Context) {
+		c.Set("id", 77)
+		UploadRealPersonVirtualCharacterAsset(c)
+	})
+	request := newCreateVirtualCharacterMultipartRequest(t, nil, "portrait.png", "image/png", []byte("portrait-bytes"))
+	request.URL.Path = fmt.Sprintf("/api/virtual-characters/%d/asset", character.ID)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+	require.Equal(t, http.StatusCreated, recorder.Code, recorder.Body.String())
+
+	var stored model.VirtualCharacter
+	require.NoError(t, db.First(&stored, character.ID).Error)
+	require.Equal(t, "real-asset-1", stored.ProviderAssetID)
+	require.Equal(t, "file-staging-1", stored.StagingFileID)
+	require.Equal(t, model.VirtualCharacterStatusCreating, stored.Status)
+	require.Greater(t, stored.AssetNextPollAt, int64(0))
+	authorization, err := model.GetVirtualCharacterAuthorization(character.ID)
+	require.NoError(t, err)
+	require.Equal(t, model.VirtualCharacterProviderAssetProcessing, authorization.ProviderAssetStatus)
+
+	var payload struct {
+		Success bool                          `json:"success"`
+		Data    virtualCharacterGroupResponse `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
+	require.True(t, payload.Success)
+	require.False(t, payload.Data.AssetUploadRequired)
 }

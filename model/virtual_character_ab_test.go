@@ -261,8 +261,16 @@ func TestOfficialH5CompletionActivatesReservedVerificationEvidence(t *testing.T)
 	authorization, err := GetVirtualCharacterAuthorization(character.ID)
 	require.NoError(t, err)
 	require.Equal(t, VirtualCharacterAuthorizationSynchronizing, authorization.Status)
+	require.Equal(t, VirtualCharacterProviderAssetAwaitingUpload, authorization.ProviderAssetStatus)
 	require.Greater(t, authorization.HolderScopeAcceptedAt, int64(0))
 	require.Zero(t, authorization.ValidUntil)
+	stored, err := GetVirtualCharacterByID(character.ID)
+	require.NoError(t, err)
+	require.Empty(t, stored.ProviderAssetID)
+	require.Zero(t, stored.AssetNextPollAt)
+	due, err := ListVirtualCharactersToPoll(time.Now().Unix(), 10)
+	require.NoError(t, err)
+	require.Empty(t, due)
 }
 
 func TestFailedRealPersonValidationRemovesReservedCharacter(t *testing.T) {

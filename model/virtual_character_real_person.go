@@ -20,6 +20,8 @@ const (
 	VirtualCharacterAuthorizationExpired             = "expired"
 	VirtualCharacterAuthorizationRevoked             = "revoked"
 	VirtualCharacterAuthorizationFailed              = "failed"
+	VirtualCharacterProviderAssetAwaitingUpload      = "AwaitingUpload"
+	VirtualCharacterProviderAssetProcessing          = "Processing"
 
 	VirtualCharacterRealPersonGroupType    = "LivenessFace"
 	VirtualCharacterRealPersonAgreement    = "volc-official-h5-v1"
@@ -251,7 +253,7 @@ func CompleteReservedVirtualCharacterValidation(sessionID, providerGroupID, cons
 		if err := tx.Model(&character).Updates(map[string]any{
 			"provider_group_id": providerGroupID, "provider_asset_id": "",
 			"status": VirtualCharacterStatusCreating, "validation_status": VirtualCharacterValidationAccepted,
-			"asset_next_poll_at": now, "last_error": "", "updated_at": now,
+			"asset_poll_attempts": 0, "asset_next_poll_at": 0, "last_error": "", "updated_at": now,
 		}).Error; err != nil {
 			return err
 		}
@@ -260,7 +262,8 @@ func CompleteReservedVirtualCharacterValidation(sessionID, providerGroupID, cons
 			"consent_receipt_hash": strings.TrimSpace(consentReceiptHash), "authorized_at": now,
 			"holder_scope_accepted_at": now,
 			"provider_group_type":      VirtualCharacterRealPersonGroupType, "provider_group_status": "Active",
-			"last_error": "", "updated_at": now,
+			"provider_asset_status": VirtualCharacterProviderAssetAwaitingUpload,
+			"last_error":            "", "updated_at": now,
 		}).Error; err != nil {
 			return err
 		}
@@ -272,6 +275,70 @@ func CompleteReservedVirtualCharacterValidation(sessionID, providerGroupID, cons
 		}).Error
 	})
 	return &character, err
+}
+
+func MarkRealPersonVirtualCharacterAwaitingAssetUpload(characterID int64) error {
+	if characterID <= 0 {
+		return errors.New("invalid real-person character")
+	}
+	now := time.Now().Unix()
+	return DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&VirtualCharacter{}).
+			Where("id = ? AND source_type = ? AND provider_asset_id = ?", characterID, VirtualCharacterSourceVolcRealPerson, "").
+			Updates(map[string]any{
+				"status": VirtualCharacterStatusCreating, "asset_poll_attempts": 0,
+				"asset_next_poll_at": 0, "last_error": "", "updated_at": now,
+			}).Error; err != nil {
+			return err
+		}
+		return tx.Model(&VirtualCharacterAuthorization{}).
+			Where("character_id = ? AND status NOT IN ?", characterID, []string{VirtualCharacterAuthorizationExpired, VirtualCharacterAuthorizationRevoked}).
+			Updates(map[string]any{
+				"status":                VirtualCharacterAuthorizationSynchronizing,
+				"provider_asset_status": VirtualCharacterProviderAssetAwaitingUpload,
+				"provider_checked_at":   now, "last_error": "", "updated_at": now,
+			}).Error
+	})
+}
+
+func AttachRealPersonVirtualCharacterImage(characterID int64, providerAssetID, stagingFileID, mimeType string, fileSize int64) error {
+	providerAssetID = strings.TrimPrefix(strings.TrimSpace(providerAssetID), "asset://")
+	if characterID <= 0 || providerAssetID == "" {
+		return errors.New("invalid real-person character asset")
+	}
+	now := time.Now().Unix()
+	return DB.Transaction(func(tx *gorm.DB) error {
+		var character VirtualCharacter
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", characterID).First(&character).Error; err != nil {
+			return err
+		}
+		if character.SourceType != VirtualCharacterSourceVolcRealPerson || character.ValidationStatus != VirtualCharacterValidationAccepted || strings.TrimSpace(character.ProviderGroupID) == "" {
+			return errors.New("real-person character has not completed identity validation")
+		}
+		if strings.TrimSpace(character.ProviderAssetID) != "" {
+			return errors.New("real-person character asset has already been uploaded")
+		}
+		var authorization VirtualCharacterAuthorization
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("character_id = ?", characterID).First(&authorization).Error; err != nil {
+			return err
+		}
+		if authorization.Status == VirtualCharacterAuthorizationExpired || authorization.Status == VirtualCharacterAuthorizationRevoked || authorization.HolderScopeAcceptedAt <= 0 || strings.TrimSpace(authorization.ConsentReceiptHash) == "" {
+			return errors.New("real-person authorization is not valid for asset upload")
+		}
+		if err := tx.Model(&character).Updates(map[string]any{
+			"provider_asset_id": providerAssetID, "staging_file_id": strings.TrimSpace(stagingFileID),
+			"mime_type": strings.TrimSpace(mimeType), "file_size": fileSize,
+			"cover_url": virtualCharacterPreviewPath(characterID), "status": VirtualCharacterStatusCreating,
+			"asset_poll_attempts": 0, "asset_next_poll_at": now, "last_error": "", "updated_at": now,
+		}).Error; err != nil {
+			return err
+		}
+		return tx.Model(&authorization).Updates(map[string]any{
+			"status":                VirtualCharacterAuthorizationSynchronizing,
+			"provider_asset_status": VirtualCharacterProviderAssetProcessing,
+			"provider_checked_at":   now, "last_error": "", "updated_at": now,
+		}).Error
+	})
 }
 
 func FailReservedVirtualCharacterValidation(sessionID, status, resultCode, reason string) error {
@@ -499,6 +566,7 @@ func ListRealPersonVirtualCharactersDueForProviderCheck(now, staleBefore int64, 
 		Select("virtual_characters.*").
 		Joins("JOIN virtual_character_authorizations ON virtual_character_authorizations.character_id = virtual_characters.id").
 		Where("virtual_characters.source_type = ? AND virtual_characters.status IN ?", VirtualCharacterSourceVolcRealPerson, []string{VirtualCharacterStatusActive, VirtualCharacterStatusBlocked, VirtualCharacterStatusCreating}).
+		Where("virtual_characters.provider_asset_id <> ?", "").
 		Where("(virtual_character_authorizations.valid_until > 0 AND virtual_character_authorizations.valid_until <= ?) OR virtual_character_authorizations.provider_checked_at <= ?", now, staleBefore).
 		Order("virtual_character_authorizations.provider_checked_at ASC, virtual_characters.id ASC").Limit(limit).Scan(&items).Error
 	return items, err

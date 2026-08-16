@@ -396,6 +396,7 @@ func SetApiRouter(router *gin.Engine) {
 			virtualCharacterRoute.GET("/validation-sessions/:id", controller.GetVirtualCharacterValidationSession)
 			virtualCharacterRoute.DELETE("/validation-sessions/:id", controller.CancelVirtualCharacterValidationSession)
 			virtualCharacterRoute.GET("/:id/preview", controller.PreviewVirtualCharacter)
+			virtualCharacterRoute.POST("/:id/asset", middleware.UserUploadRateLimit(), controller.UploadRealPersonVirtualCharacterAsset)
 			virtualCharacterRoute.POST("/:id/sync", controller.SyncRealPersonVirtualCharacter)
 			virtualCharacterRoute.GET("/:id", controller.GetVirtualCharacterGroup)
 			virtualCharacterRoute.PUT("/:id", controller.UpdateVirtualCharacter)

@@ -61,6 +61,7 @@ import { CreateRealPersonDialog } from './components/create-real-person-dialog'
 import { CreateVirtualCharacterDialog } from './components/create-virtual-character-dialog'
 import { DeleteCharacterDialog } from './components/delete-character-dialog'
 import { GenerateDialog } from './components/generate-dialog'
+import { RealPersonAssetUploadDialog } from './components/real-person-asset-upload-dialog'
 import { SettingsDialog } from './components/settings-dialog'
 import { TaskHistory } from './components/task-history'
 import { CharacterGridSkeleton, Pagination } from './components/ui-bits'
@@ -102,6 +103,7 @@ export function VirtualCharacters() {
   const [validation, setValidation] =
     useState<VirtualCharacterValidationSession | null>(null)
   const [detailID, setDetailID] = useState<number | null>(null)
+  const [assetUploadID, setAssetUploadID] = useState<number | null>(null)
   const [imagePreview, setImagePreview] =
     useState<CharacterImagePreview | null>(null)
   const [generateTarget, setGenerateTarget] = useState<{
@@ -157,7 +159,9 @@ export function VirtualCharacters() {
     queryFn: () => listVirtualCharacters(realListParams),
     refetchInterval: (query) =>
       query.state.data?.data.page.items.some(
-        (item) => item.status === 'creating' || item.status === 'deleting'
+        (item) =>
+          (item.status === 'creating' && !item.asset_upload_required) ||
+          item.status === 'deleting'
       )
         ? 5000
         : false,
@@ -240,8 +244,21 @@ export function VirtualCharacters() {
       toast.success(t('Real-person provider status synchronized'))
       await refreshAll()
     } catch (error) {
-      toast.error(errorMessage(error, t('Failed to synchronize provider status')))
+      toast.error(
+        errorMessage(error, t('Failed to synchronize provider status'))
+      )
     }
+  }
+
+  const clearValidationQuery = () => {
+    const url = new URL(window.location.href)
+    url.searchParams.delete('validation_session')
+    url.searchParams.delete('validation_status')
+    window.history.replaceState(
+      window.history.state,
+      '',
+      `${url.pathname}${url.search}${url.hash}`
+    )
   }
 
   return (
@@ -300,7 +317,9 @@ export function VirtualCharacters() {
                 <TabsTrigger value='public'>
                   {t('Public characters')}
                 </TabsTrigger>
-                <TabsTrigger value='virtual'>{t('My virtual characters')}</TabsTrigger>
+                <TabsTrigger value='virtual'>
+                  {t('My virtual characters')}
+                </TabsTrigger>
                 <TabsTrigger value='real'>{t('My real people')}</TabsTrigger>
                 <TabsTrigger value='history'>{t('Task history')}</TabsTrigger>
               </TabsList>
@@ -465,7 +484,9 @@ export function VirtualCharacters() {
               configQuery.isSuccess &&
               !configQuery.data?.data.real_person_enabled && (
                 <Alert variant='destructive'>
-                  <AlertTitle>{t('Real-person library is disabled')}</AlertTitle>
+                  <AlertTitle>
+                    {t('Real-person library is disabled')}
+                  </AlertTitle>
                   <AlertDescription>
                     {t(
                       'An administrator must enable the Premium real-person Assets API and configure the matching Volc AK/SK and Project.'
@@ -497,7 +518,9 @@ export function VirtualCharacters() {
                             )
                           : tab === 'virtual'
                             ? t('Create your first private virtual character.')
-                            : t('Complete identity authorization to add your first real person.')}
+                            : t(
+                                'Complete identity authorization to add your first real person.'
+                              )}
                       </CardDescription>
                     </CardHeader>
                   </Card>
@@ -514,6 +537,7 @@ export function VirtualCharacters() {
                       onGenerate={() => setGenerateTarget({ character: item })}
                       onDelete={() => setDeleteTarget(item)}
                       onSync={() => void syncRealPerson(item)}
+                      onUpload={() => setAssetUploadID(item.id)}
                     />
                   ))}
                 </div>
@@ -558,9 +582,20 @@ export function VirtualCharacters() {
           setCreateOpen(true)
         }}
         onSucceeded={async (characterID) => {
+          setValidation(null)
+          clearValidationQuery()
           await refreshAll()
           setTab('real')
-          if (characterID) setDetailID(characterID)
+          if (characterID) setAssetUploadID(characterID)
+        }}
+      />
+      <RealPersonAssetUploadDialog
+        characterID={assetUploadID}
+        onClose={() => setAssetUploadID(null)}
+        onUploaded={async () => {
+          setAssetUploadID(null)
+          setTab('real')
+          await refreshAll()
         }}
       />
       <CharacterDetailDialog

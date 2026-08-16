@@ -122,6 +122,16 @@ export async function createValidationSession(input: {
   return res.data
 }
 
+export async function uploadRealPersonAsset(
+  id: number,
+  file: File
+): Promise<ApiResponse<VirtualCharacter>> {
+  const form = new FormData()
+  form.append('file', file)
+  const res = await api.post(`/api/virtual-characters/${id}/asset`, form)
+  return res.data
+}
+
 export async function cancelValidationSession(
   id: string
 ): Promise<ApiResponse<{ id: string; cancelled: boolean }>> {

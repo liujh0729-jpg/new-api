@@ -55,29 +55,30 @@ func (e *virtualCharacterImageCreateError) Error() string {
 }
 
 type virtualCharacterGroupResponse struct {
-	ID               int64                                  `json:"id"`
-	Scope            string                                 `json:"scope"`
-	SourceType       string                                 `json:"source_type"`
-	Name             string                                 `json:"name"`
-	Description      string                                 `json:"description"`
-	Tags             []string                               `json:"tags"`
-	Nationality      string                                 `json:"nationality,omitempty"`
-	Gender           string                                 `json:"gender,omitempty"`
-	AgeMin           *int                                   `json:"age_min,omitempty"`
-	AgeMax           *int                                   `json:"age_max,omitempty"`
-	Occupation       string                                 `json:"occupation,omitempty"`
-	Temperament      string                                 `json:"temperament,omitempty"`
-	Status           string                                 `json:"status"`
-	ValidationStatus string                                 `json:"validation_status"`
-	CoverURL         string                                 `json:"cover_url,omitempty"`
-	ProviderAssetID  string                                 `json:"provider_asset_id,omitempty"`
-	MimeType         string                                 `json:"mime_type,omitempty"`
-	FileSize         int64                                  `json:"file_size,omitempty"`
-	LastError        string                                 `json:"last_error,omitempty"`
-	CreatedAt        int64                                  `json:"created_at"`
-	UpdatedAt        int64                                  `json:"updated_at"`
-	CatalogVersion   string                                 `json:"catalog_version,omitempty"`
-	Authorization    *virtualCharacterAuthorizationResponse `json:"authorization,omitempty"`
+	ID                  int64                                  `json:"id"`
+	Scope               string                                 `json:"scope"`
+	SourceType          string                                 `json:"source_type"`
+	Name                string                                 `json:"name"`
+	Description         string                                 `json:"description"`
+	Tags                []string                               `json:"tags"`
+	Nationality         string                                 `json:"nationality,omitempty"`
+	Gender              string                                 `json:"gender,omitempty"`
+	AgeMin              *int                                   `json:"age_min,omitempty"`
+	AgeMax              *int                                   `json:"age_max,omitempty"`
+	Occupation          string                                 `json:"occupation,omitempty"`
+	Temperament         string                                 `json:"temperament,omitempty"`
+	Status              string                                 `json:"status"`
+	ValidationStatus    string                                 `json:"validation_status"`
+	CoverURL            string                                 `json:"cover_url,omitempty"`
+	ProviderAssetID     string                                 `json:"provider_asset_id,omitempty"`
+	AssetUploadRequired bool                                   `json:"asset_upload_required,omitempty"`
+	MimeType            string                                 `json:"mime_type,omitempty"`
+	FileSize            int64                                  `json:"file_size,omitempty"`
+	LastError           string                                 `json:"last_error,omitempty"`
+	CreatedAt           int64                                  `json:"created_at"`
+	UpdatedAt           int64                                  `json:"updated_at"`
+	CatalogVersion      string                                 `json:"catalog_version,omitempty"`
+	Authorization       *virtualCharacterAuthorizationResponse `json:"authorization,omitempty"`
 }
 
 type virtualCharacterAuthorizationResponse struct {
@@ -476,16 +477,11 @@ func VirtualCharacterValidationCallback(c *gin.Context) {
 		if err == nil {
 			var receipt string
 			receipt, err = realPersonValidationReceiptHash(item, groupID)
-			var character *model.VirtualCharacter
 			if err == nil {
-				character, err = model.CompleteReservedVirtualCharacterValidation(item.ID, groupID, receipt)
+				_, err = model.CompleteReservedVirtualCharacterValidation(item.ID, groupID, receipt)
 			}
 			if err != nil {
 				_ = model.CreateVirtualCharacterCleanupJob(&model.VirtualCharacterCleanupJob{ProviderAccountID: account.ID, TargetType: "volc_group", TargetID: groupID})
-			} else {
-				// H5 success is committed before asset discovery. A temporary ListAssets
-				// failure leaves the character synchronizing and the maintenance worker retries.
-				_, _ = service.SyncRealPersonVirtualCharacter(c.Request.Context(), character.ID)
 			}
 		}
 	}
@@ -574,14 +570,102 @@ func stageAndCreateVirtualCharacterImage(
 	if err != nil {
 		return &virtualCharacterImageCreateError{Status: http.StatusBadGateway, Code: "provider_asset_failed", Message: service.LocalizeVolcAssetError(err)}
 	}
-	if err := model.AttachVirtualCharacterImage(character.ID, providerAssetID, stored.FileID, mimeType, header.Size); err != nil {
+	var attachErr error
+	if character.SourceType == model.VirtualCharacterSourceVolcRealPerson {
+		attachErr = model.AttachRealPersonVirtualCharacterImage(character.ID, providerAssetID, stored.FileID, mimeType, header.Size)
+	} else {
+		attachErr = model.AttachVirtualCharacterImage(character.ID, providerAssetID, stored.FileID, mimeType, header.Size)
+	}
+	if attachErr != nil {
 		_ = model.CreateVirtualCharacterCleanupJob(&model.VirtualCharacterCleanupJob{
 			CharacterID: character.ID, ProviderAccountID: account.ID, TargetType: "volc_asset", TargetID: providerAssetID,
 		})
-		return &virtualCharacterImageCreateError{Status: http.StatusInternalServerError, Code: "asset_save_failed", Message: err.Error()}
+		return &virtualCharacterImageCreateError{Status: http.StatusInternalServerError, Code: "asset_save_failed", Message: attachErr.Error()}
 	}
 	cleanupStaging = false
 	return nil
+}
+
+func UploadRealPersonVirtualCharacterAsset(c *gin.Context) {
+	userID := c.GetInt("id")
+	if userID <= 0 {
+		virtualCharacterError(c, http.StatusUnauthorized, "unauthorized", "authentication is required")
+		return
+	}
+	characterID, err := parseVirtualCharacterID(c.Param("id"))
+	if err != nil {
+		virtualCharacterLookupError(c, err)
+		return
+	}
+	character, err := model.GetOwnedVirtualCharacter(characterID, userID)
+	if err != nil || character.SourceType != model.VirtualCharacterSourceVolcRealPerson {
+		virtualCharacterLookupError(c, gorm.ErrRecordNotFound)
+		return
+	}
+	if character.ValidationStatus != model.VirtualCharacterValidationAccepted || strings.TrimSpace(character.ProviderGroupID) == "" {
+		virtualCharacterError(c, http.StatusConflict, "validation_required", "complete real-person identity validation before uploading the portrait asset")
+		return
+	}
+	if character.Status == model.VirtualCharacterStatusDeleting {
+		virtualCharacterError(c, http.StatusConflict, "character_deleting", "character is being deleted")
+		return
+	}
+	if strings.TrimSpace(character.ProviderAssetID) != "" {
+		virtualCharacterError(c, http.StatusConflict, "asset_already_uploaded", "real-person portrait asset has already been uploaded")
+		return
+	}
+	authorization, err := model.GetVirtualCharacterAuthorization(character.ID)
+	if err != nil || authorization.HolderScopeAcceptedAt <= 0 || strings.TrimSpace(authorization.ConsentReceiptHash) == "" ||
+		authorization.Status == model.VirtualCharacterAuthorizationExpired || authorization.Status == model.VirtualCharacterAuthorizationRevoked {
+		virtualCharacterError(c, http.StatusConflict, "authorization_invalid", "real-person authorization is not valid for asset upload")
+		return
+	}
+
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, virtualCharacterUploadMaxBody)
+	if err := c.Request.ParseMultipartForm(8 << 20); err != nil {
+		virtualCharacterError(c, http.StatusBadRequest, "invalid_upload", "invalid or oversized multipart upload")
+		return
+	}
+	if c.Request.MultipartForm != nil {
+		defer c.Request.MultipartForm.RemoveAll()
+	}
+	header, err := c.FormFile("file")
+	if err != nil {
+		virtualCharacterError(c, http.StatusBadRequest, "missing_file", "real-person portrait image is required")
+		return
+	}
+	if _, err := validateVolcCharacterImageUpload(header); err != nil {
+		virtualCharacterError(c, http.StatusBadRequest, "invalid_file", err.Error())
+		return
+	}
+	account, client, err := enabledVirtualCharacterClientForSource(model.VirtualCharacterSourceVolcRealPerson)
+	if err != nil {
+		virtualCharacterError(c, http.StatusServiceUnavailable, "real_person_disabled", err.Error())
+		return
+	}
+	if account.ID != character.ProviderAccountID {
+		virtualCharacterError(c, http.StatusConflict, "provider_account_changed", "the provider account used for identity validation is no longer active")
+		return
+	}
+	assetCount, err := model.CountVirtualCharacterProviderAssets()
+	if err != nil {
+		virtualCharacterError(c, http.StatusInternalServerError, "quota_check_failed", err.Error())
+		return
+	}
+	if assetCount >= int64(model.GetVirtualCharacterAccountAssetCap()) {
+		virtualCharacterError(c, http.StatusConflict, "account_asset_cap_reached", "account asset capacity has been reached")
+		return
+	}
+	if createErr := stageAndCreateVirtualCharacterImage(c.Request.Context(), character, account, client, header, character.Name); createErr != nil {
+		virtualCharacterError(c, createErr.Status, createErr.Code, createErr.Message)
+		return
+	}
+	character, err = model.GetVirtualCharacterByID(character.ID)
+	if err != nil {
+		virtualCharacterError(c, http.StatusInternalServerError, "asset_save_failed", err.Error())
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"success": true, "data": virtualCharacterGroupToResponse(character)})
 }
 
 func previewVirtualCharacter(c *gin.Context) {
@@ -962,6 +1046,10 @@ func virtualCharacterGroupToResponse(item *model.VirtualCharacter) virtualCharac
 		ProviderAssetID: item.ProviderAssetID, MimeType: item.MimeType, FileSize: item.FileSize,
 		LastError: item.LastError, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt, CatalogVersion: item.CatalogVersion,
 	}
+	response.AssetUploadRequired = item.SourceType == model.VirtualCharacterSourceVolcRealPerson &&
+		item.ValidationStatus == model.VirtualCharacterValidationAccepted &&
+		strings.TrimSpace(item.ProviderGroupID) != "" && strings.TrimSpace(item.ProviderAssetID) == "" &&
+		item.Status != model.VirtualCharacterStatusDeleting
 	if item.SourceType == model.VirtualCharacterSourceVolcRealPerson {
 		if authorization, err := model.GetVirtualCharacterAuthorization(item.ID); err == nil {
 			response.Authorization = virtualCharacterAuthorizationToResponse(authorization)

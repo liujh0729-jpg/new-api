@@ -326,8 +326,8 @@ func virtualCharacterPreviewPath(characterID int64) string {
 
 func ListVirtualCharactersToPoll(now int64, limit int) ([]VirtualCharacter, error) {
 	var characters []VirtualCharacter
-	err := DB.Where("status = ? AND asset_next_poll_at <= ? AND ((source_type = ? AND provider_group_id <> ?) OR provider_asset_id <> ?)",
-		VirtualCharacterStatusCreating, now, VirtualCharacterSourceVolcRealPerson, "", "").
+	err := DB.Where("status = ? AND asset_next_poll_at <= ? AND provider_asset_id <> ?",
+		VirtualCharacterStatusCreating, now, "").
 		Order("asset_next_poll_at ASC, id ASC").Limit(limit).Find(&characters).Error
 	return characters, err
 }

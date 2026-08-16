@@ -73,6 +73,7 @@ export interface VirtualCharacter {
   validation_status: 'unverified' | 'accepted' | 'rejected'
   cover_url?: string
   provider_asset_id?: string
+  asset_upload_required?: boolean
   mime_type?: string
   file_size?: number
   created_at: number

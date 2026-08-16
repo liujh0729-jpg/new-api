@@ -20,6 +20,7 @@ import {
   AiUserIcon,
   Copy01Icon,
   Delete02Icon,
+  FileUploadIcon,
   MagicWand01Icon,
   RefreshIcon,
   Tick02Icon,
@@ -50,6 +51,7 @@ export function CharacterCard({
   onGenerate,
   onDelete,
   onSync,
+  onUpload,
 }: {
   item: VirtualCharacter
   onOpen: () => void
@@ -57,6 +59,7 @@ export function CharacterCard({
   onGenerate: () => void
   onDelete: () => void
   onSync?: () => void
+  onUpload?: () => void
 }) {
   const { t } = useTranslation()
   const { copiedText, copyToClipboard } = useCopyToClipboard()
@@ -69,7 +72,8 @@ export function CharacterCard({
   const assetReference = providerAssetID
     ? `asset://${providerAssetID.replace(/^asset:\/\//, '')}`
     : ''
-  const isUploading = item.status === 'creating'
+  const awaitingUpload = Boolean(item.asset_upload_required)
+  const isUploading = item.status === 'creating' && !awaitingUpload
   const canGenerate =
     item.status === 'active' &&
     !isUploading &&
@@ -144,7 +148,14 @@ export function CharacterCard({
               </div>
             ) : null}
           </div>
-          {isUploading ? (
+          {awaitingUpload ? (
+            <Badge
+              variant='secondary'
+              className='mr-1 shrink-0 px-1.5 text-[10px]'
+            >
+              {t('Waiting for portrait upload')}
+            </Badge>
+          ) : isUploading ? (
             <Badge
               variant='secondary'
               className='mr-1 shrink-0 px-1.5 text-[10px]'
@@ -162,7 +173,11 @@ export function CharacterCard({
         </div>
       </CardHeader>
       <CardContent className='flex flex-col gap-1.5 px-2.5 pt-1.5 pb-2.5'>
-        {isUploading ? (
+        {awaitingUpload ? (
+          <p className='text-muted-foreground text-[11px]'>
+            {t("Upload the verified person's image to continue.")}
+          </p>
+        ) : isUploading ? (
           <Progress value={null}>
             <ProgressLabel className='text-muted-foreground text-[10px]'>
               {t('Processing character image')}
@@ -193,6 +208,16 @@ export function CharacterCard({
           </div>
         )}
         <div className='flex flex-wrap gap-1'>
+          {awaitingUpload && (
+            <Button
+              size='sm'
+              className='h-6 px-1.5 text-[11px]'
+              onClick={onUpload}
+            >
+              <HugeiconsIcon icon={FileUploadIcon} data-icon='inline-start' />
+              {t('Upload portrait asset')}
+            </Button>
+          )}
           <Button
             size='sm'
             variant='outline'
@@ -202,6 +227,7 @@ export function CharacterCard({
             {t('Details')}
           </Button>
           {item.source_type === 'volc_real_person' &&
+            !awaitingUpload &&
             item.status !== 'deleting' &&
             item.authorization?.status !== 'expired' &&
             item.authorization?.status !== 'revoked' && (

@@ -62,6 +62,12 @@ func SyncRealPersonVirtualCharacter(ctx context.Context, characterID int64) (*mo
 		_ = model.ExpireRealPersonAuthorization(character.ID, "authorization expired")
 		return nil, errors.New("real-person authorization expired")
 	}
+	if strings.TrimSpace(character.ProviderAssetID) == "" {
+		if err := model.MarkRealPersonVirtualCharacterAwaitingAssetUpload(character.ID); err != nil {
+			return nil, err
+		}
+		return model.GetVirtualCharacterByID(character.ID)
+	}
 	account, err := providerAccountForCharacter(character)
 	if err != nil {
 		_ = model.BlockRealPersonVirtualCharacter(character.ID, model.VirtualCharacterAuthorizationProviderUnavailable, err.Error())
@@ -91,63 +97,40 @@ func SyncRealPersonVirtualCharacter(ctx context.Context, characterID int64) (*mo
 		}
 		return waitForRealPersonProvider(character, groupStatus, "Pending")
 	}
-	assets, err := client.ListAssetsByGroupType(ctx, character.ProviderGroupID, model.VirtualCharacterRealPersonGroupType, account.ProjectName)
+	asset, err := client.GetAsset(ctx, character.ProviderAssetID, account.ProjectName)
 	if err != nil {
 		reason := common.MaskSensitiveInfo(err.Error())
 		_ = model.BlockRealPersonVirtualCharacter(character.ID, model.VirtualCharacterAuthorizationProviderUnavailable, reason)
 		return nil, err
 	}
-	activeImages := make([]VolcAssetResult, 0, len(assets))
-	processingStatus := ""
-	inactiveStatuses := make([]string, 0, len(assets))
-	imageCount := 0
-	for i := range assets {
-		asset := assets[i]
-		if !strings.EqualFold(strings.TrimSpace(asset.GroupID), strings.TrimSpace(character.ProviderGroupID)) {
-			continue
-		}
-		if !strings.EqualFold(strings.TrimSpace(asset.AssetType), "Image") {
-			continue
-		}
-		imageCount++
-		switch strings.ToLower(strings.TrimSpace(asset.Status)) {
-		case "active":
-			activeImages = append(activeImages, asset)
-		case "processing", "creating", "pending":
-			processingStatus = asset.Status
-		default:
-			status := strings.TrimSpace(asset.Status)
-			if status == "" {
-				status = "Unknown"
-			}
-			inactiveStatuses = append(inactiveStatuses, status)
-		}
+	if asset == nil || !sameVolcAssetID(asset.ID, character.ProviderAssetID) ||
+		!strings.EqualFold(strings.TrimSpace(asset.GroupID), strings.TrimSpace(character.ProviderGroupID)) ||
+		!strings.EqualFold(strings.TrimSpace(asset.AssetType), "Image") {
+		reason := "real-person provider asset does not belong to its verified group"
+		_ = model.BlockRealPersonVirtualCharacter(character.ID, model.VirtualCharacterAuthorizationFailed, reason)
+		return nil, errors.New(reason)
 	}
 	checkedAt := time.Now().Unix()
-	switch len(activeImages) {
-	case 0:
-		if processingStatus == "" && imageCount > 0 {
-			reason := "verified real-person group has no usable active image"
-			if len(inactiveStatuses) > 0 {
-				reason += "; provider statuses: " + strings.Join(inactiveStatuses, ", ")
-			}
-			_ = model.BlockRealPersonVirtualCharacter(character.ID, model.VirtualCharacterAuthorizationFailed, reason)
-			return nil, errors.New(reason)
-		}
-		if processingStatus == "" {
-			processingStatus = "Pending"
-		}
-		return waitForRealPersonProvider(character, groupStatus, processingStatus)
-	case 1:
-		asset := activeImages[0]
-		if err := model.ActivateRealPersonVirtualCharacter(character.ID, asset.ID, asset.Status, checkedAt); err != nil {
+	assetStatus := strings.TrimSpace(asset.Status)
+	switch strings.ToLower(assetStatus) {
+	case "active":
+		if err := model.ActivateRealPersonVirtualCharacter(character.ID, asset.ID, assetStatus, checkedAt); err != nil {
 			return nil, err
 		}
+		queueRealPersonStagingCleanup(character)
 		return model.GetVirtualCharacterByID(character.ID)
-	default:
-		reason := fmt.Sprintf("provider group contains %d active images; exactly one is required", len(activeImages))
-		_ = model.BlockRealPersonVirtualCharacter(character.ID, model.VirtualCharacterAuthorizationAmbiguous, reason)
+	case "processing", "creating", "pending", "queued":
+		return waitForRealPersonProvider(character, groupStatus, assetStatus)
+	case "failed", "error", "rejected", "deleted", "deleting", "disabled", "inactive", "revoked":
+		reason := fmt.Sprintf("real-person portrait asset review failed: %s", assetStatus)
+		_ = model.BlockRealPersonVirtualCharacter(character.ID, model.VirtualCharacterAuthorizationFailed, reason)
+		queueRealPersonStagingCleanup(character)
 		return nil, errors.New(reason)
+	default:
+		if assetStatus == "" {
+			assetStatus = "Unknown"
+		}
+		return waitForRealPersonProvider(character, groupStatus, assetStatus)
 	}
 }
 
@@ -333,6 +316,25 @@ func waitForRealPersonProvider(character *model.VirtualCharacter, groupStatus, a
 		return nil, err
 	}
 	return model.GetVirtualCharacterByID(character.ID)
+}
+
+func sameVolcAssetID(left, right string) bool {
+	normalize := func(value string) string {
+		return strings.TrimPrefix(strings.TrimSpace(value), "asset://")
+	}
+	return strings.EqualFold(normalize(left), normalize(right))
+}
+
+func queueRealPersonStagingCleanup(character *model.VirtualCharacter) {
+	if character == nil || strings.TrimSpace(character.StagingFileID) == "" {
+		return
+	}
+	if err := model.CreateVirtualCharacterCleanupJob(&model.VirtualCharacterCleanupJob{
+		CharacterID: character.ID, ProviderAccountID: character.ProviderAccountID,
+		TargetType: "aipdd_file", TargetID: character.StagingFileID,
+	}); err != nil {
+		common.SysError(fmt.Sprintf("queue real-person staging cleanup for character %d: %v", character.ID, err))
+	}
 }
 
 func marshalAuthorizationSnapshot(character *model.VirtualCharacter, authorization *model.VirtualCharacterAuthorization) (string, *VirtualCharacterAuthorizationError) {

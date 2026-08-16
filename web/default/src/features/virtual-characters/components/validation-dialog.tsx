@@ -105,7 +105,7 @@ export function ValidationDialog({
     <Dialog open onOpenChange={(open) => !open && void close()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>{t('Real-person validation')}</DialogTitle>
+          <DialogTitle>{t('Step 1 of 2: real-person validation')}</DialogTitle>
           <DialogDescription>
             {t(
               'Scan the QR code with the person being validated and finish the H5 flow.'
