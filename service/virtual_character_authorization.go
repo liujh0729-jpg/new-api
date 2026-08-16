@@ -82,6 +82,15 @@ func SyncRealPersonVirtualCharacter(ctx context.Context, characterID int64) (*mo
 		_ = model.BlockRealPersonVirtualCharacter(character.ID, model.VirtualCharacterAuthorizationProviderUnavailable, err.Error())
 		return nil, err
 	}
+	groupStatus := providerGroupStatus(group)
+	if !strings.EqualFold(groupStatus, "Active") {
+		if isTerminalProviderGroupStatus(groupStatus) {
+			reason := fmt.Sprintf("provider group is not active: %s", groupStatus)
+			_ = model.BlockRealPersonVirtualCharacter(character.ID, model.VirtualCharacterAuthorizationFailed, reason)
+			return nil, errors.New(reason)
+		}
+		return waitForRealPersonProvider(character, groupStatus, "Pending")
+	}
 	assets, err := client.ListAssetsByGroupType(ctx, character.ProviderGroupID, model.VirtualCharacterRealPersonGroupType, account.ProjectName)
 	if err != nil {
 		reason := common.MaskSensitiveInfo(err.Error())
@@ -128,10 +137,7 @@ func SyncRealPersonVirtualCharacter(ctx context.Context, characterID int64) (*mo
 		if processingStatus == "" {
 			processingStatus = "Pending"
 		}
-		_ = model.UpdateRealPersonProviderState(character.ID, providerGroupStatus(group), processingStatus, model.VirtualCharacterAuthorizationSynchronizing, "waiting for one active real-person image", checkedAt)
-		attempts := character.AssetPollAttempts + 1
-		_ = model.RetryVirtualCharacterImagePoll(character.ID, attempts, time.Now().Add(virtualCharacterRetryDelay(attempts)).Unix(), "waiting for one active real-person image")
-		return model.GetVirtualCharacterByID(character.ID)
+		return waitForRealPersonProvider(character, groupStatus, processingStatus)
 	case 1:
 		asset := activeImages[0]
 		if err := model.ActivateRealPersonVirtualCharacter(character.ID, asset.ID, asset.Status, checkedAt); err != nil {
@@ -219,6 +225,12 @@ func RefreshRealPersonVirtualCharacterState(ctx context.Context, character *mode
 		_ = model.BlockRealPersonVirtualCharacter(character.ID, model.VirtualCharacterAuthorizationProviderUnavailable, err.Error())
 		return nil, err
 	}
+	groupStatus := providerGroupStatus(group)
+	if !strings.EqualFold(groupStatus, "Active") {
+		reason := fmt.Sprintf("provider group is not active: %s", groupStatus)
+		_ = model.BlockRealPersonVirtualCharacter(character.ID, model.VirtualCharacterAuthorizationProviderUnavailable, reason)
+		return nil, errors.New(reason)
+	}
 	asset, err := client.GetAsset(ctx, character.ProviderAssetID, account.ProjectName)
 	if err != nil {
 		reason := common.MaskSensitiveInfo(err.Error())
@@ -283,17 +295,44 @@ func validateRealPersonGroup(character *model.VirtualCharacter, account *model.V
 	if group.ProjectName != "" && !strings.EqualFold(strings.TrimSpace(group.ProjectName), strings.TrimSpace(account.ProjectName)) {
 		return errors.New("provider group belongs to a different project")
 	}
-	if !strings.EqualFold(strings.TrimSpace(group.Status), "Active") {
-		return fmt.Errorf("provider group is not active: %s", group.Status)
-	}
 	return nil
 }
 
 func providerGroupStatus(group *VolcAssetGroupResult) string {
 	if group == nil || strings.TrimSpace(group.Status) == "" {
+		// GetAssetGroup does not always include Status for LivenessFace groups.
+		// A successfully returned, structurally valid group is usable in that case.
 		return "Active"
 	}
 	return strings.TrimSpace(group.Status)
+}
+
+func isTerminalProviderGroupStatus(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "failed", "error", "rejected", "deleted", "deleting", "disabled", "inactive", "revoked":
+		return true
+	default:
+		return false
+	}
+}
+
+func waitForRealPersonProvider(character *model.VirtualCharacter, groupStatus, assetStatus string) (*model.VirtualCharacter, error) {
+	if character == nil || character.ID <= 0 {
+		return nil, errors.New("invalid real-person character")
+	}
+	attempts := character.AssetPollAttempts + 1
+	now := time.Now()
+	if err := model.MarkRealPersonVirtualCharacterSynchronizing(
+		character.ID,
+		groupStatus,
+		assetStatus,
+		now.Unix(),
+		attempts,
+		now.Add(virtualCharacterRetryDelay(attempts)).Unix(),
+	); err != nil {
+		return nil, err
+	}
+	return model.GetVirtualCharacterByID(character.ID)
 }
 
 func marshalAuthorizationSnapshot(character *model.VirtualCharacter, authorization *model.VirtualCharacterAuthorization) (string, *VirtualCharacterAuthorizationError) {

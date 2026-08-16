@@ -305,14 +305,27 @@ func FailReservedVirtualCharacterValidation(sessionID, status, resultCode, reaso
 	})
 }
 
-func UpdateRealPersonProviderState(characterID int64, groupStatus, assetStatus, status, reason string, checkedAt int64) error {
-	updates := map[string]any{
-		"provider_group_status": strings.TrimSpace(groupStatus),
-		"provider_asset_status": strings.TrimSpace(assetStatus),
-		"provider_checked_at":   checkedAt, "status": status,
-		"last_error": reason, "updated_at": time.Now().Unix(),
+func MarkRealPersonVirtualCharacterSynchronizing(characterID int64, groupStatus, assetStatus string, checkedAt int64, attempts int, nextAt int64) error {
+	if characterID <= 0 {
+		return errors.New("invalid real-person character")
 	}
-	return DB.Model(&VirtualCharacterAuthorization{}).Where("character_id = ?", characterID).Updates(updates).Error
+	now := time.Now().Unix()
+	return DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&VirtualCharacter{}).
+			Where("id = ? AND source_type = ?", characterID, VirtualCharacterSourceVolcRealPerson).
+			Updates(map[string]any{
+				"status": VirtualCharacterStatusCreating, "asset_poll_attempts": attempts,
+				"asset_next_poll_at": nextAt, "last_error": "", "updated_at": now,
+			}).Error; err != nil {
+			return err
+		}
+		return tx.Model(&VirtualCharacterAuthorization{}).Where("character_id = ?", characterID).Updates(map[string]any{
+			"provider_group_status": strings.TrimSpace(groupStatus),
+			"provider_asset_status": strings.TrimSpace(assetStatus),
+			"provider_checked_at":   checkedAt, "status": VirtualCharacterAuthorizationSynchronizing,
+			"last_error": "", "updated_at": now,
+		}).Error
+	})
 }
 
 func BlockRealPersonVirtualCharacter(characterID int64, authorizationStatus, reason string) error {

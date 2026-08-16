@@ -1183,7 +1183,7 @@ func redirectValidationResult(c *gin.Context, item *model.VirtualCharacterValida
 		c.AbortWithStatus(http.StatusOK)
 		return
 	}
-	destination := base + "/console/virtual-characters?validation_session=" + url.QueryEscape(item.ID) + "&validation_status=" + url.QueryEscape(item.Status)
+	destination := base + "/characters?validation_session=" + url.QueryEscape(item.ID) + "&validation_status=" + url.QueryEscape(item.Status)
 	c.Redirect(http.StatusFound, destination)
 }
 

@@ -133,6 +133,7 @@ func TestValidationCallbackRejectsTokenMismatchAndReplay(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, request)
 	require.Equal(t, http.StatusFound, recorder.Code)
+	require.Equal(t, "https://new-api.example.com/characters?validation_session=session-security&validation_status=failed", recorder.Header().Get("Location"))
 
 	var stored model.VirtualCharacterValidationSession
 	require.NoError(t, model.DB.Where("id = ?", session.ID).First(&stored).Error)

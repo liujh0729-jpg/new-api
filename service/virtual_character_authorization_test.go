@@ -80,3 +80,21 @@ func TestAuthorizeRealPersonCharacterChecksOwnerAndWindow(t *testing.T) {
 	require.Equal(t, model.VirtualCharacterStatusDeleting, expired.Status)
 	require.Nil(t, expired.RealPersonSlot)
 }
+
+func TestValidateRealPersonGroupAcceptsOfficialResponseWithoutStatus(t *testing.T) {
+	character := &model.VirtualCharacter{ProviderGroupID: "group-real"}
+	account := &model.VirtualCharacterProviderAccount{ProjectName: "default"}
+	group := &VolcAssetGroupResult{
+		ID: "group-real", GroupType: model.VirtualCharacterRealPersonGroupType,
+		ProjectName: "default",
+	}
+
+	require.NoError(t, validateRealPersonGroup(character, account, group))
+	require.Equal(t, "Active", providerGroupStatus(group))
+}
+
+func TestProviderGroupProcessingStatusIsRetryable(t *testing.T) {
+	require.False(t, isTerminalProviderGroupStatus("Processing"))
+	require.False(t, isTerminalProviderGroupStatus("Creating"))
+	require.True(t, isTerminalProviderGroupStatus("Failed"))
+}
