@@ -59,7 +59,7 @@ type VirtualCharacterProviderAccount struct {
 	EncryptedSecretKey string `json:"-" gorm:"type:text"`
 	Region             string `json:"region" gorm:"type:varchar(64)"`
 	ProjectName        string `json:"project_name" gorm:"type:varchar(191)"`
-	ChannelID          int    `json:"channel_id" gorm:"index"`
+	ChannelID          int    `json:"-" gorm:"index"` // deprecated: generation uses the distributor-selected Seedance channel
 	LastCheckStatus    string `json:"last_check_status,omitempty" gorm:"type:varchar(20)"`
 	LastCheckError     string `json:"last_check_error,omitempty" gorm:"type:text"`
 	LastCheckedAt      int64  `json:"last_checked_at,omitempty"`

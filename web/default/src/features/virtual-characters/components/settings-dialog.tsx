@@ -17,10 +17,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useState, type FormEvent } from 'react'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-import { searchChannels } from '@/features/channels/api'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import {
@@ -88,7 +87,6 @@ function buildSettingsForm(settings?: VirtualCharacterSettings) {
       preset?.account_asset_cap ?? settings?.account_asset_cap ?? 50,
     real_person_enabled: settings?.real_person_enabled ?? false,
     real_person_limit: settings?.real_person_limit ?? 5,
-    channel_id: settings?.channel_id ?? 0,
   }
 }
 
@@ -104,7 +102,6 @@ function settingsFormKey(settings?: VirtualCharacterSettings): string {
     settings.account_asset_cap,
     settings.real_person_enabled,
     settings.real_person_limit,
-    settings.channel_id,
     settings.access_key_masked,
     settings.secret_key_masked,
   ].join('|')
@@ -144,11 +141,6 @@ function SettingsDialogForm({
 }) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
-  const videoChannelsQuery = useQuery({
-    queryKey: ['virtual-characters', 'doubao-video-channels'],
-    queryFn: () =>
-      searchChannels({ type: 54, status: 'enabled', page_size: 100 }),
-  })
   const [form, setForm] = useState(() => buildSettingsForm(settings))
   // Track which action is running so only its own button shows a spinner, while all
   // three stay disabled for the duration.
@@ -258,7 +250,7 @@ function SettingsDialogForm({
             <CardTitle>{t('Provider account')}</CardTitle>
             <CardDescription>
               {t(
-                'Volc Assets API requires Access Key and Secret Key (AK/SK). Ark API Key is not supported. Credentials are encrypted at rest.'
+                'Volc Assets APIs use the Access Key and Secret Key (AK/SK) below. Credentials are encrypted at rest.'
               )}
             </CardDescription>
           </CardHeader>
@@ -278,7 +270,7 @@ function SettingsDialogForm({
               />
               <FieldDescription>
                 {t(
-                  'Requires Volc Premium real-person Assets API access. The selected Doubao video channel must belong to the same Volc account as the AK/SK below.'
+                  'Requires Volc Premium real-person Assets API access. Video requests automatically use the configured AIPDD Seedance upstream, whose Ark credential must belong to the same Volc account and Project.'
                 )}
               </FieldDescription>
               <div className='grid gap-4 sm:grid-cols-2'>
@@ -337,42 +329,6 @@ function SettingsDialogForm({
                       setForm({ ...form, project_name: event.target.value })
                     }
                   />
-                </Field>
-                <Field data-disabled={!form.real_person_enabled}>
-                  <FieldLabel htmlFor='provider-video-channel'>
-                    {t('Real-person video channel')}
-                  </FieldLabel>
-                  <NativeSelect
-                    id='provider-video-channel'
-                    className='w-full'
-                    disabled={!form.real_person_enabled}
-                    value={String(form.channel_id || 0)}
-                    onChange={(event) =>
-                      setForm({
-                        ...form,
-                        channel_id: Number(event.target.value),
-                      })
-                    }
-                  >
-                    <NativeSelectOption value='0'>
-                      {t('Select a Doubao video channel')}
-                    </NativeSelectOption>
-                    {(videoChannelsQuery.data?.data?.items ?? []).map(
-                      (channel) => (
-                        <NativeSelectOption
-                          key={channel.id}
-                          value={String(channel.id)}
-                        >
-                          #{channel.id} · {channel.name}
-                        </NativeSelectOption>
-                      )
-                    )}
-                  </NativeSelect>
-                  <FieldDescription>
-                    {t(
-                      'Every real-person video request is pinned to this channel after ownership and authorization checks.'
-                    )}
-                  </FieldDescription>
                 </Field>
               </div>
               <Field>

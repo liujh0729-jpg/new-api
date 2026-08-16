@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
@@ -210,7 +209,7 @@ func GetVirtualCharacterABConfig(c *gin.Context) {
 		"image_max_mb": 30, "task_retention_days": 90,
 		"official_enabled":    libraryEnabled && account.OfficialEnabled,
 		"virtual_enabled":     libraryEnabled && account.VirtualEnabled,
-		"real_person_enabled": libraryEnabled && account.RealPersonEnabled && account.ChannelID > 0,
+		"real_person_enabled": libraryEnabled && account.RealPersonEnabled,
 		"real_person_limit":   model.GetVirtualCharacterRealPersonLimit(),
 		"account_asset_cap":   model.GetVirtualCharacterAccountAssetCap(),
 	})
@@ -736,7 +735,7 @@ func previewVirtualCharacter(c *gin.Context) {
 	}
 	previewURL := ""
 	if character.SourceType == model.VirtualCharacterSourceVolcRealPerson {
-		if _, authErr := service.AuthorizeVirtualCharacterForVideo(c.Request.Context(), character, c.GetInt("id"), 0); authErr != nil {
+		if _, authErr := service.AuthorizeVirtualCharacterForVideo(c.Request.Context(), character, c.GetInt("id")); authErr != nil {
 			virtualCharacterError(c, authErr.Status, authErr.Code, authErr.Message)
 			return
 		}
@@ -889,7 +888,6 @@ func AdminGetVirtualCharacterABSettings(c *gin.Context) {
 		"create_asset_qpm":  createAssetQPM,
 		"access_key_masked": maskProviderCredential(account.EncryptedAccessKey != ""), "secret_key_masked": maskProviderCredential(account.EncryptedSecretKey != ""),
 		"region": account.Region, "project_name": account.ProjectName,
-		"channel_id":   account.ChannelID,
 		"crypto_ready": common.HasStableCryptoSecret(), "last_check_status": account.LastCheckStatus, "last_check_error": account.LastCheckError,
 		"last_checked_at": account.LastCheckedAt, "catalog": catalog,
 		"catalog_last_synced_at": model.GetVirtualCharacterAIPDDCatalogLastSyncAt(),
@@ -938,7 +936,6 @@ func AdminUpdateVirtualCharacterABSettings(c *gin.Context) {
 		AccountAssetCap   int    `json:"account_asset_cap"`
 		RealPersonEnabled bool   `json:"real_person_enabled"`
 		RealPersonLimit   int    `json:"real_person_limit"`
-		ChannelID         int    `json:"channel_id"`
 	}
 	if err := common.DecodeJson(c.Request.Body, &req); err != nil {
 		virtualCharacterError(c, http.StatusBadRequest, "invalid_request", err.Error())
@@ -984,17 +981,6 @@ func AdminUpdateVirtualCharacterABSettings(c *gin.Context) {
 		virtualCharacterError(c, http.StatusBadRequest, "invalid_real_person_limit", "real-person limit must be between 1 and 1000")
 		return
 	}
-	if req.Enabled && req.RealPersonEnabled {
-		channel, channelErr := model.GetChannelById(req.ChannelID, true)
-		if channelErr != nil || channel.Status != common.ChannelStatusEnabled {
-			virtualCharacterError(c, http.StatusBadRequest, "invalid_provider_channel", "an enabled Doubao video channel is required for real-person assets")
-			return
-		}
-		if channel.Type != constant.ChannelTypeDoubaoVideo {
-			virtualCharacterError(c, http.StatusBadRequest, "invalid_provider_channel", "real-person assets require a Doubao video channel owned by the same Volc account")
-			return
-		}
-	}
 	quotaPlan, accountAssetCap, createAssetQPM := model.NormalizeVirtualCharacterQuotaPlan(req.QuotaPlan, req.AccountAssetCap, req.CreateAssetQPM)
 	if accountAssetCap <= 0 || accountAssetCap > 5000000 {
 		virtualCharacterError(c, http.StatusBadRequest, "invalid_asset_cap", "account asset cap must be between 1 and 5000000")
@@ -1008,7 +994,7 @@ func AdminUpdateVirtualCharacterABSettings(c *gin.Context) {
 	account.OfficialEnabled = req.Enabled
 	account.VirtualEnabled = req.Enabled
 	account.RealPersonEnabled = req.Enabled && req.RealPersonEnabled
-	account.ChannelID = req.ChannelID
+	account.ChannelID = 0
 	account.QuotaPlan = quotaPlan
 	account.CreateAssetQPM = createAssetQPM
 	account.Region, account.ProjectName = strings.TrimSpace(req.Region), strings.TrimSpace(req.ProjectName)
@@ -1162,9 +1148,6 @@ func enabledVirtualCharacterClientForSource(sourceType string) (*model.VirtualCh
 	case model.VirtualCharacterSourceVolcRealPerson:
 		if !account.RealPersonEnabled {
 			return nil, nil, errors.New("real-person virtual characters are not enabled")
-		}
-		if account.ChannelID <= 0 {
-			return nil, nil, errors.New("real-person video channel is not configured")
 		}
 	default:
 		return nil, nil, errors.New("unsupported virtual character source")

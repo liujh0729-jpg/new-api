@@ -13,7 +13,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func TestAuthorizeRealPersonCharacterChecksOwnerWindowAndChannel(t *testing.T) {
+func TestAuthorizeRealPersonCharacterChecksOwnerAndWindow(t *testing.T) {
 	previousDB := model.DB
 	previousSecret := common.CryptoSecret
 	previousConfigured := common.CryptoSecretConfigured
@@ -57,7 +57,7 @@ func TestAuthorizeRealPersonCharacterChecksOwnerWindowAndChannel(t *testing.T) {
 	}
 	require.NoError(t, db.Create(authorization).Error)
 
-	snapshotJSON, authErr := AuthorizeVirtualCharacterForVideo(context.Background(), character, character.UserID, account.ChannelID)
+	snapshotJSON, authErr := AuthorizeVirtualCharacterForVideo(context.Background(), character, character.UserID)
 	require.Nil(t, authErr)
 	var snapshot VirtualCharacterAuthorizationSnapshot
 	require.NoError(t, common.Unmarshal([]byte(snapshotJSON), &snapshot))
@@ -65,18 +65,14 @@ func TestAuthorizeRealPersonCharacterChecksOwnerWindowAndChannel(t *testing.T) {
 	require.Equal(t, authorization.ValidUntil, snapshot.AuthorizationUntil)
 	require.True(t, snapshot.CommercialUseAllowed)
 
-	_, authErr = AuthorizeVirtualCharacterForVideo(context.Background(), character, 999, account.ChannelID)
+	_, authErr = AuthorizeVirtualCharacterForVideo(context.Background(), character, 999)
 	require.NotNil(t, authErr)
 	require.Equal(t, "character_forbidden", authErr.Code)
-
-	_, authErr = AuthorizeVirtualCharacterForVideo(context.Background(), character, character.UserID, 99)
-	require.NotNil(t, authErr)
-	require.Equal(t, "character_provider_mismatch", authErr.Code)
 
 	require.NoError(t, db.Model(authorization).Updates(map[string]any{
 		"valid_until": now - 1, "provider_checked_at": now,
 	}).Error)
-	_, authErr = AuthorizeVirtualCharacterForVideo(context.Background(), character, character.UserID, account.ChannelID)
+	_, authErr = AuthorizeVirtualCharacterForVideo(context.Background(), character, character.UserID)
 	require.NotNil(t, authErr)
 	require.Equal(t, "authorization_expired", authErr.Code)
 	var expired model.VirtualCharacter

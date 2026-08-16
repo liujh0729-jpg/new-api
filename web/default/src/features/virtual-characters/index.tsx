@@ -468,7 +468,7 @@ export function VirtualCharacters() {
                   <AlertTitle>{t('Real-person library is disabled')}</AlertTitle>
                   <AlertDescription>
                     {t(
-                      'An administrator must enable the Premium real-person Assets API and bind the matching Doubao video channel.'
+                      'An administrator must enable the Premium real-person Assets API and configure the matching Volc AK/SK and Project.'
                     )}
                   </AlertDescription>
                 </Alert>

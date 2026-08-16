@@ -213,7 +213,6 @@ export async function updateVirtualCharacterSettings(input: {
   global_limit: number
   real_person_limit: number
   real_person_enabled: boolean
-  channel_id: number
   account_asset_cap: number
 }): Promise<ApiResponse<VirtualCharacterSettings>> {
   const res = await api.put('/api/virtual-characters/admin/settings', input)

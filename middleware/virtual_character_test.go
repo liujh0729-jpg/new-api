@@ -20,6 +20,8 @@ import (
 	"gorm.io/gorm"
 )
 
+const testVirtualCharacterVideoModel = "AP Seedance-2.0 VIP"
+
 func TestVirtualCharacterRequestHasExternalReferences(t *testing.T) {
 	tests := []struct {
 		name string
@@ -67,10 +69,14 @@ func TestBindVirtualCharacterUsesActiveOwnedImageAndIgnoresLegacyAssetID(t *test
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	router.Use(func(c *gin.Context) { c.Set("id", 101) }, BindVirtualCharacter())
+	router.Use(func(c *gin.Context) {
+		c.Set("id", 101)
+		common.SetContextKey(c, constant.ContextKeyChannelType, constant.ChannelTypeAIPDD)
+	}, BindVirtualCharacter())
 	router.POST("/v1/video/generations", func(c *gin.Context) {
 		var req relaycommon.TaskSubmitReq
 		require.NoError(t, common.UnmarshalBodyReusable(c, &req))
+		require.Equal(t, constant.ChannelTypeAIPDD, common.GetContextKeyInt(c, constant.ContextKeyChannelType))
 		require.Equal(t, []string{"asset://provider-asset-1"}, req.Images)
 		require.Equal(t, "application/json", c.GetHeader("Content-Type"))
 		_, leakedLegacyAssetID := req.Metadata["character_asset_id"]
@@ -82,7 +88,7 @@ func TestBindVirtualCharacterUsesActiveOwnedImageAndIgnoresLegacyAssetID(t *test
 		c.Status(http.StatusNoContent)
 	})
 
-	body := fmt.Sprintf(`{"character_id":%d,"character_asset_id":999999,"model":"doubao-seedance-2-0-260128","prompt":"test"}`, character.ID)
+	body := fmt.Sprintf(`{"character_id":%d,"character_asset_id":999999,"model":"%s","prompt":"test"}`, character.ID, testVirtualCharacterVideoModel)
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodPost, "/v1/video/generations", strings.NewReader(body))
 	request.Header.Set("Content-Type", "application/json")
@@ -98,7 +104,7 @@ func TestBindVirtualCharacterUsesActiveOwnedImageAndIgnoresLegacyAssetID(t *test
 	writer := multipart.NewWriter(multipartBody)
 	require.NoError(t, writer.WriteField("character_id", fmt.Sprintf("%d", character.ID)))
 	require.NoError(t, writer.WriteField("character_asset_id", "999999"))
-	require.NoError(t, writer.WriteField("model", "doubao-seedance-2-0-260128"))
+	require.NoError(t, writer.WriteField("model", testVirtualCharacterVideoModel))
 	require.NoError(t, writer.WriteField("prompt", "multipart test"))
 	require.NoError(t, writer.Close())
 	multipartRecorder := httptest.NewRecorder()
@@ -116,9 +122,26 @@ func TestBindVirtualCharacterUsesActiveOwnedImageAndIgnoresLegacyAssetID(t *test
 	require.Equal(t, http.StatusBadRequest, badRecorder.Code)
 	require.Contains(t, badRecorder.Body.String(), "Seedance")
 
+	// Channel type is not part of character-model eligibility. A user-visible
+	// model containing "seedance" is sufficient.
+	arbitraryChannelRouter := gin.New()
+	arbitraryChannelRouter.Use(func(c *gin.Context) {
+		c.Set("id", 101)
+		common.SetContextKey(c, constant.ContextKeyChannelType, constant.ChannelTypeDoubaoVideo)
+	}, BindVirtualCharacter())
+	arbitraryChannelRouter.POST("/v1/video/generations", func(c *gin.Context) { c.Status(http.StatusNoContent) })
+	arbitraryChannelRecorder := httptest.NewRecorder()
+	arbitraryChannelRequest := httptest.NewRequest(http.MethodPost, "/v1/video/generations", strings.NewReader(body))
+	arbitraryChannelRequest.Header.Set("Content-Type", "application/json")
+	arbitraryChannelRouter.ServeHTTP(arbitraryChannelRecorder, arbitraryChannelRequest)
+	require.Equal(t, http.StatusNoContent, arbitraryChannelRecorder.Code)
+
 	// The same private character is invisible to another user.
 	otherRouter := gin.New()
-	otherRouter.Use(func(c *gin.Context) { c.Set("id", 202) }, BindVirtualCharacter())
+	otherRouter.Use(func(c *gin.Context) {
+		c.Set("id", 202)
+		common.SetContextKey(c, constant.ContextKeyChannelType, constant.ChannelTypeAIPDD)
+	}, BindVirtualCharacter())
 	otherRouter.POST("/v1/video/generations", func(c *gin.Context) { c.Status(http.StatusNoContent) })
 	otherRecorder := httptest.NewRecorder()
 	otherRequest := httptest.NewRequest(http.MethodPost, "/v1/video/generations", strings.NewReader(body))
@@ -171,10 +194,11 @@ func TestBindVirtualCharacterAllowsAuthorizedRealPersonSource(t *testing.T) {
 	router.Use(func(c *gin.Context) {
 		c.Set("id", 303)
 		common.SetContextKey(c, constant.ContextKeyChannelId, 7)
+		common.SetContextKey(c, constant.ContextKeyChannelType, constant.ChannelTypeAIPDD)
 	}, BindVirtualCharacter())
 	router.POST("/v1/video/generations", func(c *gin.Context) { c.Status(http.StatusNoContent) })
 
-	body := fmt.Sprintf(`{"character_id":%d,"model":"doubao-seedance-2-0-260128","prompt":"test"}`, character.ID)
+	body := fmt.Sprintf(`{"character_id":%d,"model":"%s","prompt":"test"}`, character.ID, testVirtualCharacterVideoModel)
 	recorder := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/video/generations", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -215,10 +239,13 @@ func TestBindVirtualCharacterAllowsOfficialPresetSource(t *testing.T) {
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	router.Use(func(c *gin.Context) { c.Set("id", 404) }, BindVirtualCharacter())
+	router.Use(func(c *gin.Context) {
+		c.Set("id", 404)
+		common.SetContextKey(c, constant.ContextKeyChannelType, constant.ChannelTypeAIPDD)
+	}, BindVirtualCharacter())
 	router.POST("/v1/video/generations", func(c *gin.Context) { c.Status(http.StatusNoContent) })
 
-	body := fmt.Sprintf(`{"character_id":%d,"model":"doubao-seedance-2-0-260128","prompt":"test"}`, character.ID)
+	body := fmt.Sprintf(`{"character_id":%d,"model":"%s","prompt":"test"}`, character.ID, testVirtualCharacterVideoModel)
 	recorder := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/video/generations", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -280,6 +307,7 @@ func TestBindVirtualCharacterAuthorizesMixedDirectAssetReferences(t *testing.T) 
 		router.Use(func(c *gin.Context) {
 			c.Set("id", userID)
 			common.SetContextKey(c, constant.ContextKeyChannelId, 54)
+			common.SetContextKey(c, constant.ContextKeyChannelType, constant.ChannelTypeAIPDD)
 		}, BindVirtualCharacter())
 		router.POST("/v1/videos", func(c *gin.Context) {
 			c.Set(VirtualCharacterTaskClaimedKey, true)
@@ -287,7 +315,7 @@ func TestBindVirtualCharacterAuthorizesMixedDirectAssetReferences(t *testing.T) 
 		})
 		return router
 	}
-	body := `{"model":"doubao-seedance-2-0-260128","prompt":"test","content":[{"type":"image_url","image_url":{"url":"asset://asset-preset"},"role":"reference_image"},{"type":"image_url","image_url":{"url":"asset://asset-real"},"role":"reference_image"}]}`
+	body := `{"model":"` + testVirtualCharacterVideoModel + `","prompt":"test","content":[{"type":"image_url","image_url":{"url":"asset://asset-preset"},"role":"reference_image"},{"type":"image_url","image_url":{"url":"asset://asset-real"},"role":"reference_image"}]}`
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(body))
 	request.Header.Set("Content-Type", "application/json")
@@ -304,7 +332,7 @@ func TestBindVirtualCharacterAuthorizesMixedDirectAssetReferences(t *testing.T) 
 	newRouter(702).ServeHTTP(forbidden, forbiddenRequest)
 	require.Equal(t, http.StatusForbidden, forbidden.Code, forbidden.Body.String())
 
-	unknownBody := `{"model":"doubao-seedance-2-0-260128","prompt":"test","content":[{"type":"image_url","image_url":{"url":"asset://asset-unknown"}}]}`
+	unknownBody := `{"model":"` + testVirtualCharacterVideoModel + `","prompt":"test","content":[{"type":"image_url","image_url":{"url":"asset://asset-unknown"}}]}`
 	unknown := httptest.NewRecorder()
 	unknownRequest := httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(unknownBody))
 	unknownRequest.Header.Set("Content-Type", "application/json")

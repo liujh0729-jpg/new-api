@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
@@ -46,12 +45,11 @@ func BindVirtualCharacter() gin.HandlerFunc {
 			c.Next()
 			return
 		}
-		if !model.IsVirtualCharacterSeedanceModel(strings.TrimSpace(req.Model)) {
-			abortVirtualCharacterBinding(c, http.StatusBadRequest, "character_model_not_allowed", "character video requires a Seedance model")
+		if !model.IsVirtualCharacterSeedanceModel(req.Model) {
+			abortVirtualCharacterBinding(c, http.StatusBadRequest, "character_model_not_allowed", "character video requires a model name containing Seedance")
 			return
 		}
 		userID := c.GetInt("id")
-		selectedChannelID := common.GetContextKeyInt(c, constant.ContextKeyChannelId)
 		characters := make([]*model.VirtualCharacter, 0, len(assetIDs)+1)
 		snapshots := make(map[int64]string, len(assetIDs)+1)
 		var item *model.VirtualCharacter
@@ -69,11 +67,7 @@ func BindVirtualCharacter() gin.HandlerFunc {
 				abortVirtualCharacterBinding(c, http.StatusNotFound, "character_not_found", "character not found")
 				return
 			}
-			if item.SourceType == model.VirtualCharacterSourceVolcRealPerson && selectedChannelID <= 0 {
-				abortVirtualCharacterBinding(c, http.StatusServiceUnavailable, "character_provider_unavailable", "video channel selection is unavailable")
-				return
-			}
-			snapshot, authErr := service.AuthorizeVirtualCharacterForVideo(c.Request.Context(), item, userID, selectedChannelID)
+			snapshot, authErr := service.AuthorizeVirtualCharacterForVideo(c.Request.Context(), item, userID)
 			if authErr != nil {
 				abortVirtualCharacterBinding(c, authErr.Status, authErr.Code, authErr.Message)
 				return
@@ -104,11 +98,7 @@ func BindVirtualCharacter() gin.HandlerFunc {
 					abortVirtualCharacterBinding(c, http.StatusNotFound, "asset_reference_not_registered", "asset reference is not registered in the character library")
 					return
 				}
-				if candidate.SourceType == model.VirtualCharacterSourceVolcRealPerson && selectedChannelID <= 0 {
-					abortVirtualCharacterBinding(c, http.StatusServiceUnavailable, "character_provider_unavailable", "video channel selection is unavailable")
-					return
-				}
-				snapshot, authErr := service.AuthorizeVirtualCharacterForVideo(c.Request.Context(), candidate, userID, selectedChannelID)
+				snapshot, authErr := service.AuthorizeVirtualCharacterForVideo(c.Request.Context(), candidate, userID)
 				if authErr != nil {
 					abortVirtualCharacterBinding(c, authErr.Status, authErr.Code, authErr.Message)
 					return
@@ -150,7 +140,7 @@ func BindVirtualCharacter() gin.HandlerFunc {
 				abortVirtualCharacterBinding(c, http.StatusConflict, "character_unavailable", "character is not available for new tasks")
 				return
 			}
-			if _, authErr := service.AuthorizeVirtualCharacterForVideo(c.Request.Context(), latest, userID, selectedChannelID); authErr != nil {
+			if _, authErr := service.AuthorizeVirtualCharacterForVideo(c.Request.Context(), latest, userID); authErr != nil {
 				_ = model.RollbackVirtualCharacterTaskBinding(taskID)
 				abortVirtualCharacterBinding(c, authErr.Status, authErr.Code, authErr.Message)
 				return

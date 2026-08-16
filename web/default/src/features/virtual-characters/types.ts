@@ -202,7 +202,6 @@ export interface VirtualCharacterSettings {
   real_person_limit: number
   real_person_enabled: boolean
   virtual_enabled: boolean
-  channel_id: number
   account_asset_cap: number
   catalog?: {
     version: string

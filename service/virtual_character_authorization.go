@@ -154,7 +154,7 @@ func SyncRealPersonVirtualCharacter(ctx context.Context, characterID int64) (*mo
 	}
 }
 
-func AuthorizeVirtualCharacterForVideo(ctx context.Context, character *model.VirtualCharacter, userID, selectedChannelID int) (string, *VirtualCharacterAuthorizationError) {
+func AuthorizeVirtualCharacterForVideo(ctx context.Context, character *model.VirtualCharacter, userID int) (string, *VirtualCharacterAuthorizationError) {
 	if character == nil || character.ID <= 0 {
 		return "", authorizationError(http.StatusNotFound, "character_not_found", "character not found")
 	}
@@ -174,17 +174,11 @@ func AuthorizeVirtualCharacterForVideo(ctx context.Context, character *model.Vir
 	if err != nil {
 		return "", authorizationError(http.StatusServiceUnavailable, "character_provider_unavailable", err.Error())
 	}
-	if account.ChannelID > 0 && selectedChannelID > 0 && account.ChannelID != selectedChannelID {
-		return "", authorizationError(http.StatusConflict, "character_provider_mismatch", "selected video channel does not own this character asset")
-	}
 	if character.SourceType != model.VirtualCharacterSourceVolcRealPerson {
 		return marshalAuthorizationSnapshot(character, nil)
 	}
 	if !account.RealPersonEnabled {
 		return "", authorizationError(http.StatusServiceUnavailable, "real_person_disabled", "real-person character support is disabled")
-	}
-	if account.ChannelID <= 0 || (selectedChannelID > 0 && account.ChannelID != selectedChannelID) {
-		return "", authorizationError(http.StatusConflict, "character_provider_mismatch", "real-person asset must use its configured Doubao video channel")
 	}
 	authorization, err := model.GetVirtualCharacterAuthorization(character.ID)
 	if err != nil {

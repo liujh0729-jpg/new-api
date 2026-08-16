@@ -836,9 +836,9 @@ curl "$BASE_URL/v1/virtual-characters/12" \
 1. 提示词用「图片1」「图片2」按顺序指代表材，**不要**在文案里写 `asset://` 原文。
 2. 多个已注册 `asset://` 可在同一 `content` 中组合，并会逐一鉴权和写入任务审计；它也可与公网 HTTPS 参考图混用。仍须遵守 [4.13.3](#4133-content-项与参考素材) 的「参考素材模式 / 首尾帧模式」二选一，不可与 `first_frame`/`last_frame` 混用。
 3. 使用 `character_id` 时：**不要**再同时传 `image` / `images` / `first_frame` / `last_frame` / `input_reference`，也不要再传非空的 `metadata.content`；否则返回 `character_reference_conflict`。
-4. 真人角色无论通过 `character_id` 还是直接 `asset://` 使用，都必须属于当前用户、授权未过期、授权证据完整，并与管理员绑定的豆包视频通道及火山账号/项目一致。
+4. 真人角色无论通过 `character_id` 还是直接 `asset://` 使用，都必须属于当前用户、授权未过期、授权证据完整。无需在角色库里绑定豆包视频通道；请求会自动走系统现有的 AIPDD Seedance 上游，且 AIPDD 内部使用的 Ark 凭证必须与角色库 AK/SK 属于同一火山账号和 Project。
 5. 旧请求中的 `character_asset_id` 会被静默忽略；JSON 与 multipart 请求都不会将其转发到 metadata 或上游。
-6. 模型必须是当前账号可用的 Seedance 档位；角色及其唯一图片须为可访问且状态为 Active。直接 `asset://` 必须先同步或创建到本地角色库，不能用它绕过真人授权链路。
+6. 模型必须是当前账号可用且名称包含 `seedance`（不区分大小写）的模型。角色及其唯一图片须为可访问且状态为 Active。直接 `asset://` 必须先同步或创建到本地角色库，不能用它绕过真人授权链路。
 
 官方 `asset://` 示例（可用 `/v1/videos`）：
 
