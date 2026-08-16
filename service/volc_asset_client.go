@@ -33,6 +33,7 @@ type VolcAssetResult struct {
 	Name        string
 	AssetType   string
 	Status      string
+	ErrorCode   string
 	Error       string
 	URL         string
 	ProjectName string
@@ -404,8 +405,9 @@ func parseVolcAsset(result map[string]interface{}) *VolcAssetResult {
 	return &VolcAssetResult{
 		ID: findString(result, "Id", "ID", "AssetId", "AssetID"), GroupID: findString(result, "GroupId", "GroupID"),
 		Name: findString(result, "Name"), AssetType: findString(result, "AssetType", "Type"),
-		Status: findString(result, "Status"), Error: findString(result, "Error", "Message", "FailReason", "FailedReason"),
-		URL: findString(result, "URL", "Url"), ProjectName: findString(result, "ProjectName"),
+		Status: findString(result, "Status"), ErrorCode: findString(result, "ErrorCode", "Code"),
+		Error: findString(result, "Error", "Message", "FailReason", "FailedReason"),
+		URL:   findString(result, "URL", "Url"), ProjectName: findString(result, "ProjectName"),
 	}
 }
 

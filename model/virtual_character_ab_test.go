@@ -2,6 +2,7 @@ package model
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -209,6 +210,81 @@ func TestCompleteValidationCreatesOneActorGroupAndIsReplaySafe(t *testing.T) {
 	require.EqualValues(t, 1, count)
 }
 
+func TestPendingRealPersonReservationIsHiddenAndCancellationRemovesIt(t *testing.T) {
+	cleanupVirtualCharacterABTables(t)
+	character, authorization, _, err := ReserveRealPersonVirtualCharacter(56, 3, "Pending actor", "", "[]")
+	require.NoError(t, err)
+	require.Zero(t, authorization.ValidUntil)
+	session := &VirtualCharacterValidationSession{
+		ID: "session-cancel", UserID: 56, ProviderAccountID: 3, CharacterID: character.ID,
+		Status: VirtualCharacterValidationPending, StateHash: "state-cancel", Name: character.Name,
+		ExpiresAt: time.Now().Add(time.Minute).Unix(),
+	}
+	require.NoError(t, CreateVirtualCharacterValidationSession(session))
+
+	items, total, err := ListVirtualCharacters(56, VirtualCharacterScopePrivate, false, VirtualCharacterListFilter{
+		SourceType: VirtualCharacterSourceVolcRealPerson,
+	}, 0, 20)
+	require.NoError(t, err)
+	require.Zero(t, total)
+	require.Empty(t, items)
+
+	cancelled, err := CancelReservedVirtualCharacterValidation(session.ID, session.UserID)
+	require.NoError(t, err)
+	require.True(t, cancelled)
+
+	var storedSession VirtualCharacterValidationSession
+	require.NoError(t, DB.First(&storedSession, "id = ?", session.ID).Error)
+	require.Equal(t, VirtualCharacterValidationCancelled, storedSession.Status)
+	var characterCount, authorizationCount int64
+	require.NoError(t, DB.Unscoped().Model(&VirtualCharacter{}).Where("id = ?", character.ID).Count(&characterCount).Error)
+	require.NoError(t, DB.Model(&VirtualCharacterAuthorization{}).Where("character_id = ?", character.ID).Count(&authorizationCount).Error)
+	require.Zero(t, characterCount)
+	require.Zero(t, authorizationCount)
+}
+
+func TestOfficialH5CompletionActivatesReservedVerificationEvidence(t *testing.T) {
+	cleanupVirtualCharacterABTables(t)
+	character, _, _, err := ReserveRealPersonVirtualCharacter(57, 4, "Verified actor", "", "[]")
+	require.NoError(t, err)
+	session := &VirtualCharacterValidationSession{
+		ID: "session-official-h5", UserID: 57, ProviderAccountID: 4, CharacterID: character.ID,
+		Status: VirtualCharacterValidationPending, StateHash: "state-official-h5", Name: character.Name,
+		ExpiresAt: time.Now().Add(time.Minute).Unix(),
+	}
+	require.NoError(t, CreateVirtualCharacterValidationSession(session))
+
+	completed, err := CompleteReservedVirtualCharacterValidation(session.ID, "group-official", strings.Repeat("a", 64))
+	require.NoError(t, err)
+	require.Equal(t, VirtualCharacterValidationAccepted, completed.ValidationStatus)
+
+	authorization, err := GetVirtualCharacterAuthorization(character.ID)
+	require.NoError(t, err)
+	require.Equal(t, VirtualCharacterAuthorizationSynchronizing, authorization.Status)
+	require.Greater(t, authorization.HolderScopeAcceptedAt, int64(0))
+	require.Zero(t, authorization.ValidUntil)
+}
+
+func TestFailedRealPersonValidationRemovesReservedCharacter(t *testing.T) {
+	cleanupVirtualCharacterABTables(t)
+	character, _, _, err := ReserveRealPersonVirtualCharacter(58, 5, "Failed actor", "", "[]")
+	require.NoError(t, err)
+	session := &VirtualCharacterValidationSession{
+		ID: "session-failed", UserID: 58, ProviderAccountID: 5, CharacterID: character.ID,
+		Status: VirtualCharacterValidationPending, StateHash: "state-failed", Name: character.Name,
+		ExpiresAt: time.Now().Add(time.Minute).Unix(),
+	}
+	require.NoError(t, CreateVirtualCharacterValidationSession(session))
+	require.NoError(t, FailReservedVirtualCharacterValidation(session.ID, VirtualCharacterValidationFailed, "rejected", "validation failed"))
+
+	var storedSession VirtualCharacterValidationSession
+	require.NoError(t, DB.First(&storedSession, "id = ?", session.ID).Error)
+	require.Equal(t, VirtualCharacterValidationFailed, storedSession.Status)
+	var characterCount int64
+	require.NoError(t, DB.Unscoped().Model(&VirtualCharacter{}).Where("id = ?", character.ID).Count(&characterCount).Error)
+	require.Zero(t, characterCount)
+}
+
 func TestCollapseAssetsKeepsOneImageAndQueuesEveryExtra(t *testing.T) {
 	cleanupVirtualCharacterABTables(t)
 	require.NoError(t, DB.AutoMigrate(&legacyVirtualCharacterAsset{}))
@@ -349,6 +425,47 @@ func TestBeginVirtualCharacterGroupDeleteQueuesImageFileBeforeGroup(t *testing.T
 	pending, err = HasIncompleteVirtualCharacterCleanupJobs(character.ID, jobs[2].ID)
 	require.NoError(t, err)
 	require.False(t, pending)
+}
+
+func TestDiscardFailedAIGCVirtualCharacterUploadHidesEmptyCharacterAndQueuesCleanup(t *testing.T) {
+	cleanupVirtualCharacterABTables(t)
+	slot := 1
+	character := &VirtualCharacter{
+		UserID: 90, Slot: &slot, Scope: VirtualCharacterScopePrivate,
+		SourceType: VirtualCharacterSourceVolcAIGC, Status: VirtualCharacterStatusCreating,
+		ProviderAccountID: 5, ProviderGroupID: "group-failed", ProviderAssetID: "asset-failed", StagingFileID: "file-failed",
+	}
+	require.NoError(t, DB.Create(character).Error)
+	require.NoError(t, DiscardFailedAIGCVirtualCharacterUpload(character.ID, "", "素材上传失败"))
+
+	var hidden VirtualCharacter
+	require.ErrorIs(t, DB.First(&hidden, character.ID).Error, gorm.ErrRecordNotFound)
+	require.NoError(t, DB.Unscoped().First(&hidden, character.ID).Error)
+	require.Equal(t, VirtualCharacterStatusDeleting, hidden.Status)
+	require.Nil(t, hidden.Slot)
+	require.True(t, hidden.DeletedAt.Valid)
+	require.Equal(t, "素材上传失败", hidden.LastError)
+
+	var jobs []VirtualCharacterCleanupJob
+	require.NoError(t, DB.Where("character_id = ?", character.ID).Find(&jobs).Error)
+	require.Len(t, jobs, 3)
+	targets := make(map[string]string, len(jobs))
+	for _, job := range jobs {
+		targets[job.TargetType] = job.TargetID
+	}
+	require.Equal(t, "asset-failed", targets["volc_asset"])
+	require.Equal(t, "file-failed", targets["aipdd_file"])
+	require.Equal(t, "group-failed", targets["volc_group"])
+
+	noTargetSlot := 2
+	noTarget := &VirtualCharacter{
+		UserID: 90, Slot: &noTargetSlot, Scope: VirtualCharacterScopePrivate,
+		SourceType: VirtualCharacterSourceVolcAIGC, Status: VirtualCharacterStatusCreating,
+		ProviderAccountID: 5,
+	}
+	require.NoError(t, DB.Create(noTarget).Error)
+	require.NoError(t, DiscardFailedAIGCVirtualCharacterUpload(noTarget.ID, "", "素材组创建失败"))
+	require.ErrorIs(t, DB.Unscoped().First(&VirtualCharacter{}, noTarget.ID).Error, gorm.ErrRecordNotFound)
 }
 
 func TestVirtualCharacterImageTerminalTransitionsReleaseFailedSlot(t *testing.T) {

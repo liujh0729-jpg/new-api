@@ -22,13 +22,13 @@ const (
 	VirtualCharacterAuthorizationFailed              = "failed"
 
 	VirtualCharacterRealPersonGroupType    = "LivenessFace"
+	VirtualCharacterRealPersonAgreement    = "volc-official-h5-v1"
 	VirtualCharacterDefaultRealPersonLimit = 5
 )
 
-// VirtualCharacterAuthorization is the auditable, local authorization gate for
-// a verified natural person. Provider verification is necessary but never
-// sufficient on its own: every generation also checks this record's owner,
-// validity window, status, and cached provider state.
+// VirtualCharacterAuthorization is the auditable, local verification gate for
+// a natural person. The official provider H5 flow supplies the consent and
+// identity evidence; the legacy scope columns remain for database compatibility.
 type VirtualCharacterAuthorization struct {
 	ID                    int64  `json:"id" gorm:"primaryKey;autoIncrement"`
 	CharacterID           int64  `json:"character_id" gorm:"uniqueIndex"`
@@ -74,16 +74,6 @@ type VirtualCharacterTaskReference struct {
 	CreatedAt                 int64  `json:"created_at" gorm:"autoCreateTime;index"`
 }
 
-type VirtualCharacterAuthorizationInput struct {
-	ValidUntil           int64
-	CommercialUseAllowed bool
-	PurposesJSON         string
-	RegionsJSON          string
-	PlatformsJSON        string
-	IndustriesJSON       string
-	AgreementVersion     string
-}
-
 func GetVirtualCharacterRealPersonLimit() int {
 	common.OptionMapRWMutex.RLock()
 	raw := strings.TrimSpace(common.OptionMap["VirtualCharacterRealPersonLimit"])
@@ -107,14 +97,11 @@ func CountRealPersonVirtualCharacters(userID int) (int64, error) {
 	return count, err
 }
 
-func ReserveRealPersonVirtualCharacter(userID, providerAccountID int, name, description, tagsJSON string, input VirtualCharacterAuthorizationInput) (*VirtualCharacter, *VirtualCharacterAuthorization, int, error) {
+func ReserveRealPersonVirtualCharacter(userID, providerAccountID int, name, description, tagsJSON string) (*VirtualCharacter, *VirtualCharacterAuthorization, int, error) {
 	if userID <= 0 || providerAccountID <= 0 {
 		return nil, nil, 0, errors.New("invalid user or provider account")
 	}
 	now := time.Now().Unix()
-	if input.ValidUntil <= now {
-		return nil, nil, 0, errors.New("authorization expiry must be in the future")
-	}
 	limit := GetVirtualCharacterRealPersonLimit()
 	var character *VirtualCharacter
 	var authorization *VirtualCharacterAuthorization
@@ -141,10 +128,7 @@ func ReserveRealPersonVirtualCharacter(userID, providerAccountID int, name, desc
 		}
 		authorization = &VirtualCharacterAuthorization{
 			CharacterID: character.ID, UserID: userID, Status: VirtualCharacterAuthorizationPending,
-			ValidFrom: now, ValidUntil: input.ValidUntil, CommercialUseAllowed: input.CommercialUseAllowed,
-			PurposesJSON: input.PurposesJSON, RegionsJSON: input.RegionsJSON,
-			PlatformsJSON: input.PlatformsJSON, IndustriesJSON: input.IndustriesJSON,
-			AgreementVersion:  strings.TrimSpace(input.AgreementVersion),
+			ValidFrom: now, AgreementVersion: VirtualCharacterRealPersonAgreement,
 			ProviderGroupType: VirtualCharacterRealPersonGroupType,
 		}
 		return tx.Create(authorization).Error
@@ -162,6 +146,44 @@ func DeleteRealPersonReservation(characterID int64, userID int) error {
 		}
 		return tx.Unscoped().Where("id = ? AND user_id = ? AND source_type = ?", characterID, userID, VirtualCharacterSourceVolcRealPerson).Delete(&VirtualCharacter{}).Error
 	})
+}
+
+func CancelReservedVirtualCharacterValidation(sessionID string, userID int) (bool, error) {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" || userID <= 0 {
+		return false, gorm.ErrRecordNotFound
+	}
+	cancelled := false
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		var session VirtualCharacterValidationSession
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND user_id = ?", sessionID, userID).First(&session).Error; err != nil {
+			return err
+		}
+		if session.Status != VirtualCharacterValidationPending {
+			return nil
+		}
+		now := time.Now().Unix()
+		if err := tx.Model(&session).Updates(map[string]any{
+			"status": VirtualCharacterValidationCancelled, "result_code": "cancelled",
+			"last_error": "validation cancelled", "consumed_at": now,
+			"encrypted_byted_token": "", "encrypted_h5_link": "", "updated_at": now,
+		}).Error; err != nil {
+			return err
+		}
+		if session.CharacterID > 0 {
+			if err := tx.Where("character_id = ? AND user_id = ?", session.CharacterID, userID).Delete(&VirtualCharacterAuthorization{}).Error; err != nil {
+				return err
+			}
+			if err := tx.Unscoped().Where("id = ? AND user_id = ? AND source_type = ? AND validation_status = ?",
+				session.CharacterID, userID, VirtualCharacterSourceVolcRealPerson, VirtualCharacterValidationUnverified).
+				Delete(&VirtualCharacter{}).Error; err != nil {
+				return err
+			}
+		}
+		cancelled = true
+		return nil
+	})
+	return cancelled, err
 }
 
 func GetVirtualCharacterAuthorization(characterID int64) (*VirtualCharacterAuthorization, error) {
@@ -212,8 +234,8 @@ func CompleteReservedVirtualCharacterValidation(sessionID, providerGroupID, cons
 		if session.Status != VirtualCharacterValidationPending || session.ExpiresAt <= time.Now().Unix() || session.CharacterID <= 0 {
 			return errors.New("validation session is no longer pending")
 		}
-		if session.HolderScopeAcceptedAt <= 0 || strings.TrimSpace(consentReceiptHash) == "" {
-			return errors.New("portrait holder authorization scope was not accepted")
+		if strings.TrimSpace(consentReceiptHash) == "" {
+			return errors.New("real-person validation evidence is missing")
 		}
 		if err := tx.Where("id = ? AND user_id = ? AND source_type = ?", session.CharacterID, session.UserID, VirtualCharacterSourceVolcRealPerson).First(&character).Error; err != nil {
 			return err
@@ -222,7 +244,7 @@ func CompleteReservedVirtualCharacterValidation(sessionID, providerGroupID, cons
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("character_id = ? AND user_id = ?", character.ID, character.UserID).First(&authorization).Error; err != nil {
 			return err
 		}
-		if authorization.Status != VirtualCharacterAuthorizationPending || authorization.HolderScopeAcceptedAt != session.HolderScopeAcceptedAt || authorization.ValidUntil <= time.Now().Unix() {
+		if authorization.Status != VirtualCharacterAuthorizationPending {
 			return errors.New("real-person authorization is no longer pending")
 		}
 		now := time.Now().Unix()
@@ -236,7 +258,8 @@ func CompleteReservedVirtualCharacterValidation(sessionID, providerGroupID, cons
 		if err := tx.Model(&authorization).Updates(map[string]any{
 			"status": VirtualCharacterAuthorizationSynchronizing, "agreement_reference": session.ID,
 			"consent_receipt_hash": strings.TrimSpace(consentReceiptHash), "authorized_at": now,
-			"provider_group_type": VirtualCharacterRealPersonGroupType, "provider_group_status": "Active",
+			"holder_scope_accepted_at": now,
+			"provider_group_type":      VirtualCharacterRealPersonGroupType, "provider_group_status": "Active",
 			"last_error": "", "updated_at": now,
 		}).Error; err != nil {
 			return err
@@ -244,7 +267,8 @@ func CompleteReservedVirtualCharacterValidation(sessionID, providerGroupID, cons
 		return tx.Model(&session).Updates(map[string]any{
 			"status": VirtualCharacterValidationSucceeded, "provider_group_id": providerGroupID,
 			"result_code": "10000", "last_error": "", "consumed_at": now,
-			"encrypted_byted_token": "", "encrypted_h5_link": "", "updated_at": now,
+			"holder_scope_accepted_at": now,
+			"encrypted_byted_token":    "", "encrypted_h5_link": "", "updated_at": now,
 		}).Error
 	})
 	return &character, err
@@ -272,15 +296,12 @@ func FailReservedVirtualCharacterValidation(sessionID, status, resultCode, reaso
 		if session.CharacterID <= 0 {
 			return nil
 		}
-		if err := tx.Model(&VirtualCharacter{}).Where("id = ? AND source_type = ?", session.CharacterID, VirtualCharacterSourceVolcRealPerson).Updates(map[string]any{
-			"real_person_slot": nil, "status": VirtualCharacterStatusFailed,
-			"validation_status": VirtualCharacterValidationRejected, "last_error": reason, "updated_at": now,
-		}).Error; err != nil {
+		if err := tx.Where("character_id = ? AND user_id = ?", session.CharacterID, session.UserID).Delete(&VirtualCharacterAuthorization{}).Error; err != nil {
 			return err
 		}
-		return tx.Model(&VirtualCharacterAuthorization{}).Where("character_id = ?", session.CharacterID).Updates(map[string]any{
-			"status": VirtualCharacterAuthorizationFailed, "last_error": reason, "updated_at": now,
-		}).Error
+		return tx.Unscoped().Where("id = ? AND user_id = ? AND source_type = ? AND validation_status = ?",
+			session.CharacterID, session.UserID, VirtualCharacterSourceVolcRealPerson, VirtualCharacterValidationUnverified).
+			Delete(&VirtualCharacter{}).Error
 	})
 }
 
@@ -324,7 +345,7 @@ func ActivateRealPersonVirtualCharacter(characterID int64, providerAssetID, prov
 		if authorization.HolderScopeAcceptedAt <= 0 || strings.TrimSpace(authorization.ConsentReceiptHash) == "" {
 			return errors.New("real-person authorization evidence is incomplete")
 		}
-		if authorization.ValidUntil <= now {
+		if authorization.ValidUntil > 0 && authorization.ValidUntil <= now {
 			if err := tx.Model(&authorization).Updates(map[string]any{"status": VirtualCharacterAuthorizationExpired, "expired_at": now, "last_error": "authorization expired", "provider_checked_at": checkedAt, "updated_at": now}).Error; err != nil {
 				return err
 			}
@@ -465,7 +486,7 @@ func ListRealPersonVirtualCharactersDueForProviderCheck(now, staleBefore int64, 
 		Select("virtual_characters.*").
 		Joins("JOIN virtual_character_authorizations ON virtual_character_authorizations.character_id = virtual_characters.id").
 		Where("virtual_characters.source_type = ? AND virtual_characters.status IN ?", VirtualCharacterSourceVolcRealPerson, []string{VirtualCharacterStatusActive, VirtualCharacterStatusBlocked, VirtualCharacterStatusCreating}).
-		Where("virtual_character_authorizations.valid_until <= ? OR virtual_character_authorizations.provider_checked_at <= ?", now, staleBefore).
+		Where("(virtual_character_authorizations.valid_until > 0 AND virtual_character_authorizations.valid_until <= ?) OR virtual_character_authorizations.provider_checked_at <= ?", now, staleBefore).
 		Order("virtual_character_authorizations.provider_checked_at ASC, virtual_characters.id ASC").Limit(limit).Scan(&items).Error
 	return items, err
 }

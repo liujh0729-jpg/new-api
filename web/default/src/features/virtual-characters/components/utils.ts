@@ -87,6 +87,7 @@ export function validationStatusLabel(
       succeeded: 'Validation succeeded',
       failed: 'Validation failed',
       expired: 'Validation expired',
+      cancelled: 'Validation cancelled',
     }[status]
   )
 }

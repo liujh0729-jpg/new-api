@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/textproto"
-	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -150,9 +149,9 @@ func TestValidationCallbackRejectsTokenMismatchAndReplay(t *testing.T) {
 	require.Equal(t, model.VirtualCharacterValidationFailed, stored.Status)
 }
 
-func TestValidationLaunchRequiresPortraitHolderScopeAcceptance(t *testing.T) {
+func TestValidationLaunchRedirectsDirectlyToProviderH5(t *testing.T) {
 	db := setupVirtualCharacterControllerTestDB(t)
-	require.NoError(t, db.AutoMigrate(&model.VirtualCharacter{}, &model.VirtualCharacterAuthorization{}, &model.VirtualCharacterValidationSession{}))
+	require.NoError(t, db.AutoMigrate(&model.VirtualCharacterValidationSession{}))
 	previousSecret := common.CryptoSecret
 	previousConfigured := common.CryptoSecretConfigured
 	common.CryptoSecret = strings.Repeat("h", 32)
@@ -162,47 +161,24 @@ func TestValidationLaunchRequiresPortraitHolderScopeAcceptance(t *testing.T) {
 		common.CryptoSecretConfigured = previousConfigured
 	})
 
-	character := &model.VirtualCharacter{UserID: 89, Scope: model.VirtualCharacterScopePrivate, SourceType: model.VirtualCharacterSourceVolcRealPerson, Name: "Actor <One>", Status: model.VirtualCharacterStatusCreating}
-	require.NoError(t, db.Create(character).Error)
 	now := time.Now().Unix()
-	require.NoError(t, db.Create(&model.VirtualCharacterAuthorization{
-		CharacterID: character.ID, UserID: character.UserID, Status: model.VirtualCharacterAuthorizationPending,
-		ValidFrom: now, ValidUntil: now + 3600, PurposesJSON: `["Product <demo>"]`, RegionsJSON: `["CN"]`, PlatformsJSON: `["Web"]`,
-	}).Error)
 	encryptedLink, err := common.EncryptSensitiveValue("https://verify.example.com/private-token")
 	require.NoError(t, err)
-	state := "scope-state"
+	state := "direct-state"
 	session := &model.VirtualCharacterValidationSession{
-		ID: "session-scope", UserID: character.UserID, CharacterID: character.ID, Status: model.VirtualCharacterValidationPending,
-		StateHash: hashValidationState(state), EncryptedH5Link: encryptedLink, Name: character.Name, Language: "en", ExpiresAt: now + 600,
+		ID: "session-direct", UserID: 89, Status: model.VirtualCharacterValidationPending,
+		StateHash: hashValidationState(state), EncryptedH5Link: encryptedLink, Name: "Actor", Language: "en", ExpiresAt: now + 600,
 	}
 	require.NoError(t, db.Create(session).Error)
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.GET("/launch/:id", LaunchVirtualCharacterValidation)
-	router.POST("/launch/:id", LaunchVirtualCharacterValidation)
-	getRecorder := httptest.NewRecorder()
-	router.ServeHTTP(getRecorder, httptest.NewRequest(http.MethodGet, "/launch/"+session.ID+"?state="+state, nil))
-	require.Equal(t, http.StatusOK, getRecorder.Code)
-	require.Contains(t, getRecorder.Body.String(), "Product &lt;demo&gt;")
-	require.NotContains(t, getRecorder.Body.String(), "private-token")
-	require.Equal(t, "no-store", getRecorder.Header().Get("Cache-Control"))
-
-	form := url.Values{"state": {state}, "accepted": {"1"}}
-	postRequest := httptest.NewRequest(http.MethodPost, "/launch/"+session.ID, strings.NewReader(form.Encode()))
-	postRequest.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	postRecorder := httptest.NewRecorder()
-	router.ServeHTTP(postRecorder, postRequest)
-	require.Equal(t, http.StatusFound, postRecorder.Code)
-	require.Equal(t, "https://verify.example.com/private-token", postRecorder.Header().Get("Location"))
-
-	var stored model.VirtualCharacterValidationSession
-	require.NoError(t, db.First(&stored, "id = ?", session.ID).Error)
-	require.Greater(t, stored.HolderScopeAcceptedAt, int64(0))
-	var authorization model.VirtualCharacterAuthorization
-	require.NoError(t, db.Where("character_id = ?", character.ID).First(&authorization).Error)
-	require.Equal(t, stored.HolderScopeAcceptedAt, authorization.HolderScopeAcceptedAt)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/launch/"+session.ID+"?state="+state, nil))
+	require.Equal(t, http.StatusFound, recorder.Code)
+	require.Equal(t, "https://verify.example.com/private-token", recorder.Header().Get("Location"))
+	require.Equal(t, "no-store", recorder.Header().Get("Cache-Control"))
 }
 
 func TestValidationSessionEndpointHidesOtherUsersSessions(t *testing.T) {
@@ -361,11 +337,10 @@ func TestCreateVirtualCharacterRequiresComplianceAndRollsBackOnGroupFailure(t *t
 		"name": "Actor One", "description": "d", "tags": `["a"]`,
 	}, "actor.png", "image/png", []byte("png-bytes")))
 	require.Equal(t, http.StatusBadGateway, failRecorder.Code)
+	require.Contains(t, failRecorder.Body.String(), "火山素材服务请求失败")
 
 	var failed model.VirtualCharacter
-	require.NoError(t, db.Where("user_id = ?", 77).First(&failed).Error)
-	require.Equal(t, model.VirtualCharacterStatusFailed, failed.Status)
-	require.Nil(t, failed.Slot)
+	require.Error(t, db.Unscoped().Where("user_id = ?", 77).First(&failed).Error)
 
 	newVolcAssetClientForVirtualCharacters = func(*model.VirtualCharacterProviderAccount) (service.VolcAssetClient, error) {
 		return &stubVolcAssetClient{createGroupID: "group-ok", createAssetErr: errors.New("upstream create asset failed")}, nil
@@ -375,10 +350,13 @@ func TestCreateVirtualCharacterRequiresComplianceAndRollsBackOnGroupFailure(t *t
 		"name": "Actor Asset Fail",
 	}, "actor.png", "image/png", []byte("png-bytes")))
 	require.Equal(t, http.StatusBadGateway, assetFailRecorder.Code)
+	require.Contains(t, assetFailRecorder.Body.String(), "火山素材服务请求失败")
 	var assetFailed model.VirtualCharacter
-	require.NoError(t, db.Where("user_id = ? AND name = ?", 77, "Actor Asset Fail").First(&assetFailed).Error)
-	require.Equal(t, model.VirtualCharacterStatusFailed, assetFailed.Status)
+	require.Error(t, db.Where("user_id = ? AND name = ?", 77, "Actor Asset Fail").First(&assetFailed).Error)
+	require.NoError(t, db.Unscoped().Where("user_id = ? AND name = ?", 77, "Actor Asset Fail").First(&assetFailed).Error)
+	require.Equal(t, model.VirtualCharacterStatusDeleting, assetFailed.Status)
 	require.Nil(t, assetFailed.Slot)
+	require.True(t, assetFailed.DeletedAt.Valid)
 	var cleanupJobs int64
 	require.NoError(t, db.Model(&model.VirtualCharacterCleanupJob{}).Where("target_type = ? AND target_id = ?", "volc_group", "group-ok").Count(&cleanupJobs).Error)
 	require.Equal(t, int64(1), cleanupJobs)

@@ -312,6 +312,9 @@ func ListVirtualCharacters(userID int, scope string, includeOffline bool, filter
 	switch scope {
 	case VirtualCharacterScopePrivate, "":
 		query = query.Where("scope = ? AND user_id = ?", VirtualCharacterScopePrivate, userID)
+		// Real-person rows are reservations until the official H5 flow succeeds.
+		// They must never appear as character cards while validation is pending or failed.
+		query = query.Where("source_type <> ? OR validation_status = ?", VirtualCharacterSourceVolcRealPerson, VirtualCharacterValidationAccepted)
 	case VirtualCharacterScopePublic:
 		query = query.Where("scope = ?", VirtualCharacterScopePublic)
 		if !includeOffline {

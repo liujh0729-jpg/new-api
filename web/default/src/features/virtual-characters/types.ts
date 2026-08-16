@@ -18,11 +18,22 @@ For commercial licensing, please contact support@quantumnous.com
 */
 export type VirtualCharacterScope = 'public' | 'private'
 export type VirtualCharacterStatus =
-  'creating' | 'active' | 'blocked' | 'offline' | 'deleting' | 'failed'
+  | 'creating'
+  | 'active'
+  | 'blocked'
+  | 'offline'
+  | 'deleting'
+  | 'failed'
 export type VirtualCharacterValidationSessionStatus =
-  'pending' | 'succeeded' | 'failed' | 'expired'
+  | 'pending'
+  | 'succeeded'
+  | 'failed'
+  | 'expired'
+  | 'cancelled'
 export type VirtualCharacterSourceType =
-  'volc_preset' | 'volc_aigc' | 'volc_real_person'
+  | 'volc_preset'
+  | 'volc_aigc'
+  | 'volc_real_person'
 
 export type VirtualCharacterAuthorizationStatus =
   | 'pending'
@@ -36,15 +47,6 @@ export type VirtualCharacterAuthorizationStatus =
 
 export interface VirtualCharacterAuthorization {
   status: VirtualCharacterAuthorizationStatus
-  valid_from: number
-  valid_until: number
-  commercial_use_allowed: boolean
-  purposes: string[]
-  regions: string[]
-  platforms: string[]
-  industries: string[]
-  agreement_version: string
-  holder_scope_accepted_at?: number
   provider_group_status?: string
   provider_asset_status?: string
   provider_checked_at?: number
@@ -150,15 +152,12 @@ export interface VirtualCharacterTask {
     provider_asset_id: string
     authorization_snapshot?: {
       authorization_status?: string
-      authorization_from?: number
-      authorization_until?: number
-      commercial_use_allowed?: boolean
-      purposes?: string[]
-      regions?: string[]
-      platforms?: string[]
-      industries?: string[]
-      holder_scope_accepted_at?: number
+      agreement_reference?: string
+      consent_receipt_hash?: string
+      provider_group_status?: string
+      provider_asset_status?: string
       provider_checked_at?: number
+      authorized_at?: number
       captured_at: number
     }
   }>

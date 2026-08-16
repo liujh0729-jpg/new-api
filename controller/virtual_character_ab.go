@@ -1,7 +1,6 @@
 package controller
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -10,7 +9,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"html/template"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -28,9 +26,8 @@ import (
 )
 
 const (
-	virtualCharacterValidationTTL              = 30 * time.Minute
-	virtualCharacterUploadMaxBody              = int64(31 << 20)
-	virtualCharacterRealPersonAgreementVersion = "volc-real-person-v1"
+	virtualCharacterValidationTTL = 30 * time.Minute
+	virtualCharacterUploadMaxBody = int64(31 << 20)
 )
 
 type virtualCharacterStagingStorage interface {
@@ -84,23 +81,13 @@ type virtualCharacterGroupResponse struct {
 }
 
 type virtualCharacterAuthorizationResponse struct {
-	Status                string   `json:"status"`
-	ValidFrom             int64    `json:"valid_from"`
-	ValidUntil            int64    `json:"valid_until"`
-	CommercialUseAllowed  bool     `json:"commercial_use_allowed"`
-	Purposes              []string `json:"purposes"`
-	Regions               []string `json:"regions"`
-	Platforms             []string `json:"platforms"`
-	Industries            []string `json:"industries"`
-	AgreementVersion      string   `json:"agreement_version"`
-	HolderScopeAcceptedAt int64    `json:"holder_scope_accepted_at,omitempty"`
-	ProviderGroupStatus   string   `json:"provider_group_status,omitempty"`
-	ProviderAssetStatus   string   `json:"provider_asset_status,omitempty"`
-	ProviderCheckedAt     int64    `json:"provider_checked_at,omitempty"`
-	AuthorizedAt          int64    `json:"authorized_at,omitempty"`
-	RevokedAt             int64    `json:"revoked_at,omitempty"`
-	ExpiredAt             int64    `json:"expired_at,omitempty"`
-	LastError             string   `json:"last_error,omitempty"`
+	Status              string `json:"status"`
+	ProviderGroupStatus string `json:"provider_group_status,omitempty"`
+	ProviderAssetStatus string `json:"provider_asset_status,omitempty"`
+	ProviderCheckedAt   int64  `json:"provider_checked_at,omitempty"`
+	AuthorizedAt        int64  `json:"authorized_at,omitempty"`
+	RevokedAt           int64  `json:"revoked_at,omitempty"`
+	LastError           string `json:"last_error,omitempty"`
 }
 
 func parseVirtualCharacterListFilter(c *gin.Context) (model.VirtualCharacterListFilter, error) {
@@ -270,25 +257,26 @@ func CreateVirtualCharacter(c *gin.Context) {
 	}
 	groupID, err := client.CreateAssetGroup(c.Request.Context(), metadata.Name, metadata.Description, account.ProjectName)
 	if err != nil {
-		_ = model.ReleasePrivateVirtualCharacterSlot(item.ID, common.MaskSensitiveInfo(err.Error()))
-		virtualCharacterError(c, http.StatusBadGateway, "provider_group_failed", common.MaskSensitiveInfo(err.Error()))
+		message := service.LocalizeVolcAssetError(err)
+		if discardErr := model.DiscardFailedAIGCVirtualCharacterUpload(item.ID, "", message); discardErr != nil {
+			common.SysError(fmt.Sprintf("discard failed virtual character upload %d: %v", item.ID, discardErr))
+		}
+		virtualCharacterError(c, http.StatusBadGateway, "provider_group_failed", message)
 		return
 	}
 	if err := model.AttachVirtualCharacterProviderGroup(item.ID, groupID); err != nil {
-		_ = model.CreateVirtualCharacterCleanupJob(&model.VirtualCharacterCleanupJob{
-			CharacterID: item.ID, ProviderAccountID: account.ID, TargetType: "volc_group", TargetID: groupID, Status: model.VirtualCharacterCleanupPending, NextAttemptAt: time.Now().Unix(),
-		})
-		_ = model.ReleasePrivateVirtualCharacterSlot(item.ID, err.Error())
+		if discardErr := model.DiscardFailedAIGCVirtualCharacterUpload(item.ID, groupID, err.Error()); discardErr != nil {
+			common.SysError(fmt.Sprintf("discard failed virtual character upload %d: %v", item.ID, discardErr))
+		}
 		virtualCharacterError(c, http.StatusInternalServerError, "attach_group_failed", err.Error())
 		return
 	}
 	item.ProviderGroupID = groupID
 	createErr := stageAndCreateVirtualCharacterImage(c.Request.Context(), item, account, client, header, metadata.Name)
 	if createErr != nil {
-		_ = model.CreateVirtualCharacterCleanupJob(&model.VirtualCharacterCleanupJob{
-			CharacterID: item.ID, ProviderAccountID: account.ID, TargetType: "volc_group", TargetID: groupID, Status: model.VirtualCharacterCleanupPending, NextAttemptAt: time.Now().Unix(),
-		})
-		_ = model.ReleasePrivateVirtualCharacterSlot(item.ID, createErr.Message)
+		if discardErr := model.DiscardFailedAIGCVirtualCharacterUpload(item.ID, groupID, createErr.Message); discardErr != nil {
+			common.SysError(fmt.Sprintf("discard failed virtual character upload %d: %v", item.ID, discardErr))
+		}
 		virtualCharacterError(c, createErr.Status, createErr.Code, createErr.Message)
 		return
 	}
@@ -321,19 +309,10 @@ func CreateVirtualCharacterValidationSession(c *gin.Context) {
 		return
 	}
 	var req struct {
-		Name          string   `json:"name"`
-		Description   string   `json:"description"`
-		Tags          []string `json:"tags"`
-		Language      string   `json:"language"`
-		Authorization struct {
-			ValidUntil           int64    `json:"valid_until"`
-			CommercialUseAllowed bool     `json:"commercial_use_allowed"`
-			Purposes             []string `json:"purposes"`
-			Regions              []string `json:"regions"`
-			Platforms            []string `json:"platforms"`
-			Industries           []string `json:"industries"`
-			AgreementAccepted    bool     `json:"agreement_accepted"`
-		} `json:"authorization"`
+		Name        string   `json:"name"`
+		Description string   `json:"description"`
+		Tags        []string `json:"tags"`
+		Language    string   `json:"language"`
 	}
 	if err := common.DecodeJson(c.Request.Body, &req); err != nil {
 		virtualCharacterError(c, http.StatusBadRequest, "invalid_request", err.Error())
@@ -352,11 +331,6 @@ func CreateVirtualCharacterValidationSession(c *gin.Context) {
 		virtualCharacterError(c, http.StatusBadRequest, "invalid_language", "language must be zh or en")
 		return
 	}
-	authorizationInput, err := normalizeRealPersonAuthorizationInput(req.Authorization.ValidUntil, req.Authorization.CommercialUseAllowed, req.Authorization.Purposes, req.Authorization.Regions, req.Authorization.Platforms, req.Authorization.Industries, req.Authorization.AgreementAccepted)
-	if err != nil {
-		virtualCharacterError(c, http.StatusBadRequest, "invalid_authorization", err.Error())
-		return
-	}
 	sessionID, err := randomHex(16)
 	if err != nil {
 		virtualCharacterError(c, http.StatusInternalServerError, "session_failed", "failed to generate validation session")
@@ -372,7 +346,7 @@ func CreateVirtualCharacterValidationSession(c *gin.Context) {
 		virtualCharacterError(c, http.StatusServiceUnavailable, "callback_not_configured", "public callback address is not configured")
 		return
 	}
-	character, _, _, err := model.ReserveRealPersonVirtualCharacter(userID, account.ID, metadata.Name, metadata.Description, tagsJSON, authorizationInput)
+	character, _, _, err := model.ReserveRealPersonVirtualCharacter(userID, account.ID, metadata.Name, metadata.Description, tagsJSON)
 	if err != nil {
 		if strings.Contains(err.Error(), "limit reached") {
 			virtualCharacterError(c, http.StatusConflict, "character_limit_reached", err.Error())
@@ -422,11 +396,17 @@ func GetVirtualCharacterValidationSession(c *gin.Context) {
 	common.ApiSuccess(c, validationSessionResponse(item, ""))
 }
 
+func CancelVirtualCharacterValidationSession(c *gin.Context) {
+	cancelled, err := model.CancelReservedVirtualCharacterValidation(c.Param("id"), c.GetInt("id"))
+	if err != nil {
+		virtualCharacterLookupError(c, err)
+		return
+	}
+	common.ApiSuccess(c, gin.H{"id": c.Param("id"), "cancelled": cancelled})
+}
+
 func LaunchVirtualCharacterValidation(c *gin.Context) {
 	state := strings.TrimSpace(c.Query("state"))
-	if c.Request.Method == http.MethodPost {
-		state = strings.TrimSpace(c.PostForm("state"))
-	}
 	if state == "" {
 		c.AbortWithStatus(http.StatusGone)
 		return
@@ -435,26 +415,6 @@ func LaunchVirtualCharacterValidation(c *gin.Context) {
 	if err != nil || item.ID != c.Param("id") || item.Status != model.VirtualCharacterValidationPending || item.ExpiresAt <= time.Now().Unix() {
 		c.AbortWithStatus(http.StatusGone)
 		return
-	}
-	authorization, err := model.GetVirtualCharacterAuthorization(item.CharacterID)
-	if err != nil || authorization.UserID != item.UserID || authorization.Status != model.VirtualCharacterAuthorizationPending {
-		c.AbortWithStatus(http.StatusGone)
-		return
-	}
-	if c.Request.Method == http.MethodGet && item.HolderScopeAcceptedAt == 0 {
-		renderVirtualCharacterHolderScope(c, item, authorization, state, "")
-		return
-	}
-	if c.Request.Method == http.MethodPost && item.HolderScopeAcceptedAt == 0 {
-		if c.PostForm("accepted") != "1" {
-			renderVirtualCharacterHolderScope(c, item, authorization, state, "Please confirm the authorization scope before continuing.")
-			return
-		}
-		if err := model.AcceptVirtualCharacterHolderScope(item.ID); err != nil {
-			c.AbortWithStatus(http.StatusConflict)
-			return
-		}
-		item.HolderScopeAcceptedAt = time.Now().Unix()
 	}
 	link, err := common.DecryptSensitiveValue(item.EncryptedH5Link)
 	if err != nil {
@@ -468,80 +428,6 @@ func LaunchVirtualCharacterValidation(c *gin.Context) {
 	}
 	c.Header("Cache-Control", "no-store")
 	c.Redirect(http.StatusFound, parsed.String())
-}
-
-var virtualCharacterHolderScopeTemplate = template.Must(template.New("holder-scope").Parse(`<!doctype html>
-<html lang="{{.Language}}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{{.Title}}</title><style>
-body{margin:0;background:#f5f6f8;color:#1f2937;font-family:system-ui,-apple-system,"Segoe UI",sans-serif}.card{box-sizing:border-box;max-width:680px;margin:40px auto;padding:28px;background:#fff;border:1px solid #e5e7eb;border-radius:16px;box-shadow:0 12px 32px rgba(15,23,42,.08)}h1{font-size:24px;margin:0 0 12px}.lead{color:#4b5563;line-height:1.6}.grid{display:grid;grid-template-columns:120px 1fr;gap:10px 16px;margin:24px 0;padding:18px;background:#f9fafb;border-radius:12px}.label{color:#6b7280}.value{word-break:break-word}.confirm{display:flex;gap:10px;align-items:flex-start;line-height:1.55;margin:20px 0}.error{color:#b91c1c;margin:12px 0}.button{width:100%;border:0;border-radius:10px;padding:13px 18px;background:#111827;color:#fff;font-size:16px;cursor:pointer}.note{margin-top:16px;color:#6b7280;font-size:13px;line-height:1.5}@media(max-width:720px){.card{margin:0;min-height:100vh;border:0;border-radius:0;padding:24px 20px}.grid{grid-template-columns:1fr}.label{margin-top:5px}}
-</style></head><body><main class="card"><h1>{{.Title}}</h1><p class="lead">{{.Lead}}</p><div class="grid">
-<div class="label">{{.NameLabel}}</div><div class="value">{{.Name}}</div>
-<div class="label">{{.RequesterLabel}}</div><div class="value">{{.Requester}}</div>
-<div class="label">{{.ExpiryLabel}}</div><div class="value">{{.Expiry}}</div>
-<div class="label">{{.PurposeLabel}}</div><div class="value">{{.Purposes}}</div>
-<div class="label">{{.RegionLabel}}</div><div class="value">{{.Regions}}</div>
-<div class="label">{{.PlatformLabel}}</div><div class="value">{{.Platforms}}</div>
-<div class="label">{{.IndustryLabel}}</div><div class="value">{{.Industries}}</div>
-<div class="label">{{.CommercialLabel}}</div><div class="value">{{.Commercial}}</div></div>
-{{if .Error}}<p class="error">{{.Error}}</p>{{end}}<form method="post" action="{{.Action}}"><input type="hidden" name="state" value="{{.State}}"><label class="confirm"><input type="checkbox" name="accepted" value="1" required><span>{{.Confirm}}</span></label><button class="button" type="submit">{{.Continue}}</button></form><p class="note">{{.Note}}</p></main></body></html>`))
-
-type virtualCharacterHolderScopePage struct {
-	Language, Title, Lead, NameLabel, Name, ExpiryLabel, Expiry string
-	RequesterLabel, Requester                                   string
-	PurposeLabel, Purposes, RegionLabel, Regions                string
-	PlatformLabel, Platforms, IndustryLabel, Industries         string
-	CommercialLabel, Commercial, Confirm, Continue, Note        string
-	Action, State, Error                                        string
-}
-
-func renderVirtualCharacterHolderScope(c *gin.Context, session *model.VirtualCharacterValidationSession, authorization *model.VirtualCharacterAuthorization, state, message string) {
-	join := func(raw string) string {
-		values := decodeVirtualCharacterTags(raw)
-		if len(values) == 0 {
-			return "-"
-		}
-		return strings.Join(values, ", ")
-	}
-	page := virtualCharacterHolderScopePage{
-		Language: "en", Title: "Portrait authorization confirmation",
-		Lead:      "Review the authorization scope below. Continue only if you are the portrait rights holder and agree to this use.",
-		NameLabel: "Character", Name: session.Name, ExpiryLabel: "Valid until", Expiry: time.Unix(authorization.ValidUntil, 0).UTC().Format("2006-01-02 15:04 UTC"),
-		RequesterLabel: "Requesting account", Requester: fmt.Sprintf("NewAPI account #%d", session.UserID),
-		PurposeLabel: "Purposes", Purposes: join(authorization.PurposesJSON), RegionLabel: "Regions", Regions: join(authorization.RegionsJSON),
-		PlatformLabel: "Platforms", Platforms: join(authorization.PlatformsJSON), IndustryLabel: "Industries", Industries: join(authorization.IndustriesJSON),
-		CommercialLabel: "Commercial use", Commercial: "Not allowed", Confirm: "I am the portrait rights holder. I have reviewed and agree to the authorization scope, facial information processing, and identity verification required to create this private character.",
-		Continue: "Agree and continue to verification", Note: "This link is private and expires soon. You may stop now if you do not agree.",
-		Action: c.Request.URL.Path, State: state, Error: message,
-	}
-	if authorization.CommercialUseAllowed {
-		page.Commercial = "Allowed within the scope above"
-	}
-	if strings.HasPrefix(strings.ToLower(session.Language), "zh") {
-		page.Language, page.Title = "zh-CN", "肖像授权确认"
-		page.Lead = "请核对以下授权范围。仅肖像权人本人同意相关使用时，方可继续。"
-		page.NameLabel, page.ExpiryLabel, page.PurposeLabel = "形象名称", "授权有效期", "使用目的"
-		page.RequesterLabel, page.Requester = "使用方账号", fmt.Sprintf("NewAPI 账号 #%d", session.UserID)
-		page.RegionLabel, page.PlatformLabel, page.IndustryLabel = "使用地区", "使用平台", "使用行业"
-		page.CommercialLabel, page.Commercial = "商业使用", "不允许"
-		if authorization.CommercialUseAllowed {
-			page.Commercial = "允许（仅限上述授权范围）"
-		}
-		page.Confirm = "我是该形象的肖像权人，已阅读并同意上述授权范围、人脸信息处理以及创建私有真人形象所需的身份核验。"
-		page.Continue = "同意并前往身份核验"
-		page.Note = "此链接仅供本人使用且即将过期；如不同意，请直接关闭页面。"
-		if message != "" {
-			page.Error = "请先确认授权范围，再继续。"
-		}
-	}
-	var output bytes.Buffer
-	if err := virtualCharacterHolderScopeTemplate.Execute(&output, page); err != nil {
-		c.AbortWithStatus(http.StatusInternalServerError)
-		return
-	}
-	c.Header("Cache-Control", "no-store")
-	c.Header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
-	c.Header("X-Content-Type-Options", "nosniff")
-	c.Data(http.StatusOK, "text/html; charset=utf-8", output.Bytes())
 }
 
 func VirtualCharacterValidationCallback(c *gin.Context) {
@@ -558,12 +444,6 @@ func VirtualCharacterValidationCallback(c *gin.Context) {
 	if item.ExpiresAt <= time.Now().Unix() {
 		_ = model.FailReservedVirtualCharacterValidation(item.ID, model.VirtualCharacterValidationExpired, "expired", "validation session expired")
 		item.Status = model.VirtualCharacterValidationExpired
-		redirectValidationResult(c, item)
-		return
-	}
-	if item.HolderScopeAcceptedAt <= 0 {
-		_ = model.FailReservedVirtualCharacterValidation(item.ID, model.VirtualCharacterValidationFailed, "scope_not_accepted", "portrait holder did not accept the authorization scope")
-		item.Status = model.VirtualCharacterValidationFailed
 		redirectValidationResult(c, item)
 		return
 	}
@@ -595,7 +475,7 @@ func VirtualCharacterValidationCallback(c *gin.Context) {
 		groupID, err = client.GetVisualValidateResult(c.Request.Context(), storedToken, account.ProjectName)
 		if err == nil {
 			var receipt string
-			receipt, err = realPersonConsentReceiptHash(item, groupID)
+			receipt, err = realPersonValidationReceiptHash(item, groupID)
 			var character *model.VirtualCharacter
 			if err == nil {
 				character, err = model.CompleteReservedVirtualCharacterValidation(item.ID, groupID, receipt)
@@ -618,34 +498,20 @@ func VirtualCharacterValidationCallback(c *gin.Context) {
 	redirectValidationResult(c, item)
 }
 
-func realPersonConsentReceiptHash(session *model.VirtualCharacterValidationSession, groupID string) (string, error) {
-	if session == nil || session.CharacterID <= 0 || session.HolderScopeAcceptedAt <= 0 {
-		return "", errors.New("invalid real-person authorization receipt")
-	}
-	authorization, err := model.GetVirtualCharacterAuthorization(session.CharacterID)
-	if err != nil || authorization.UserID != session.UserID || authorization.HolderScopeAcceptedAt != session.HolderScopeAcceptedAt {
-		return "", errors.New("real-person authorization receipt does not match the validation session")
+func realPersonValidationReceiptHash(session *model.VirtualCharacterValidationSession, groupID string) (string, error) {
+	if session == nil || session.CharacterID <= 0 || session.UserID <= 0 || strings.TrimSpace(groupID) == "" {
+		return "", errors.New("invalid real-person validation receipt")
 	}
 	receipt := struct {
-		SessionID            string `json:"session_id"`
-		CharacterID          int64  `json:"character_id"`
-		UserID               int    `json:"user_id"`
-		ProviderGroupID      string `json:"provider_group_id"`
-		ValidFrom            int64  `json:"valid_from"`
-		ValidUntil           int64  `json:"valid_until"`
-		CommercialUseAllowed bool   `json:"commercial_use_allowed"`
-		PurposesJSON         string `json:"purposes_json"`
-		RegionsJSON          string `json:"regions_json"`
-		PlatformsJSON        string `json:"platforms_json"`
-		IndustriesJSON       string `json:"industries_json"`
-		AgreementVersion     string `json:"agreement_version"`
-		HolderAcceptedAt     int64  `json:"holder_accepted_at"`
+		SessionID         string `json:"session_id"`
+		CharacterID       int64  `json:"character_id"`
+		UserID            int    `json:"user_id"`
+		ProviderAccountID int    `json:"provider_account_id"`
+		ProviderGroupID   string `json:"provider_group_id"`
+		ResultCode        string `json:"result_code"`
 	}{
 		SessionID: session.ID, CharacterID: session.CharacterID, UserID: session.UserID,
-		ProviderGroupID: strings.TrimSpace(groupID), ValidFrom: authorization.ValidFrom, ValidUntil: authorization.ValidUntil,
-		CommercialUseAllowed: authorization.CommercialUseAllowed, PurposesJSON: authorization.PurposesJSON,
-		RegionsJSON: authorization.RegionsJSON, PlatformsJSON: authorization.PlatformsJSON, IndustriesJSON: authorization.IndustriesJSON,
-		AgreementVersion: authorization.AgreementVersion, HolderAcceptedAt: session.HolderScopeAcceptedAt,
+		ProviderAccountID: session.ProviderAccountID, ProviderGroupID: strings.TrimSpace(groupID), ResultCode: "10000",
 	}
 	payload, err := common.Marshal(receipt)
 	if err != nil {
@@ -706,7 +572,7 @@ func stageAndCreateVirtualCharacterImage(
 	}
 	providerAssetID, err := client.CreateAsset(ctx, character.ProviderGroupID, signed.URL, "Image", name, account.ProjectName)
 	if err != nil {
-		return &virtualCharacterImageCreateError{Status: http.StatusBadGateway, Code: "provider_asset_failed", Message: common.MaskSensitiveInfo(err.Error())}
+		return &virtualCharacterImageCreateError{Status: http.StatusBadGateway, Code: "provider_asset_failed", Message: service.LocalizeVolcAssetError(err)}
 	}
 	if err := model.AttachVirtualCharacterImage(character.ID, providerAssetID, stored.FileID, mimeType, header.Size); err != nil {
 		_ = model.CreateVirtualCharacterCleanupJob(&model.VirtualCharacterCleanupJob{
@@ -1109,14 +975,9 @@ func virtualCharacterAuthorizationToResponse(item *model.VirtualCharacterAuthori
 		return nil
 	}
 	return &virtualCharacterAuthorizationResponse{
-		Status: item.Status, ValidFrom: item.ValidFrom, ValidUntil: item.ValidUntil,
-		CommercialUseAllowed: item.CommercialUseAllowed,
-		Purposes:             decodeVirtualCharacterTags(item.PurposesJSON), Regions: decodeVirtualCharacterTags(item.RegionsJSON),
-		Platforms: decodeVirtualCharacterTags(item.PlatformsJSON), Industries: decodeVirtualCharacterTags(item.IndustriesJSON),
-		AgreementVersion: item.AgreementVersion, ProviderGroupStatus: item.ProviderGroupStatus,
-		HolderScopeAcceptedAt: item.HolderScopeAcceptedAt,
-		ProviderAssetStatus:   item.ProviderAssetStatus, ProviderCheckedAt: item.ProviderCheckedAt,
-		AuthorizedAt: item.AuthorizedAt, RevokedAt: item.RevokedAt, ExpiredAt: item.ExpiredAt, LastError: item.LastError,
+		Status: item.Status, ProviderGroupStatus: item.ProviderGroupStatus,
+		ProviderAssetStatus: item.ProviderAssetStatus, ProviderCheckedAt: item.ProviderCheckedAt,
+		AuthorizedAt: item.AuthorizedAt, RevokedAt: item.RevokedAt, LastError: item.LastError,
 	}
 }
 
@@ -1301,66 +1162,6 @@ func validateVolcCharacterImageUpload(header *multipart.FileHeader) (string, err
 		return "", errors.New("character image exceeds the 30 MB limit")
 	}
 	return mimeType, nil
-}
-
-func normalizeRealPersonAuthorizationInput(validUntil int64, commercialUseAllowed bool, purposes, regions, platforms, industries []string, agreementAccepted bool) (model.VirtualCharacterAuthorizationInput, error) {
-	if !agreementAccepted {
-		return model.VirtualCharacterAuthorizationInput{}, errors.New("the portrait-right and personal-information authorization agreement must be accepted")
-	}
-	now := time.Now()
-	if validUntil < now.Add(5*time.Minute).Unix() || validUntil > now.AddDate(10, 0, 0).Unix() {
-		return model.VirtualCharacterAuthorizationInput{}, errors.New("authorization expiry must be between 5 minutes and 10 years from now")
-	}
-	encode := func(name string, values []string, required bool) (string, error) {
-		if len(values) > 20 {
-			return "", fmt.Errorf("%s supports at most 20 values", name)
-		}
-		normalized := make([]string, 0, len(values))
-		seen := make(map[string]struct{}, len(values))
-		for _, value := range values {
-			value = strings.TrimSpace(value)
-			if value == "" {
-				continue
-			}
-			if len([]rune(value)) > 64 {
-				return "", fmt.Errorf("%s values must be at most 64 characters", name)
-			}
-			if _, exists := seen[value]; exists {
-				continue
-			}
-			seen[value] = struct{}{}
-			normalized = append(normalized, value)
-		}
-		if required && len(normalized) == 0 {
-			return "", fmt.Errorf("%s is required", name)
-		}
-		payload, err := common.Marshal(normalized)
-		if err != nil {
-			return "", err
-		}
-		return string(payload), nil
-	}
-	purposesJSON, err := encode("purposes", purposes, true)
-	if err != nil {
-		return model.VirtualCharacterAuthorizationInput{}, err
-	}
-	regionsJSON, err := encode("regions", regions, true)
-	if err != nil {
-		return model.VirtualCharacterAuthorizationInput{}, err
-	}
-	platformsJSON, err := encode("platforms", platforms, true)
-	if err != nil {
-		return model.VirtualCharacterAuthorizationInput{}, err
-	}
-	industriesJSON, err := encode("industries", industries, false)
-	if err != nil {
-		return model.VirtualCharacterAuthorizationInput{}, err
-	}
-	return model.VirtualCharacterAuthorizationInput{
-		ValidUntil: validUntil, CommercialUseAllowed: commercialUseAllowed,
-		PurposesJSON: purposesJSON, RegionsJSON: regionsJSON, PlatformsJSON: platformsJSON,
-		IndustriesJSON: industriesJSON, AgreementVersion: virtualCharacterRealPersonAgreementVersion,
-	}, nil
 }
 
 func randomHex(size int) (string, error) {

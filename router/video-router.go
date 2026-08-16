@@ -20,6 +20,7 @@ func SetVideoRouter(router *gin.Engine) {
 		virtualCharacterV1Router.POST("", middleware.UserUploadRateLimit(), controller.CreateVirtualCharacter)
 		virtualCharacterV1Router.POST("/validation-sessions", controller.CreateVirtualCharacterValidationSession)
 		virtualCharacterV1Router.GET("/validation-sessions/:id", controller.GetVirtualCharacterValidationSession)
+		virtualCharacterV1Router.DELETE("/validation-sessions/:id", controller.CancelVirtualCharacterValidationSession)
 		virtualCharacterV1Router.POST("/:id/sync", controller.SyncRealPersonVirtualCharacter)
 		virtualCharacterV1Router.DELETE("/:id", controller.DeleteVirtualCharacterGroup)
 		virtualCharacterV1Router.GET("/:id", controller.GetVirtualCharacterGroup)

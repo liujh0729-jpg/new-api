@@ -33,7 +33,12 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Progress, ProgressLabel } from '@/components/ui/progress'
-import { getValidationSession, virtualCharacterQueryKeys } from '../api'
+import { Spinner } from '@/components/ui/spinner'
+import {
+  cancelValidationSession,
+  getValidationSession,
+  virtualCharacterQueryKeys,
+} from '../api'
 import type { VirtualCharacterValidationSession } from '../types'
 import { validationStatusLabel } from './utils'
 
@@ -50,6 +55,7 @@ export function ValidationDialog({
 }) {
   const { t } = useTranslation()
   const [now, setNow] = useState(() => Date.now())
+  const [closingSessionID, setClosingSessionID] = useState<string | null>(null)
   const notified = useRef(false)
   const query = useQuery({
     queryKey: virtualCharacterQueryKeys.validation(session?.id ?? ''),
@@ -60,6 +66,9 @@ export function ValidationDialog({
     initialData: session ? { success: true, data: session } : undefined,
   })
   const current = query.data?.data ?? session
+  useEffect(() => {
+    notified.current = false
+  }, [session?.id])
   useEffect(() => {
     if (!session) return
     const timer = window.setInterval(() => setNow(Date.now()), 1000)
@@ -72,6 +81,20 @@ export function ValidationDialog({
     }
   }, [current?.character_id, current?.status, onSucceeded])
   if (!session || !current) return null
+  const closing = closingSessionID === current.id
+  const close = async () => {
+    if (closing) return
+    if (current.status === 'pending') {
+      setClosingSessionID(current.id)
+      try {
+        await cancelValidationSession(current.id)
+      } catch {
+        // The reservation remains hidden and expires automatically if the
+        // cancellation request cannot reach the server.
+      }
+    }
+    onClose()
+  }
   const remaining = Math.max(0, current.expires_at * 1000 - now)
   const remainingSeconds = Math.ceil(remaining / 1000)
   const progress = Math.max(
@@ -79,7 +102,7 @@ export function ValidationDialog({
     Math.min(100, (remaining / (30 * 60 * 1000)) * 100)
   )
   return (
-    <Dialog open onOpenChange={(open) => !open && onClose()}>
+    <Dialog open onOpenChange={(open) => !open && void close()}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>{t('Real-person validation')}</DialogTitle>
@@ -104,7 +127,9 @@ export function ValidationDialog({
               <AlertTitle>
                 {current.status === 'expired'
                   ? t('Validation expired')
-                  : t('Validation failed')}
+                  : current.status === 'cancelled'
+                    ? t('Validation cancelled')
+                    : t('Validation failed')}
               </AlertTitle>
               <AlertDescription>{current.last_error}</AlertDescription>
             </Alert>
@@ -150,7 +175,12 @@ export function ValidationDialog({
           )}
         </div>
         <DialogFooter>
-          <Button variant='outline' onClick={onClose}>
+          <Button
+            variant='outline'
+            disabled={closing}
+            onClick={() => void close()}
+          >
+            {closing && <Spinner data-icon='inline-start' />}
             {t('Close')}
           </Button>
         </DialogFooter>

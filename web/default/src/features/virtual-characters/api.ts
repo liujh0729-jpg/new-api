@@ -114,19 +114,19 @@ export async function createValidationSession(input: {
   description: string
   tags: string[]
   language: 'zh' | 'en'
-  authorization: {
-    valid_until: number
-    commercial_use_allowed: boolean
-    purposes: string[]
-    regions: string[]
-    platforms: string[]
-    industries: string[]
-    agreement_accepted: boolean
-  }
 }): Promise<ApiResponse<VirtualCharacterValidationSession>> {
   const res = await api.post(
     '/api/virtual-characters/validation-sessions',
     input
+  )
+  return res.data
+}
+
+export async function cancelValidationSession(
+  id: string
+): Promise<ApiResponse<{ id: string; cancelled: boolean }>> {
+  const res = await api.delete(
+    `/api/virtual-characters/validation-sessions/${encodeURIComponent(id)}`
   )
   return res.data
 }

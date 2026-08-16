@@ -17,6 +17,7 @@ const (
 	VirtualCharacterValidationSucceeded = "succeeded"
 	VirtualCharacterValidationFailed    = "failed"
 	VirtualCharacterValidationExpired   = "expired"
+	VirtualCharacterValidationCancelled = "cancelled"
 
 	VirtualCharacterCleanupPending = "pending"
 	VirtualCharacterCleanupRunning = "running"
@@ -245,6 +246,60 @@ func ReleasePrivateVirtualCharacterSlot(characterID int64, reason string) error 
 	}).Error
 }
 
+// DiscardFailedAIGCVirtualCharacterUpload hides an AIGC character whose only
+// image failed to upload or activate. Provider resources are queued for
+// deletion in the same transaction. Records with cleanup work are soft-deleted
+// until that work completes; records without provider resources are removed
+// immediately.
+func DiscardFailedAIGCVirtualCharacterUpload(characterID int64, providerGroupID, reason string) error {
+	if characterID <= 0 {
+		return errors.New("invalid character id")
+	}
+	return DB.Transaction(func(tx *gorm.DB) error {
+		var character VirtualCharacter
+		if err := tx.Where("id = ? AND source_type = ?", characterID, VirtualCharacterSourceVolcAIGC).First(&character).Error; err != nil {
+			return err
+		}
+		now := time.Now().Unix()
+		groupID := strings.TrimSpace(providerGroupID)
+		if groupID == "" {
+			groupID = strings.TrimSpace(character.ProviderGroupID)
+		}
+		targets := []struct {
+			targetType string
+			targetID   string
+		}{
+			{targetType: "volc_asset", targetID: character.ProviderAssetID},
+			{targetType: "aipdd_file", targetID: character.StagingFileID},
+			{targetType: "volc_group", targetID: groupID},
+		}
+		hasCleanupTarget := false
+		for _, target := range targets {
+			if strings.TrimSpace(target.targetID) == "" {
+				continue
+			}
+			hasCleanupTarget = true
+			if err := createCleanupJobIfAbsent(tx, character.ID, character.ProviderAccountID, target.targetType, target.targetID, now); err != nil {
+				return err
+			}
+		}
+		if err := tx.Model(&character).Updates(map[string]any{
+			"slot":               nil,
+			"status":             VirtualCharacterStatusDeleting,
+			"asset_next_poll_at": 0,
+			"last_error":         reason,
+			"cleanup_next_at":    now,
+			"updated_at":         now,
+		}).Error; err != nil {
+			return err
+		}
+		if !hasCleanupTarget {
+			return tx.Unscoped().Delete(&character).Error
+		}
+		return tx.Delete(&character).Error
+	})
+}
+
 func AttachVirtualCharacterImage(characterID int64, providerAssetID, stagingFileID, mimeType string, fileSize int64) error {
 	providerAssetID = strings.TrimPrefix(strings.TrimSpace(providerAssetID), "asset://")
 	if characterID <= 0 || providerAssetID == "" {
@@ -309,32 +364,6 @@ func CreateVirtualCharacterValidationSession(session *VirtualCharacterValidation
 		session.Status = VirtualCharacterValidationPending
 	}
 	return DB.Create(session).Error
-}
-
-func AcceptVirtualCharacterHolderScope(sessionID string) error {
-	now := time.Now().Unix()
-	return DB.Transaction(func(tx *gorm.DB) error {
-		var session VirtualCharacterValidationSession
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", strings.TrimSpace(sessionID)).First(&session).Error; err != nil {
-			return err
-		}
-		if session.Status != VirtualCharacterValidationPending || session.ExpiresAt <= now || session.CharacterID <= 0 {
-			return errors.New("validation session is no longer pending")
-		}
-		var authorization VirtualCharacterAuthorization
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("character_id = ? AND user_id = ?", session.CharacterID, session.UserID).First(&authorization).Error; err != nil {
-			return err
-		}
-		if authorization.Status != VirtualCharacterAuthorizationPending || authorization.ValidUntil <= now {
-			return errors.New("real-person authorization is no longer pending")
-		}
-		if err := tx.Model(&session).Updates(map[string]any{"holder_scope_accepted_at": now, "updated_at": now}).Error; err != nil {
-			return err
-		}
-		return tx.Model(&authorization).Updates(map[string]any{
-			"holder_scope_accepted_at": now, "updated_at": now,
-		}).Error
-	})
 }
 
 func GetOwnedVirtualCharacterValidationSession(id string, userID int) (*VirtualCharacterValidationSession, error) {

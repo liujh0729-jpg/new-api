@@ -62,8 +62,8 @@ func TestAuthorizeRealPersonCharacterChecksOwnerAndWindow(t *testing.T) {
 	var snapshot VirtualCharacterAuthorizationSnapshot
 	require.NoError(t, common.Unmarshal([]byte(snapshotJSON), &snapshot))
 	require.Equal(t, character.ID, snapshot.CharacterID)
-	require.Equal(t, authorization.ValidUntil, snapshot.AuthorizationUntil)
-	require.True(t, snapshot.CommercialUseAllowed)
+	require.Equal(t, authorization.AgreementReference, snapshot.AgreementReference)
+	require.Equal(t, authorization.ConsentReceiptHash, snapshot.ConsentReceiptHash)
 
 	_, authErr = AuthorizeVirtualCharacterForVideo(context.Background(), character, 999)
 	require.NotNil(t, authErr)

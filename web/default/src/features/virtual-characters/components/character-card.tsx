@@ -173,22 +173,6 @@ export function CharacterCard({
             {facetMeta ? (
               <p className='text-muted-foreground text-[11px]'>{facetMeta}</p>
             ) : null}
-            {item.source_type === 'volc_real_person' && item.authorization ? (
-              <div className='flex flex-wrap gap-1'>
-                <Badge variant='outline' className='px-1.5 py-0 text-[10px]'>
-                  {t('Authorized until {{time}}', {
-                    time: new Date(
-                      item.authorization.valid_until * 1000
-                    ).toLocaleDateString(),
-                  })}
-                </Badge>
-                <Badge variant='outline' className='px-1.5 py-0 text-[10px]'>
-                  {item.authorization.commercial_use_allowed
-                    ? t('Commercial use')
-                    : t('Non-commercial use')}
-                </Badge>
-              </div>
-            ) : null}
             <div className='flex min-h-4 flex-wrap gap-1'>
               {item.tags.length > 0 ? (
                 item.tags.map((tag) => (

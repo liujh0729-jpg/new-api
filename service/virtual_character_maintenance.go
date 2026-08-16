@@ -112,7 +112,7 @@ func pollVirtualCharacterImageActivation(now time.Time) {
 			if reason == "" {
 				reason = "Volc asset processing failed"
 			}
-			finishVirtualCharacterImagePoll(character, false, common.MaskSensitiveInfo(reason))
+			finishVirtualCharacterImagePoll(character, false, LocalizeVolcAssetErrorDetails(result.ErrorCode, reason, "", 0))
 		default:
 			retryVirtualCharacterImagePoll(character, now, fmt.Errorf("unexpected Volc asset status %q", result.Status))
 		}
@@ -132,7 +132,7 @@ func refreshRealPersonProviderStates(now time.Time) {
 		if err != nil {
 			continue
 		}
-		if authorization.ValidUntil <= now.Unix() {
+		if authorization.ValidUntil > 0 && authorization.ValidUntil <= now.Unix() {
 			if err := model.ExpireRealPersonAuthorization(character.ID, "authorization expired"); err != nil {
 				common.SysError(fmt.Sprintf("expire real-person authorization %d: %v", character.ID, err))
 			}
@@ -169,24 +169,14 @@ func expireVirtualCharacterValidationSessions(now time.Time) {
 }
 
 func finishVirtualCharacterImagePoll(character *model.VirtualCharacter, active bool, reason string) {
-	if err := model.MarkVirtualCharacterImageTerminal(character.ID, active, reason); err != nil {
+	if !active {
+		if err := model.DiscardFailedAIGCVirtualCharacterUpload(character.ID, character.ProviderGroupID, reason); err != nil {
+			common.SysError(fmt.Sprintf("discard failed virtual character upload %d: %v", character.ID, err))
+		}
+		return
+	}
+	if err := model.MarkVirtualCharacterImageTerminal(character.ID, true, ""); err != nil {
 		common.SysError(fmt.Sprintf("mark virtual character %d terminal: %v", character.ID, err))
-		return
-	}
-	// Retain staging for Active characters so their private preview remains available.
-	if active {
-		return
-	}
-	now := time.Now().Unix()
-	for targetType, targetID := range map[string]string{
-		"volc_asset": character.ProviderAssetID,
-		"aipdd_file": character.StagingFileID,
-		"volc_group": character.ProviderGroupID,
-	} {
-		_ = model.CreateVirtualCharacterCleanupJob(&model.VirtualCharacterCleanupJob{
-			CharacterID: character.ID, ProviderAccountID: character.ProviderAccountID,
-			TargetType: targetType, TargetID: targetID, NextAttemptAt: now,
-		})
 	}
 }
 

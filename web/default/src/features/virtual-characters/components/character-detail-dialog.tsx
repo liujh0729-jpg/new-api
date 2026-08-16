@@ -254,45 +254,11 @@ function CharacterDetailContent({
           </CardHeader>
           <CardContent className='grid gap-3 text-sm sm:grid-cols-2'>
             <div>
-              <p className='text-muted-foreground'>{t('Authorization status')}</p>
-              <p>{authorizationStatusLabel(character.authorization.status, t)}</p>
-            </div>
-            <div>
-              <p className='text-muted-foreground'>{t('Valid period')}</p>
-              <p>
-                {new Date(
-                  character.authorization.valid_from * 1000
-                ).toLocaleString()}{' '}
-                –{' '}
-                {new Date(
-                  character.authorization.valid_until * 1000
-                ).toLocaleString()}
-              </p>
-            </div>
-            <div>
-              <p className='text-muted-foreground'>{t('Authorized purposes')}</p>
-              <p>{character.authorization.purposes.join(', ') || '-'}</p>
-            </div>
-            <div>
-              <p className='text-muted-foreground'>{t('Authorized regions')}</p>
-              <p>{character.authorization.regions.join(', ') || '-'}</p>
-            </div>
-            <div>
-              <p className='text-muted-foreground'>{t('Authorized platforms')}</p>
-              <p>{character.authorization.platforms.join(', ') || '-'}</p>
-            </div>
-            <div>
               <p className='text-muted-foreground'>
-                {t('Authorized industries (optional)')}
+                {t('Authorization status')}
               </p>
-              <p>{character.authorization.industries.join(', ') || '-'}</p>
-            </div>
-            <div>
-              <p className='text-muted-foreground'>{t('Commercial use')}</p>
               <p>
-                {character.authorization.commercial_use_allowed
-                  ? t('Allowed')
-                  : t('Not allowed')}
+                {authorizationStatusLabel(character.authorization.status, t)}
               </p>
             </div>
             <div>
@@ -303,7 +269,9 @@ function CharacterDetailContent({
               </p>
             </div>
             <div>
-              <p className='text-muted-foreground'>{t('Last provider check')}</p>
+              <p className='text-muted-foreground'>
+                {t('Last provider check')}
+              </p>
               <p>
                 {character.authorization.provider_checked_at
                   ? new Date(

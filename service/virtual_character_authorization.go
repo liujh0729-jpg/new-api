@@ -29,29 +29,20 @@ func (e *VirtualCharacterAuthorizationError) Error() string {
 }
 
 type VirtualCharacterAuthorizationSnapshot struct {
-	CharacterID           int64    `json:"character_id"`
-	UserID                int      `json:"user_id"`
-	SourceType            string   `json:"source_type"`
-	ProviderAccountID     int      `json:"provider_account_id"`
-	ProviderGroupID       string   `json:"provider_group_id,omitempty"`
-	ProviderAssetID       string   `json:"provider_asset_id"`
-	AuthorizationStatus   string   `json:"authorization_status,omitempty"`
-	AuthorizationFrom     int64    `json:"authorization_from,omitempty"`
-	AuthorizationUntil    int64    `json:"authorization_until,omitempty"`
-	CommercialUseAllowed  bool     `json:"commercial_use_allowed,omitempty"`
-	Purposes              []string `json:"purposes,omitempty"`
-	Regions               []string `json:"regions,omitempty"`
-	Platforms             []string `json:"platforms,omitempty"`
-	Industries            []string `json:"industries,omitempty"`
-	AgreementVersion      string   `json:"agreement_version,omitempty"`
-	AgreementReference    string   `json:"agreement_reference,omitempty"`
-	ConsentReceiptHash    string   `json:"consent_receipt_hash,omitempty"`
-	HolderScopeAcceptedAt int64    `json:"holder_scope_accepted_at,omitempty"`
-	ProviderGroupStatus   string   `json:"provider_group_status,omitempty"`
-	ProviderAssetStatus   string   `json:"provider_asset_status,omitempty"`
-	ProviderCheckedAt     int64    `json:"provider_checked_at,omitempty"`
-	AuthorizedAt          int64    `json:"authorized_at,omitempty"`
-	CapturedAt            int64    `json:"captured_at"`
+	CharacterID         int64  `json:"character_id"`
+	UserID              int    `json:"user_id"`
+	SourceType          string `json:"source_type"`
+	ProviderAccountID   int    `json:"provider_account_id"`
+	ProviderGroupID     string `json:"provider_group_id,omitempty"`
+	ProviderAssetID     string `json:"provider_asset_id"`
+	AuthorizationStatus string `json:"authorization_status,omitempty"`
+	AgreementReference  string `json:"agreement_reference,omitempty"`
+	ConsentReceiptHash  string `json:"consent_receipt_hash,omitempty"`
+	ProviderGroupStatus string `json:"provider_group_status,omitempty"`
+	ProviderAssetStatus string `json:"provider_asset_status,omitempty"`
+	ProviderCheckedAt   int64  `json:"provider_checked_at,omitempty"`
+	AuthorizedAt        int64  `json:"authorized_at,omitempty"`
+	CapturedAt          int64  `json:"captured_at"`
 }
 
 func SyncRealPersonVirtualCharacter(ctx context.Context, characterID int64) (*model.VirtualCharacter, error) {
@@ -67,7 +58,7 @@ func SyncRealPersonVirtualCharacter(ctx context.Context, characterID int64) (*mo
 		return nil, err
 	}
 	now := time.Now().Unix()
-	if authorization.ValidUntil <= now {
+	if authorization.ValidUntil > 0 && authorization.ValidUntil <= now {
 		_ = model.ExpireRealPersonAuthorization(character.ID, "authorization expired")
 		return nil, errors.New("real-person authorization expired")
 	}
@@ -188,7 +179,7 @@ func AuthorizeVirtualCharacterForVideo(ctx context.Context, character *model.Vir
 	if authorization.ValidFrom > now {
 		return "", authorizationError(http.StatusConflict, "authorization_not_started", "real-person authorization is not active yet")
 	}
-	if authorization.ValidUntil <= now {
+	if authorization.ValidUntil > 0 && authorization.ValidUntil <= now {
 		_ = model.ExpireRealPersonAuthorization(character.ID, "authorization expired")
 		return "", authorizationError(http.StatusConflict, "authorization_expired", "real-person authorization has expired")
 	}
@@ -313,17 +304,8 @@ func marshalAuthorizationSnapshot(character *model.VirtualCharacter, authorizati
 	}
 	if authorization != nil {
 		snapshot.AuthorizationStatus = authorization.Status
-		snapshot.AuthorizationFrom = authorization.ValidFrom
-		snapshot.AuthorizationUntil = authorization.ValidUntil
-		snapshot.CommercialUseAllowed = authorization.CommercialUseAllowed
-		snapshot.Purposes = decodeAuthorizationScope(authorization.PurposesJSON)
-		snapshot.Regions = decodeAuthorizationScope(authorization.RegionsJSON)
-		snapshot.Platforms = decodeAuthorizationScope(authorization.PlatformsJSON)
-		snapshot.Industries = decodeAuthorizationScope(authorization.IndustriesJSON)
-		snapshot.AgreementVersion = authorization.AgreementVersion
 		snapshot.AgreementReference = authorization.AgreementReference
 		snapshot.ConsentReceiptHash = authorization.ConsentReceiptHash
-		snapshot.HolderScopeAcceptedAt = authorization.HolderScopeAcceptedAt
 		snapshot.ProviderGroupStatus = authorization.ProviderGroupStatus
 		snapshot.ProviderAssetStatus = authorization.ProviderAssetStatus
 		snapshot.ProviderCheckedAt = authorization.ProviderCheckedAt
@@ -334,14 +316,6 @@ func marshalAuthorizationSnapshot(character *model.VirtualCharacter, authorizati
 		return "", authorizationError(http.StatusInternalServerError, "authorization_snapshot_failed", err.Error())
 	}
 	return string(payload), nil
-}
-
-func decodeAuthorizationScope(raw string) []string {
-	var values []string
-	if err := common.Unmarshal([]byte(strings.TrimSpace(raw)), &values); err != nil {
-		return nil
-	}
-	return values
 }
 
 func authorizationError(status int, code, message string) *VirtualCharacterAuthorizationError {
