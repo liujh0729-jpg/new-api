@@ -23,7 +23,8 @@ func TestSetupRequestHeaderUsesAIPDDAPIKeyHeader(t *testing.T) {
 			ApiKey:      "aipdd-key",
 		},
 		AIPDDFinance: &relaycommon.AIPDDFinanceContext{
-			InstanceID: "instance-id", PlatformOrderID: "order-id",
+			InstanceID: "instance-id", PlatformOrderID: "order-id", AttemptID: "order-id:2:7",
+			NewAPIUserID: 11, NewAPITokenID: 22,
 		},
 	}
 	header := http.Header{}
@@ -33,7 +34,7 @@ func TestSetupRequestHeaderUsesAIPDDAPIKeyHeader(t *testing.T) {
 	require.Empty(t, header.Get("Authorization"))
 	require.Equal(t, "instance-id", header.Get("X-AIPDD-Instance-ID"))
 	require.Equal(t, "order-id", header.Get("X-AIPDD-Order-ID"))
-	require.Empty(t, header.Get("X-AIPDD-Attempt-ID"))
-	require.Empty(t, header.Get("X-AIPDD-NewAPI-User-ID"))
-	require.Empty(t, header.Get("X-AIPDD-NewAPI-Token-ID"))
+	require.Equal(t, "order-id:2:7", header.Get("X-AIPDD-Attempt-ID"))
+	require.Equal(t, "11", header.Get("X-AIPDD-NewAPI-User-ID"))
+	require.Equal(t, "22", header.Get("X-AIPDD-NewAPI-Token-ID"))
 }

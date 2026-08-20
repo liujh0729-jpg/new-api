@@ -70,6 +70,38 @@ func TestTaskAWCoinPriceUsesStrictSeedanceDisplayContract(t *testing.T) {
 	require.Equal(t, float64(101), TaskAWCoinPrice(pricing))
 }
 
+func TestAtomicCatalogAcceptsSeedance25AutoDurationAndPricesThirtySecondHold(t *testing.T) {
+	displayAmount := float64(679)
+	displayVideoAmount := float64(2038)
+	catalog := AtomicCatalog{
+		SchemaVersion: 1,
+		Revision:      "revision-seedance-25-auto-duration",
+		AWCoinRate:    AtomicAWCoinRate{RMBPerAWCoin: 0.001, USDPerAWCoin: 0.0001},
+		Capabilities: []AtomicCapability{{
+			ID: "AP Seedance-2.5 标准版", AdapterCode: "seedance",
+			Execution: AtomicExecution{Protocol: "seedance_official", Path: "/api/v3/contents/generations/tasks"},
+			Pricing: AtomicPricing{
+				PricingModel: "per_second", Currency: "awcoin", PricingBasis: "display", Enabled: true,
+				ByResolution: map[string]constant.AIPDDSeedanceResolutionPricing{
+					"480p": {
+						TargetResolution:                 "480p",
+						DefaultDurationSeconds:           -1,
+						DefaultFramesPerSecond:           24,
+						DisplayAmountAWCoinPerSecond:     &displayAmount,
+						DisplayVideoInputAWCoinPerSecond: &displayVideoAmount,
+					},
+				},
+			},
+		}},
+	}
+
+	require.NoError(t, catalog.Validate())
+	require.Equal(t, float64(20370), TaskAWCoinPrice(catalog.Capabilities[0].Pricing))
+
+	catalog.Capabilities[0].ID = "AP Seedance-2.0 标准版"
+	require.ErrorContains(t, catalog.Validate(), "positive defaultDurationSeconds")
+}
+
 func TestAtomicCatalogPrefersExplicitDisplayPricesAndKeepsBYOKSeparate(t *testing.T) {
 	displayAmount := float64(4620)
 	byokAmount := float64(600)

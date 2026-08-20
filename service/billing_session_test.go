@@ -26,7 +26,7 @@ func TestBillingSessionRefundMarksZeroChargeAIPDDOrderNotCharged(t *testing.T) {
 		orderID    = "trusted-zero-charge-order"
 	)
 	require.NoError(t, model.EnsureAIPDDTransitOrder(
-		instanceID, orderID, 1, 2, 3, 0, "test-model",
+		instanceID, orderID, orderID+":0:3", 1, 2, 3, 0, "test-model",
 	))
 
 	finance := &relaycommon.AIPDDFinanceContext{

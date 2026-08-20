@@ -441,7 +441,10 @@ export function useTaskLogsColumns(isAdmin: boolean): ColumnDef<TaskLog>[] {
         }
 
         if (isSuccess && isVideoTask && isUrl) {
-          const videoUrl = `/v1/videos/${log.task_id}/content`
+          const encodedTaskId = encodeURIComponent(log.task_id)
+          const videoUrl = isAdmin
+            ? `/api/task/${encodedTaskId}/content?user_id=${encodeURIComponent(String(log.user_id))}`
+            : `/v1/videos/${encodedTaskId}/content`
           return (
             <a
               href={videoUrl}

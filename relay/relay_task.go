@@ -2,9 +2,11 @@ package relay
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	neturl "net/url"
 	"path"
@@ -16,6 +18,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -23,6 +26,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
+	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 )
 
@@ -33,6 +37,79 @@ type TaskSubmitResult struct {
 	Quota          int
 	AIPDDExecution *model.AIPDDTaskExecutionSnapshot
 	//PerCallPrice   types.PriceData
+}
+
+func quoteCatalogSeedancePricing(
+	capability constant.AIPDDCapability,
+	facts relaycommon.TaskPricingFacts,
+	groupRatio float64,
+	quotaPerUnit float64,
+) (billing_setting.TaskPricingQuote, error) {
+	if capability.SeedancePricing == nil || capability.AWCoinUSDPerCoin <= 0 ||
+		math.IsNaN(capability.AWCoinUSDPerCoin) || math.IsInf(capability.AWCoinUSDPerCoin, 0) {
+		return billing_setting.TaskPricingQuote{}, billing_setting.ErrTaskPricingNotConfigured
+	}
+	if facts.Quantity <= 0 || math.IsNaN(facts.Quantity) || math.IsInf(facts.Quantity, 0) ||
+		groupRatio < 0 || math.IsNaN(groupRatio) || math.IsInf(groupRatio, 0) ||
+		quotaPerUnit <= 0 || math.IsNaN(quotaPerUnit) || math.IsInf(quotaPerUnit, 0) {
+		return billing_setting.TaskPricingQuote{}, billing_setting.ErrInvalidTaskPricing
+	}
+	resolution, err := billing_setting.NormalizeTaskPricingResolution(facts.Resolution)
+	if err != nil {
+		return billing_setting.TaskPricingQuote{}, fmt.Errorf("%w: %v", billing_setting.ErrTaskPricingResolutionRequired, err)
+	}
+	var tier constant.AIPDDSeedanceResolutionPricing
+	found := false
+	for rawResolution, candidate := range capability.SeedancePricing.ByResolution {
+		canonical, normalizeErr := billing_setting.NormalizeTaskPricingResolution(rawResolution)
+		if normalizeErr == nil && canonical == resolution {
+			tier, found = candidate, true
+			break
+		}
+	}
+	if !found {
+		return billing_setting.TaskPricingQuote{}, fmt.Errorf(
+			"%w: model %q resolution %q",
+			billing_setting.ErrTaskPricingResolutionNotConfigured,
+			capability.ModelName,
+			resolution,
+		)
+	}
+	variant := billing_setting.TaskPricingVariantNoReferenceVideo
+	awcoinPerSecond := tier.AmountAWCoinPerSecond
+	byok := strings.EqualFold(strings.TrimSpace(capability.SeedancePricing.BillingMode), "BYOK")
+	if byok && tier.BYOKAmountAWCoinPerSecond != nil {
+		awcoinPerSecond = *tier.BYOKAmountAWCoinPerSecond
+	}
+	if facts.HasReferenceVideo {
+		variant = billing_setting.TaskPricingVariantReferenceVideo
+		awcoinPerSecond = tier.VideoInputAWCoinPerSecond
+		if byok && tier.BYOKVideoInputAWCoinPerSecond != nil {
+			awcoinPerSecond = *tier.BYOKVideoInputAWCoinPerSecond
+		}
+	}
+	if awcoinPerSecond <= 0 || math.IsNaN(awcoinPerSecond) || math.IsInf(awcoinPerSecond, 0) {
+		return billing_setting.TaskPricingQuote{}, billing_setting.ErrInvalidTaskPricing
+	}
+	unitPriceUSD := awcoinPerSecond * capability.AWCoinUSDPerCoin
+	baseUSD := unitPriceUSD * facts.Quantity
+	saleUSD := baseUSD * groupRatio
+	quotaValue := saleUSD * quotaPerUnit
+	if unitPriceUSD <= 0 || math.IsNaN(quotaValue) || math.IsInf(quotaValue, 0) || quotaValue < 0 {
+		return billing_setting.TaskPricingQuote{}, billing_setting.ErrInvalidTaskPricing
+	}
+	return billing_setting.TaskPricingQuote{
+		Unit:              billing_setting.TaskPricingUnitSecond,
+		Variant:           variant,
+		UnitPriceUSD:      unitPriceUSD,
+		Quantity:          facts.Quantity,
+		GroupRatio:        groupRatio,
+		BaseUSD:           baseUSD,
+		SaleUSD:           saleUSD,
+		Quota:             billingexpr.QuotaRound(quotaValue),
+		HasReferenceVideo: facts.HasReferenceVideo,
+		Resolution:        resolution,
+	}, nil
 }
 
 var upstreamAccountIDPatterns = []*regexp.Regexp{
@@ -318,7 +395,12 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 			return nil, taskErr
 		}
 	}
-	taskPricingMode := info.TaskPricingQuote != nil ||
+	catalogCapability, hasCatalogSeedancePricing := constant.GetAIPDDCapability(info.UpstreamModelName)
+	hasCatalogSeedancePricing = hasCatalogSeedancePricing && catalogCapability.SeedancePricing != nil &&
+		catalogCapability.AWCoinUSDPerCoin > 0
+	useCatalogSeedancePricing := hasCatalogSeedancePricing &&
+		billing_setting.GetBillingMode(modelName) != billing_setting.BillingModeTaskPricing
+	taskPricingMode := info.TaskPricingQuote != nil || useCatalogSeedancePricing ||
 		billing_setting.GetBillingMode(modelName) == billing_setting.BillingModeTaskPricing
 	if (constant.IsAIPDDTaskPricingModel(info.UpstreamModelName) ||
 		model.IsAIPDDTaskPricingRequiredModel(modelName)) &&
@@ -356,6 +438,13 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		info.PriceData.Quota = quote.Quota
 		info.PriceData.GroupRatioInfo.GroupRatio = quote.GroupRatio
 		info.PriceData.FreeModel = quote.GroupRatio == 0
+	} else if useCatalogSeedancePricing {
+		groupRatioInfo := helper.HandleGroupRatio(c, info)
+		info.PriceData = types.PriceData{
+			UsePrice:       true,
+			FreeModel:      groupRatioInfo.GroupRatio == 0,
+			GroupRatioInfo: groupRatioInfo,
+		}
 	} else {
 		priceData, err := helper.ModelPriceHelperPerCall(c, info)
 		if err != nil {
@@ -391,14 +480,25 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 				return nil, factsErr
 			}
 			info.TaskPricingFacts = &facts
-			resolved, quoteErr := billing_setting.QuoteTaskPricing(
-				info.OriginModelName,
-				facts.Quantity,
-				facts.Resolution,
-				info.PriceData.GroupRatioInfo.GroupRatio,
-				common.QuotaPerUnit,
-				facts.HasReferenceVideo,
-			)
+			var resolved billing_setting.TaskPricingQuote
+			var quoteErr error
+			if useCatalogSeedancePricing {
+				resolved, quoteErr = quoteCatalogSeedancePricing(
+					catalogCapability,
+					facts,
+					info.PriceData.GroupRatioInfo.GroupRatio,
+					common.QuotaPerUnit,
+				)
+			} else {
+				resolved, quoteErr = billing_setting.QuoteTaskPricing(
+					info.OriginModelName,
+					facts.Quantity,
+					facts.Resolution,
+					info.PriceData.GroupRatioInfo.GroupRatio,
+					common.QuotaPerUnit,
+					facts.HasReferenceVideo,
+				)
+			}
 			if quoteErr != nil {
 				code := "model_price_error"
 				if errors.Is(quoteErr, billing_setting.ErrReferenceVideoDisabled) {
@@ -639,7 +739,7 @@ func taskFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *dt
 	mediaInfo := resolveTaskMediaInfo(originTask, c.Request.URL.Path)
 
 	// Gemini/Vertex/AIPDD 支持实时查询：用户 fetch 时直接从上游拉取最新状态
-	if realtimeResp := tryRealtimeFetch(originTask, isOpenAIVideoAPI, mediaInfo.MediaType); len(realtimeResp) > 0 {
+	if realtimeResp := tryRealtimeFetch(c.Request.Context(), originTask, isOpenAIVideoAPI, mediaInfo.MediaType); len(realtimeResp) > 0 {
 		respBody = realtimeResp
 		return
 	}
@@ -678,7 +778,7 @@ func taskFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *dt
 // tryRealtimeFetch 尝试从上游实时拉取 Gemini/Vertex/AIPDD 任务状态。
 // 仅当渠道类型支持直接查询时触发；其他渠道或出错时返回 nil。
 // 当非 OpenAI Video API 时，还会构建自定义格式的响应体。
-func tryRealtimeFetch(task *model.Task, isOpenAIVideoAPI bool, mediaType string) []byte {
+func tryRealtimeFetch(ctx context.Context, task *model.Task, isOpenAIVideoAPI bool, mediaType string) []byte {
 	channelModel, err := model.GetChannelById(task.ChannelId, true)
 	if err != nil {
 		return nil
@@ -745,8 +845,16 @@ func tryRealtimeFetch(task *model.Task, isOpenAIVideoAPI bool, mediaType string)
 	}
 	applyTaskResultURL(task, ti.Url, mediaType)
 
+	transitionWon := false
 	if !snap.Equal(task.Snapshot()) {
-		_, _ = task.UpdateWithStatus(snap.Status)
+		transitionWon, _ = task.UpdateWithStatus(snap.Status)
+	}
+	if transitionWon && ti.Status == model.TaskStatusSuccess {
+		// A realtime GET can observe the terminal response before the background
+		// poller. Settle the frozen task-pricing snapshot here after winning the
+		// same status CAS, otherwise the 30-second auto-duration precharge would
+		// remain permanently consumed and the poller would skip the terminal row.
+		service.SettleTaskBillingOnComplete(ctx, adaptor, task, ti)
 	}
 
 	// OpenAI Video API 由调用者的 ConvertToOpenAIVideo 分支处理

@@ -16,28 +16,20 @@ import (
 	"gorm.io/gorm"
 )
 
-func TestResolveAIPDDFinanceInstanceIDDerivesStableIdentityFromAPIKey(t *testing.T) {
+func TestResolveAIPDDFinanceInstanceIDRequiresRegisteredSiteIdentity(t *testing.T) {
 	t.Setenv(aipddInstanceIDEnv, "")
 
-	first, err := resolveAIPDDFinanceInstanceID("sk-aipdd-test")
-	require.NoError(t, err)
-	second, err := resolveAIPDDFinanceInstanceID("sk-aipdd-test")
-	require.NoError(t, err)
-	other, err := resolveAIPDDFinanceInstanceID("sk-aipdd-other")
-	require.NoError(t, err)
+	resolved, err := resolveAIPDDFinanceInstanceID()
 
-	require.Equal(t, first, second)
-	require.NotEqual(t, first, other)
-	parsed, err := uuid.Parse(first)
-	require.NoError(t, err)
-	require.Equal(t, uuid.Version(8), parsed.Version())
+	require.ErrorContains(t, err, aipddInstanceIDEnv+" is required")
+	require.Empty(t, resolved)
 }
 
 func TestResolveAIPDDFinanceInstanceIDHonorsExplicitOverride(t *testing.T) {
 	const configured = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
 	t.Setenv(aipddInstanceIDEnv, configured)
 
-	resolved, err := resolveAIPDDFinanceInstanceID("sk-aipdd-test")
+	resolved, err := resolveAIPDDFinanceInstanceID()
 
 	require.NoError(t, err)
 	require.Equal(t, configured, resolved)
@@ -77,9 +69,11 @@ func TestPrepareAIPDDFinanceAttemptSupportsMultiKeyChannel(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, info.AIPDDFinance)
 	require.Equal(t, 3, info.AIPDDFinance.ChannelKeyIndex)
+	require.Equal(t, "finance-order:0:7", info.AIPDDFinance.AttemptID)
 	var order model.AIPDDTransitOrder
 	require.NoError(t, db.Where("platform_order_id = ?", "finance-order").First(&order).Error)
 	require.Equal(t, 3, order.ChannelKeyIndex)
+	require.Equal(t, "finance-order:0:7", order.LatestAttemptID)
 }
 
 func TestPrepareAIPDDFinanceAttemptClosesPreviousChannel(t *testing.T) {
@@ -92,11 +86,10 @@ func TestPrepareAIPDDFinanceAttemptClosesPreviousChannel(t *testing.T) {
 	require.NoError(t, db.AutoMigrate(&model.AIPDDTransitOrder{}))
 
 	const orderID = "cross-channel-finance-order"
-	t.Setenv(aipddInstanceIDEnv, "")
-	instanceID, err := resolveAIPDDFinanceInstanceID("sk-aipdd-test")
-	require.NoError(t, err)
+	const instanceID = "11111111-2222-4333-8444-555555555555"
+	t.Setenv(aipddInstanceIDEnv, instanceID)
 	require.NoError(t, model.EnsureAIPDDTransitOrder(
-		instanceID, orderID, 11, 22, 1, 0, "test-model"))
+		instanceID, orderID, orderID+":0:1", 11, 22, 1, 0, "test-model"))
 	c := aipddFinanceTestContext(constant.ChannelTypeAIPDD, 2)
 	info := &relaycommon.RelayInfo{
 		RequestId: orderID, OriginModelName: "test-model", RetryIndex: 1, UserId: 11, TokenId: 22,
@@ -108,10 +101,14 @@ func TestPrepareAIPDDFinanceAttemptClosesPreviousChannel(t *testing.T) {
 	require.NoError(t, PrepareAIPDDFinanceAttempt(c, info))
 	require.NotNil(t, info.AIPDDFinance)
 	require.Equal(t, 2, info.AIPDDFinance.ChannelID)
+	require.Equal(t, orderID+":1:2", info.AIPDDFinance.AttemptID)
+	require.Equal(t, 11, info.AIPDDFinance.NewAPIUserID)
+	require.Equal(t, 22, info.AIPDDFinance.NewAPITokenID)
 
 	var order model.AIPDDTransitOrder
 	require.NoError(t, db.Where("platform_order_id = ?", orderID).First(&order).Error)
 	require.Equal(t, 2, order.ChannelID)
+	require.Equal(t, orderID+":1:2", order.LatestAttemptID)
 	require.Equal(t, model.AIPDDTransitPending, order.Status)
 }
 

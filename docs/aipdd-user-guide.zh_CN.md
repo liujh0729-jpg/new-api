@@ -541,6 +541,8 @@ curl "$BASE_URL/v1/audio/speech" \
 
 ### 4.13 AP Seedance 2.0 视频
 
+> Seedance 2.0 与 2.5 使用独立契约，不能跨版本复用默认值。完整字段与约束见 [AP Seedance 2.0 / 2.5 API 文档](./aipdd-seedance-api.zh_CN.md)；2.5 不能沿用 2.0 的 5 秒默认值、旧比例、`seed` 或 `service_tier`。
+
 接口：`POST /v1/videos` 或 `POST /v1/video/generations`  
 查询：`GET /v1/videos/{task_id}`（OpenAI 风格，推荐）或 `GET /v1/video/generations/{task_id}`（兼容路径，返回通用 `code/data` 封装）
 
@@ -758,17 +760,20 @@ curl "$BASE_URL/v1/videos" \
 
 #### 4.13.5 角色图片 `asset://` 与角色库引用
 
-Seedance 2.0 支持引用火山托管角色图片。**上游官方写法**是把素材 ID 写成 `asset://{asset_id}`，放在 `content` 的 `image_url.url`（`role` 为 `reference_image`）中。NewAPI 会先把每个 `asset://` 反查到本地角色库并鉴权，再转发上游；未知或重复注册的 Asset ID 会被拒绝。NewAPI 角色库采用“一角色一图”，上传新图片必须创建新角色，不支持在已有角色下追加或替换图片。
+Seedance 2.0 支持引用火山托管角色图片。**上游官方写法**是把素材 ID 写成 `asset://{asset_id}`，放在 `content` 的 `image_url.url`（`role` 为 `reference_image`）中。NewAPI 会先把每个 `asset://` 反查到本地角色库并鉴权，再转发上游；未知或重复注册的 Asset ID 会被拒绝。NewAPI 角色库采用“一角色一图”：虚拟形象在创建角色时上传图片；真人形象先完成 H5 身份核验，再为本次预留的角色上传一张肖像图片。
 
-真人形象使用独立的私有授权链路：肖像权人须查看并确认用途、地区、平台、行业、商业使用和有效期，再完成火山 H5 身份核验；系统随后从 `LivenessFace` Group 中确认唯一 Active Image Asset。完整设计及管理员前置条件见 [真人形象素材库实施说明](real-person-character-library.zh_CN.md)。
+真人形象使用独立的私有链路：火山 H5 身份核验成功后，NewAPI 只保存返回的 `LivenessFace GroupId`，此时角色状态为“等待上传肖像”；随后用户上传同一人的图片，NewAPI 使用管理员配置的火山 AK/SK 和 Project 调用 `CreateAsset`，并只轮询本次返回的准确 `AssetId`。素材达到 `Active` 后角色才可用于生成。完整设计及管理员前置条件见 [真人形象素材库实施说明](real-person-character-library.zh_CN.md)。
 
-使用 API Key 上传角色：
+API Key 角色接口：
 
-- 创建：`POST /v1/virtual-characters`，请求格式为 `multipart/form-data`。
+- 创建虚拟形象：`POST /v1/virtual-characters`，请求格式为 `multipart/form-data`；`name` 和 `file` 必填，`description`、`tags` 可选。
+- 创建真人核验：`POST /v1/virtual-characters/validation-sessions`；`name` 必填，`description`、`tags`、`language`（`zh` 或 `en`）可选。
+- 查询真人核验：`GET /v1/virtual-characters/validation-sessions/{session_id}`。用户仍须本人打开 `launch_url` 完成火山 H5，API Key 不能绕过该步骤。
+- 上传真人肖像：核验成功后调用 `POST /v1/virtual-characters/{character_id}/asset`，请求格式为 `multipart/form-data`，图片字段名为 `file`。
+- 同步真人状态：`POST /v1/virtual-characters/{character_id}/sync`；也可直接查询角色详情等待后台自动同步。
 - 列表：`GET /v1/virtual-characters?scope=public` 查询公开角色；`scope=private` 查询当前 API Key 用户的私有角色。可用 `source_type=volc_aigc` 或 `source_type=volc_real_person` 区分“我的虚拟形象”和“我的真人”。不传 `scope` 时默认为 `public`。
-- 查询：`GET /v1/virtual-characters/{id}`，轮询响应中的 `data.status`；正常状态流转为 `creating → active`，终态失败为 `failed`，并在 `data.last_error` 中返回原因。
-- 鉴权：以上接口均使用 `Authorization: Bearer $NEW_API_TOKEN`。角色归属于 API Key 对应的用户，并沿用该用户的角色配额与上传限流。
-- 字段：`name` 和 `file` 必填；`description`、`tags` 可选。`tags` 可传 JSON 字符串数组或逗号分隔文本。
+- 查询：`GET /v1/virtual-characters/{id}`。虚拟形象通常为 `creating → active/failed`；真人形象在未上传时返回 `asset_upload_required: true`，上传后为 `creating → active`，审核或授权异常时可能进入 `blocked`，原因见 `last_error`。
+- 鉴权：以上 `/v1` 接口均使用 `Authorization: Bearer $NEW_API_TOKEN`。角色归属于 API Key 对应的用户，并沿用该用户的角色配额与上传限流；不能查询、上传或使用其他用户的私有真人角色。
 - 图片：支持 JPG/JPEG、PNG、WebP、GIF、HEIC，最大 30 MB。
 
 公开角色支持分页及条件筛选：
@@ -819,9 +824,70 @@ curl "$BASE_URL/v1/virtual-characters/12" \
   -H "Authorization: Bearer $NEW_API_TOKEN"
 ```
 
+使用 API Key 创建真人素材需要完成以下两步。
+
+第一步，创建 H5 真人核验会话：
+
+```bash
+curl "$BASE_URL/v1/virtual-characters/validation-sessions" \
+  -X POST \
+  -H "Authorization: Bearer $NEW_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "签约演员 A",
+    "description": "品牌宣传片演员",
+    "tags": ["真人", "演员"],
+    "language": "zh"
+  }'
+```
+
+响应中的 `data.launch_url` 交给肖像权人本人打开，`data.id` 是核验会话 ID，`data.character_id` 是本次预留的角色 ID。`launch_url` 可以在手机上打开，调用方不得把 NewAPI API Key 暴露给浏览器或被核验人。
+
+```json
+{
+  "success": true,
+  "data": {
+    "id": "validation-session-id",
+    "status": "pending",
+    "launch_url": "https://new-api.example.com/api/virtual-characters/validation/launch/...",
+    "expires_at": 1786874400,
+    "character_id": 34
+  }
+}
+```
+
+使用同一 API Key 轮询核验结果：
+
+```bash
+curl "$BASE_URL/v1/virtual-characters/validation-sessions/validation-session-id" \
+  -H "Authorization: Bearer $NEW_API_TOKEN"
+```
+
+当 `data.status` 变为 `succeeded` 后，第二步上传与已核验人员一致的肖像图片：
+
+```bash
+curl "$BASE_URL/v1/virtual-characters/34/asset" \
+  -X POST \
+  -H "Authorization: Bearer $NEW_API_TOKEN" \
+  -F 'file=@./verified-actor.png;type=image/png'
+```
+
+上传成功返回 HTTP `201` 和本次创建的 `provider_asset_id`。此后可查询详情或主动同步，直到角色变为 `active`：
+
+```bash
+curl "$BASE_URL/v1/virtual-characters/34" \
+  -H "Authorization: Bearer $NEW_API_TOKEN"
+
+curl "$BASE_URL/v1/virtual-characters/34/sync" \
+  -X POST \
+  -H "Authorization: Bearer $NEW_API_TOKEN"
+```
+
+如果 H5 已成功但尚未上传图片，角色详情会返回 `asset_upload_required: true`，不会把它误报为火山审核处理中。关闭控制台上传窗口也不会丢失该步骤，可稍后通过角色卡片或上述 API 继续上传。
+
 | 引用方式 | 字段 | 适用创建接口 | 说明 |
 | --- | --- | --- | --- |
-| 已注册 `asset://` | `content[].image_url.url`，或简写 `images` / `image` | 支持 Seedance 的视频创建入口 | 传角色库中已唯一注册的火山素材 ID，**请求里请写完整** `asset://{asset_id}`；每个 ID 都会反查所有权、授权期限和火山状态 |
+| 已注册 `asset://` | `content[].image_url.url`，或简写 `images` / `image` | 支持 Seedance 的视频创建入口 | 传角色库中已唯一注册的火山素材 ID，**请求里请写完整** `asset://{asset_id}`；每个 ID 都会反查所有权、H5 核验证据和火山状态 |
 | NewAPI 角色库 | `character_id` | 支持 Seedance 的视频创建入口；控制台为 `POST /pg/video/generations` | 平台内部角色 ID；中间件读取角色的唯一 `provider_asset_id`，注入 `images: ["asset://..."]` 后再转发上游 |
 
 两种 ID 不要混用：
@@ -836,7 +902,7 @@ curl "$BASE_URL/v1/virtual-characters/12" \
 1. 提示词用「图片1」「图片2」按顺序指代表材，**不要**在文案里写 `asset://` 原文。
 2. 多个已注册 `asset://` 可在同一 `content` 中组合，并会逐一鉴权和写入任务审计；它也可与公网 HTTPS 参考图混用。仍须遵守 [4.13.3](#4133-content-项与参考素材) 的「参考素材模式 / 首尾帧模式」二选一，不可与 `first_frame`/`last_frame` 混用。
 3. 使用 `character_id` 时：**不要**再同时传 `image` / `images` / `first_frame` / `last_frame` / `input_reference`，也不要再传非空的 `metadata.content`；否则返回 `character_reference_conflict`。
-4. 真人角色无论通过 `character_id` 还是直接 `asset://` 使用，都必须属于当前用户、授权未过期、授权证据完整。无需在角色库里绑定豆包视频通道；请求会自动走系统现有的 AIPDD Seedance 上游，且 AIPDD 内部使用的 Ark 凭证必须与角色库 AK/SK 属于同一火山账号和 Project。
+4. 真人角色无论通过 `character_id` 还是直接 `asset://` 使用，都必须属于当前用户、H5 核验证据完整且授权未撤回。无需在角色库里绑定豆包视频通道；请求会自动走系统现有的 AIPDD Seedance 上游，且 AIPDD 内部使用的 Ark 凭证必须与角色库 AK/SK 属于同一火山账号和 Project。
 5. 旧请求中的 `character_asset_id` 会被静默忽略；JSON 与 multipart 请求都不会将其转发到 metadata 或上游。
 6. 模型必须是当前账号可用且名称包含 `seedance`（不区分大小写）的模型。角色及其唯一图片须为可访问且状态为 Active。直接 `asset://` 必须先同步或创建到本地角色库，不能用它绕过真人授权链路。
 

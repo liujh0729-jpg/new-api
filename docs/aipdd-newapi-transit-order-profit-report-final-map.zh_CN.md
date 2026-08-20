@@ -1,6 +1,6 @@
 # AIPDD × NewAPI 中转订单与 AIPDD 利润报表最终地图
 
-> 状态：第一版代码实施与本地全链路验证完成（尚未生产部署）  
+> 状态：第一版代码实施完成；2026-08-20 已按手工站点严格身份契约更新
 > 确认日期：2026-08-12  
 > 实施日期：2026-08-11  
 > 适用范围：AIPDD 利润报表，以及为该报表必需的 NewAPI → AIPDD 订单映射和结算回传  
@@ -51,10 +51,11 @@ flowchart LR
 ### 3.2 幂等与重试
 
 - 统一订单号由 NewAPI 在第一次请求 AIPDD 前生成。
-- AIPDD 以统一订单号作为跨系统幂等标识；同一订单号重复到达时更新原订单，不新建重复订单。
-- AIPDD 内部重试、设备调度重试和上游号池故障切换仍属于同一笔订单。
+- AIPDD 以 `site_id + 统一订单号` 作为跨系统幂等标识；同一站点的同一订单号重复到达时更新原订单，不新建重复订单。
+- NewAPI 的一次逻辑订单在重试时保持统一订单号不变；每次真实上游尝试使用新的 `X-AIPDD-Attempt-ID`，同一次尝试的网络重发复用原 attempt ID。
+- AIPDD 内部重试、设备调度重试和上游号池故障切换仍属于同一笔订单，但可通过 attempt 记录保留实际执行与成本证据。
 - NewAPI 客户重新发起的一次独立请求应生成新的统一订单号。
-- 不为内部重试建立复杂的财务 attempt、movement、event 或 revision 子账。
+- NewAPI 本地镜像只保存最新 attempt；AIPDD 的统一财务账按 attempt 保存来源证据，但钱包扣款仍只能单写一次。
 
 ## 4. AIPDD 中转订单数据
 
@@ -344,7 +345,8 @@ stateDiagram-v2
 ### 14.1 NewAPI
 
 - 新增单表 `aipdd_transit_order`，只保存统一订单、本地客户归属、本地扣费、AIPDD 售价积分/人民币、创建与结算时间。
-- OpenAI Chat、Seedance、Shared Task 请求只发送 `X-AIPDD-Order-ID` 和 `X-AIPDD-Instance-ID`。
+- OpenAI Chat、Seedance、Shared Task 创建请求发送 `X-AIPDD-Instance-ID`、`X-AIPDD-Order-ID`、`X-AIPDD-Attempt-ID`，并附带仅含数字的 NewAPI 用户/Token 审计头。
+- `AIPDD_INSTANCE_ID` 必须固定为手工登记站点的 `externalInstanceId`；禁止再从 API Key 派生，Key 轮换时 Instance 与历史订单身份保持不变。
 - multi-key 渠道记录本次实际选中的 Key 槽位，不再跳过订单。
 - 异步任务从终态响应读取售价；Chat 通过单订单接口做有限直接重试。
 - 删除旧复杂财务模型、worker、事件同步 API、XLSX 导出和管理页面，并移除 Excelize 依赖。

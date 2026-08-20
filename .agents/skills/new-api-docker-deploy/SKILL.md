@@ -1,6 +1,6 @@
 ---
 name: new-api-docker-deploy
-description: Deploy and update New API on a pre-provisioned Docker server over SSH using Alibaba Cloud ACR images for the application, PostgreSQL, and Redis with Docker Compose, while automatically archiving deployment runs and recording generated credentials in AIPDD. Use when the user provides server SSH credentials and an AIPDD API key, asks for a first deployment or an update, optionally sets New API's own ServerAddress to a supplied domain without configuring a reverse proxy or HTTPS, asks to reset or synchronize the AIPDD channel, confirms that AIPDD local prices may be overwritten and reconciled from the authenticated catalog, or requests idempotent VIP1-VIP5 group-price synchronization with same-name private user-group linkage. Keep first-deployment initialization separate from updates; generate credentials and create the root account only on first deployment; updates preserve .env, databases, users, and channels, pull the ACR image, and never publish updated application images to Docker Hub.
+description: Deploy and update New API on a pre-provisioned Docker server over SSH using Alibaba Cloud ACR images, Docker Compose, PostgreSQL, and Redis, while preserving the manually registered AIPDD delivery-site identity and archiving deployment runs. Use when the user asks for a first deployment or update, supplies a site-scoped AIPDD API key and registered externalInstanceId, optionally changes New API's ServerAddress without configuring reverse proxy or HTTPS, resets the AIPDD channel, reconciles authenticated AIPDD prices, or synchronizes VIP1-VIP5 group pricing. Keep initialization separate from updates; require one immutable AIPDD_INSTANCE_ID across key rotations, generate credentials and root only on first deployment, preserve data and secrets during updates, and never publish application images to Docker Hub.
 ---
 
 # New API Docker 自动部署（阿里云 ACR）
@@ -55,7 +55,8 @@ Treat the following as required inputs. Ask for any missing value before connect
 1. Server host or IP address.
 2. SSH username.
 3. SSH password. Never put it in a command, URL, temporary file, or log.
-4. AIPDD upstream API key for first deployment. During an update, reuse the key already stored in the remote `.env`; ask for a new key only when the user explicitly requests an AIPDD key change or the existing deployment has no usable key. Keep it masked and do not echo it in the final report.
+4. A site-scoped AIPDD API key created by an administrator from the manually registered delivery site. A normal unbound user Key is invalid for NewAPI runtime traffic. During an update, reuse the Key in remote `.env`; ask for a replacement only when explicitly rotating it or when it is unusable. A replacement Key must belong to the same site.
+5. The site's registered `externalInstanceId` UUID for first deployment. During an update, recover it from `<deployment-dir>/.aipdd-instance-id` and `AIPDD_INSTANCE_ID`; if both exist they must match. Accept `DEPLOY_INSTANCE_ID` only as an explicit recovery value for a legacy deployment, and require it to equal the site's registered UUID.
 
 Optionally ask for SSH port, deployment directory, public port, and the New API application domain. Use port `22`, `/opt/new-api`, and `6070` when omitted. A supplied domain means only setting New API’s `ServerAddress` option; it does not authorize a reverse proxy, HTTPS, certificate, DNS, or firewall change. Ask these three decisions independently in either deployment mode and never infer any `yes` from a general request to deploy:
 
@@ -81,6 +82,18 @@ Keep `AIPDD_API_KEY` only in protected secret material. Do not place any secret 
 
 At the end of a first deployment, output a clearly labeled credential block containing the generated values and the admin username. Output the AIPDD key as `已配置（不回显）`; only display it if the user explicitly asks for the sensitive value to be shown. For an update, do not output or regenerate credentials; state that existing credentials were preserved.
 
+## Strict AIPDD site identity
+
+Treat the manually registered delivery site as the only runtime identity source:
+
+- Persist its `externalInstanceId` in `<deployment-dir>/.aipdd-instance-id` with mode `600` and in `.env` as `AIPDD_INSTANCE_ID`.
+- Pass `AIPDD_INSTANCE_ID` into the `new-api` container. The file, `.env`, container environment, and AIPDD site record must contain the same canonical UUID.
+- Never derive the instance UUID from `AIPDD_API_KEY`, and never replace it during Key rotation. Rotating a Key changes only `AIPDD_API_KEY`.
+- On an update, never invent a random UUID. If the protected file is absent, recover only from an existing matching `.env` value or an explicit `DEPLOY_INSTANCE_ID` verified against the registered site. Stop on missing or conflicting identity.
+- For a first deployment, require the administrator's manual site and registration-token flow to have associated this UUID before site runtime calls. If the site is not registered and `ACTIVE`, stop and ask for that prerequisite; do not auto-create or auto-bind a site.
+
+The deployed NewAPI image must send `X-AIPDD-Instance-ID`, `X-AIPDD-Order-ID`, and `X-AIPDD-Attempt-ID` on Chat, Shared Task, and Seedance creation requests. It should also send numeric `X-AIPDD-NewAPI-User-ID` and `X-AIPDD-NewAPI-Token-ID` for audit. A logical order keeps its order ID across retries; each actual retry gets a new attempt ID, while a network resend of the same attempt reuses it.
+
 ## 部署档案与凭据上报
 
 Use `scripts/report_deployment.py` from a trusted local environment for every deployment. The default API base URL is `https://api.aipdd.work`; override it only with `--base-url`. Authentication comes from local `AIPDD_API_KEY` or a protected `--key-file`, never from an argument value. Payload JSON comes from stdin or a mode-`600` `--payload` file. Temporary payload/key files must be created with mode `600` before secrets are written and deleted immediately after the call. Use `--dry-run` only for a redacted, no-network preview.
@@ -97,20 +110,20 @@ python .agents/skills/new-api-docker-deploy/scripts/report_deployment.py \
 
 `--instance-id` is required for `instance` and `credentials`; deployment stages take `deploymentId` from the payload. Exit `0` means success, `2` means local validation failed, and `3` means the network/API call failed. Never print a payload, key, HTTP response body, or dry-run preview unless the preview is redacted.
 
-For every run, generate a new deployment UUID and one UTC `startedAt`. Resolve the stable instance UUID from `<deployment-dir>/.aipdd-instance-id` before containers are started or updated:
+For every run, generate a new deployment UUID and one UTC `startedAt`. Resolve the registered site UUID from `<deployment-dir>/.aipdd-instance-id` before containers are started or updated:
 
 ```python
 from pathlib import Path
 from report_deployment import resolve_instance_id
 
-instance_id = resolve_instance_id(Path("/opt/new-api"), create_if_missing=True)
+instance_id = resolve_instance_id(Path("/opt/new-api"), create_if_missing=False)
 ```
 
-The helper validates an existing UUID and creates the file with mode `600` when requested. If resolving locally for a remote deployment, apply the same rule remotely: read the protected file if present; otherwise generate one UUID, write only that UUID plus a newline to a mode-`600` file, and reuse it for all later updates. Never replace a valid existing instance ID.
+The helper validates an existing UUID. Create the file on a first deployment only from the UUID associated through the manual site registration-token flow. On update, recover a missing file only from a matching `.env` or explicit registered value. Never generate a new identity during an update and never replace a valid existing instance ID.
 
 Report in this order:
 
-1. **Before first-deployment containers start:** upsert `instance`, then send `deployment-start` with `schemaVersion=1` and `run.status=running`.
+1. **Before first-deployment containers start:** verify that the site-scoped Key and registered Instance UUID belong to the same manually registered site, upsert the compatibility `instance` archive, then send `deployment-start` with `schemaVersion=1` and `run.status=running`.
 2. **Before an update pulls or recreates the application:** upsert `instance`, then send `deployment-start` with `run.mode=update` and `run.status=running`. For update mode, inspect the currently running application container first and set `release.previousImageDigest` to its content digest (`sha256:...`, from `RepoDigests` or Image ID). Upstream rejects update archives without this field. Include the same `previousImageDigest` on `deployment-finish`.
 3. **After a new root administrator is successfully created:** send `credentials` with `mode=initial` and only these generated/configured entries: `admin_password` with `username=root`, `postgres_password`, `redis_password`, `session_secret`, `crypto_secret`, and `ssh_password` with its SSH username. Do not include the AIPDD API key. On update, do not send credentials unless the user explicitly authorized rotation; then use `mode=update` and include only credential types changed in this run.
 4. **After verification or a terminal deployment failure:** send `deployment-finish` for the same deployment UUID with one terminal status: `succeeded`, `failed`, `rolled_back`, `rollback_failed`, or `abandoned`. Include `finishedAt`, `durationMs`, all three decisions, available AIPDD results, verification, recovery, and a sanitized error summary when applicable.
@@ -169,18 +182,19 @@ Before pulling the new image, ask three independent questions and record the ans
 
 Do not infer any answer from the request to update the application. If the user does not explicitly answer all three decisions, stop before changing the deployment.
 
-1. Resolve the existing protected instance UUID (create it only if this complete legacy deployment has none), capture the running `new-api` image digest as `release.previousImageDigest`, upsert the instance, and submit `deployment-start` before pulling or recreating containers. Generate a fresh deployment UUID for this update. Record reporting failures but do not classify them as deployment failures.
+1. Resolve the protected registered instance UUID. If the file is missing, recover it only from a matching `AIPDD_INSTANCE_ID` or verified `DEPLOY_INSTANCE_ID`; never generate one. Capture the running `new-api` image digest as `release.previousImageDigest`, upsert the instance, and submit `deployment-start` before pulling or recreating containers. Generate a fresh deployment UUID for this update. Record reporting failures but do not classify them as deployment failures.
 2. Back up the existing Compose file and `.env` to the protected timestamped backup directory. Do not print either file.
 3. Read the current Compose file without exposing secrets. Confirm that the application image points to the expected ACR repository. If it points elsewhere, show the image name and ask before changing it.
 4. If the ACR repository is private, authenticate with the user-provided least-privilege registry account interactively. Never put registry credentials in the Compose file or command arguments.
-5. Preserve every existing `.env` value except the two decisions represented by environment toggles:
+5. Preserve every existing `.env` value except the two decision toggles and a missing identity entry. Require an existing `AIPDD_INSTANCE_ID` to equal `.aipdd-instance-id`; append it only when absent:
 
    ```dotenv
    AIPDD_CATALOG_SYNC_ON_BOOT=<true when price overwrite is confirmed, otherwise false>
    AIPDD_CHANNEL_OVERWRITE_ON_BOOT=<true only for the approved channel rebuild, otherwise false>
+   AIPDD_INSTANCE_ID=<the unchanged registered externalInstanceId UUID>
    ```
 
-   If the Compose file currently hard-codes either setting, change it to read the corresponding `.env` variable. Keep the backup and never print the resulting secret file.
+   If Compose hard-codes either toggle or the instance UUID, change it to read the corresponding `.env` variable. If the `new-api` service does not expose `AIPDD_INSTANCE_ID`, add it next to `AIPDD_API_KEY`. Keep the backup and never print the resulting secret file.
 6. Pull and recreate only the application service:
 
    ```sh
@@ -188,6 +202,8 @@ Do not infer any answer from the request to update the application. If the user 
    docker compose up -d --no-build --no-deps new-api
    docker compose ps
    ```
+
+   After recreation, require `printenv AIPDD_INSTANCE_ID` inside the application container to equal the protected file. This UUID is not a secret, but do not print the surrounding environment.
 
 7. Do not run `/api/setup`, do not generate new passwords, and do not change PostgreSQL or Redis services unless the user explicitly requested a dependency upgrade. If a dependency upgrade is requested, back up first and handle it as a separate approved change.
 8. Confirm `/api/status` and the application logs. Preserve the existing administrator password and all existing application data.
@@ -215,6 +231,7 @@ services:
       SESSION_SECRET: ${SESSION_SECRET}
       CRYPTO_SECRET: ${CRYPTO_SECRET}
       AIPDD_API_KEY: ${AIPDD_API_KEY}
+      AIPDD_INSTANCE_ID: ${AIPDD_INSTANCE_ID}
       AIPDD_BOOTSTRAP_REQUIRED: "true"
       AIPDD_CATALOG_SYNC_ON_BOOT: ${AIPDD_CATALOG_SYNC_ON_BOOT}
       AIPDD_CHANNEL_OVERWRITE_ON_BOOT: ${AIPDD_CHANNEL_OVERWRITE_ON_BOOT}
@@ -266,6 +283,7 @@ REDIS_PASSWORD=<generated>
 SESSION_SECRET=<generated>
 CRYPTO_SECRET=<generated>
 AIPDD_API_KEY=<user-provided>
+AIPDD_INSTANCE_ID=<registered delivery-site externalInstanceId UUID>
 AIPDD_CATALOG_SYNC_ON_BOOT=<true only when price overwrite is confirmed, otherwise false>
 AIPDD_CHANNEL_OVERWRITE_ON_BOOT=false
 ```
@@ -424,6 +442,9 @@ Verify all of the following:
 - `GET /api/status` succeeds from the server.
 - When an application domain was configured, `http://<domain>:6070/api/status` succeeds and the `ServerAddress` option matches; do not claim HTTPS. Otherwise report that the port-only mode is active.
 - Application logs do not contain a missing `AIPDD_API_KEY` or database/Redis connection error.
+- `.aipdd-instance-id`, `.env`, and the running container expose the same registered `AIPDD_INSTANCE_ID`; no Key-derived or newly randomized identity was used.
+- A read-only site authorization probe using the protected site Key and Instance UUID reaches `GET /api/finance/v1/settlements/<nonexistent-probe-order>`. Accept only an authenticated “order not found” result; treat missing or invalid headers (400), an invalid Key (401), and an unbound, cross-site, inactive-site, or mismatched Instance response (403) as deployment failures. Never put the Key in a command argument or log.
+- The image is attempt-aware: Chat, Shared Task, and Seedance creation requests use Instance, Order, and Attempt headers. Do not run a paid model call solely for this verification; use automated contract-test/build evidence or an already authorized smoke request.
 - In first-deployment mode, the root administrator was created on the new database. In update mode, `/api/setup` was not called and the existing administrator was preserved.
 - All three requested decisions match the user’s answers.
 - In either mode, report the three decisions separately: channel overwrite `是/否`, AIPDD model-price overwrite `是/否`, and VIP group-price synchronization `是/否`.

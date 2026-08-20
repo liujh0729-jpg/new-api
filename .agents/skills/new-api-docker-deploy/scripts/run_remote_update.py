@@ -23,6 +23,7 @@ ADMIN_USER = os.environ.get("DEPLOY_ADMIN_USER", "root")
 ADMIN_PASSWORD = os.environ.get("DEPLOY_ADMIN_PASSWORD", "")
 DEPLOY_DIR = os.environ.get("DEPLOY_DIR", "/opt/new-api")
 PUBLIC_PORT = os.environ.get("DEPLOY_PUBLIC_PORT", "6070")
+REGISTERED_INSTANCE_ID = os.environ.get("DEPLOY_INSTANCE_ID", "").strip()
 EXPECTED_IMAGE = (
     "crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest"
 )
@@ -275,16 +276,42 @@ def preflight(client: paramiko.SSHClient) -> None:
 def resolve_instance_id(client: paramiko.SSHClient) -> str:
     path = f"{DEPLOY_DIR}/.aipdd-instance-id"
     code, out, _ = run(client, f"test -f {path} && cat {path} || true", check=False)
-    existing = out.strip()
-    if existing:
+    file_value = out.strip()
+    env_value = ""
+    try:
+        for line in sftp_read(client, f"{DEPLOY_DIR}/.env").splitlines():
+            if line.strip().startswith("AIPDD_INSTANCE_ID="):
+                env_value = line.split("=", 1)[1].strip().strip('"\'')
+                break
+    except OSError:
+        pass
+
+    normalized: dict[str, str] = {}
+    for source, value in {
+        ".aipdd-instance-id": file_value,
+        ".env AIPDD_INSTANCE_ID": env_value,
+        "DEPLOY_INSTANCE_ID": REGISTERED_INSTANCE_ID,
+    }.items():
+        if not value:
+            continue
         try:
-            return str(uuid.UUID(existing))
+            normalized[source] = str(uuid.UUID(value))
         except ValueError:
-            die("Existing .aipdd-instance-id is not a valid UUID")
-    new_id = str(uuid.uuid4())
-    sftp_write(client, path, new_id + "\n")
-    print(f"Created instance id {new_id}")
-    return new_id
+            die(f"{source} is not a valid UUID")
+
+    identities = set(normalized.values())
+    if len(identities) > 1:
+        die("Configured AIPDD instance identities disagree; refusing to change site ownership")
+    if not identities:
+        die(
+            "No registered AIPDD instance UUID found. Set DEPLOY_INSTANCE_ID to the "
+            "delivery site's externalInstanceId before updating"
+        )
+    instance_id = identities.pop()
+    if not file_value:
+        sftp_write(client, path, instance_id + "\n")
+        print("Restored .aipdd-instance-id from the registered site identity")
+    return instance_id
 
 
 def current_app_image_digest(client: paramiko.SSHClient) -> str:
@@ -349,8 +376,8 @@ def backup(client: paramiko.SSHClient) -> str:
     return backup_dir
 
 
-def update_env_flags(client: paramiko.SSHClient) -> None:
-    """Set boot toggles without printing .env contents."""
+def update_env_flags(client: paramiko.SSHClient, instance_id: str) -> None:
+    """Set boot toggles and the immutable site identity without printing .env."""
     catalog = "true" if PRICE_OVERWRITE else "false"
     channel = "true" if CHANNEL_OVERWRITE else "false"
     # Update or append the two keys only.
@@ -363,6 +390,7 @@ lines = text.splitlines()
 keys = {{
     'AIPDD_CATALOG_SYNC_ON_BOOT': {catalog!r},
     'AIPDD_CHANNEL_OVERWRITE_ON_BOOT': {channel!r},
+    'AIPDD_INSTANCE_ID': {instance_id!r},
 }}
 seen = set()
 out = []
@@ -373,6 +401,8 @@ for line in lines:
     k, _, _ = line.partition('=')
     k = k.strip()
     if k in keys:
+        if k == 'AIPDD_INSTANCE_ID' and line.partition('=')[2].strip().strip(chr(34) + chr(39)) not in ('', keys[k]):
+            raise SystemExit('AIPDD_INSTANCE_ID does not match .aipdd-instance-id')
         out.append(f"{{k}}={{keys[k]}}")
         seen.add(k)
     else:
@@ -388,7 +418,7 @@ PY
     _, out, _ = run(client, script)
     if "ENV_FLAGS_UPDATED" not in out:
         die("Failed to update .env boot flags")
-    # Ensure compose reads env vars for those keys if hard-coded
+    # Ensure compose reads env vars for the boot flags and immutable identity.
     compose_fix = f"""
 python3 - <<'PY'
 from pathlib import Path
@@ -415,6 +445,38 @@ for flag_key in ('AIPDD_CATALOG_SYNC_ON_BOOT', 'AIPDD_CHANNEL_OVERWRITE_ON_BOOT'
     if n:
         text = new_text
         changed = True
+
+mapping_identity = re.compile(r'^(\\s*)AIPDD_INSTANCE_ID:\\s*.*$', re.M)
+list_identity = re.compile(r'^(\\s*)-\\s*AIPDD_INSTANCE_ID=.*$', re.M)
+if mapping_identity.search(text):
+    text, n = mapping_identity.subn(
+        lambda m: m.group(1) + 'AIPDD_INSTANCE_ID: ${{AIPDD_INSTANCE_ID}}', text
+    )
+    changed = changed or bool(n)
+elif list_identity.search(text):
+    text, n = list_identity.subn(
+        lambda m: m.group(1) + '- AIPDD_INSTANCE_ID=${{AIPDD_INSTANCE_ID}}', text
+    )
+    changed = changed or bool(n)
+else:
+    mapping_key = re.compile(r'^(\\s*)AIPDD_API_KEY:\\s*.*$', re.M)
+    list_key = re.compile(r'^(\\s*)-\\s*AIPDD_API_KEY=.*$', re.M)
+    if mapping_key.search(text):
+        text = mapping_key.sub(
+            lambda m: m.group(0) + '\\n' + m.group(1) + 'AIPDD_INSTANCE_ID: ${{AIPDD_INSTANCE_ID}}',
+            text,
+            count=1,
+        )
+        changed = True
+    elif list_key.search(text):
+        text = list_key.sub(
+            lambda m: m.group(0) + '\\n' + m.group(1) + '- AIPDD_INSTANCE_ID=${{AIPDD_INSTANCE_ID}}',
+            text,
+            count=1,
+        )
+        changed = True
+    else:
+        raise SystemExit('Compose new-api service does not expose AIPDD_API_KEY')
 if changed:
     p.write_text(text, encoding='utf-8')
     print('COMPOSE_UPDATED')
@@ -436,6 +498,17 @@ def pull_and_recreate(client: paramiko.SSHClient) -> None:
     )
     _, ps, _ = run(client, f"cd {DEPLOY_DIR} && docker compose ps")
     print(ps)
+
+
+def verify_instance_identity(client: paramiko.SSHClient, instance_id: str) -> None:
+    code, out, _ = run(
+        client,
+        f"cd {DEPLOY_DIR} && docker compose exec -T new-api printenv AIPDD_INSTANCE_ID",
+        check=False,
+    )
+    if code != 0 or out.strip() != instance_id:
+        die("running new-api container does not use the registered AIPDD instance UUID")
+    print("AIPDD instance identity OK")
 
 
 def wait_status(client: paramiko.SSHClient, seconds: int = 120) -> dict[str, Any]:
@@ -527,7 +600,9 @@ def list_aipdd_channels(
     return items
 
 
-def overwrite_channels(client: paramiko.SSHClient, cookie: str, user_id: int) -> None:
+def overwrite_channels(
+    client: paramiko.SSHClient, cookie: str, user_id: int, instance_id: str
+) -> None:
     print("=== overwrite AIPDD channels ===")
     channels = list_aipdd_channels(client, cookie, user_id)
     print(f"found {len(channels)} AIPDD channel(s)")
@@ -543,7 +618,7 @@ def overwrite_channels(client: paramiko.SSHClient, cookie: str, user_id: int) ->
         if not data.get("success"):
             die(f"delete channel {cid} failed: {data.get('message')}")
     # Ensure overwrite/catalog boot flags true, then force-recreate so bootstrap runs.
-    update_env_flags(client)
+    update_env_flags(client, instance_id)
     run(
         client,
         f"cd {DEPLOY_DIR} && docker compose up -d --no-build --no-deps --force-recreate new-api",
@@ -615,26 +690,63 @@ def put_option(
 
 def read_remote_aipdd_api_key(client: paramiko.SSHClient) -> str:
     """Read AIPDD_API_KEY from remote .env without printing it."""
-    code, out, err = run(
-        client,
-        f"""
-python3 - <<'PY'
-from pathlib import Path
-for line in Path({DEPLOY_DIR!r}).joinpath('.env').read_text(encoding='utf-8').splitlines():
-    if line.startswith('AIPDD_API_KEY='):
-        print(line.split('=', 1)[1])
-        break
-else:
-    raise SystemExit(2)
-PY
-""",
-        check=False,
-    )
-    key = out.strip()
-    if code != 0 or not key:
+    key = read_remote_env_value(client, "AIPDD_API_KEY")
+    if not key:
         print("WARN: cannot read remote AIPDD_API_KEY for archive reporting")
         return ""
     return key
+
+
+def read_remote_env_value(client: paramiko.SSHClient, name: str) -> str:
+    """Read one exact dotenv value in memory without sending it to stdout."""
+    try:
+        text = sftp_read(client, f"{DEPLOY_DIR}/.env")
+    except OSError:
+        return ""
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, value = stripped.split("=", 1)
+        if key.strip() == name:
+            return value.strip().strip('"\'')
+    return ""
+
+
+def probe_aipdd_site_identity(api_key: str, instance_id: str, base_url: str) -> None:
+    """Verify strict site authorization without creating an order or paid task."""
+    if not api_key:
+        die("remote AIPDD_API_KEY is missing")
+    base = (base_url or REPORT_BASE).strip().rstrip("/")
+    if base.endswith("/v1"):
+        base = base[:-3]
+    probe_order = "new-api-deploy-probe-" + uuid.uuid4().hex
+    endpoint = f"{base}/api/finance/v1/settlements/{probe_order}"
+    req = request.Request(
+        endpoint,
+        headers={
+            "Accept": "application/json",
+            "X-API-Key": api_key,
+            "Authorization": "Bearer " + api_key,
+            "X-AIPDD-Instance-ID": instance_id,
+        },
+        method="GET",
+    )
+    try:
+        with request.urlopen(req, timeout=15) as response:
+            if 200 <= response.status < 300:
+                print("AIPDD site identity authorization OK")
+                return
+            die(f"AIPDD site identity probe returned HTTP {response.status}")
+    except error.HTTPError as exc:
+        if exc.code == 404:
+            print("AIPDD site identity authorization OK")
+            return
+        if exc.code in {400, 401, 403}:
+            die(f"AIPDD site identity rejected with HTTP {exc.code}")
+        die(f"AIPDD site identity probe returned HTTP {exc.code}")
+    except error.URLError as exc:
+        die(f"AIPDD site identity probe failed: {exc.reason}")
 
 
 def export_catalog_snapshot(client: paramiko.SSHClient) -> Path:
@@ -1227,8 +1339,14 @@ def main() -> None:
         instance_id = resolve_instance_id(client)
         # Capture digest before pull; update-mode archive requires previousImageDigest.
         previous_image_digest = current_app_image_digest(client)
+        runtime_key = read_remote_aipdd_api_key(client)
         if not report_key:
-            report_key = read_remote_aipdd_api_key(client)
+            report_key = runtime_key
+        probe_aipdd_site_identity(
+            runtime_key,
+            instance_id,
+            read_remote_env_value(client, "AIPDD_BASE_URL"),
+        )
         public_url = f"http://{HOST}:{PUBLIC_PORT}"
         instance_payload = {
             "instanceLabel": f"new-api@{HOST}",
@@ -1281,16 +1399,17 @@ def main() -> None:
 
         backup_ref = backup(client)
         recovery = {"backupCreated": True, "backupReference": backup_ref}
-        update_env_flags(client)
+        update_env_flags(client, instance_id)
         pull_and_recreate(client)
         wait_status(client, 120)
+        verify_instance_identity(client, instance_id)
 
         user_id = 0
         if CHANNEL_OVERWRITE or PRICE_OVERWRITE or VIP_SYNC:
             cookie, user_id = login(client)
 
         if CHANNEL_OVERWRITE:
-            overwrite_channels(client, cookie, user_id)
+            overwrite_channels(client, cookie, user_id, instance_id)
 
         if PRICE_OVERWRITE:
             aipdd_result = reconcile_prices(client, cookie, user_id)
@@ -1341,7 +1460,7 @@ def main() -> None:
             "schemaVersion": 1,
             "deploymentId": deployment_id,
             "instance": {
-                "instanceId": instance_id or str(uuid.uuid4()),
+                "instanceId": instance_id,
                 "instanceLabel": f"new-api@{HOST}",
                 "serverIp": HOST,
                 "sshPort": 22,
@@ -1376,7 +1495,9 @@ def main() -> None:
         }
         if err_obj:
             finish_payload["error"] = err_obj
-        if deployment_id:
+        # A failure before strict identity resolution has no trustworthy site
+        # owner. Do not invent a UUID or submit an orphan deployment archive.
+        if deployment_id and instance_id:
             report("deployment-finish", finish_payload, api_key=report_key)
         try:
             client.close()

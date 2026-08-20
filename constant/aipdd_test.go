@@ -29,3 +29,25 @@ func TestAIPDDExcludedModelFamiliesAreFiltered(t *testing.T) {
 	require.True(t, IsAIPDDExcludedModel("AIPDD-LightX2V"))
 	require.True(t, IsAIPDDExcludedModel("seedvr2-upscale"))
 }
+
+func TestSetAIPDDCapabilitiesPreservesAuthenticatedSeedanceBillingMode(t *testing.T) {
+	originalCapabilities := GetAIPDDCapabilities()
+	t.Cleanup(func() { SetAIPDDCapabilities(originalCapabilities) })
+
+	byokPrice := 0.7
+	SetAIPDDCapabilities([]AIPDDCapability{{
+		ModelName: "AP Seedance-2.5 标准版",
+		SeedancePricing: &AIPDDSeedancePricing{
+			BillingMode: "BYOK",
+			ByResolution: map[string]AIPDDSeedanceResolutionPricing{
+				"480p": {BYOKAmountAWCoinPerSecond: &byokPrice},
+			},
+		},
+	}})
+
+	capability, ok := GetAIPDDCapability("AP Seedance-2.5 标准版")
+	require.True(t, ok)
+	require.NotNil(t, capability.SeedancePricing)
+	require.Equal(t, "BYOK", capability.SeedancePricing.BillingMode)
+	require.Equal(t, 0.7, *capability.SeedancePricing.ByResolution["480p"].BYOKAmountAWCoinPerSecond)
+}

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 
@@ -60,6 +61,29 @@ func VideoProxy(c *gin.Context) {
 	}
 
 	if failure := serveTaskVideoContent(c, taskID, c.GetInt("id")); failure != nil {
+		videoProxyError(c, failure.status, failure.errType, failure.message)
+	}
+}
+
+// AdminVideoProxy serves videos from the global task log. The task owner is
+// supplied explicitly so duplicate upstream task IDs cannot select another
+// user's task. The route itself must remain protected by AdminAuth.
+func AdminVideoProxy(c *gin.Context) {
+	c.Header("Cache-Control", "private, max-age=86400")
+
+	taskID := c.Param("task_id")
+	if taskID == "" {
+		videoProxyError(c, http.StatusBadRequest, "invalid_request_error", "task_id is required")
+		return
+	}
+
+	userID, err := strconv.Atoi(strings.TrimSpace(c.Query("user_id")))
+	if err != nil || userID <= 0 {
+		videoProxyError(c, http.StatusBadRequest, "invalid_request_error", "valid user_id is required")
+		return
+	}
+
+	if failure := serveTaskVideoContent(c, taskID, userID); failure != nil {
 		videoProxyError(c, failure.status, failure.errType, failure.message)
 	}
 }
@@ -199,7 +223,7 @@ func streamVideoContentTarget(c *gin.Context, taskID string, target *videoConten
 	}
 
 	setVideoProxyContentHeaders(c, taskID, target.URL, resp.Header.Get("Content-Type"))
-	c.Writer.Header().Set("Cache-Control", "public, max-age=86400")
+	setDefaultVideoProxyCacheControl(c)
 	c.Writer.WriteHeader(resp.StatusCode)
 	if _, err = io.Copy(c.Writer, resp.Body); err != nil {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to stream video content: %s", err.Error()))
@@ -250,10 +274,16 @@ func writeVideoDataURL(c *gin.Context, taskID string, dataURL string) error {
 	}
 
 	setVideoProxyContentHeaders(c, taskID, "", mimeType)
-	c.Writer.Header().Set("Cache-Control", "public, max-age=86400")
+	setDefaultVideoProxyCacheControl(c)
 	c.Writer.WriteHeader(http.StatusOK)
 	_, err = c.Writer.Write(videoBytes)
 	return err
+}
+
+func setDefaultVideoProxyCacheControl(c *gin.Context) {
+	if c.Writer.Header().Get("Cache-Control") == "" {
+		c.Writer.Header().Set("Cache-Control", "public, max-age=86400")
+	}
 }
 
 func setVideoProxyContentHeaders(c *gin.Context, taskID, videoURL, contentType string) {

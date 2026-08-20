@@ -56,8 +56,11 @@ export function useTransitOrdersColumns(): ColumnDef<AIPDDTransitOrder>[] {
         />
       ),
       cell: ({ row }) => (
-        <div className='max-w-[220px] truncate font-mono text-xs'>
-          {row.original.platform_order_id}
+        <div className='max-w-[240px] font-mono text-xs'>
+          <div className='truncate'>{row.original.platform_order_id}</div>
+          <div className='text-muted-foreground truncate'>
+            {row.original.latest_attempt_id || '-'}
+          </div>
         </div>
       ),
     },

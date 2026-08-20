@@ -21,6 +21,7 @@ const (
 type AIPDDTransitOrder struct {
 	ID                   string `json:"id" gorm:"type:varchar(36);primaryKey"`
 	PlatformOrderID      string `json:"platform_order_id" gorm:"type:varchar(191);uniqueIndex"`
+	LatestAttemptID      string `json:"latest_attempt_id" gorm:"type:varchar(255);index"`
 	InstanceID           string `json:"instance_id" gorm:"type:varchar(36);index"`
 	UserID               int    `json:"user_id" gorm:"index"`
 	TokenID              int    `json:"token_id" gorm:"index"`
@@ -40,25 +41,35 @@ type AIPDDTransitOrder struct {
 func (AIPDDTransitOrder) TableName() string { return "aipdd_transit_order" }
 
 func EnsureAIPDDTransitOrder(
-	instanceID, platformOrderID string,
+	instanceID, platformOrderID, attemptID string,
 	userID, tokenID, channelID, channelKeyIndex int,
 	modelName string,
 ) error {
 	now := time.Now().Unix()
 	order := &AIPDDTransitOrder{
-		ID: uuid.NewString(), PlatformOrderID: platformOrderID, InstanceID: instanceID,
+		ID: uuid.NewString(), PlatformOrderID: platformOrderID, LatestAttemptID: attemptID, InstanceID: instanceID,
 		UserID: userID, TokenID: tokenID, ChannelID: channelID, ChannelKeyIndex: channelKeyIndex,
 		Model: modelName, Status: AIPDDTransitPending, CreatedAt: now, UpdatedAt: now,
 	}
-	return DB.Clauses(clause.OnConflict{
-		Columns: []clause.Column{{Name: "platform_order_id"}},
-		DoUpdates: clause.Assignments(map[string]any{
-			"instance_id": instanceID, "channel_id": channelID,
+	if err := DB.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "platform_order_id"}},
+		DoNothing: true,
+	}).Create(order).Error; err != nil {
+		return err
+	}
+	// A transport-level resend of the same attempt must be idempotent and must
+	// not erase a settlement already applied to the local mirror. A real NewAPI
+	// retry gets a new attempt ID and reopens the mirror until AIPDD returns the
+	// site-scoped aggregate settlement.
+	return DB.Model(&AIPDDTransitOrder{}).
+		Where("platform_order_id = ? AND (latest_attempt_id IS NULL OR latest_attempt_id <> ?)", platformOrderID, attemptID).
+		Updates(map[string]any{
+			"latest_attempt_id": attemptID, "instance_id": instanceID,
+			"user_id": userID, "token_id": tokenID, "channel_id": channelID,
 			"channel_key_index": channelKeyIndex, "model": modelName,
 			"status": AIPDDTransitPending, "source_charge_awcoin": nil,
 			"source_charge_rmb_mic": nil, "settled_at": nil, "updated_at": now,
-		}),
-	}).Create(order).Error
+		}).Error
 }
 
 func RecordAIPDDTransitLocalSettlement(
@@ -127,6 +138,7 @@ type AIPDDTransitOrderQuery struct {
 // associations still return the order IDs; source charges stay null until settled.
 type AIPDDTransitOrderItem struct {
 	PlatformOrderID     string   `json:"platform_order_id"`
+	LatestAttemptID     string   `json:"latest_attempt_id"`
 	UserID              int      `json:"user_id"`
 	Username            string   `json:"username"`
 	TokenID             int      `json:"token_id"`
@@ -255,6 +267,7 @@ func GetAIPDDTransitOrders(query AIPDDTransitOrderQuery) ([]*AIPDDTransitOrderIt
 		order := &orders[i]
 		item := &AIPDDTransitOrderItem{
 			PlatformOrderID:     order.PlatformOrderID,
+			LatestAttemptID:     order.LatestAttemptID,
 			UserID:              order.UserID,
 			Username:            usernameByID[order.UserID],
 			TokenID:             order.TokenID,

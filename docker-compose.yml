@@ -3,11 +3,12 @@
 # Quick Start:
 #   1. export POSTGRES_PASSWORD='change-this-postgres-password'
 #   2. export REDIS_PASSWORD='change-this-redis-password'
-#   3. export AIPDD_API_KEY='change-this-aipdd-api-key'
-#   4. export SESSION_SECRET='change-this-random-session-secret'
-#   5. export CRYPTO_SECRET="$(openssl rand -hex 32)"  # Keep this value permanently
-#   6. docker compose up -d
-#   7. Access at http://localhost:6070
+#   3. export AIPDD_API_KEY='change-this-site-api-key'
+#   4. export AIPDD_INSTANCE_ID='registered-site-instance-uuid'
+#   5. export SESSION_SECRET='change-this-random-session-secret'
+#   6. export CRYPTO_SECRET="$(openssl rand -hex 32)"  # Keep this value permanently
+#   7. docker compose up -d
+#   8. Access at http://localhost:6070
 #
 # Using MySQL instead of PostgreSQL:
 #   1. Comment out the postgres service and SQL_DSN line 15
@@ -37,7 +38,7 @@ services:
       - REDIS_CONN_STRING=redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD}@redis:6379
       - AIPDD_API_KEY=${AIPDD_API_KEY:?set AIPDD_API_KEY}
       - AIPDD_BASE_URL=${AIPDD_BASE_URL:-}
-      - AIPDD_INSTANCE_ID=${AIPDD_INSTANCE_ID:-}
+      - AIPDD_INSTANCE_ID=${AIPDD_INSTANCE_ID:?set AIPDD_INSTANCE_ID to the registered site UUID}
       - TZ=Asia/Shanghai
       - ERROR_LOG_ENABLED=true # 是否启用错误日志记录 (Whether to enable error log recording)
       - BATCH_UPDATE_ENABLED=true  # 是否启用批量更新 (Whether to enable batch update)

@@ -198,6 +198,9 @@ type RelayInfo struct {
 type AIPDDFinanceContext struct {
 	InstanceID      string `json:"instance_id"`
 	PlatformOrderID string `json:"platform_order_id"`
+	AttemptID       string `json:"attempt_id"`
+	NewAPIUserID    int    `json:"newapi_user_id,omitempty"`
+	NewAPITokenID   int    `json:"newapi_token_id,omitempty"`
 	ChannelID       int    `json:"channel_id"`
 	ChannelKeyIndex int    `json:"channel_key_index"`
 }
@@ -840,15 +843,18 @@ func (t *TaskSubmitReq) UnmarshalMetadata(v any) error {
 }
 
 type TaskInfo struct {
-	Code             int    `json:"code"`
-	TaskID           string `json:"task_id"`
-	Status           string `json:"status"`
-	Reason           string `json:"reason,omitempty"`
-	Url              string `json:"url,omitempty"`
-	RemoteUrl        string `json:"remote_url,omitempty"`
-	Progress         string `json:"progress,omitempty"`
-	CompletionTokens int    `json:"completion_tokens,omitempty"` // 用于按倍率计费
-	TotalTokens      int    `json:"total_tokens,omitempty"`      // 用于按倍率计费
+	Code             int     `json:"code"`
+	TaskID           string  `json:"task_id"`
+	Status           string  `json:"status"`
+	Reason           string  `json:"reason,omitempty"`
+	Url              string  `json:"url,omitempty"`
+	RemoteUrl        string  `json:"remote_url,omitempty"`
+	Progress         string  `json:"progress,omitempty"`
+	CompletionTokens int     `json:"completion_tokens,omitempty"` // 用于按倍率计费
+	TotalTokens      int     `json:"total_tokens,omitempty"`      // 用于按倍率计费
+	Duration         float64 `json:"duration,omitempty"`          // 实际生成时长（秒）
+	OutputFormat     string  `json:"output_format,omitempty"`     // 实际输出容器
+	Resolution       string  `json:"resolution,omitempty"`        // 实际输出分辨率
 }
 
 func FailTaskInfo(reason string) *TaskInfo {

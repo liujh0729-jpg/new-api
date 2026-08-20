@@ -649,6 +649,7 @@ func RelayTask(c *gin.Context) {
 			USDExchangeRate: operation_setting.USDExchangeRate,
 		}
 		if quote := relayInfo.TaskPricingQuote; quote != nil {
+			task.PrivateData.BillingContext.PerCallBilling = false
 			task.PrivateData.BillingContext.GroupRatio = quote.GroupRatio
 			task.PrivateData.BillingContext.BillingMode = billing_setting.BillingModeTaskPricing
 			task.PrivateData.BillingContext.BillingUnit = quote.Unit

@@ -1,25 +1,36 @@
 package dto
 
 type VideoRequest struct {
-	Model          string                    `json:"model,omitempty" example:"AP Seedance-2.0 标准版"`                 // Model/style ID
-	Prompt         string                    `json:"prompt,omitempty" example:"电影感城市夜景"`                            // Text prompt
-	Image          string                    `json:"image,omitempty" example:"https://example.com/reference.jpg"`   // Image input (URL/Base64)
-	Duration       *float64                  `json:"duration,omitempty" example:"5.0"`                              // Video duration (seconds)
-	Width          *int                      `json:"width,omitempty" example:"1280"`                                // Video width
-	Height         *int                      `json:"height,omitempty" example:"720"`                                // Video height
-	Fps            *int                      `json:"fps,omitempty" example:"24"`                                    // Video frame rate
-	Seed           *int                      `json:"seed,omitempty" example:"0"`                                    // Random seed
-	N              *int                      `json:"n,omitempty" example:"1"`                                       // Number of videos to generate
-	Resolution     *string                   `json:"resolution,omitempty" example:"720p"`                           // Seedance resolution tier
-	Ratio          *string                   `json:"ratio,omitempty" example:"16:9"`                                // Seedance aspect ratio
-	Content        []VideoRequestContentItem `json:"content,omitempty"`                                             // Seedance official multimodal content
-	GenerateAudio  *bool                     `json:"generate_audio,omitempty" example:"false"`                      // Generate synchronized audio
-	ServiceTier    *string                   `json:"service_tier,omitempty"`                                        // Seedance service tier
-	Priority       *int                      `json:"priority,omitempty" example:"0"`                                // Seedance task priority
-	CallbackURL    *string                   `json:"callback_url,omitempty" example:"https://example.com/callback"` // Completion callback URL
-	ResponseFormat string                    `json:"response_format,omitempty" example:"url"`                       // Response format
-	User           string                    `json:"user,omitempty" example:"user-1234"`                            // User identifier
-	Metadata       map[string]any            `json:"metadata,omitempty"`                                            // Vendor-specific/custom params
+	Model                 string                    `json:"model,omitempty" example:"AP Seedance-2.0 标准版"`                 // Model/style ID
+	Prompt                string                    `json:"prompt,omitempty" example:"电影感城市夜景"`                            // Text prompt
+	Image                 string                    `json:"image,omitempty" example:"https://example.com/reference.jpg"`   // Image input (URL/Base64)
+	Duration              *float64                  `json:"duration,omitempty" example:"5.0"`                              // Video duration (seconds)
+	Width                 *int                      `json:"width,omitempty" example:"1280"`                                // Video width
+	Height                *int                      `json:"height,omitempty" example:"720"`                                // Video height
+	Fps                   *int                      `json:"fps,omitempty" example:"24"`                                    // Video frame rate
+	Seed                  *int                      `json:"seed,omitempty" example:"0"`                                    // Random seed
+	N                     *int                      `json:"n,omitempty" example:"1"`                                       // Number of videos to generate
+	Resolution            *string                   `json:"resolution,omitempty" example:"720p"`                           // Seedance resolution tier
+	Ratio                 *string                   `json:"ratio,omitempty" example:"16:9"`                                // Seedance aspect ratio
+	Content               []VideoRequestContentItem `json:"content,omitempty"`                                             // Seedance official multimodal content
+	GenerateAudio         *bool                     `json:"generate_audio,omitempty" example:"false"`                      // Generate synchronized audio
+	Watermark             *bool                     `json:"watermark,omitempty" example:"false"`                           // Add a visible watermark
+	OutputFormat          *string                   `json:"output_format,omitempty" example:"mp4"`                         // Seedance output container: mp4 or mov
+	ReturnLastFrame       *bool                     `json:"return_last_frame,omitempty" example:"false"`                   // Return the generated last frame
+	OmniReferenceTaskType *string                   `json:"omni_reference_task_type,omitempty" example:"auto"`             // auto, reference, edit, or extend
+	ServiceTier           *string                   `json:"service_tier,omitempty"`                                        // Seedance service tier
+	Priority              *int                      `json:"priority,omitempty" example:"0"`                                // Seedance task priority
+	ExecutionExpiresAfter *int                      `json:"execution_expires_after,omitempty" example:"172800"`            // Task execution expiry in seconds
+	SafetyIdentifier      *string                   `json:"safety_identifier,omitempty" example:"tenant-user-hash"`        // Stable end-user safety identifier
+	Tools                 []VideoRequestTool        `json:"tools,omitempty"`                                               // Optional Seedance tools
+	CallbackURL           *string                   `json:"callback_url,omitempty" example:"https://example.com/callback"` // Completion callback URL
+	ResponseFormat        string                    `json:"response_format,omitempty" example:"url"`                       // Response format
+	User                  string                    `json:"user,omitempty" example:"user-1234"`                            // User identifier
+	Metadata              map[string]any            `json:"metadata,omitempty"`                                            // Vendor-specific/custom params
+}
+
+type VideoRequestTool struct {
+	Type string `json:"type" example:"web_search"`
 }
 
 type VideoRequestContentItem struct {

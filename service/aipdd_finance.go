@@ -1,7 +1,6 @@
 package service
 
 import (
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"os"
@@ -56,7 +55,7 @@ func PrepareAIPDDFinanceAttempt(c *gin.Context, info *relaycommon.RelayInfo) err
 		}
 		info.AIPDDFinance = nil
 	}
-	instanceID, err := resolveAIPDDFinanceInstanceID(info.ApiKey)
+	instanceID, err := resolveAIPDDFinanceInstanceID()
 	if err != nil {
 		return err
 	}
@@ -64,11 +63,13 @@ func PrepareAIPDDFinanceAttempt(c *gin.Context, info *relaycommon.RelayInfo) err
 	if orderID == "" {
 		return errors.New("request id is required for AIPDD finance order")
 	}
+	attemptID := buildAIPDDFinanceAttemptID(orderID, info.RetryIndex, info.ChannelId)
 	finance := &relaycommon.AIPDDFinanceContext{
-		InstanceID: instanceID, PlatformOrderID: orderID,
+		InstanceID: instanceID, PlatformOrderID: orderID, AttemptID: attemptID,
+		NewAPIUserID: info.UserId, NewAPITokenID: info.TokenId,
 		ChannelID: info.ChannelId, ChannelKeyIndex: info.ChannelMultiKeyIndex,
 	}
-	if err := model.EnsureAIPDDTransitOrder(instanceID, orderID,
+	if err := model.EnsureAIPDDTransitOrder(instanceID, orderID, attemptID,
 		info.UserId, info.TokenId, info.ChannelId, info.ChannelMultiKeyIndex, info.OriginModelName); err != nil {
 		return err
 	}
@@ -76,20 +77,22 @@ func PrepareAIPDDFinanceAttempt(c *gin.Context, info *relaycommon.RelayInfo) err
 	return nil
 }
 
-func resolveAIPDDFinanceInstanceID(apiKey string) (string, error) {
+func resolveAIPDDFinanceInstanceID() (string, error) {
 	if configured := strings.TrimSpace(os.Getenv(aipddInstanceIDEnv)); configured != "" {
-		if _, err := uuid.Parse(configured); err != nil {
+		parsed, err := uuid.Parse(configured)
+		if err != nil {
 			return "", fmt.Errorf("%s must be a UUID: %w", aipddInstanceIDEnv, err)
 		}
-		return configured, nil
+		return parsed.String(), nil
 	}
-	key := strings.TrimSpace(apiKey)
-	if key == "" {
-		return "", errors.New("AIPDD API key is required to derive finance instance identity")
-	}
-	return uuid.NewHash(
-		sha256.New(), uuid.NameSpaceURL, []byte("aipdd:new-api:finance-instance:"+key), 8,
-	).String(), nil
+	return "", fmt.Errorf(
+		"%s is required and must match the registered delivery site's external instance ID",
+		aipddInstanceIDEnv,
+	)
+}
+
+func buildAIPDDFinanceAttemptID(orderID string, retryIndex, channelID int) string {
+	return fmt.Sprintf("%s:%d:%d", orderID, max(0, retryIndex), channelID)
 }
 
 func RecordAIPDDFinanceSettlement(info *relaycommon.RelayInfo, actualQuota int, status string) error {

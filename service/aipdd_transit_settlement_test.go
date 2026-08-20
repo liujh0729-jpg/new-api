@@ -25,7 +25,7 @@ func TestApplyAIPDDTransitSettlementResponseStoresOnlySourceCharge(t *testing.T)
 
 	const orderID = "newapi-order-1"
 	require.NoError(t, model.EnsureAIPDDTransitOrder(
-		"11111111-2222-4333-8444-555555555555", orderID, 1, 2, 3, 0, "model-a"))
+		"11111111-2222-4333-8444-555555555555", orderID, orderID+":0:3", 1, 2, 3, 0, "model-a"))
 	require.NoError(t, ApplyAIPDDTransitSettlementResponse(
 		&relaycommon.AIPDDFinanceContext{PlatformOrderID: orderID},
 		[]byte(`{"code":0,"data":{"settlement":{"status":"settled","charged_points":1250,"charged_rmb":"2.500000"}}}`)))
@@ -48,7 +48,7 @@ func TestApplyAIPDDTransitSettlementResponseAcceptsOfficialTopLevelShape(t *test
 
 	const orderID = "newapi-order-2"
 	require.NoError(t, model.EnsureAIPDDTransitOrder(
-		"11111111-2222-4333-8444-555555555555", orderID, 1, 2, 3, 0, "model-b"))
+		"11111111-2222-4333-8444-555555555555", orderID, orderID+":0:3", 1, 2, 3, 0, "model-b"))
 	require.NoError(t, ApplyAIPDDTransitSettlementResponse(
 		&relaycommon.AIPDDFinanceContext{PlatformOrderID: orderID},
 		[]byte(`{"id":"task-1","status":"succeeded","settlement":{"status":"settled","charged_points":800,"charged_rmb":"1.600000"}}`)))
@@ -70,7 +70,7 @@ func TestSyncAIPDDTaskFinanceFromUpstreamSettlesOfficialBody(t *testing.T) {
 
 	const orderID = "newapi-order-realtime-1"
 	require.NoError(t, model.EnsureAIPDDTransitOrder(
-		"11111111-2222-4333-8444-555555555555", orderID, 1, 2, 3, 0, "AP Seedance-2.0 轻量版"))
+		"11111111-2222-4333-8444-555555555555", orderID, orderID+":0:3", 1, 2, 3, 0, "AP Seedance-2.0 轻量版"))
 	task := &model.Task{
 		Quota: 109589,
 		PrivateData: model.TaskPrivateData{
@@ -125,7 +125,7 @@ func TestFetchAIPDDTransitSettlementUsesTheSelectedMultiKeyAndMinimalIdentity(t 
 	require.NoError(t, db.Create(&model.Channel{
 		Id: channelID, Type: 100, Key: "sk-aipdd-other\n" + selected, Name: "AIPDD", BaseURL: &baseURL,
 	}).Error)
-	require.NoError(t, model.EnsureAIPDDTransitOrder(instance, orderID, 1, 2, channelID, 1, "chat-model"))
+	require.NoError(t, model.EnsureAIPDDTransitOrder(instance, orderID, orderID+":0:9", 1, 2, channelID, 1, "chat-model"))
 
 	err = fetchAndApplyAIPDDTransitSettlement(&relaycommon.AIPDDFinanceContext{
 		InstanceID: instance, PlatformOrderID: orderID, ChannelID: channelID, ChannelKeyIndex: 1,

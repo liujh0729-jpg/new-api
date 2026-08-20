@@ -565,7 +565,12 @@ func (t *Task) ToOpenAIVideo() *dto.OpenAIVideo {
 	openAIVideo.Model = t.Properties.OriginModelName
 	openAIVideo.SetProgressStr(t.Progress)
 	openAIVideo.CreatedAt = t.CreatedAt
-	openAIVideo.CompletedAt = t.UpdatedAt
+	if t.Status == TaskStatusSuccess || t.Status == TaskStatusFailure {
+		openAIVideo.CompletedAt = t.FinishTime
+		if openAIVideo.CompletedAt == 0 {
+			openAIVideo.CompletedAt = t.UpdatedAt
+		}
+	}
 	openAIVideo.SetMetadata("url", t.GetResultURL())
 	return openAIVideo
 }

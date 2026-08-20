@@ -8,6 +8,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -88,12 +90,16 @@ type taskDetailResponse struct {
 // the official endpoint returns the task directly at the top level, while the
 // legacy AIPDD endpoint wraps it in data.
 type seedanceOfficialTaskResponse struct {
-	ID             string `json:"id"`
-	Status         string `json:"status"`
-	Code           any    `json:"code"`
-	Message        string `json:"message"`
-	RequestID      string `json:"request_id"`
-	CamelRequestID string `json:"requestId"`
+	ID             string  `json:"id"`
+	Status         string  `json:"status"`
+	Model          string  `json:"model"`
+	Duration       float64 `json:"duration"`
+	OutputFormat   string  `json:"output_format"`
+	Resolution     string  `json:"resolution"`
+	Code           any     `json:"code"`
+	Message        string  `json:"message"`
+	RequestID      string  `json:"request_id"`
+	CamelRequestID string  `json:"requestId"`
 	Content        struct {
 		VideoURL string `json:"video_url"`
 	} `json:"content"`
@@ -180,7 +186,7 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 			!seedanceRequestSpecifiesResolution(raw) {
 			raw["resolution"] = info.TaskPricingFacts.Resolution
 		}
-		payload, errorCode, err := normalizeAndValidateSeedanceOfficialPayload(raw)
+		payload, errorCode, err := normalizeAndValidateSeedanceOfficialPayload(raw, cfg)
 		if err != nil {
 			return service.TaskErrorWrapperLocal(err, errorCode, http.StatusBadRequest)
 		}
@@ -252,7 +258,7 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 		if !ok {
 			return nil
 		}
-		ratios["seconds"] = seedanceBillingSeconds(raw, pricing)
+		ratios["seconds"] = seedanceBillingSeconds(raw, pricing, cfg)
 		if seedanceHasReferenceVideo(raw["content"]) {
 			ratios["has_reference_video"] = 1
 		}
@@ -276,6 +282,27 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 		return nil
 	}
 	return ratios
+}
+
+// AdjustBillingOnComplete settles Seedance 2.5 against the duration returned by
+// Ark. The billing context is the immutable submit-time unit-price snapshot, so
+// a later catalog refresh cannot change an in-flight task's charge.
+func (a *TaskAdaptor) AdjustBillingOnComplete(task *model.Task, taskResult *relaycommon.TaskInfo) int {
+	if task == nil || taskResult == nil || !validSeedance25ActualDuration(taskResult.Duration) {
+		return 0
+	}
+	billing := task.PrivateData.BillingContext
+	if billing == nil || billing.BillingMode != billing_setting.BillingModeTaskPricing ||
+		billing.BillingUnit != billing_setting.TaskPricingUnitSecond ||
+		!isSeedance25ModelName(billing.OriginModelName) || billing.UnitPriceUSD <= 0 ||
+		billing.QuotaPerUnit <= 0 || billing.GroupRatio < 0 {
+		return 0
+	}
+	quota := billing.UnitPriceUSD * taskResult.Duration * billing.GroupRatio * billing.QuotaPerUnit
+	if math.IsNaN(quota) || math.IsInf(quota, 0) || quota <= 0 || quota > float64(int(^uint(0)>>1)) {
+		return 0
+	}
+	return billingexpr.QuotaRound(quota)
 }
 
 func (a *TaskAdaptor) EstimateTaskPricingFacts(c *gin.Context, info *relaycommon.RelayInfo) (relaycommon.TaskPricingFacts, *dto.TaskError) {
@@ -308,7 +335,7 @@ func (a *TaskAdaptor) EstimateTaskPricingFacts(c *gin.Context, info *relaycommon
 				http.StatusBadRequest,
 			)
 		}
-		quantity := seedanceBillingSeconds(raw, pricing)
+		quantity := seedanceBillingSeconds(raw, pricing, cfg)
 		if quantity <= 0 {
 			return relaycommon.TaskPricingFacts{}, service.TaskErrorWrapperLocal(
 				fmt.Errorf("invalid billing duration for model %s", info.OriginModelName),
@@ -396,6 +423,13 @@ func (a *TaskAdaptor) BuildRequestHeader(_ *gin.Context, req *http.Request, info
 		finance := info.AIPDDFinance
 		req.Header.Set("X-AIPDD-Instance-ID", finance.InstanceID)
 		req.Header.Set("X-AIPDD-Order-ID", finance.PlatformOrderID)
+		req.Header.Set("X-AIPDD-Attempt-ID", finance.AttemptID)
+		if finance.NewAPIUserID > 0 {
+			req.Header.Set("X-AIPDD-NewAPI-User-ID", strconv.Itoa(finance.NewAPIUserID))
+		}
+		if finance.NewAPITokenID > 0 {
+			req.Header.Set("X-AIPDD-NewAPI-Token-ID", strconv.Itoa(finance.NewAPITokenID))
+		}
 	}
 	return nil
 }
@@ -700,13 +734,20 @@ func mapValue(value any) (map[string]any, bool) {
 func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error) {
 	var official seedanceOfficialTaskResponse
 	if err := common.Unmarshal(respBody, &official); err == nil && strings.TrimSpace(official.Status) != "" {
-		info := &relaycommon.TaskInfo{Code: 0, TaskID: official.ID}
+		info := &relaycommon.TaskInfo{
+			Code: 0, TaskID: official.ID, Duration: official.Duration,
+			OutputFormat: official.OutputFormat, Resolution: official.Resolution,
+		}
 		switch strings.ToLower(strings.TrimSpace(official.Status)) {
 		case "pending", "queued":
 			info.Status, info.Progress = model.TaskStatusQueued, taskcommon.ProgressQueued
 		case "processing", "running":
 			info.Status, info.Progress = model.TaskStatusInProgress, taskcommon.ProgressInProgress
 		case "succeeded", "completed":
+			if isSeedance25ModelName(official.Model) && !validSeedance25ActualDuration(official.Duration) {
+				info.Status, info.Progress = model.TaskStatusInProgress, taskcommon.ProgressInProgress
+				return info, nil
+			}
 			info.Status, info.Progress, info.Url = model.TaskStatusSuccess, taskcommon.ProgressComplete, official.Content.VideoURL
 		case "failed", "cancelled", "canceled":
 			rawMessage, rawCode := seedanceOfficialErrorDetails(official)
@@ -895,6 +936,15 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, erro
 	if err := common.Unmarshal(originTask.Data, &official); err == nil && strings.TrimSpace(official.Status) != "" {
 		if strings.TrimSpace(official.Content.VideoURL) != "" {
 			openAIVideo.SetMetadata("url", official.Content.VideoURL)
+		}
+		if official.Duration > 0 {
+			openAIVideo.SetMetadata("duration", official.Duration)
+		}
+		if strings.TrimSpace(official.OutputFormat) != "" {
+			openAIVideo.SetMetadata("output_format", official.OutputFormat)
+		}
+		if strings.TrimSpace(official.Resolution) != "" {
+			openAIVideo.SetMetadata("resolution", official.Resolution)
 		}
 		if isSeedanceOfficialFailure(official.Status) || originTask.Status == model.TaskStatusFailure {
 			rawMessage, rawCode := seedanceOfficialErrorDetails(official)
@@ -1224,7 +1274,7 @@ func validSeedanceVideoURL(value any) bool {
 	}
 }
 
-func normalizeAndValidateSeedanceOfficialPayload(raw map[string]any) (map[string]any, string, error) {
+func normalizeAndValidateSeedanceOfficialPayload(raw map[string]any, cfg modelConfig) (map[string]any, string, error) {
 	if raw == nil {
 		return nil, "invalid_request", fmt.Errorf("request body is required")
 	}
@@ -1233,7 +1283,8 @@ func normalizeAndValidateSeedanceOfficialPayload(raw map[string]any) (map[string
 	for _, key := range []string{
 		"content", "resolution", "ratio", "duration", "frames", "fps", "framespersecond",
 		"frames_per_second", "seed", "callback_url", "return_last_frame", "service_tier",
-		"generate_audio", "priority",
+		"generate_audio", "watermark", "output_format", "omni_reference_task_type", "priority",
+		"execution_expires_after", "safety_identifier", "tools", "camera_fixed", "draft", "media_mode",
 	} {
 		if seedanceRequestValuePresent(payload[key]) {
 			continue
@@ -1259,6 +1310,9 @@ func normalizeAndValidateSeedanceOfficialPayload(raw map[string]any) (map[string
 		if !ok || strings.TrimSpace(anyToString(item["type"])) == "" {
 			return nil, "invalid_content", fmt.Errorf("content[%d] must be an object with a non-empty type", index)
 		}
+	}
+	if isSeedance25Config(cfg) {
+		return normalizeAndValidateSeedance25Payload(payload, metadata, content)
 	}
 
 	resolution := canonicalSeedanceResolution(payload["resolution"])
@@ -1300,6 +1354,327 @@ func normalizeAndValidateSeedanceOfficialPayload(raw map[string]any) (map[string
 		delete(payload, key)
 	}
 	return payload, "", nil
+}
+
+func normalizeAndValidateSeedance25Payload(payload, metadata map[string]any, content []any) (map[string]any, string, error) {
+	for _, key := range []string{
+		"frames", "fps", "framespersecond", "frames_per_second", "seed",
+		"camera_fixed", "draft", "service_tier",
+	} {
+		if seedanceRequestValuePresent(payload[key]) {
+			return nil, "unsupported_parameter", fmt.Errorf("%s is not supported by Seedance 2.5", key)
+		}
+	}
+
+	applySeedance25CompatibilityMediaMode(content, payload["media_mode"])
+	resolution := canonicalSeedanceResolution(payload["resolution"])
+	ratio := strings.ToLower(strings.TrimSpace(anyToString(payload["ratio"])))
+	width, height, dimensionsFound, err := seedanceRequestDimensions(payload, metadata)
+	if err != nil {
+		return nil, "invalid_dimensions", err
+	}
+	if resolution == "" && dimensionsFound {
+		resolution, err = inferSeedanceResolution(width, height)
+		if err != nil {
+			return nil, "invalid_dimensions", err
+		}
+	}
+	if ratio == "" && dimensionsFound {
+		ratio, err = inferSeedance25Ratio(width, height)
+		if err != nil {
+			return nil, "invalid_dimensions", err
+		}
+	}
+	if resolution == "" {
+		resolution = "720p"
+	}
+	if ratio == "" {
+		ratio = "adaptive"
+	}
+	if resolution != "480p" && resolution != "720p" && resolution != "1080p" {
+		return nil, "unsupported_resolution", fmt.Errorf("Seedance 2.5 resolution %q is not supported", resolution)
+	}
+	if !isSupportedSeedance25Ratio(ratio) {
+		return nil, "unsupported_ratio", fmt.Errorf("Seedance 2.5 ratio %q is not supported", ratio)
+	}
+	payload["resolution"] = resolution
+	payload["ratio"] = ratio
+
+	duration := -1
+	if seedanceRequestValuePresent(payload["duration"]) {
+		var ok bool
+		duration, ok = exactInteger(payload["duration"])
+		if !ok {
+			return nil, "invalid_duration", fmt.Errorf("duration must be an integer")
+		}
+	}
+	if duration != -1 && (duration < 4 || duration > 30) {
+		return nil, "invalid_duration", fmt.Errorf("duration must be -1 or an integer from 4 to 30")
+	}
+	payload["duration"] = duration
+
+	taskType := strings.ToLower(strings.TrimSpace(anyToString(payload["omni_reference_task_type"])))
+	if taskType == "" {
+		taskType = "auto"
+	}
+	if taskType != "auto" && taskType != "reference" && taskType != "edit" && taskType != "extend" {
+		return nil, "invalid_reference_task_type", fmt.Errorf("omni_reference_task_type must be auto, reference, edit, or extend")
+	}
+
+	if err := seedance25BooleanDefault(payload, "generate_audio", true); err != nil {
+		return nil, "invalid_generate_audio", err
+	}
+	if err := seedance25BooleanDefault(payload, "watermark", false); err != nil {
+		return nil, "invalid_watermark", err
+	}
+	if err := seedance25BooleanDefault(payload, "return_last_frame", false); err != nil {
+		return nil, "invalid_return_last_frame", err
+	}
+	outputFormat := strings.ToLower(strings.TrimSpace(anyToString(payload["output_format"])))
+	if outputFormat == "" {
+		outputFormat = "mp4"
+	}
+	if outputFormat != "mp4" && outputFormat != "mov" {
+		return nil, "invalid_output_format", fmt.Errorf("output_format must be mp4 or mov")
+	}
+	payload["output_format"] = outputFormat
+
+	expiresAfter, err := seedance25IntegerDefault(payload, "execution_expires_after", 172800, 3600, 259200)
+	if err != nil {
+		return nil, "invalid_execution_expires_after", err
+	}
+	payload["execution_expires_after"] = expiresAfter
+	priority, err := seedance25IntegerDefault(payload, "priority", 0, 0, 9)
+	if err != nil {
+		return nil, "invalid_priority", err
+	}
+	payload["priority"] = priority
+	if safety := strings.TrimSpace(anyToString(payload["safety_identifier"])); safety != "" {
+		if len(safety) > 64 || !regexp.MustCompile(`^[\x20-\x7e]+$`).MatchString(safety) {
+			return nil, "invalid_safety_identifier", fmt.Errorf("safety_identifier must contain at most 64 ASCII characters")
+		}
+		payload["safety_identifier"] = safety
+	}
+	if err := validateSeedance25Tools(payload["tools"]); err != nil {
+		return nil, "invalid_tools", err
+	}
+	if errorCode, err := validateSeedance25Content(content, taskType, ratio, duration); err != nil {
+		return nil, errorCode, err
+	}
+	if taskType == "auto" && !seedance25ContentHasReferenceMaterial(content) {
+		delete(payload, "omni_reference_task_type")
+	} else {
+		payload["omni_reference_task_type"] = taskType
+	}
+
+	for _, key := range []string{
+		"character_id", "prompt", "image", "images", "width", "height", "media_mode",
+		"metadata", "response_format", "user", "n", "frames", "fps", "framespersecond",
+		"frames_per_second", "seed", "camera_fixed", "draft", "service_tier",
+	} {
+		delete(payload, key)
+	}
+	return payload, "", nil
+}
+
+func seedance25ContentHasReferenceMaterial(content []any) bool {
+	for _, value := range content {
+		item, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		typeName := strings.ToLower(strings.TrimSpace(anyToString(item["type"])))
+		role := strings.ToLower(strings.TrimSpace(anyToString(item["role"])))
+		switch typeName {
+		case "video", "video_url", "audio", "audio_url":
+			return true
+		case "image", "image_url":
+			if role != "first_frame" && role != "last_frame" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func applySeedance25CompatibilityMediaMode(content []any, modeValue any) {
+	mode := strings.ToLower(strings.TrimSpace(anyToString(modeValue)))
+	imageIndexes := make([]int, 0, 2)
+	for index, value := range content {
+		item, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		typeName := strings.ToLower(strings.TrimSpace(anyToString(item["type"])))
+		if typeName == "image" || typeName == "image_url" {
+			imageIndexes = append(imageIndexes, index)
+		}
+	}
+	if len(imageIndexes) == 0 {
+		return
+	}
+	setRole := func(index int, role string) {
+		if item, ok := content[index].(map[string]any); ok {
+			item["role"] = role
+		}
+	}
+	switch mode {
+	case "first_frame", "first_last_frame", "start_end_frame":
+		setRole(imageIndexes[0], "first_frame")
+		if len(imageIndexes) > 1 {
+			setRole(imageIndexes[1], "last_frame")
+		}
+	case "last_frame":
+		setRole(imageIndexes[0], "last_frame")
+	}
+}
+
+func validateSeedance25Content(content []any, taskType, ratio string, duration int) (string, error) {
+	if len(content) == 0 || len(content) > 50 {
+		return "invalid_content", fmt.Errorf("content must contain between 1 and 50 items")
+	}
+	images, videos, audios := 0, 0, 0
+	firstFrame, frameMode, referenceMaterial := false, false, false
+	for index, value := range content {
+		item, ok := value.(map[string]any)
+		if !ok {
+			return "invalid_content", fmt.Errorf("content[%d] must be an object", index)
+		}
+		typeName := strings.ToLower(strings.TrimSpace(anyToString(item["type"])))
+		role := strings.ToLower(strings.TrimSpace(anyToString(item["role"])))
+		switch typeName {
+		case "text":
+			if strings.TrimSpace(anyToString(item["text"])) == "" {
+				return "invalid_content", fmt.Errorf("content[%d].text is required", index)
+			}
+		case "image", "image_url":
+			images++
+			isFrame := role == "first_frame" || role == "last_frame"
+			frameMode = frameMode || isFrame
+			firstFrame = firstFrame || role == "first_frame"
+			referenceMaterial = referenceMaterial || !isFrame
+		case "video", "video_url":
+			videos++
+			referenceMaterial = true
+		case "audio", "audio_url":
+			audios++
+			referenceMaterial = true
+		default:
+			return "invalid_content", fmt.Errorf("content[%d].type %q is not supported", index, typeName)
+		}
+	}
+	if images > 30 || videos > 10 || audios > 10 {
+		return "invalid_content", fmt.Errorf("content supports at most 30 images, 10 videos, and 10 audio files")
+	}
+	if frameMode && referenceMaterial {
+		return "invalid_content_mode", fmt.Errorf("first/last-frame mode cannot be combined with reference media")
+	}
+	if frameMode && !firstFrame {
+		return "invalid_content_mode", fmt.Errorf("last_frame requires first_frame")
+	}
+	if (frameMode || taskType == "extend") && ratio != "adaptive" {
+		return "invalid_ratio", fmt.Errorf("first/last-frame and extend modes require ratio=adaptive")
+	}
+	if taskType == "edit" && (videos != 1 || ratio != "adaptive" || duration != -1) {
+		return "invalid_edit_request", fmt.Errorf("edit requires one 4-30 second reference video, ratio=adaptive, and duration=-1")
+	}
+	if taskType == "extend" && videos != 1 {
+		return "invalid_extend_request", fmt.Errorf("extend requires one reference video")
+	}
+	if taskType == "reference" && !referenceMaterial {
+		return "invalid_reference_request", fmt.Errorf("reference mode requires reference media")
+	}
+	return "", nil
+}
+
+func validateSeedance25Tools(value any) error {
+	if value == nil {
+		return nil
+	}
+	tools, ok := value.([]any)
+	if !ok {
+		return fmt.Errorf("tools must be an array")
+	}
+	for _, raw := range tools {
+		tool, ok := raw.(map[string]any)
+		if !ok || len(tool) != 1 || strings.TrimSpace(anyToString(tool["type"])) != "web_search" {
+			return fmt.Errorf(`tools only supports {"type":"web_search"}`)
+		}
+	}
+	return nil
+}
+
+func seedance25BooleanDefault(payload map[string]any, key string, fallback bool) error {
+	value, exists := payload[key]
+	if !exists || value == nil {
+		payload[key] = fallback
+		return nil
+	}
+	if _, ok := value.(bool); !ok {
+		return fmt.Errorf("%s must be a boolean", key)
+	}
+	return nil
+}
+
+func seedance25IntegerDefault(payload map[string]any, key string, fallback, minimum, maximum int) (int, error) {
+	if !seedanceRequestValuePresent(payload[key]) {
+		return fallback, nil
+	}
+	value, ok := exactInteger(payload[key])
+	if !ok || value < minimum || value > maximum {
+		return 0, fmt.Errorf("%s must be an integer from %d to %d", key, minimum, maximum)
+	}
+	return value, nil
+}
+
+func exactInteger(value any) (int, bool) {
+	var parsed float64
+	switch typed := value.(type) {
+	case float64:
+		parsed = typed
+	case float32:
+		parsed = float64(typed)
+	case int:
+		return typed, true
+	case int64:
+		if int64(int(typed)) != typed {
+			return 0, false
+		}
+		return int(typed), true
+	case string:
+		value, err := strconv.ParseFloat(strings.TrimSpace(typed), 64)
+		if err != nil {
+			return 0, false
+		}
+		parsed = value
+	default:
+		return 0, false
+	}
+	maxIntValue := int(^uint(0) >> 1)
+	minIntValue := -maxIntValue - 1
+	if math.IsNaN(parsed) || math.IsInf(parsed, 0) || parsed != math.Trunc(parsed) ||
+		parsed > float64(maxIntValue) || parsed < float64(minIntValue) {
+		return 0, false
+	}
+	return int(parsed), true
+}
+
+func inferSeedance25Ratio(width, height int) (string, error) {
+	divisor := greatestCommonDivisor(width, height)
+	ratio := fmt.Sprintf("%d:%d", width/divisor, height/divisor)
+	if !isSupportedSeedance25Ratio(ratio) {
+		return "", fmt.Errorf("Seedance 2.5 dimensions %dx%d do not map to a supported ratio", width, height)
+	}
+	return ratio, nil
+}
+
+func isSupportedSeedance25Ratio(ratio string) bool {
+	switch ratio {
+	case "16:9", "4:3", "1:1", "3:4", "9:16", "21:9", "adaptive":
+		return true
+	default:
+		return false
+	}
 }
 
 func seedanceOfficialContentFromLegacyFields(payload map[string]any) []any {
@@ -1432,6 +1807,21 @@ func isSeedanceExecutionConfig(cfg modelConfig) bool {
 		cfg.SeedancePricing != nil
 }
 
+func isSeedance25Config(cfg modelConfig) bool {
+	return isSeedance25ModelName(cfg.ModelName) || isSeedance25ModelName(cfg.ScriptCode)
+}
+
+func isSeedance25ModelName(value string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	return strings.Contains(normalized, "seedance-2.5") ||
+		strings.Contains(normalized, "seedance-2-5-260628")
+}
+
+func validSeedance25ActualDuration(duration float64) bool {
+	return duration > 0 && duration <= 30 && duration == math.Trunc(duration) &&
+		!math.IsNaN(duration) && !math.IsInf(duration, 0)
+}
+
 func seedanceRequestDimensions(payload, metadata map[string]any) (int, int, bool, error) {
 	for _, source := range []map[string]any{payload, metadata} {
 		if source == nil {
@@ -1509,9 +1899,12 @@ func seedanceRequestValuePresent(value any) bool {
 	}
 }
 
-func seedanceBillingSeconds(raw map[string]any, pricing constant.AIPDDSeedanceResolutionPricing) float64 {
+func seedanceBillingSeconds(raw map[string]any, pricing constant.AIPDDSeedanceResolutionPricing, cfg modelConfig) float64 {
 	if duration := positiveFloat(raw["duration"]); duration > 0 {
 		return duration
+	}
+	if isSeedance25Config(cfg) {
+		return 30
 	}
 	if frames := positiveFloat(raw["frames"]); frames > 0 {
 		fps := positiveFloat(raw["fps"])

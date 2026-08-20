@@ -88,25 +88,26 @@ type AIPDDCapability struct {
 }
 
 type AIPDDSeedanceResolutionPricing struct {
-	TargetResolution                 string   `json:"targetResolution"`
-	EnhancementType                  string   `json:"enhancementType"`
-	InputTypes                       []string `json:"inputTypes"`
-	AmountAWCoinPerSecond            float64  `json:"amountAwcoinPerSecond"`
-	DisplayAmountAWCoinPerSecond               *float64 `json:"displayAmountAwcoinPerSecond,omitempty"`
-	BYOKAmountAWCoinPerSecond                  *float64 `json:"byokAmountAwcoinPerSecond,omitempty"`
-	SuggestedRetailAWCoinPerSecond             *float64 `json:"suggestedRetailAwcoinPerSecond,omitempty"`
-	TextInputAWCoinPerSecond                   float64  `json:"textInputAwcoinPerSecond"`
-	ImageInputAWCoinPerSecond                  float64  `json:"imageInputAwcoinPerSecond"`
-	VideoInputAWCoinPerSecond                  float64  `json:"videoInputAwcoinPerSecond"`
-	DisplayVideoInputAWCoinPerSecond           *float64 `json:"displayVideoInputAwcoinPerSecond,omitempty"`
-	BYOKVideoInputAWCoinPerSecond              *float64 `json:"byokVideoInputAwcoinPerSecond,omitempty"`
-	SuggestedRetailVideoInputAWCoinPerSecond   *float64 `json:"suggestedRetailVideoInputAwcoinPerSecond,omitempty"`
-	AudioInputAWCoinPerSecond                  float64  `json:"audioInputAwcoinPerSecond"`
-	DefaultDurationSeconds                     float64  `json:"defaultDurationSeconds"`
-	DefaultFramesPerSecond                     float64  `json:"defaultFramesPerSecond"`
+	TargetResolution                         string   `json:"targetResolution"`
+	EnhancementType                          string   `json:"enhancementType"`
+	InputTypes                               []string `json:"inputTypes"`
+	AmountAWCoinPerSecond                    float64  `json:"amountAwcoinPerSecond"`
+	DisplayAmountAWCoinPerSecond             *float64 `json:"displayAmountAwcoinPerSecond,omitempty"`
+	BYOKAmountAWCoinPerSecond                *float64 `json:"byokAmountAwcoinPerSecond,omitempty"`
+	SuggestedRetailAWCoinPerSecond           *float64 `json:"suggestedRetailAwcoinPerSecond,omitempty"`
+	TextInputAWCoinPerSecond                 float64  `json:"textInputAwcoinPerSecond"`
+	ImageInputAWCoinPerSecond                float64  `json:"imageInputAwcoinPerSecond"`
+	VideoInputAWCoinPerSecond                float64  `json:"videoInputAwcoinPerSecond"`
+	DisplayVideoInputAWCoinPerSecond         *float64 `json:"displayVideoInputAwcoinPerSecond,omitempty"`
+	BYOKVideoInputAWCoinPerSecond            *float64 `json:"byokVideoInputAwcoinPerSecond,omitempty"`
+	SuggestedRetailVideoInputAWCoinPerSecond *float64 `json:"suggestedRetailVideoInputAwcoinPerSecond,omitempty"`
+	AudioInputAWCoinPerSecond                float64  `json:"audioInputAwcoinPerSecond"`
+	DefaultDurationSeconds                   float64  `json:"defaultDurationSeconds"`
+	DefaultFramesPerSecond                   float64  `json:"defaultFramesPerSecond"`
 }
 
 type AIPDDSeedancePricing struct {
+	BillingMode  string                                    `json:"billingMode,omitempty"`
 	ByResolution map[string]AIPDDSeedanceResolutionPricing `json:"byResolution"`
 }
 
@@ -421,7 +422,10 @@ func cloneAIPDDCapability(capability AIPDDCapability) AIPDDCapability {
 		capability.WorkflowConstraints = constraints
 	}
 	if capability.SeedancePricing != nil {
-		pricing := &AIPDDSeedancePricing{ByResolution: make(map[string]AIPDDSeedanceResolutionPricing, len(capability.SeedancePricing.ByResolution))}
+		pricing := &AIPDDSeedancePricing{
+			BillingMode:  capability.SeedancePricing.BillingMode,
+			ByResolution: make(map[string]AIPDDSeedanceResolutionPricing, len(capability.SeedancePricing.ByResolution)),
+		}
 		for resolution, item := range capability.SeedancePricing.ByResolution {
 			item.InputTypes = append([]string(nil), item.InputTypes...)
 			pricing.ByResolution[resolution] = item

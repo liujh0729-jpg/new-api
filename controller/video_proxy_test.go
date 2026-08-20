@@ -5,11 +5,63 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 
 	"github.com/gin-gonic/gin"
+	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
+
+func TestAdminVideoProxyUsesExplicitTaskOwner(t *testing.T) {
+	previousDB := model.DB
+	db, err := gorm.Open(sqlite.Open("file:admin-video-proxy?mode=memory&cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	model.DB = db
+	t.Cleanup(func() {
+		if sqlDB, sqlErr := db.DB(); sqlErr == nil {
+			_ = sqlDB.Close()
+		}
+		model.DB = previousDB
+	})
+	require.NoError(t, db.AutoMigrate(&model.Task{}))
+	require.NoError(t, db.Create(&model.Task{
+		TaskID: "task_owned_by_101",
+		UserId: 101,
+		Status: model.TaskStatusInProgress,
+	}).Error)
+
+	request := func(userID string) *httptest.ResponseRecorder {
+		recorder := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(recorder)
+		ctx.Params = gin.Params{{Key: "task_id", Value: "task_owned_by_101"}}
+		ctx.Request = httptest.NewRequest(http.MethodGet, "/api/task/task_owned_by_101/content?user_id="+userID, nil)
+		AdminVideoProxy(ctx)
+		return recorder
+	}
+
+	wrongOwner := request("202")
+	require.Equal(t, http.StatusNotFound, wrongOwner.Code)
+	require.Contains(t, wrongOwner.Body.String(), "Task not found")
+
+	actualOwner := request("101")
+	require.Equal(t, http.StatusBadRequest, actualOwner.Code)
+	require.Contains(t, actualOwner.Body.String(), "Task is not completed yet")
+}
+
+func TestAdminVideoProxyRequiresValidTaskOwner(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Params = gin.Params{{Key: "task_id", Value: "task_123"}}
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/task/task_123/content?user_id=invalid", nil)
+
+	AdminVideoProxy(ctx)
+
+	require.Equal(t, http.StatusBadRequest, recorder.Code)
+	require.Contains(t, recorder.Body.String(), "valid user_id is required")
+	require.Equal(t, "private, max-age=86400", recorder.Header().Get("Cache-Control"))
+}
 
 func TestSetVideoProxyContentHeadersUsesTaskIDFilename(t *testing.T) {
 	gin.SetMode(gin.TestMode)
@@ -44,6 +96,17 @@ func TestWriteVideoDataURLAddsDownloadFilename(t *testing.T) {
 	require.Equal(t, http.StatusOK, recorder.Code)
 	require.Equal(t, "video/mp4", recorder.Header().Get("Content-Type"))
 	require.Equal(t, `inline; filename=task_data.mp4`, recorder.Header().Get("Content-Disposition"))
+}
+
+func TestWriteVideoDataURLPreservesPrivateCacheControl(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Header("Cache-Control", "private, max-age=86400")
+
+	err := writeVideoDataURL(ctx, "task_admin", "data:video/mp4;base64,AAAA")
+
+	require.NoError(t, err)
+	require.Equal(t, "private, max-age=86400", recorder.Header().Get("Cache-Control"))
 }
 
 func TestCopyVideoProxyRequestHeadersForwardsRange(t *testing.T) {

@@ -33,6 +33,39 @@ func (*frozenQuoteBilling) NeedsRefund() bool        { return false }
 func (*frozenQuoteBilling) GetPreConsumedQuota() int { return 0 }
 func (*frozenQuoteBilling) Reserve(int) error        { return nil }
 
+func TestQuoteCatalogSeedancePricingUsesAuthenticatedByokRate(t *testing.T) {
+	byokNoVideo := 0.7
+	byokVideo := 2.0
+	capability := constant.AIPDDCapability{
+		ModelName:        "AP Seedance-2.5 标准版",
+		AWCoinUSDPerCoin: 0.001,
+		SeedancePricing: &constant.AIPDDSeedancePricing{
+			BillingMode: "BYOK",
+			ByResolution: map[string]constant.AIPDDSeedanceResolutionPricing{
+				"480p": {
+					AmountAWCoinPerSecond:         67.9,
+					VideoInputAWCoinPerSecond:     203.8,
+					BYOKAmountAWCoinPerSecond:     &byokNoVideo,
+					BYOKVideoInputAWCoinPerSecond: &byokVideo,
+				},
+			},
+		},
+	}
+	quote, err := quoteCatalogSeedancePricing(capability, relaycommon.TaskPricingFacts{
+		Resolution: "480p", Quantity: 4,
+	}, 1, 1000)
+	require.NoError(t, err)
+	require.Equal(t, 3, quote.Quota)
+	require.InDelta(t, 0.0007, quote.UnitPriceUSD, 1e-12)
+
+	quote, err = quoteCatalogSeedancePricing(capability, relaycommon.TaskPricingFacts{
+		Resolution: "480p", Quantity: 4, HasReferenceVideo: true,
+	}, 1, 1000)
+	require.NoError(t, err)
+	require.Equal(t, 8, quote.Quota)
+	require.InDelta(t, 0.002, quote.UnitPriceUSD, 1e-12)
+}
+
 func TestRelayTaskSubmitFreezesLocalTaskQuoteAcrossRetries(t *testing.T) {
 	service.InitHttpClient()
 	restoreTaskPricingGlobals(t)
@@ -207,9 +240,12 @@ func TestRelayTaskSubmitAllowsExplicitFreeGroup(t *testing.T) {
 	require.Equal(t, int32(1), upstreamCalls.Load())
 }
 
-func TestRelayTaskSubmitRejectsLegacyModelPriceWithoutTaskPricing(t *testing.T) {
+func TestRelayTaskSubmitUsesFrozenCatalogSeedancePriceWithoutDuplicatedLocalConfig(t *testing.T) {
 	service.InitHttpClient()
 	restoreTaskPricingGlobals(t)
+	oldQuotaPerUnit := common.QuotaPerUnit
+	common.QuotaPerUnit = 1000
+	t.Cleanup(func() { common.QuotaPerUnit = oldQuotaPerUnit })
 	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
 		"billing_setting.billing_mode": `{}`,
 		"billing_setting.task_pricing": `{}`,
@@ -220,7 +256,8 @@ func TestRelayTaskSubmitRejectsLegacyModelPriceWithoutTaskPricing(t *testing.T) 
 	var upstreamCalls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		upstreamCalls.Add(1)
-		w.WriteHeader(http.StatusOK)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"upstream-task","status":"queued"}`))
 	}))
 	defer server.Close()
 
@@ -229,15 +266,18 @@ func TestRelayTaskSubmitRejectsLegacyModelPriceWithoutTaskPricing(t *testing.T) 
 		OriginModelName: testTaskPricingOriginModel,
 		UserGroup:       "default",
 		UsingGroup:      "default",
+		Billing:         &frozenQuoteBilling{},
 		TaskRelayInfo:   &relaycommon.TaskRelayInfo{},
 	}
 
 	result, taskErr := RelayTaskSubmit(ctx, info)
-	require.Nil(t, result)
-	require.NotNil(t, taskErr)
-	require.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
-	require.Equal(t, "model_price_error", taskErr.Code)
-	require.Zero(t, upstreamCalls.Load())
+	require.Nil(t, taskErr)
+	require.NotNil(t, result)
+	require.NotNil(t, info.TaskPricingQuote)
+	require.Equal(t, 0.01, info.TaskPricingQuote.UnitPriceUSD)
+	require.Equal(t, float64(5), info.TaskPricingQuote.Quantity)
+	require.Equal(t, 50, result.Quota)
+	require.Equal(t, int32(1), upstreamCalls.Load())
 }
 
 func TestRelayTaskSubmitFramesFPSKeepsExactSecondsUntilFinalRound(t *testing.T) {

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/textproto"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -238,6 +239,13 @@ func setAIPDDFinanceHeaders(header *http.Header, info *relaycommon.RelayInfo) {
 	finance := info.AIPDDFinance
 	header.Set("X-AIPDD-Instance-ID", finance.InstanceID)
 	header.Set("X-AIPDD-Order-ID", finance.PlatformOrderID)
+	header.Set("X-AIPDD-Attempt-ID", finance.AttemptID)
+	if finance.NewAPIUserID > 0 {
+		header.Set("X-AIPDD-NewAPI-User-ID", strconv.Itoa(finance.NewAPIUserID))
+	}
+	if finance.NewAPITokenID > 0 {
+		header.Set("X-AIPDD-NewAPI-Token-ID", strconv.Itoa(finance.NewAPITokenID))
+	}
 }
 
 func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.GeneralOpenAIRequest) (any, error) {

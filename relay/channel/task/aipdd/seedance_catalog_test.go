@@ -12,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
@@ -401,6 +402,94 @@ func TestSeedanceCatalogRejectsMissingResolutionPricingMetadata(t *testing.T) {
 	taskErr := adaptor.ValidateRequestAndSetAction(ctx, info)
 	require.NotNil(t, taskErr)
 	require.Equal(t, "unsupported_resolution", taskErr.Code)
+}
+
+func TestSeedance25DefaultsForwardingAndThirtySecondPreauthorization(t *testing.T) {
+	capability := seedanceTestCapabilityForModel("AP Seedance-2.5 标准版")
+	constant.SetAIPDDCapabilities([]constant.AIPDDCapability{capability})
+	t.Cleanup(constant.ResetAIPDDCapabilities)
+
+	ctx, info, adaptor := seedanceRequestContextForModel(
+		t,
+		capability.ModelName,
+		`{"model":"AP Seedance-2.5 标准版","prompt":"hello","generate_audio":false,"watermark":false,"priority":0}`,
+	)
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(ctx, info))
+	payload, err := getSeedanceOfficialPayload(ctx)
+	require.NoError(t, err)
+	require.Equal(t, "720p", payload["resolution"])
+	require.Equal(t, "adaptive", payload["ratio"])
+	require.Equal(t, -1, payload["duration"])
+	require.NotContains(t, payload, "omni_reference_task_type")
+	require.Equal(t, false, payload["generate_audio"])
+	require.Equal(t, false, payload["watermark"])
+	require.Equal(t, 0, payload["priority"])
+	require.Equal(t, "mp4", payload["output_format"])
+	require.NotContains(t, payload, "prompt")
+	require.NotContains(t, payload, "media_mode")
+	require.Equal(t, map[string]float64{"seconds": 30}, adaptor.EstimateBilling(ctx, info))
+
+	referenceCtx, referenceInfo, referenceAdaptor := seedanceRequestContextForModel(
+		t,
+		capability.ModelName,
+		`{"model":"AP Seedance-2.5 标准版","omni_reference_task_type":"auto","content":[{"type":"text","text":"hello"},{"type":"image_url","role":"reference_image","image_url":{"url":"https://cdn.example.com/ref.png"}}]}`,
+	)
+	require.Nil(t, referenceAdaptor.ValidateRequestAndSetAction(referenceCtx, referenceInfo))
+	referencePayload, err := getSeedanceOfficialPayload(referenceCtx)
+	require.NoError(t, err)
+	require.Equal(t, "auto", referencePayload["omni_reference_task_type"])
+}
+
+func TestSeedance25RejectsUnsupportedAndInvalidModeCombinations(t *testing.T) {
+	capability := seedanceTestCapabilityForModel("AP Seedance-2.5 标准版")
+	constant.SetAIPDDCapabilities([]constant.AIPDDCapability{capability})
+	t.Cleanup(constant.ResetAIPDDCapabilities)
+
+	tests := []struct {
+		name string
+		body string
+		code string
+	}{
+		{"seed", `{"model":"AP Seedance-2.5 标准版","prompt":"hello","seed":0}`, "unsupported_parameter"},
+		{"invalid duration", `{"model":"AP Seedance-2.5 标准版","prompt":"hello","duration":3}`, "invalid_duration"},
+		{"edit fixed duration", `{"model":"AP Seedance-2.5 标准版","duration":4,"ratio":"adaptive","omni_reference_task_type":"edit","content":[{"type":"video_url","role":"reference_video","video_url":{"url":"https://cdn.example.com/ref.mp4"}}]}`, "invalid_edit_request"},
+		{"frame reference conflict", `{"model":"AP Seedance-2.5 标准版","ratio":"adaptive","content":[{"type":"image_url","role":"first_frame","image_url":{"url":"https://cdn.example.com/first.png"}},{"type":"audio_url","role":"reference_audio","audio_url":{"url":"https://cdn.example.com/ref.mp3"}}]}`, "invalid_content_mode"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, info, adaptor := seedanceRequestContextForModel(t, capability.ModelName, test.body)
+			taskErr := adaptor.ValidateRequestAndSetAction(ctx, info)
+			require.NotNil(t, taskErr)
+			require.Equal(t, test.code, taskErr.Code)
+		})
+	}
+}
+
+func TestSeedance25ActualDurationSettlementUsesFrozenPrice(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+	task := &model.Task{PrivateData: model.TaskPrivateData{BillingContext: &model.TaskBillingContext{
+		OriginModelName: "AP Seedance-2.5 标准版",
+		BillingMode:     billing_setting.BillingModeTaskPricing,
+		BillingUnit:     billing_setting.TaskPricingUnitSecond,
+		UnitPriceUSD:    0.25,
+		GroupRatio:      1.2,
+		QuotaPerUnit:    500000,
+	}}}
+	require.Equal(t, 600000, adaptor.AdjustBillingOnComplete(task, &relaycommon.TaskInfo{Duration: 4}))
+	require.Zero(t, adaptor.AdjustBillingOnComplete(task, &relaycommon.TaskInfo{}))
+}
+
+func TestSeedance25SucceededWithoutDurationRemainsPollable(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+	info, err := adaptor.ParseTaskResult([]byte(`{"id":"task-1","model":"AP Seedance-2.5 标准版","status":"succeeded","content":{"video_url":"https://cdn.example.com/out.mp4"}}`))
+	require.NoError(t, err)
+	require.Equal(t, string(model.TaskStatusInProgress), info.Status)
+
+	info, err = adaptor.ParseTaskResult([]byte(`{"id":"task-1","model":"AP Seedance-2.5 标准版","status":"succeeded","duration":4,"output_format":"mov","resolution":"1080p","content":{"video_url":"https://cdn.example.com/out.mov"}}`))
+	require.NoError(t, err)
+	require.Equal(t, string(model.TaskStatusSuccess), info.Status)
+	require.Equal(t, 4.0, info.Duration)
+	require.Equal(t, "mov", info.OutputFormat)
 }
 
 func TestSeedanceCatalogExecutionSnapshotContainsFactsNotUpstreamPrice(t *testing.T) {

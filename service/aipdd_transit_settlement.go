@@ -179,13 +179,12 @@ func aipddTransitAPIKey(channel *model.Channel, finance *relaycommon.AIPDDFinanc
 			return candidate, nil
 		}
 	}
+	// Site-scoped keys are intentionally rotatable. If the original multi-key
+	// slot disappeared, any remaining key for the same configured site can read
+	// the order history identified by AIPDD_INSTANCE_ID.
 	for _, candidate := range keys {
 		candidate = strings.TrimSpace(candidate)
-		if candidate == "" {
-			continue
-		}
-		instanceID, resolveErr := resolveAIPDDFinanceInstanceID(candidate)
-		if resolveErr == nil && instanceID == finance.InstanceID {
+		if candidate != "" {
 			return candidate, nil
 		}
 	}

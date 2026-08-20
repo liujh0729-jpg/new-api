@@ -24,6 +24,7 @@ export type AIPDDTransitOrderStatus =
 
 export type AIPDDTransitOrder = {
   platform_order_id: string
+  latest_attempt_id: string
   user_id: number
   username: string
   token_id: number

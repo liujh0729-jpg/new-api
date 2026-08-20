@@ -39,6 +39,7 @@ type AtomicPricing struct {
 	PricingModel         string                                             `json:"pricingModel"`
 	Currency             string                                             `json:"currency"`
 	PricingBasis         string                                             `json:"pricingBasis,omitempty"`
+	BillingMode          string                                             `json:"billingMode,omitempty"`
 	Enabled              bool                                               `json:"enabled"`
 	ChargeConfig         map[string]any                                     `json:"chargeConfig"`
 	PromptPerMillion     float64                                            `json:"promptPerMillion"`
@@ -47,21 +48,21 @@ type AtomicPricing struct {
 }
 
 type AtomicCapability struct {
-	ID               string          `json:"id"`
-	Code             string          `json:"code"`
-	Name             string          `json:"name"`
-	Description      string          `json:"description"`
-	AdapterCode      string          `json:"adapterCode"`
-	EndpointType     string          `json:"endpointType"`
-	TaskKind         string          `json:"taskKind"`
-	InputModalities  []string        `json:"inputModalities"`
-	OutputModalities []string        `json:"outputModalities"`
-	Params           ScriptParams    `json:"params"`
+	ID               string       `json:"id"`
+	Code             string       `json:"code"`
+	Name             string       `json:"name"`
+	Description      string       `json:"description"`
+	AdapterCode      string       `json:"adapterCode"`
+	EndpointType     string       `json:"endpointType"`
+	TaskKind         string       `json:"taskKind"`
+	InputModalities  []string     `json:"inputModalities"`
+	OutputModalities []string     `json:"outputModalities"`
+	Params           ScriptParams `json:"params"`
 	// Available is optional. Java ComfyUI entries historically omitted it;
 	// a missing or null value must not be treated as false.
-	Available        *bool           `json:"available"`
-	Execution        AtomicExecution `json:"execution"`
-	Pricing          AtomicPricing   `json:"pricing"`
+	Available *bool           `json:"available"`
+	Execution AtomicExecution `json:"execution"`
+	Pricing   AtomicPricing   `json:"pricing"`
 }
 
 type AtomicModel struct {
@@ -273,7 +274,6 @@ func validateSeedancePricing(modelName string, pricing AtomicPricing) error {
 		}{
 			{name: "displayAmountAwcoinPerSecond", value: *item.DisplayAmountAWCoinPerSecond},
 			{name: "displayVideoInputAwcoinPerSecond", value: *item.DisplayVideoInputAWCoinPerSecond},
-			{name: "defaultDurationSeconds", value: item.DefaultDurationSeconds},
 			{name: "defaultFramesPerSecond", value: item.DefaultFramesPerSecond},
 		}
 		for _, field := range fields {
@@ -281,8 +281,17 @@ func validateSeedancePricing(modelName string, pricing AtomicPricing) error {
 				return fmt.Errorf("AIPDD Seedance model %q resolution %q requires positive %s", modelName, resolution, field.name)
 			}
 		}
+		if item.DefaultDurationSeconds != -1 || !isSeedance25Model(modelName) {
+			if item.DefaultDurationSeconds <= 0 || math.IsNaN(item.DefaultDurationSeconds) || math.IsInf(item.DefaultDurationSeconds, 0) {
+				return fmt.Errorf("AIPDD Seedance model %q resolution %q requires positive defaultDurationSeconds", modelName, resolution)
+			}
+		}
 	}
 	return nil
+}
+
+func isSeedance25Model(modelName string) bool {
+	return strings.Contains(strings.ToLower(strings.TrimSpace(modelName)), "seedance-2.5")
 }
 
 func (catalog AtomicCatalog) ModelNames() []string {
@@ -330,6 +339,7 @@ func (catalog AtomicCatalog) RuntimeCapabilities() []constant.AIPDDCapability {
 		if item.AdapterCode == "seedance" {
 			capability.BillingType = constant.AIPDDBillingTypeDurationSeconds
 			capability.SeedancePricing = &constant.AIPDDSeedancePricing{
+				BillingMode:  item.Pricing.BillingMode,
 				ByResolution: normalizeSeedanceDisplayPricingMatrix(item.Pricing.ByResolution),
 			}
 		} else if strings.EqualFold(strings.TrimSpace(item.Pricing.PricingModel), "per_unit") &&
@@ -379,11 +389,15 @@ func TaskAWCoinPrice(pricing AtomicPricing) float64 {
 	}
 	best := 0.0
 	for _, resolution := range pricing.ByResolution {
-		if resolution.DisplayAmountAWCoinPerSecond == nil || resolution.DefaultDurationSeconds <= 0 ||
+		duration := resolution.DefaultDurationSeconds
+		if duration == -1 {
+			duration = 30
+		}
+		if resolution.DisplayAmountAWCoinPerSecond == nil || duration <= 0 ||
 			*resolution.DisplayAmountAWCoinPerSecond <= 0 {
 			continue
 		}
-		amount := math.Ceil(*resolution.DisplayAmountAWCoinPerSecond * resolution.DefaultDurationSeconds)
+		amount := math.Ceil(*resolution.DisplayAmountAWCoinPerSecond * duration)
 		if amount > 0 && (best == 0 || amount < best) {
 			best = amount
 		}
