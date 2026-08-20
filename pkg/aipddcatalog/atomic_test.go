@@ -95,11 +95,32 @@ func TestAtomicCatalogAcceptsSeedance25AutoDurationAndPricesThirtySecondHold(t *
 		}},
 	}
 
-	require.NoError(t, catalog.Validate())
+	for _, modelName := range []string{
+		"AP Seedance-2.5 标准版",
+		"AP Seedance 2.5 标准版",
+		"AP SEEDANCE_2_5 标准版",
+	} {
+		catalog.Capabilities[0].ID = modelName
+		require.NoError(t, catalog.Validate())
+	}
 	require.Equal(t, float64(20370), TaskAWCoinPrice(catalog.Capabilities[0].Pricing))
 
 	catalog.Capabilities[0].ID = "AP Seedance-2.0 标准版"
 	require.ErrorContains(t, catalog.Validate(), "positive defaultDurationSeconds")
+	catalog.Capabilities[0].ID = "AP Seedance-2.50 标准版"
+	require.ErrorContains(t, catalog.Validate(), "positive defaultDurationSeconds")
+
+	catalog.Capabilities[0].ID = "AP Seedance-2.5 标准版"
+	for _, duration := range []float64{-2, 0} {
+		catalog.Capabilities[0].Pricing.ByResolution["480p"] = constant.AIPDDSeedanceResolutionPricing{
+			TargetResolution:                 "480p",
+			DefaultDurationSeconds:           duration,
+			DefaultFramesPerSecond:           24,
+			DisplayAmountAWCoinPerSecond:     &displayAmount,
+			DisplayVideoInputAWCoinPerSecond: &displayVideoAmount,
+		}
+		require.ErrorContains(t, catalog.Validate(), "positive defaultDurationSeconds")
+	}
 }
 
 func TestAtomicCatalogPrefersExplicitDisplayPricesAndKeepsBYOKSeparate(t *testing.T) {

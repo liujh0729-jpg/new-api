@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"unicode"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -291,7 +292,15 @@ func validateSeedancePricing(modelName string, pricing AtomicPricing) error {
 }
 
 func isSeedance25Model(modelName string) bool {
-	return strings.Contains(strings.ToLower(strings.TrimSpace(modelName)), "seedance-2.5")
+	parts := strings.FieldsFunc(strings.ToLower(strings.TrimSpace(modelName)), func(r rune) bool {
+		return unicode.IsSpace(r) || r == '-' || r == '_' || r == '.'
+	})
+	for index := 0; index+2 < len(parts); index++ {
+		if parts[index] == "seedance" && parts[index+1] == "2" && parts[index+2] == "5" {
+			return true
+		}
+	}
+	return false
 }
 
 func (catalog AtomicCatalog) ModelNames() []string {

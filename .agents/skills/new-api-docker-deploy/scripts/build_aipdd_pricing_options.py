@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import re
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
@@ -93,17 +94,35 @@ def parse_map(raw: Any, key: str) -> dict[str, Any]:
     return dict(raw)
 
 
-def decimal_value(value: Any, label: str, *, positive: bool = False) -> Decimal:
+def decimal_value(
+    value: Any,
+    label: str,
+    *,
+    positive: bool = False,
+    allowed_values: tuple[Decimal, ...] = (),
+) -> Decimal:
     if isinstance(value, bool) or value is None:
         raise ValueError(f"{label} must be numeric")
     try:
         number = Decimal(str(value))
     except (InvalidOperation, ValueError) as exc:
         raise ValueError(f"{label} must be numeric") from exc
-    if not number.is_finite() or number < 0 or (positive and number <= 0):
+    if not number.is_finite():
+        relation = "positive" if positive else "non-negative"
+        raise ValueError(f"{label} must be finite and {relation}")
+    if number in allowed_values:
+        return number
+    if number < 0 or (positive and number <= 0):
         relation = "positive" if positive else "non-negative"
         raise ValueError(f"{label} must be finite and {relation}")
     return number
+
+
+def is_seedance_25_model_name(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+    parts = [part for part in re.split(r"[\s._-]+", value.strip().casefold()) if part]
+    return any(parts[index : index + 3] == ["seedance", "2", "5"] for index in range(len(parts) - 2))
 
 
 def json_number(value: Decimal) -> int | float:
@@ -148,6 +167,7 @@ def resolution_task_pricing(
     capability: dict[str, Any],
     usd_per_awcoin: Decimal,
 ) -> dict[str, Any]:
+    model_name = str(capability.get("id", "")).strip()
     pricing = capability.get("pricing")
     if not isinstance(pricing, dict) or not isinstance(pricing.get("byResolution"), dict):
         raise ValueError(f"{capability.get('id')}: per-second pricing matrix is missing")
@@ -185,6 +205,7 @@ def resolution_task_pricing(
             item.get("defaultDurationSeconds"),
             f"{capability.get('id')}/{resolution}.defaultDurationSeconds",
             positive=True,
+            allowed_values=(Decimal("-1"),) if is_seedance_25_model_name(model_name) else (),
         )
         decimal_value(
             item.get("defaultFramesPerSecond"),
@@ -390,7 +411,7 @@ def build_updates(
             "per_call_models": sorted(per_call_models),
             "task_pricing_models": sorted(task_models),
             "tiered_expr_models": sorted(llm_names),
-            "task_pricing_contract": "Seedance by_resolution matrix requires suggested retail prices for New API sale, still requires AIPDD display settlement fields, fixes 480p group ratio at 1, and rejects legacy catalog pricing; per_unit/second tasks use flat USD/second task pricing; all AIPDD prices convert as AWCoin × rmbPerAwcoin ÷ site USDExchangeRate so display RMB equals AIPDD suggested retail; no legacy ModelPrice fallback",
+            "task_pricing_contract": "Seedance by_resolution matrix requires suggested retail prices for New API sale, still requires AIPDD display settlement fields, accepts only the -1 auto-duration sentinel for Seedance 2.5 model names, fixes 480p group ratio at 1, and rejects legacy catalog pricing; per_unit/second tasks use flat USD/second task pricing; all AIPDD prices convert as AWCoin × rmbPerAwcoin ÷ site USDExchangeRate so display RMB equals AIPDD suggested retail; no legacy ModelPrice fallback",
             "task_pricing_policy": "RMB-anchored: stored USD = AWCoin × rmbPerAwcoin ÷ site USDExchangeRate (catalog usdPerAwcoin unused); per-resolution Seedance suggested-retail with group_ratio_policy=none for 480p, plus catalog per-unit duration; display/BYOK prices are informational only",
             "price_conversion": "rmb_anchored",
         },

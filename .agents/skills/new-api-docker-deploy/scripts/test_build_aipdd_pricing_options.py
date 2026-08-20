@@ -57,9 +57,9 @@ def resolution(
     }
 
 
-def seedance_capability(by_resolution: dict) -> dict:
+def seedance_capability(by_resolution: dict, name: str = "AP Seedance") -> dict:
     return {
-        "id": "AP Seedance",
+        "id": name,
         "adapterCode": "seedance",
         "pricing": {
             "pricingModel": "per_second",
@@ -85,6 +85,36 @@ def duration_capability(name: str = "aipdd_ltx_2.3", *, unit: str = "second", am
 
 
 class BuildAIPDDPricingOptionsTest(unittest.TestCase):
+    def test_seedance_25_model_name_variants_accept_auto_duration(self) -> None:
+        for model_name in (
+            "AP Seedance-2.5 标准版",
+            "AP Seedance 2.5 标准版",
+            "AP SEEDANCE_2_5 标准版",
+        ):
+            with self.subTest(model_name=model_name):
+                item = resolution("720p", 10, 15)
+                item["defaultDurationSeconds"] = -1
+                capability = seedance_capability({"720p": item}, model_name)
+
+                pricing = MODULE.resolution_task_pricing(capability, USD_PER_AWCOIN)
+
+                self.assertEqual(0.1, pricing["by_resolution"]["720p"]["no_reference_video_unit_price"])
+
+    def test_auto_duration_remains_rejected_outside_seedance_25(self) -> None:
+        for model_name, duration in (
+            ("AP Seedance-2.0 标准版", -1),
+            ("AP Seedance-2.50 标准版", -1),
+            ("AP Seedance-2.5 标准版", -2),
+            ("AP Seedance-2.5 标准版", 0),
+        ):
+            with self.subTest(model_name=model_name, duration=duration):
+                item = resolution("720p", 10, 15)
+                item["defaultDurationSeconds"] = duration
+                capability = seedance_capability({"720p": item}, model_name)
+
+                with self.assertRaisesRegex(ValueError, "positive"):
+                    MODULE.resolution_task_pricing(capability, USD_PER_AWCOIN)
+
     def test_resolution_task_pricing_uses_only_suggested_retail_fields(self) -> None:
         capability = seedance_capability({
             "720p": resolution("720p", 10, 15, display=1, display_video=2),
@@ -309,6 +339,7 @@ class BuildAIPDDPricingOptionsTest(unittest.TestCase):
         self.assertIn("by_resolution matrix", result["summary"]["task_pricing_contract"])
         self.assertIn("suggested retail prices for New API sale", result["summary"]["task_pricing_contract"])
         self.assertIn("AIPDD display settlement fields", result["summary"]["task_pricing_contract"])
+        self.assertIn("-1 auto-duration sentinel for Seedance 2.5", result["summary"]["task_pricing_contract"])
         self.assertIn("fixes 480p group ratio at 1", result["summary"]["task_pricing_contract"])
         self.assertIn("rejects legacy catalog pricing", result["summary"]["task_pricing_contract"])
         self.assertIn("no legacy ModelPrice fallback", result["summary"]["task_pricing_contract"])
