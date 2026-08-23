@@ -169,6 +169,7 @@ export function VirtualCharacters() {
   const historyQuery = useQuery({
     queryKey: virtualCharacterQueryKeys.history(historyPage),
     queryFn: () => getVirtualCharacterHistory(historyPage),
+    enabled: tab === 'history',
   })
   const configQuery = useQuery({
     queryKey: virtualCharacterQueryKeys.config(),

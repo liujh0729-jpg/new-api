@@ -1,6 +1,7 @@
 package common
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -203,6 +204,70 @@ type AIPDDFinanceContext struct {
 	NewAPITokenID   int    `json:"newapi_token_id,omitempty"`
 	ChannelID       int    `json:"channel_id"`
 	ChannelKeyIndex int    `json:"channel_key_index"`
+}
+
+// UnmarshalJSON accepts both the canonical numeric New API IDs and the
+// string-encoded IDs written by legacy deployments. Marshal keeps using the
+// struct tags above, so records written by current code are normalized back to
+// JSON numbers.
+func (context *AIPDDFinanceContext) UnmarshalJSON(data []byte) error {
+	type rawAIPDDFinanceContext struct {
+		InstanceID      string          `json:"instance_id"`
+		PlatformOrderID string          `json:"platform_order_id"`
+		AttemptID       string          `json:"attempt_id"`
+		NewAPIUserID    json.RawMessage `json:"newapi_user_id"`
+		NewAPITokenID   json.RawMessage `json:"newapi_token_id"`
+		ChannelID       int             `json:"channel_id"`
+		ChannelKeyIndex int             `json:"channel_key_index"`
+	}
+
+	var raw rawAIPDDFinanceContext
+	if err := common.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	newAPIUserID, err := parseAIPDDFinanceID(raw.NewAPIUserID)
+	if err != nil {
+		return fmt.Errorf("invalid newapi_user_id: %w", err)
+	}
+	newAPITokenID, err := parseAIPDDFinanceID(raw.NewAPITokenID)
+	if err != nil {
+		return fmt.Errorf("invalid newapi_token_id: %w", err)
+	}
+
+	*context = AIPDDFinanceContext{
+		InstanceID:      raw.InstanceID,
+		PlatformOrderID: raw.PlatformOrderID,
+		AttemptID:       raw.AttemptID,
+		NewAPIUserID:    newAPIUserID,
+		NewAPITokenID:   newAPITokenID,
+		ChannelID:       raw.ChannelID,
+		ChannelKeyIndex: raw.ChannelKeyIndex,
+	}
+	return nil
+}
+
+func parseAIPDDFinanceID(data json.RawMessage) (int, error) {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return 0, nil
+	}
+	if trimmed[0] != '"' {
+		var value int
+		if err := common.Unmarshal(trimmed, &value); err != nil {
+			return 0, err
+		}
+		return value, nil
+	}
+
+	var value string
+	if err := common.Unmarshal(trimmed, &value); err != nil {
+		return 0, err
+	}
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0, nil
+	}
+	return strconv.Atoi(value)
 }
 
 func (info *RelayInfo) InitChannelMeta(c *gin.Context) {

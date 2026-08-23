@@ -66,3 +66,48 @@ func TestRelayInfoGetFinalRequestRelayFormatNilReceiver(t *testing.T) {
 	var info *RelayInfo
 	require.Equal(t, types.RelayFormat(""), info.GetFinalRequestRelayFormat())
 }
+
+func TestAIPDDFinanceContextAcceptsLegacyStringIDs(t *testing.T) {
+	var context AIPDDFinanceContext
+	require.NoError(t, rootcommon.Unmarshal([]byte(`{
+		"instance_id":"instance-1",
+		"platform_order_id":"order-1",
+		"attempt_id":"attempt-1",
+		"newapi_user_id":"12",
+		"newapi_token_id":"34",
+		"channel_id":56,
+		"channel_key_index":1
+	}`), &context))
+
+	require.Equal(t, 12, context.NewAPIUserID)
+	require.Equal(t, 34, context.NewAPITokenID)
+	payload, err := rootcommon.Marshal(context)
+	require.NoError(t, err)
+	require.JSONEq(t, `{
+		"instance_id":"instance-1",
+		"platform_order_id":"order-1",
+		"attempt_id":"attempt-1",
+		"newapi_user_id":12,
+		"newapi_token_id":34,
+		"channel_id":56,
+		"channel_key_index":1
+	}`, string(payload))
+}
+
+func TestAIPDDFinanceContextAcceptsNumericAndEmptyIDs(t *testing.T) {
+	var numeric AIPDDFinanceContext
+	require.NoError(t, rootcommon.Unmarshal([]byte(`{"newapi_user_id":12,"newapi_token_id":34}`), &numeric))
+	require.Equal(t, 12, numeric.NewAPIUserID)
+	require.Equal(t, 34, numeric.NewAPITokenID)
+
+	var empty AIPDDFinanceContext
+	require.NoError(t, rootcommon.Unmarshal([]byte(`{"newapi_user_id":"","newapi_token_id":null}`), &empty))
+	require.Zero(t, empty.NewAPIUserID)
+	require.Zero(t, empty.NewAPITokenID)
+}
+
+func TestAIPDDFinanceContextRejectsInvalidStringID(t *testing.T) {
+	var context AIPDDFinanceContext
+	err := rootcommon.Unmarshal([]byte(`{"newapi_user_id":"not-a-number"}`), &context)
+	require.ErrorContains(t, err, "invalid newapi_user_id")
+}
