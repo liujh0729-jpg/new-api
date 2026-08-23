@@ -4,8 +4,6 @@ Seedance 2.0 与 Seedance 2.5 共用任务创建和查询入口，但使用不�
 
 ## 公共调用方式
 
-客户端只使用平台签发的 NewAPI Token，不需要、也不应提交 AIPDD 或 Ark 上游密钥。
-
 ~~~http
 Authorization: Bearer <NEWAPI_TOKEN>
 Content-Type: application/json
