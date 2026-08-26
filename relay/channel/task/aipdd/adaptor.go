@@ -959,6 +959,9 @@ func (a *TaskAdaptor) ConvertToSeedanceOfficialTask(originTask *model.Task) ([]b
 	stripSeedanceInternalResponseFields(response)
 	delete(response, "task_id")
 	delete(response, "taskId")
+	if _, exists := response["usage"]; exists {
+		response["usage"] = map[string]any{}
+	}
 	response["id"] = originTask.TaskID
 
 	publicModel := firstNonEmpty(originTask.Properties.OriginModelName, anyToString(response["model"]))

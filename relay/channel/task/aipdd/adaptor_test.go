@@ -88,6 +88,7 @@ func TestConvertToSeedanceOfficialTaskUsesPublicFieldsAndActualDuration(t *testi
 		Data: json.RawMessage(`{
 			"id":"cgt-upstream","task_id":"cgt-upstream","model":"seedance-2-5-260628",
 			"status":"completed","duration":8,"billing_mode":"internal","finance_cost":99,
+			"usage":{"completion_tokens":38830,"total_tokens":38830},
 			"content":{"video_url":"https://cdn.example.com/out.mp4","upstream_model_id":"internal-model"}
 		}`),
 	}
@@ -103,6 +104,8 @@ func TestConvertToSeedanceOfficialTaskUsesPublicFieldsAndActualDuration(t *testi
 	require.NotContains(t, response, "task_id")
 	require.NotContains(t, response, "billing_mode")
 	require.NotContains(t, response, "finance_cost")
+	require.Equal(t, map[string]any{}, response["usage"])
+	require.NotContains(t, string(data), "38830")
 	content, ok := response["content"].(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, "https://cdn.example.com/out.mp4", content["video_url"])
