@@ -73,6 +73,107 @@ func TestAIPDDTaskSnapshotPersistsImageMediaMetadata(t *testing.T) {
 	}
 }
 
+func TestConvertToSeedanceOfficialTaskUsesPublicFieldsAndActualDuration(t *testing.T) {
+	requestedDuration := 6.0
+	task := &model.Task{
+		TaskID: "task_public",
+		Status: model.TaskStatusSuccess,
+		Properties: model.Properties{
+			OriginModelName:   "AP Seedance-2.5 标准版",
+			UpstreamModelName: "seedance-2-5-260628",
+		},
+		PrivateData: model.TaskPrivateData{AIPDDExecution: &model.AIPDDTaskExecutionSnapshot{
+			Protocol: "seedance_official", RequestedDuration: &requestedDuration,
+		}},
+		Data: json.RawMessage(`{
+			"id":"cgt-upstream","task_id":"cgt-upstream","model":"seedance-2-5-260628",
+			"status":"completed","duration":8,"billing_mode":"internal","finance_cost":99,
+			"content":{"video_url":"https://cdn.example.com/out.mp4","upstream_model_id":"internal-model"}
+		}`),
+	}
+
+	data, err := (&TaskAdaptor{}).ConvertToSeedanceOfficialTask(task)
+	require.NoError(t, err)
+	var response map[string]any
+	require.NoError(t, common.Unmarshal(data, &response))
+	require.Equal(t, "task_public", response["id"])
+	require.Equal(t, "AP Seedance-2.5 标准版", response["model"])
+	require.Equal(t, "succeeded", response["status"])
+	require.Equal(t, 8.0, response["duration"])
+	require.NotContains(t, response, "task_id")
+	require.NotContains(t, response, "billing_mode")
+	require.NotContains(t, response, "finance_cost")
+	content, ok := response["content"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "https://cdn.example.com/out.mp4", content["video_url"])
+	require.NotContains(t, content, "upstream_model_id")
+}
+
+func TestConvertToSeedanceOfficialTaskDurationFallbackAndAutoOmission(t *testing.T) {
+	requestedDuration := 5.5
+	withFallback := &model.Task{
+		TaskID: "task_fixed", Status: model.TaskStatusInProgress,
+		Properties: model.Properties{OriginModelName: "AP Seedance"},
+		PrivateData: model.TaskPrivateData{AIPDDExecution: &model.AIPDDTaskExecutionSnapshot{
+			Protocol: "seedance_official", RequestedDuration: &requestedDuration,
+		}},
+		Data: json.RawMessage(`{"id":"cgt-fixed","status":"processing"}`),
+	}
+	data, err := (&TaskAdaptor{}).ConvertToSeedanceOfficialTask(withFallback)
+	require.NoError(t, err)
+	var response map[string]any
+	require.NoError(t, common.Unmarshal(data, &response))
+	require.Equal(t, "running", response["status"])
+	require.Equal(t, requestedDuration, response["duration"])
+
+	automatic := &model.Task{
+		TaskID: "task_auto", Status: model.TaskStatusQueued,
+		Properties:  model.Properties{OriginModelName: "AP Seedance-2.5 标准版"},
+		PrivateData: model.TaskPrivateData{AIPDDExecution: &model.AIPDDTaskExecutionSnapshot{Protocol: "seedance_official"}},
+		Data:        json.RawMessage(`{"id":"cgt-auto","status":"pending","duration":-1}`),
+	}
+	data, err = (&TaskAdaptor{}).ConvertToSeedanceOfficialTask(automatic)
+	require.NoError(t, err)
+	response = map[string]any{}
+	require.NoError(t, common.Unmarshal(data, &response))
+	require.Equal(t, "queued", response["status"])
+	require.NotContains(t, response, "duration")
+}
+
+func TestConvertToSeedanceOfficialTaskNormalizesCancelledStatus(t *testing.T) {
+	task := &model.Task{
+		TaskID: "task_cancelled", Status: model.TaskStatusFailure,
+		Properties: model.Properties{OriginModelName: "AP Seedance"},
+		Data:       json.RawMessage(`{"id":"cgt-cancelled","status":"canceled","error":{"code":"cancelled"}}`),
+	}
+	data, err := (&TaskAdaptor{}).ConvertToSeedanceOfficialTask(task)
+	require.NoError(t, err)
+	var response map[string]any
+	require.NoError(t, common.Unmarshal(data, &response))
+	require.Equal(t, "cancelled", response["status"])
+}
+
+func TestSeedanceOfficialPublicPathRejectsNonOfficialCapability(t *testing.T) {
+	const modelName = "non-official-video"
+	constant.SetAIPDDCapabilities([]constant.AIPDDCapability{{
+		ModelName: modelName, EndpointType: constant.EndpointTypeOpenAIVideo,
+		ExecutionProtocol: "legacy", ExecutionPath: "/shared-tasks/tasks",
+	}})
+	t.Cleanup(constant.ResetAIPDDCapabilities)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/v3/contents/generations/tasks", strings.NewReader(`{"model":"non-official-video"}`))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	info := relayInfoWithModel(modelName)
+	info.OriginModelName = modelName
+
+	taskErr := (&TaskAdaptor{}).ValidateRequestAndSetAction(ctx, info)
+	require.NotNil(t, taskErr)
+	require.Equal(t, "invalid_endpoint", taskErr.Code)
+	require.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
+}
+
 func TestConvertToOpenAIVideoNormalizesSeedanceOfficialFailure(t *testing.T) {
 	task := &model.Task{
 		TaskID:   "task_seedance_failure",
@@ -884,6 +985,47 @@ func TestDoResponseParsesJavaCreateTaskResponse(t *testing.T) {
 	}
 	if taskID != "java-task" {
 		t.Fatalf("unexpected upstream task id: %s", taskID)
+	}
+}
+
+func TestDoResponseUsesSeedanceOfficialCreateShapeOnlyOnOfficialPublicPath(t *testing.T) {
+	constant.SetAIPDDCapabilities([]constant.AIPDDCapability{seedanceTestCapability()})
+	t.Cleanup(constant.ResetAIPDDCapabilities)
+
+	tests := []struct {
+		name           string
+		path           string
+		officialPublic bool
+	}{
+		{name: "official public", path: "/api/v3/contents/generations/tasks", officialPublic: true},
+		{name: "openai video unchanged", path: "/v1/videos", officialPublic: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(recorder)
+			ctx.Request = httptest.NewRequest(http.MethodPost, test.path, nil)
+			info := relayInfoWithModel("AP Seedance")
+			info.OriginModelName = "AP Seedance"
+			info.PublicTaskID = "task_public"
+			resp := &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(`{"id":"cgt-upstream"}`)),
+			}
+
+			taskID, _, taskErr := (&TaskAdaptor{}).DoResponse(ctx, resp, info)
+			require.Nil(t, taskErr)
+			require.Equal(t, "cgt-upstream", taskID)
+			var body map[string]any
+			require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &body))
+			require.Equal(t, "task_public", body["id"])
+			if test.officialPublic {
+				require.Len(t, body, 1)
+			} else {
+				require.Equal(t, "task_public", body["task_id"])
+				require.Equal(t, "video", body["object"])
+			}
+		})
 	}
 }
 

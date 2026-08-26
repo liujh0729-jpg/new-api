@@ -21,6 +21,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
 
@@ -176,6 +177,13 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 			http.StatusBadRequest,
 		)
 	}
+	if relayconstant.IsSeedanceOfficialTasksPath(c.Request.URL.Path) && cfg.ExecutionProtocol != "seedance_official" {
+		return service.TaskErrorWrapperLocal(
+			fmt.Errorf("%s does not support the Seedance official endpoint", cfg.ModelName),
+			"invalid_endpoint",
+			http.StatusBadRequest,
+		)
+	}
 	if cfg.ExecutionProtocol == "seedance_official" {
 		var raw map[string]any
 		if err := common.UnmarshalBodyReusable(c, &raw); err != nil {
@@ -202,6 +210,12 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 			)
 		}
 		c.Set(seedanceOfficialPayloadContextKey, payload)
+		if info.TaskRelayInfo != nil {
+			info.RequestedDuration = nil
+			if duration := positiveFloat(payload["duration"]); duration > 0 && !math.IsNaN(duration) && !math.IsInf(duration, 0) {
+				info.RequestedDuration = common.GetPointer(duration)
+			}
+		}
 	}
 	if cfg.BillingType == constant.AIPDDBillingTypeDurationSeconds && cfg.SeedancePricing == nil && !isLtx23Config(cfg) {
 		duration, err := normalizeDurationSeconds(&req, cfg)
@@ -372,6 +386,10 @@ func (a *TaskAdaptor) AIPDDTaskSnapshot(info *relaycommon.RelayInfo) *model.AIPD
 		OutputModalities: append([]string(nil), cfg.OutputModalities...),
 		BaseURL:          a.baseURL,
 	}
+	if info.TaskRelayInfo != nil && info.RequestedDuration != nil {
+		requestedDuration := *info.RequestedDuration
+		snapshot.RequestedDuration = &requestedDuration
+	}
 	if ratios := info.PriceData.OtherRatios; ratios != nil {
 		snapshot.BillingSeconds = ratios["seconds"]
 		snapshot.HasReferenceVideo = ratios["has_reference_video"] > 0
@@ -540,6 +558,11 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 }
 
 func writeCreateTaskResponse(c *gin.Context, info *relaycommon.RelayInfo, cfg modelConfig) {
+	if c != nil && c.Request != nil && c.Request.URL != nil &&
+		relayconstant.IsSeedanceOfficialTasksPath(c.Request.URL.Path) {
+		c.JSON(http.StatusOK, gin.H{"id": info.PublicTaskID})
+		return
+	}
 	now := time.Now().Unix()
 	if cfg.EndpointType == constant.EndpointTypeOpenAIVideo {
 		ov := dto.NewOpenAIVideo()
@@ -922,6 +945,125 @@ func (a *TaskAdaptor) GetModelList() []string {
 
 func (a *TaskAdaptor) GetChannelName() string {
 	return ChannelName
+}
+
+func (a *TaskAdaptor) ConvertToSeedanceOfficialTask(originTask *model.Task) ([]byte, error) {
+	if originTask == nil {
+		return nil, fmt.Errorf("task is required")
+	}
+
+	response := map[string]any{}
+	if len(originTask.Data) > 0 {
+		_ = common.Unmarshal(originTask.Data, &response)
+	}
+	stripSeedanceInternalResponseFields(response)
+	delete(response, "task_id")
+	delete(response, "taskId")
+	response["id"] = originTask.TaskID
+
+	publicModel := firstNonEmpty(originTask.Properties.OriginModelName, anyToString(response["model"]))
+	if publicModel != "" {
+		response["model"] = publicModel
+	} else {
+		delete(response, "model")
+	}
+	response["status"] = seedanceOfficialPublicStatus(originTask.Status, anyToString(response["status"]))
+
+	actualDuration := positiveFloat(response["duration"])
+	if actualDuration > 0 && !math.IsNaN(actualDuration) && !math.IsInf(actualDuration, 0) {
+		response["duration"] = actualDuration
+	} else if snapshot := originTask.PrivateData.AIPDDExecution; snapshot != nil &&
+		snapshot.RequestedDuration != nil && *snapshot.RequestedDuration > 0 &&
+		!math.IsNaN(*snapshot.RequestedDuration) && !math.IsInf(*snapshot.RequestedDuration, 0) {
+		response["duration"] = *snapshot.RequestedDuration
+	} else {
+		delete(response, "duration")
+	}
+
+	if originTask.Status == model.TaskStatusFailure && response["error"] == nil {
+		message := firstNonEmpty(originTask.FailReason, "Seedance task failed")
+		response["error"] = map[string]any{
+			"code":    "seedance_task_failed",
+			"message": message,
+		}
+	}
+	return common.Marshal(response)
+}
+
+func seedanceOfficialPublicStatus(taskStatus model.TaskStatus, upstreamStatus string) string {
+	switch taskStatus {
+	case model.TaskStatusNotStart, model.TaskStatusQueued, model.TaskStatusSubmitted:
+		return "queued"
+	case model.TaskStatusInProgress:
+		return "running"
+	case model.TaskStatusSuccess:
+		return "succeeded"
+	case model.TaskStatusFailure:
+		if normalized := strings.ToLower(strings.TrimSpace(upstreamStatus)); normalized == "cancelled" || normalized == "canceled" {
+			return "cancelled"
+		}
+		return "failed"
+	}
+
+	switch strings.ToLower(strings.TrimSpace(upstreamStatus)) {
+	case "pending", "queued":
+		return "queued"
+	case "processing", "running":
+		return "running"
+	case "succeeded", "completed":
+		return "succeeded"
+	case "cancelled", "canceled":
+		return "cancelled"
+	case "failed":
+		return "failed"
+	default:
+		return "queued"
+	}
+}
+
+func stripSeedanceInternalResponseFields(value any) {
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, child := range typed {
+			if isSeedanceInternalResponseField(key) {
+				delete(typed, key)
+				continue
+			}
+			stripSeedanceInternalResponseFields(child)
+		}
+	case []any:
+		for _, child := range typed {
+			stripSeedanceInternalResponseFields(child)
+		}
+	}
+}
+
+func isSeedanceInternalResponseField(key string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(key))
+	compact := strings.ReplaceAll(normalized, "_", "")
+	if strings.HasPrefix(compact, "finance") || strings.HasPrefix(compact, "billing") ||
+		strings.HasPrefix(compact, "channel") {
+		return true
+	}
+	switch normalized {
+	case "aipdd_meta",
+		"upstreammodelid", "upstream_model_id",
+		"executionchain", "execution_chain",
+		"enhancemodelid", "enhance_model_id",
+		"enhancemodelname", "enhance_model_name",
+		"superresolutionlevel", "super_resolution_level",
+		"sourceresolution", "source_resolution",
+		"basesource", "base_source",
+		"providername", "provider_name",
+		"billingscope", "billingmode",
+		"estimated_awcoin", "base_status", "enhance_status",
+		"base_video_file_id", "base_video_object_key", "base_video_url",
+		"enhance_retry_count", "costawcoinpersecond", "cost_awcoin_per_second",
+		"channel_id", "channel_key", "api_key":
+		return true
+	default:
+		return false
+	}
 }
 
 func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, error) {
@@ -1980,6 +2122,8 @@ func endpointTypeFromPath(path string) constant.EndpointType {
 	case strings.HasPrefix(path, "/v1/audio/speech"), strings.HasPrefix(path, "/pg/audio/speech"):
 		return constant.EndpointTypeAudioSpeech
 	case strings.HasPrefix(path, "/v1/videos"), strings.HasPrefix(path, "/v1/video/generations"), strings.HasPrefix(path, "/pg/videos"), strings.HasPrefix(path, "/pg/video/generations"):
+		return constant.EndpointTypeOpenAIVideo
+	case relayconstant.IsSeedanceOfficialTasksPath(path):
 		return constant.EndpointTypeOpenAIVideo
 	default:
 		return ""

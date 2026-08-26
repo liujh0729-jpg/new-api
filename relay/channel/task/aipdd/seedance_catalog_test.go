@@ -427,6 +427,7 @@ func TestSeedance25DefaultsForwardingAndThirtySecondPreauthorization(t *testing.
 	require.Equal(t, "mp4", payload["output_format"])
 	require.NotContains(t, payload, "prompt")
 	require.NotContains(t, payload, "media_mode")
+	require.Nil(t, info.RequestedDuration)
 	require.Equal(t, map[string]float64{"seconds": 30}, adaptor.EstimateBilling(ctx, info))
 
 	referenceCtx, referenceInfo, referenceAdaptor := seedanceRequestContextForModel(
@@ -512,6 +513,8 @@ func TestSeedanceCatalogExecutionSnapshotContainsFactsNotUpstreamPrice(t *testin
 	require.Equal(t, "video", snapshot.MediaType)
 	require.Equal(t, "video_generation", snapshot.TaskKind)
 	require.InDelta(t, 2.25, snapshot.BillingSeconds, 0.0000001)
+	require.NotNil(t, snapshot.RequestedDuration)
+	require.InDelta(t, 2.25, *snapshot.RequestedDuration, 0.0000001)
 	require.True(t, snapshot.HasReferenceVideo)
 	require.Zero(t, snapshot.USDPerAWCoin)
 	require.Zero(t, snapshot.EstimatedAWCoin)

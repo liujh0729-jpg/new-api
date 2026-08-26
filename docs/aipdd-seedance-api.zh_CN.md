@@ -9,22 +9,209 @@ Authorization: Bearer <NEWAPI_TOKEN>
 Content-Type: application/json
 ~~~
 
+对外提供三种视频任务调用格式：
+
+| 路径 | 查询返回格式 | 成功状态 | `duration` |
+|---|---|---|---|
+| `/api/v3/contents/generations/tasks` | Seedance 官方兼容格式 | `succeeded` | 顶层 `duration`；实际值优先，缺失时可回填请求中的固定正数 |
+| `/v1/videos` | OpenAI Video 格式 | `completed` | 上游返回有效实际时长时，位于 `metadata.duration` |
+| `/v1/video/generations` | 旧版兼容任务格式，响应包裹在 `data` 中 | `succeeded` | 当前不返回 |
+
+已有 Seedance 官方 SDK 或调用代码时，使用 `/api/v3/contents/generations/tasks`；需要 OpenAI Video 格式时，使用 `/v1/videos`。这些路径可以使用相同的 Seedance 请求参数，但响应结构不同。
+
+所有公网入口都返回平台生成的 `task_*` 任务 ID。该 ID 是不透明字符串，用于保证用户隔离、渠道切换和计费安全；不会返回上游内部的 `cgt-*` ID。
+
 创建任务：
 
 ~~~http
+POST /api/v3/contents/generations/tasks
 POST /v1/videos
 POST /v1/video/generations
+~~~
+
+Seedance 官方兼容入口的创建响应固定为：
+
+~~~json
+{
+  "id": "task_xxx"
+}
+~~~
+
+`/v1` 入口的创建响应示例：
+
+~~~json
+{
+  "id": "task_xxx",
+  "task_id": "task_xxx",
+  "object": "video",
+  "status": "queued"
+}
 ~~~
 
 查询任务：
 
 ~~~http
+GET /api/v3/contents/generations/tasks/{task_id}
 GET /v1/videos/{task_id}
 GET /v1/video/generations/{task_id}
-GET /v1/video/generations/{task_id}/result
 ~~~
 
-任务为异步执行。创建成功后保存返回的 `id`，再轮询查询接口，直到进入成功或失败终态。
+Seedance 官方兼容入口返回顶层任务对象：
+
+~~~json
+{
+  "id": "task_xxx",
+  "model": "AP Seedance-2.5 标准版",
+  "status": "succeeded",
+  "duration": 8,
+  "resolution": "1080p",
+  "content": {
+    "video_url": "https://example.com/result.mp4"
+  }
+}
+~~~
+
+该入口的状态统一为 `queued`、`running`、`succeeded`、`failed` 或 `cancelled`。`duration` 是顶层 JSON 数值，单位为秒：优先使用上游返回的有效实际时长；上游暂未返回时，回填创建请求中明确指定的固定正数。请求值为 `-1`、省略、零或无效时不会回填。实际时长一旦返回，会覆盖请求值。
+
+使用 `GET /v1/videos/{task_id}` 查询时，如果 Seedance 上游返回了有效实际时长，NewAPI 会将其写入 `metadata.duration`，单位为秒：
+
+~~~json
+{
+  "id": "task_xxx",
+  "task_id": "task_xxx",
+  "object": "video",
+  "status": "completed",
+  "metadata": {
+    "url": "https://example.com/result.mp4",
+    "duration": 8,
+    "output_format": "mp4",
+    "resolution": "1080p"
+  }
+}
+~~~
+
+OpenAI Video 格式中的 `metadata.duration` 是可选结果字段。上游没有返回有效实际时长时会省略；不能根据字段缺失推断视频为 `0` 秒。旧版 `GET /v1/video/generations/{task_id}` 当前不映射该字段。
+
+任务为异步执行。创建成功后保存返回的任务 ID，再轮询与创建路径对应的查询接口，直到进入成功或失败终态。
+
+本站不提供 `/api/v3/contents/generations/tasks/{task_id}/result`、列表、删除或重试接口；查询结果直接包含在单任务查询响应中。
+
+## 额度与逐笔账单查询
+
+以下接口与 Seedance 创建任务使用同一个 `NEWAPI_TOKEN`。查询范围均以当前 API Key 为准，不会返回同一账号下其他 Key 的数据。
+
+### 1. 查询当前 API Key 余额
+
+~~~http
+GET /api/usage/token/
+Authorization: Bearer <NEWAPI_TOKEN>
+~~~
+
+请求示例：
+
+~~~bash
+curl -sS 'https://susciyuan.com/api/usage/token/' \
+  -H 'Authorization: Bearer sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'
+~~~
+
+成功响应示例：
+
+~~~json
+{
+  "code": true,
+  "message": "ok",
+  "data": {
+    "object": "token_usage",
+    "name": "default",
+    "total_granted": 100000,
+    "total_used": 20000,
+    "total_available": 80000,
+    "unlimited_quota": false,
+    "model_limits": {},
+    "model_limits_enabled": false,
+    "expires_at": 0
+  }
+}
+~~~
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `data.object` | string | 固定为 `token_usage` |
+| `data.name` | string | 当前 API Key 名称 |
+| `data.total_granted` | int | 当前 Key 总额度，等于 `total_used + total_available` |
+| `data.total_used` | int | 当前 Key 累计已用额度 |
+| `data.total_available` | int | 当前 Key 剩余额度；通常将该字段作为 Key 余额 |
+| `data.unlimited_quota` | bool | 是否为无限额度 Key；为 `true` 时不要用 `total_available` 判断是否可用 |
+| `data.model_limits` | object | 当前 Key 的模型调用上限映射；未配置时为空对象 |
+| `data.model_limits_enabled` | bool | 是否启用模型调用上限 |
+| `data.expires_at` | int64 | Key 过期时间，Unix 时间戳（秒）；`0` 表示永不过期 |
+
+`total_granted`、`total_used`、`total_available` 都是站点内部原始额度单位（quota units），不是人民币或美元。该接口查询的是当前 API Key 余额；如需账号下所有 Key 共享的账号余额，应登录控制台查询，不能将此接口结果当作账号总余额。
+
+### 2. 查询当前 API Key 的逐笔账单
+
+~~~http
+GET /api/log/token?p=1&page_size=20
+Authorization: Bearer <NEWAPI_TOKEN>
+~~~
+
+| Query 参数 | 类型 | 必填 | 默认值 | 说明 |
+|---|---|---|---|---|
+| `p` | int | 否 | `1` | 页码，从 `1` 开始 |
+| `page_size` | int | 否 | `10` | 每页条数，最大 `100`；兼容别名 `ps`、`size` |
+
+请求示例：
+
+~~~bash
+curl -sS 'https://susciyuan.com/api/log/token?p=1&page_size=20' \
+  -H 'Authorization: Bearer sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'
+~~~
+
+成功响应示例：
+
+~~~json
+{
+  "success": true,
+  "message": "",
+  "data": {
+    "page": 1,
+    "page_size": 20,
+    "total": 128,
+    "items": [
+      {
+        "id": 1,
+        "created_at": 1754496000,
+        "type": 2,
+        "token_name": "default",
+        "model_name": "AP Seedance-2.5 标准版",
+        "quota": 50000,
+        "quota_cny": 0.73,
+        "use_time": 120,
+        "token_id": 34,
+        "request_id": "req_xxx",
+        "other": "{\"billing_source\":\"wallet\",\"billing_mode\":\"task_pricing\",\"quota_per_unit\":500000,\"usd_exchange_rate\":7.3}"
+      }
+    ]
+  }
+}
+~~~
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `data.page` / `data.page_size` | int | 当前页码与每页条数 |
+| `data.total` | int | 当前 Key 的日志总数，计数最多约 `10000` |
+| `data.items[]` | array | 当前页逐笔日志，按最新记录在前排序 |
+| `items[].created_at` | int64 | 日志时间，Unix 时间戳（秒） |
+| `items[].type` | int | 日志类型：`1` 充值、`2` 消费、`3` 管理、`4` 系统、`5` 错误、`6` 退款 |
+| `items[].model_name` | string | 本次调用的模型名 |
+| `items[].quota` | int | 本次记录的原始额度；支出或退款方向需结合 `type` 判断 |
+| `items[].quota_cny` | number | 本次额度对应的人民币等值，四舍五入到 6 位小数 |
+| `items[].use_time` | int | 请求或任务耗时，单位为秒 |
+| `items[].token_id` | int | 当前 API Key 的内部令牌 ID |
+| `items[].request_id` | string | 请求 ID，可能为空；排查问题时建议保存 |
+| `items[].other` | string | JSON 字符串，可能包含计费来源、计费模式、预扣/实扣额度和汇率快照，客户端需再次反序列化 |
+
+该接口仅支持分页，不支持按时间或模型过滤。`quota_cny` 按计费时保存的额度与汇率快照换算；旧日志缺少快照时，按查询时的站点配置换算。更完整的字段说明见 [`API Key 查询接口文档`](api/token-query-apis.zh_CN.md)。
 
 ## 版本差异速查
 
@@ -471,7 +658,8 @@ Authorization: Bearer <NEWAPI_TOKEN>
 兼容入口：
 
 - `GET /v1/video/generations/{task_id}`
-- `GET /v1/video/generations/{task_id}/result`
+
+下面的响应示例适用于 `/v1/videos`。兼容入口返回 `{"code":"success","data":{...}}` 结构，当前不会返回 `duration`。
 
 创建响应示例：
 
@@ -757,7 +945,8 @@ Authorization: Bearer <NEWAPI_TOKEN>
 兼容入口：
 
 - `GET /v1/video/generations/{task_id}`
-- `GET /v1/video/generations/{task_id}/result`
+
+下面的响应示例适用于 `/v1/videos`。兼容入口返回 `{"code":"success","data":{...}}` 结构，当前不会返回 `duration`。
 
 创建响应示例：
 

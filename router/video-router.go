@@ -3,11 +3,20 @@ package router
 import (
 	"github.com/QuantumNous/new-api/controller"
 	"github.com/QuantumNous/new-api/middleware"
+	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 
 	"github.com/gin-gonic/gin"
 )
 
 func SetVideoRouter(router *gin.Engine) {
+	seedanceOfficialRouter := router.Group(relayconstant.SeedanceOfficialTasksPath)
+	seedanceOfficialRouter.Use(middleware.RouteTag("relay"))
+	seedanceOfficialRouter.Use(middleware.TokenAuth(), middleware.Distribute())
+	{
+		seedanceOfficialRouter.POST("", middleware.BindVirtualCharacter(), controller.RelayTask)
+		seedanceOfficialRouter.GET("/:task_id", controller.RelayTaskFetch)
+	}
+
 	// API-key virtual character lifecycle endpoints. The dashboard keeps using
 	// /api/virtual-characters with TokenOrUserAuth, while external clients get a
 	// conventional /v1 entry point backed by the exact same business handlers.

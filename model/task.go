@@ -122,6 +122,7 @@ type AIPDDTaskExecutionSnapshot struct {
 	USDPerAWCoin      float64               `json:"usd_per_awcoin,omitempty"`
 	EstimatedAWCoin   float64               `json:"estimated_awcoin,omitempty"`
 	BillingSeconds    float64               `json:"billing_seconds,omitempty"`
+	RequestedDuration *float64              `json:"requested_duration,omitempty"`
 	Resolution        string                `json:"resolution,omitempty"`
 	HasReferenceVideo bool                  `json:"has_reference_video,omitempty"`
 }

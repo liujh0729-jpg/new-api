@@ -5,6 +5,12 @@ import (
 	"strings"
 )
 
+const SeedanceOfficialTasksPath = "/api/v3/contents/generations/tasks"
+
+func IsSeedanceOfficialTasksPath(path string) bool {
+	return path == SeedanceOfficialTasksPath || strings.HasPrefix(path, SeedanceOfficialTasksPath+"/")
+}
+
 const (
 	RelayModeUnknown = iota
 	RelayModeChatCompletions
@@ -78,6 +84,10 @@ func Path2RelayMode(path string) int {
 	} else if strings.HasPrefix(path, "/v1/video/generations/") || strings.HasPrefix(path, "/pg/video/generations/") {
 		relayMode = RelayModeVideoFetchByID
 	} else if strings.HasPrefix(path, "/v1/video/generations") || strings.HasPrefix(path, "/pg/video/generations") {
+		relayMode = RelayModeVideoSubmit
+	} else if strings.HasPrefix(path, SeedanceOfficialTasksPath+"/") {
+		relayMode = RelayModeVideoFetchByID
+	} else if path == SeedanceOfficialTasksPath {
 		relayMode = RelayModeVideoSubmit
 	} else if strings.HasPrefix(path, "/v1/images/edits") {
 		relayMode = RelayModeImagesEdits

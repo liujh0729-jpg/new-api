@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	appi18n "github.com/QuantumNous/new-api/i18n"
+	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
@@ -62,6 +63,28 @@ func TestDistributeAllowsCompatibleVideoFetchWithModelLimitedToken(t *testing.T)
 	Distribute()(ctx)
 
 	require.False(t, ctx.IsAborted())
+}
+
+func TestGetModelRequestRecognizesSeedanceOfficialSubmit(t *testing.T) {
+	ctx := newJSONModelRequest(http.MethodPost, "/api/v3/contents/generations/tasks", `{"model":"AP Seedance-2.0 高性价比版"}`)
+
+	modelRequest, shouldSelectChannel, err := getModelRequest(ctx)
+
+	require.NoError(t, err)
+	require.True(t, shouldSelectChannel)
+	require.Equal(t, seedanceLimitedModel, modelRequest.Model)
+	require.Equal(t, relayconstant.RelayModeVideoSubmit, ctx.GetInt("relay_mode"))
+}
+
+func TestGetModelRequestRecognizesSeedanceOfficialFetch(t *testing.T) {
+	ctx := newJSONModelRequest(http.MethodGet, "/api/v3/contents/generations/tasks/task_123", "")
+
+	modelRequest, shouldSelectChannel, err := getModelRequest(ctx)
+
+	require.NoError(t, err)
+	require.False(t, shouldSelectChannel)
+	require.Empty(t, modelRequest.Model)
+	require.Equal(t, relayconstant.RelayModeVideoFetchByID, ctx.GetInt("relay_mode"))
 }
 
 func TestDistributeRejectsDisallowedVideoSubmitWithModelLimitedToken(t *testing.T) {
@@ -125,6 +148,16 @@ func newMultipartModelRequest(t *testing.T, path, model string) *gin.Context {
 	ctx, _ := gin.CreateTestContext(recorder)
 	ctx.Request = httptest.NewRequest(http.MethodPost, path, &body)
 	ctx.Request.Header.Set("Content-Type", writer.FormDataContentType())
+	return ctx
+}
+
+func newJSONModelRequest(method, path, body string) *gin.Context {
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(method, path, strings.NewReader(body))
+	if body != "" {
+		ctx.Request.Header.Set("Content-Type", "application/json")
+	}
 	return ctx
 }
 

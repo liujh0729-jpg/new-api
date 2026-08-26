@@ -82,6 +82,10 @@ type OpenAIVideoConverter interface {
 	ConvertToOpenAIVideo(originTask *model.Task) ([]byte, error)
 }
 
+type SeedanceOfficialTaskConverter interface {
+	ConvertToSeedanceOfficialTask(originTask *model.Task) ([]byte, error)
+}
+
 // ExactTaskBillingEstimator is implemented by task adaptors whose pricing
 // cannot be represented as multiplicative ratios (for example minimum charges).
 type ExactTaskBillingEstimator interface {

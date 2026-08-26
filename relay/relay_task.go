@@ -360,6 +360,14 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	if platform == "" {
 		platform = GetTaskPlatform(c)
 	}
+	if relayconstant.IsSeedanceOfficialTasksPath(c.Request.URL.Path) &&
+		platform != constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeAIPDD)) {
+		return nil, service.TaskErrorWrapperLocal(
+			fmt.Errorf("Seedance official endpoint requires an AIPDD Seedance channel"),
+			"invalid_endpoint",
+			http.StatusBadRequest,
+		)
+	}
 	adaptor := GetTaskAdaptor(platform)
 	if adaptor == nil {
 		return nil, service.TaskErrorWrapperLocal(fmt.Errorf("invalid api platform: %s", platform), "invalid_api_platform", http.StatusBadRequest)
@@ -731,16 +739,47 @@ func taskFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *dt
 		return
 	}
 	if !exist {
-		taskResp = service.TaskErrorWrapperLocal(errors.New("task_not_exist"), "task_not_exist", http.StatusBadRequest)
+		statusCode := http.StatusBadRequest
+		if relayconstant.IsSeedanceOfficialTasksPath(c.Request.URL.Path) {
+			statusCode = http.StatusNotFound
+		}
+		taskResp = service.TaskErrorWrapperLocal(errors.New("task_not_exist"), "task_not_exist", statusCode)
 		return
 	}
 
 	isOpenAIVideoAPI := strings.HasPrefix(c.Request.RequestURI, "/v1/videos/")
+	isSeedanceOfficialAPI := relayconstant.IsSeedanceOfficialTasksPath(c.Request.URL.Path)
+	if isSeedanceOfficialAPI && !isSeedanceOfficialTask(originTask) {
+		taskResp = service.TaskErrorWrapperLocal(
+			fmt.Errorf("task is not a Seedance official task"),
+			"invalid_endpoint",
+			http.StatusBadRequest,
+		)
+		return
+	}
 	mediaInfo := resolveTaskMediaInfo(originTask, c.Request.URL.Path)
 
 	// Gemini/Vertex/AIPDD 支持实时查询：用户 fetch 时直接从上游拉取最新状态
-	if realtimeResp := tryRealtimeFetch(c.Request.Context(), originTask, isOpenAIVideoAPI, mediaInfo.MediaType); len(realtimeResp) > 0 {
+	if realtimeResp := tryRealtimeFetch(c.Request.Context(), originTask, isOpenAIVideoAPI, isSeedanceOfficialAPI, mediaInfo.MediaType); len(realtimeResp) > 0 {
 		respBody = realtimeResp
+		return
+	}
+
+	if isSeedanceOfficialAPI {
+		adaptor := GetTaskAdaptor(originTask.Platform)
+		if adaptor == nil {
+			taskResp = service.TaskErrorWrapperLocal(fmt.Errorf("invalid channel id: %d", originTask.ChannelId), "invalid_channel_id", http.StatusBadRequest)
+			return
+		}
+		converter, ok := adaptor.(channel.SeedanceOfficialTaskConverter)
+		if !ok {
+			taskResp = service.TaskErrorWrapperLocal(fmt.Errorf("not_implemented:%s", originTask.Platform), "not_implemented", http.StatusNotImplemented)
+			return
+		}
+		respBody, err = converter.ConvertToSeedanceOfficialTask(originTask)
+		if err != nil {
+			taskResp = service.TaskErrorWrapper(err, "convert_to_seedance_official_failed", http.StatusInternalServerError)
+		}
 		return
 	}
 
@@ -778,7 +817,7 @@ func taskFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *dt
 // tryRealtimeFetch 尝试从上游实时拉取 Gemini/Vertex/AIPDD 任务状态。
 // 仅当渠道类型支持直接查询时触发；其他渠道或出错时返回 nil。
 // 当非 OpenAI Video API 时，还会构建自定义格式的响应体。
-func tryRealtimeFetch(ctx context.Context, task *model.Task, isOpenAIVideoAPI bool, mediaType string) []byte {
+func tryRealtimeFetch(ctx context.Context, task *model.Task, isOpenAIVideoAPI, isSeedanceOfficialAPI bool, mediaType string) []byte {
 	channelModel, err := model.GetChannelById(task.ChannelId, true)
 	if err != nil {
 		return nil
@@ -857,8 +896,9 @@ func tryRealtimeFetch(ctx context.Context, task *model.Task, isOpenAIVideoAPI bo
 		service.SettleTaskBillingOnComplete(ctx, adaptor, task, ti)
 	}
 
-	// OpenAI Video API 由调用者的 ConvertToOpenAIVideo 分支处理
-	if isOpenAIVideoAPI {
+	// Compatible video APIs are converted from the persisted upstream snapshot
+	// by their dedicated response builders after this realtime refresh.
+	if isOpenAIVideoAPI || isSeedanceOfficialAPI {
 		return nil
 	}
 
@@ -869,6 +909,21 @@ func tryRealtimeFetch(ctx context.Context, task *model.Task, isOpenAIVideoAPI bo
 		Data: out,
 	})
 	return respBody
+}
+
+func isSeedanceOfficialTask(task *model.Task) bool {
+	if task == nil || task.Platform != constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeAIPDD)) {
+		return false
+	}
+	if snapshot := task.PrivateData.AIPDDExecution; snapshot != nil && strings.TrimSpace(snapshot.Protocol) != "" {
+		return strings.EqualFold(strings.TrimSpace(snapshot.Protocol), "seedance_official")
+	}
+	modelName := strings.TrimSpace(task.Properties.UpstreamModelName)
+	if modelName == "" {
+		modelName = strings.TrimSpace(task.Properties.OriginModelName)
+	}
+	capability, ok := constant.GetAIPDDCapability(modelName)
+	return ok && strings.EqualFold(strings.TrimSpace(capability.ExecutionProtocol), "seedance_official")
 }
 
 func applyTaskResultURL(task *model.Task, upstreamURL, mediaType string) {
