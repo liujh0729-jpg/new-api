@@ -595,7 +595,7 @@
       "get": {
         "summary": "获取 Seedance 视频任务",
         "deprecated": false,
-        "description": "Seedance 官方兼容的任务查询接口。成功终态在折算条件完整时返回零售价等价 usage；其他状态或条件不完整时省略 usage。",
+        "description": "Seedance 官方兼容的任务查询接口。响应可能包含 usage 字段。",
         "operationId": "getSeedanceOfficialTask",
         "tags": [
           "视频生成/Seedance官方兼容格式"
@@ -787,7 +787,7 @@
       "get": {
         "summary": "获取视频任务状态 ",
         "deprecated": false,
-        "description": "OpenAI 兼容的视频任务状态查询接口。\n\n返回视频任务的详细状态信息。`status` 使用 OpenAI 状态枚举：`queued`（排队中）、`in_progress`（生成中）、`completed`（已完成）、`failed`（失败）。Seedance 成功任务在折算条件完整时还会返回 `usage`；它是零售价等价输出 Token，不参与 New API 的任务计费。\n",
+        "description": "OpenAI 兼容的视频任务状态查询接口。\n\n返回视频任务的详细状态信息。`status` 使用 OpenAI 状态枚举：`queued`（排队中）、`in_progress`（生成中）、`completed`（已完成）、`failed`（失败）。响应可能包含 `usage` 字段。\n",
         "operationId": "getVideo",
         "tags": [
           "视频生成/Sora兼容格式"
@@ -4619,7 +4619,7 @@
       },
       "SeedanceOfficialUsage": {
         "type": "object",
-        "description": "Seedance 官方字段形状的零售价等价输出 Token。按 ceil(最终计费秒数 × 冻结的建议零售价（元/秒） × 1,000,000 ÷ 冻结的折算零售价（元/百万输出 Token）) 计算；不表示模型真实计算 Token，也不参与 New API 的任务计费。",
+        "description": "Seedance 官方字段形状的使用量信息。",
         "required": [
           "completion_tokens",
           "total_tokens"
@@ -4645,7 +4645,7 @@
       },
       "SeedanceOfficialTask": {
         "type": "object",
-        "description": "Seedance 官方兼容任务对象。usage 仅在成功终态且折算条件完整时出现。",
+        "description": "Seedance 官方兼容任务对象。usage 为可选字段。",
         "required": [
           "id",
           "status"
@@ -4696,7 +4696,7 @@
       },
       "VideoUsage": {
         "type": "object",
-        "description": "Seedance 成功任务可选的零售价等价输出 Token。按 ceil(最终计费秒数 × 冻结的建议零售价（元/秒） × 1,000,000 ÷ 冻结的折算零售价（元/百万输出 Token）) 计算；不表示模型真实计算 Token，也不参与 New API 的任务计费。折算条件不完整时省略整个 usage 字段。",
+        "description": "视频任务可选的使用量信息。",
         "required": [
           "completion_tokens",
           "total_tokens"

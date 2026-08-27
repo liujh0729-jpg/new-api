@@ -723,6 +723,27 @@ func TestListModelsTokenLimitIncludesTieredBillingModel(t *testing.T) {
 	require.NotContains(t, ids, "zz-token-unpriced-model")
 }
 
+func TestListModelsTokenLimitIncludesExplicitAIPDDFreeModel(t *testing.T) {
+	withSelfUseModeDisabled(t)
+	t.Cleanup(aipddcatalog.ResetExplicitFreeModels)
+	aipddcatalog.SetExplicitFreeModels([]string{"free-catalog-list-model"})
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	common.SetContextKey(ctx, constant.ContextKeyTokenModelLimitEnabled, true)
+	common.SetContextKey(ctx, constant.ContextKeyTokenModelLimit, map[string]bool{
+		"free-catalog-list-model": true,
+		"zz-unpriced-model":       true,
+	})
+
+	ListModels(ctx, constant.ChannelTypeOpenAI)
+
+	ids := decodeListModelsResponse(t, recorder)
+	require.Contains(t, ids, "free-catalog-list-model")
+	require.NotContains(t, ids, "zz-unpriced-model")
+}
+
 func TestListModelsHidesDisabledAIPDDCatalogModelsOnly(t *testing.T) {
 	originalSelfUse := operation_setting.SelfUseModeEnabled
 	operation_setting.SelfUseModeEnabled = true

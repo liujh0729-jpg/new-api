@@ -481,7 +481,7 @@ func BuildTaskPricingImportPlan(options map[string]string, imported map[string]T
 	for _, group := range taskPricingCSVFixedGroups {
 		groupRatio[group.Name] = decimalToJSONNumber(group.Ratio)
 		if _, exists := usableGroups[group.Name]; !exists {
-			usableGroups[group.Name] = fmt.Sprintf("%s（%d档）", group.Name, group.Ratio.Mul(decimal.NewFromInt(100)).IntPart())
+			usableGroups[group.Name] = fmt.Sprintf("%s（Seedance %d档）", group.Name, group.Ratio.Mul(decimal.NewFromInt(100)).IntPart())
 		}
 	}
 

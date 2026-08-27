@@ -98,6 +98,54 @@ func TestAtomicCatalogRejectsLLMWithoutFourTierPricing(t *testing.T) {
 	require.ErrorContains(t, catalog.Validate(), "must provide cache read and cache write prices")
 }
 
+func TestAtomicCatalogAcceptsExplicitFreeLLMWithZeroPrices(t *testing.T) {
+	zero := 0.0
+	catalog := AtomicCatalog{
+		SchemaVersion: 2,
+		Revision:      "explicit-free-model",
+		AWCoinRate:    AtomicAWCoinRate{RMBPerAWCoin: 0.01, USDPerAWCoin: 0.0015},
+		Models: []AtomicModel{{
+			ID: "free-deepseek-v4-flash",
+			Pricing: AtomicPricing{
+				PricingModel: "per_token", Currency: "awcoin", Enabled: true, Free: true,
+				CacheReadPerMillion: &zero, CacheWritePerMillion: &zero,
+			},
+		}},
+	}
+
+	require.NoError(t, catalog.Validate())
+	encoded, err := MarshalAtomic(catalog)
+	require.NoError(t, err)
+	decoded, err := UnmarshalAtomic(encoded)
+	require.NoError(t, err)
+	require.True(t, decoded.Models[0].Pricing.Free)
+}
+
+func TestAtomicCatalogRejectsAccidentalOrInconsistentFreePricing(t *testing.T) {
+	zero := 0.0
+	one := 1.0
+	base := AtomicCatalog{
+		SchemaVersion: 2,
+		Revision:      "invalid-free-model",
+		AWCoinRate:    AtomicAWCoinRate{RMBPerAWCoin: 0.01, USDPerAWCoin: 0.0015},
+		Models: []AtomicModel{{
+			ID: "ordinary-zero-price",
+			Pricing: AtomicPricing{
+				PricingModel: "per_token", Currency: "awcoin", Enabled: true,
+				CacheReadPerMillion: &zero, CacheWritePerMillion: &zero,
+			},
+		}},
+	}
+	require.ErrorContains(t, base.Validate(), "has no effective price")
+
+	base.Models[0].Pricing.Free = true
+	require.ErrorContains(t, base.Validate(), "without a free- model ID")
+
+	base.Models[0].ID = "free-inconsistent"
+	base.Models[0].Pricing.CacheWritePerMillion = &one
+	require.ErrorContains(t, base.Validate(), "must have zero prices in every token lane")
+}
+
 func TestAtomicCatalogV1AcceptsLegacyLLMWithoutCachePrices(t *testing.T) {
 	catalog, err := UnmarshalAtomic([]byte(`{
 		"schemaVersion":1,

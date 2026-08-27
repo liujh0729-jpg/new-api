@@ -95,8 +95,7 @@ Authorization: Bearer <NEWAPI_TOKEN>
 - 状态取值：`queued`、`running`、`succeeded`、`failed`、`cancelled`。
 - `duration` 是顶层 JSON 数值，单位为秒。优先使用上游返回的有效实际时长；上游暂未返回时，使用创建请求中明确指定的固定正数；请求值为 `-1`、省略、零或无效时不使用该值；上游返回实际时长后以实际时长为准。
 - `usage` 严格使用 Seedance 官方字段形状；`completion_tokens` 与 `total_tokens` 相等。若官方响应原有 `tool_usage`，该字段会一并保留。
-- 这里的 Token 是按最终零售价值折算的输出 Token：`ceil(最终计费秒数 × 冻结的建议零售价（元/秒） × 1,000,000 ÷ 冻结的折算零售价（元/百万输出 Token）)`。BYOK 任务使用对应 PLATFORM 价格档位的建议零售价，不使用 BYOK 结算价。它不表示模型真实计算 Token，也不参与 New API 的二次计费。
-- 仅成功终态且折算条件完整时返回 `usage`；排队、运行、失败、取消、缺少价格或有效秒数时省略该字段。Seedance 2.5 `duration=-1` 使用最终结算的实际时长。
+- `usage` 为可选字段；未返回时客户端应兼容该字段缺失。
 
 ## 4. OpenAI Video 格式
 
@@ -156,7 +155,7 @@ Authorization: Bearer <NEWAPI_TOKEN>
 - 成功状态为 `completed`；进行中可识别 `queued`、`in_progress`、`failed` 等状态。
 - 任务未结束时不会返回 `completed_at`。
 - `metadata` 保留官方返回的实际时长、输出格式和分辨率；`metadata.duration` 是可选字段，上游没有返回有效实际时长时会省略，字段缺失不代表视频时长为 0 秒。
-- `usage` 与 Seedance 官方兼容查询返回同一组零售价等价 Token；缺少折算条件时省略，且不参与 New API 的按秒、分辨率任务计费。
+- `usage` 与 Seedance 官方兼容查询返回相同字段和值；未返回时省略该字段。
 
 ## 5. 版本差异速查
 

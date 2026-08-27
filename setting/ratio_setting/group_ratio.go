@@ -3,8 +3,10 @@ package ratio_setting
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/setting/config"
 	"github.com/QuantumNous/new-api/types"
 )
@@ -100,6 +102,30 @@ func GetGroupGroupRatio(userGroup, usingGroup string) (float64, bool) {
 		return -1, false
 	}
 	return ratio, true
+}
+
+// ResolveModelGroupRatio returns the effective ratio for model billing.
+// VIP1-VIP5 are Seedance-only retail discounts: other models remain available
+// in those groups but are charged at their undiscounted price. Custom groups
+// keep their existing global or user-group-specific ratio semantics.
+func ResolveModelGroupRatio(modelName, userGroup, usingGroup string) (float64, bool) {
+	ratio, hasSpecialRatio := GetGroupGroupRatio(userGroup, usingGroup)
+	if !hasSpecialRatio {
+		ratio = GetGroupRatio(usingGroup)
+	}
+	if isSeedanceVIPDiscountGroup(usingGroup) && !constant.IsAIPDDSeedanceModel(modelName) {
+		return 1, false
+	}
+	return ratio, hasSpecialRatio
+}
+
+func isSeedanceVIPDiscountGroup(group string) bool {
+	switch strings.ToUpper(strings.TrimSpace(group)) {
+	case "VIP1", "VIP2", "VIP3", "VIP4", "VIP5":
+		return true
+	default:
+		return false
+	}
 }
 
 func GroupGroupRatio2JSONString() string {

@@ -90,6 +90,30 @@ func TestAIPDDCatalogRatioDataUsesCacheAwareExpressionWhenPricesArePresent(t *te
 		exprs["market/cache-aware"])
 }
 
+func TestAIPDDCatalogRatioDataCreatesExplicitZeroExpressionForFreeModel(t *testing.T) {
+	zero := 0.0
+	catalog := aipddcatalog.AtomicCatalog{
+		SchemaVersion: 2,
+		AWCoinRate:    aipddcatalog.AtomicAWCoinRate{USDPerAWCoin: 0.01},
+		Models: []aipddcatalog.AtomicModel{{
+			ID: "free-deepseek-v4-flash",
+			Pricing: aipddcatalog.AtomicPricing{
+				PricingModel: "per_token", Currency: "awcoin", Enabled: true, Free: true,
+				CacheReadPerMillion: &zero, CacheWritePerMillion: &zero,
+			},
+		}},
+	}
+
+	data := aipddCatalogRatioData(catalog)
+	modes := data[billing_setting.BillingModeField].(map[string]string)
+	exprs := data[billing_setting.BillingExprField].(map[string]string)
+	require.Equal(t, billing_setting.BillingModeTieredExpr, modes["free-deepseek-v4-flash"])
+	require.Equal(
+		t,
+		`tier("aipdd", p * 0 + c * 0 + cr * 0 + cc * 0 + cc1h * 0)`,
+		exprs["free-deepseek-v4-flash"])
+}
+
 func TestAIPDDCatalogRatioDataPreservesLegacyInputPricingWhenCachePricesAreMissing(t *testing.T) {
 	catalog := aipddcatalog.AtomicCatalog{
 		SchemaVersion: 1,

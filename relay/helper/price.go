@@ -8,6 +8,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/aipddcatalog"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
@@ -50,16 +51,20 @@ func HandleGroupRatio(ctx *gin.Context, relayInfo *relaycommon.RelayInfo) types.
 		relayInfo.UsingGroup = autoGroup.(string)
 	}
 
-	// check user group special ratio
-	userGroupRatio, ok := ratio_setting.GetGroupGroupRatio(relayInfo.UserGroup, relayInfo.UsingGroup)
-	if ok {
+	// Resolve model-aware group pricing. Fixed VIP1-VIP5 discounts apply only
+	// to Seedance; other custom group policies retain their existing behavior.
+	groupRatio, hasSpecialRatio := ratio_setting.ResolveModelGroupRatio(
+		relayInfo.OriginModelName,
+		relayInfo.UserGroup,
+		relayInfo.UsingGroup,
+	)
+	if hasSpecialRatio {
 		// user group special ratio
-		groupRatioInfo.GroupSpecialRatio = userGroupRatio
-		groupRatioInfo.GroupRatio = userGroupRatio
+		groupRatioInfo.GroupSpecialRatio = groupRatio
+		groupRatioInfo.GroupRatio = groupRatio
 		groupRatioInfo.HasSpecialRatio = true
 	} else {
-		// normal group ratio
-		groupRatioInfo.GroupRatio = ratio_setting.GetGroupRatio(relayInfo.UsingGroup)
+		groupRatioInfo.GroupRatio = groupRatio
 	}
 
 	return groupRatioInfo
@@ -73,6 +78,18 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 	// Check if this model uses tiered_expr billing
 	if billing_setting.GetBillingMode(info.OriginModelName) == billing_setting.BillingModeTieredExpr {
 		return modelPriceHelperTiered(c, info, promptTokens, meta, groupRatioInfo)
+	}
+	if !usePrice && aipddcatalog.IsExplicitFreeModel(info.OriginModelName) {
+		if _, hasLocalRatio, _ := ratio_setting.GetModelRatio(info.OriginModelName); !hasLocalRatio {
+			priceData := types.PriceData{
+				FreeModel:      true,
+				ModelPrice:     0,
+				UsePrice:       true,
+				GroupRatioInfo: groupRatioInfo,
+			}
+			info.PriceData = priceData
+			return priceData, nil
+		}
 	}
 
 	var preConsumedQuota int
@@ -258,6 +275,9 @@ func HasModelBillingConfig(modelName string) bool {
 	if constant.IsAIPDDTaskPricingModel(modelName) ||
 		model.IsAIPDDTaskPricingRequiredModel(modelName) {
 		return false
+	}
+	if aipddcatalog.IsExplicitFreeModel(modelName) {
+		return true
 	}
 	if _, ok := ratio_setting.GetModelPrice(modelName, false); ok {
 		return true

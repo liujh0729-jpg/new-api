@@ -230,6 +230,7 @@ func activateAIPDDCatalog(catalog aipddcatalog.AtomicCatalog) {
 	// List-only denylist for GET /v1/models. Does not alter DB models, channel
 	// models, abilities, or request-time routing for manually specified IDs.
 	aipddcatalog.SetV1ModelsListHidden(catalog.V1ModelsListHiddenNames())
+	aipddcatalog.SetExplicitFreeModels(catalog.ExplicitFreeModelNames())
 }
 
 func upsertAIPDDVendorTx(tx *gorm.DB) (int, error) {

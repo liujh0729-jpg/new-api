@@ -32,8 +32,7 @@ type OpenAIVideo struct {
 }
 
 // VideoUsage mirrors the compact usage object returned by the official
-// Seedance task API. These are retail-equivalent output tokens and are not an
-// input to New API's task-pricing settlement.
+// Seedance task API.
 type VideoUsage struct {
 	CompletionTokens int64 `json:"completion_tokens"`
 	TotalTokens      int64 `json:"total_tokens"`

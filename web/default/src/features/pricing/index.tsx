@@ -266,7 +266,7 @@ export function Pricing() {
                 if (!open) setSelectedModelName(null)
               }}
               model={selectedModel}
-              groupRatio={groupRatio || {}}
+              groupRatio={selectedModel.group_ratio ?? groupRatio ?? {}}
               usableGroup={usableGroup || {}}
               endpointMap={
                 (endpointMap as Record<

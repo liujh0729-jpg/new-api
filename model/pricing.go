@@ -31,6 +31,7 @@ type Pricing struct {
 	AudioRatio             *float64                           `json:"audio_ratio,omitempty"`
 	AudioCompletionRatio   *float64                           `json:"audio_completion_ratio,omitempty"`
 	EnableGroup            []string                           `json:"enable_groups"`
+	GroupRatio             map[string]float64                 `json:"group_ratio,omitempty"`
 	SupportedEndpointTypes []constant.EndpointType            `json:"supported_endpoint_types"`
 	BillingMode            string                             `json:"billing_mode,omitempty"`
 	BillingExpr            string                             `json:"billing_expr,omitempty"`
@@ -75,6 +76,12 @@ func GetPricing() []Pricing {
 	for index, pricing := range pricingMap {
 		cloned[index] = pricing
 		cloned[index].EnableGroup = append([]string(nil), pricing.EnableGroup...)
+		if pricing.GroupRatio != nil {
+			cloned[index].GroupRatio = make(map[string]float64, len(pricing.GroupRatio))
+			for group, ratio := range pricing.GroupRatio {
+				cloned[index].GroupRatio[group] = ratio
+			}
+		}
 		cloned[index].SupportedEndpointTypes = append([]constant.EndpointType(nil), pricing.SupportedEndpointTypes...)
 		cloned[index].TaskPricingResolutions = append([]string(nil), pricing.TaskPricingResolutions...)
 		if pricing.TaskPricing != nil {

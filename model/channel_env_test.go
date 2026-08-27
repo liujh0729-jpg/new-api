@@ -230,6 +230,7 @@ func TestEnsureAIPDDDefaultsRestoresLegacyV1SnapshotWithoutCachePrices(t *testin
 		constant.ResetAIPDDCapabilities()
 		constant.ResetAIPDDOpenAIModels()
 		aipddcatalog.ResetV1ModelsListHidden()
+		aipddcatalog.ResetExplicitFreeModels()
 	})
 
 	const baseURL = "https://aipdd.legacy-snapshot.test"
@@ -338,6 +339,8 @@ func TestEnsureAIPDDDefaultsSyncsDynamicCatalogOnBoot(t *testing.T) {
 	t.Cleanup(func() {
 		constant.ResetAIPDDCapabilities()
 		constant.ResetAIPDDOpenAIModels()
+		aipddcatalog.ResetV1ModelsListHidden()
+		aipddcatalog.ResetExplicitFreeModels()
 	})
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -349,7 +352,7 @@ func TestEnsureAIPDDDefaultsSyncsDynamicCatalogOnBoot(t *testing.T) {
 				"code": 0,
 				"message": "fetched",
 				"data": {
-					"schemaVersion": 1,
+					"schemaVersion": 2,
 					"revision": "test-revision",
 					"generatedAt": "2026-07-12T10:00:00",
 					"awcoinRate": {"rmbPerAwcoin": 0.01, "usdPerAwcoin": 0.0015, "updatedAt": "2026-07-12T09:00:00"},
@@ -372,8 +375,9 @@ func TestEnsureAIPDDDefaultsSyncsDynamicCatalogOnBoot(t *testing.T) {
 						]
 					}],
 					"models": [
-						{"id": "gemma3:1b", "name": "gemma3:1b", "available": false, "execution": {"protocol": "openai", "path": "/v1/chat/completions"}, "pricing": {"pricingModel": "per_token", "currency": "awcoin", "enabled": true, "promptPerMillion": 10, "completionPerMillion": 30}},
-						{"id": "qwen2.5:0.5b", "name": "qwen2.5:0.5b", "available": true, "execution": {"protocol": "openai", "path": "/v1/chat/completions"}, "pricing": {"pricingModel": "per_token", "currency": "awcoin", "enabled": true, "promptPerMillion": 20, "completionPerMillion": 40}}
+						{"id": "free-deepseek-v4-flash", "name": "free-deepseek-v4-flash", "available": true, "execution": {"protocol": "openai", "path": "/v1/chat/completions"}, "pricing": {"pricingModel": "per_token", "currency": "awcoin", "enabled": true, "free": true, "promptPerMillion": 0, "completionPerMillion": 0, "cacheReadPerMillion": 0, "cacheWritePerMillion": 0}},
+						{"id": "gemma3:1b", "name": "gemma3:1b", "available": false, "execution": {"protocol": "openai", "path": "/v1/chat/completions"}, "pricing": {"pricingModel": "per_token", "currency": "awcoin", "enabled": true, "promptPerMillion": 10, "completionPerMillion": 30, "cacheReadPerMillion": 0, "cacheWritePerMillion": 0}},
+						{"id": "qwen2.5:0.5b", "name": "qwen2.5:0.5b", "available": true, "execution": {"protocol": "openai", "path": "/v1/chat/completions"}, "pricing": {"pricingModel": "per_token", "currency": "awcoin", "enabled": true, "promptPerMillion": 20, "completionPerMillion": 40, "cacheReadPerMillion": 0, "cacheWritePerMillion": 0}}
 					]
 				}
 			}`))
@@ -392,7 +396,7 @@ func TestEnsureAIPDDDefaultsSyncsDynamicCatalogOnBoot(t *testing.T) {
 	var channel Channel
 	require.NoError(t, DB.Where("type = ?", constant.ChannelTypeAIPDD).First(&channel).Error)
 	require.Equal(t, server.URL, *channel.BaseURL)
-	require.Equal(t, "dynamic-script-id,gemma3:1b,qwen2.5:0.5b", channel.Models)
+	require.Equal(t, "dynamic-script-id,free-deepseek-v4-flash,gemma3:1b,qwen2.5:0.5b", channel.Models)
 
 	var ability Ability
 	require.NoError(t, DB.Where("channel_id = ? AND model = ?", channel.Id, "dynamic-script-id").First(&ability).Error)
@@ -400,6 +404,10 @@ func TestEnsureAIPDDDefaultsSyncsDynamicCatalogOnBoot(t *testing.T) {
 	var llmAbility Ability
 	require.NoError(t, DB.Where("channel_id = ? AND model = ?", channel.Id, "gemma3:1b").First(&llmAbility).Error)
 	require.True(t, llmAbility.Enabled)
+	var freeAbility Ability
+	require.NoError(t, DB.Where("channel_id = ? AND model = ?", channel.Id, "free-deepseek-v4-flash").First(&freeAbility).Error)
+	require.True(t, freeAbility.Enabled)
+	require.True(t, aipddcatalog.IsExplicitFreeModel("free-deepseek-v4-flash"))
 
 	var item Model
 	require.NoError(t, DB.Where("model_name = ?", "dynamic-script-id").First(&item).Error)

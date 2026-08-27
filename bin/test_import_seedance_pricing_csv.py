@@ -119,6 +119,7 @@ class ImportSeedancePricingCSVTest(unittest.TestCase):
             {key: updates["GroupRatio"][key] for key in MODULE.GROUPS},
         )
         self.assertEqual("默认分组", updates["UserUsableGroups"]["default"])
+        self.assertEqual("VIP1（Seedance 78档）", updates["UserUsableGroups"]["VIP1"])
 
     def test_rejects_mismatched_exemption_between_video_variants(self) -> None:
         rows = [

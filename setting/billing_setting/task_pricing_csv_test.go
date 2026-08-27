@@ -16,11 +16,11 @@ func csvRow(model, resolution, kind, native string, ratios []string) taskPricing
 		"能力类型":  kind,
 		"计费单位":  "条/5秒",
 		"对比原生价": native,
-		"VIP1":    ratios[0],
-		"VIP2":    ratios[1],
-		"VIP3":    ratios[2],
-		"VIP4":    ratios[3],
-		"VIP5":    ratios[4],
+		"VIP1":  ratios[0],
+		"VIP2":  ratios[1],
+		"VIP3":  ratios[2],
+		"VIP4":  ratios[3],
+		"VIP5":  ratios[4],
 	}
 }
 
@@ -149,6 +149,10 @@ func TestBuildTaskPricingImportPlanPreservesUnrelatedEntries(t *testing.T) {
 	if !strings.Contains(updates["UserUsableGroups"], `"default":"默认分组"`) &&
 		!strings.Contains(updates["UserUsableGroups"], `"default": "默认分组"`) {
 		t.Fatalf("usable groups lost default: %s", updates["UserUsableGroups"])
+	}
+	if !strings.Contains(updates["UserUsableGroups"], `"VIP1":"VIP1（Seedance 78档）"`) &&
+		!strings.Contains(updates["UserUsableGroups"], `"VIP1": "VIP1（Seedance 78档）"`) {
+		t.Fatalf("usable groups must describe VIP1 as Seedance-only: %s", updates["UserUsableGroups"])
 	}
 }
 

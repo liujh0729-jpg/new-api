@@ -8,6 +8,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/pkg/aipddcatalog"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
@@ -113,4 +114,59 @@ func TestAIPDDDoesNotAcceptUnsetRatioAsLocalPricing(t *testing.T) {
 
 	_, err := ModelPriceHelperPerCall(ctx, info)
 	require.Error(t, err)
+}
+
+func TestExplicitAIPDDFreeModelIsListableAndFreeWithoutLocalPricing(t *testing.T) {
+	modelPriceSnapshot := ratio_setting.ModelPrice2JSONString()
+	modelRatioSnapshot := ratio_setting.ModelRatio2JSONString()
+	t.Cleanup(func() {
+		aipddcatalog.ResetExplicitFreeModels()
+		require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(modelPriceSnapshot))
+		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(modelRatioSnapshot))
+	})
+	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{}`))
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{}`))
+	aipddcatalog.SetExplicitFreeModels([]string{"free-catalog-model"})
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Set("group", "default")
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "free-catalog-model",
+		UserGroup:       "default",
+		UsingGroup:      "default",
+		ChannelMeta:     &relaycommon.ChannelMeta{ChannelType: constant.ChannelTypeAIPDD},
+	}
+
+	require.True(t, HasModelBillingConfig("free-catalog-model"))
+	priceData, err := ModelPriceHelper(ctx, info, 1234, &types.TokenCountMeta{MaxTokens: 500})
+	require.NoError(t, err)
+	require.True(t, priceData.FreeModel)
+	require.True(t, priceData.UsePrice)
+	require.Zero(t, priceData.ModelPrice)
+	require.Zero(t, priceData.QuotaToPreConsume)
+}
+
+func TestExplicitAIPDDFreeModelPreservesAdministratorLocalRatio(t *testing.T) {
+	modelPriceSnapshot := ratio_setting.ModelPrice2JSONString()
+	modelRatioSnapshot := ratio_setting.ModelRatio2JSONString()
+	t.Cleanup(func() {
+		aipddcatalog.ResetExplicitFreeModels()
+		require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(modelPriceSnapshot))
+		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(modelRatioSnapshot))
+	})
+	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{}`))
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{"free-catalog-model":2}`))
+	aipddcatalog.SetExplicitFreeModels([]string{"free-catalog-model"})
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Set("group", "default")
+	info := &relaycommon.RelayInfo{OriginModelName: "free-catalog-model", UserGroup: "default", UsingGroup: "default"}
+
+	priceData, err := ModelPriceHelper(ctx, info, 100, &types.TokenCountMeta{})
+	require.NoError(t, err)
+	require.False(t, priceData.UsePrice)
+	require.Equal(t, 2.0, priceData.ModelRatio)
+	require.NotZero(t, priceData.QuotaToPreConsume)
 }

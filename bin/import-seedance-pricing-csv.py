@@ -4,8 +4,9 @@
 The CSV's "对比原生价" is treated directly as RMB/second and converted only
 to NewAPI's USD/second task-pricing base. The "计费单位" column is retained for
 template compatibility but does not scale the price. VIP1..VIP5 use fixed
-global ratios. A resolution whose five tier cells are all 1 is marked to keep
-its native price for every group.
+ratios that NewAPI applies only to Seedance models; other models remain at
+their undiscounted price. A resolution whose five tier cells are all 1 is
+marked to keep its native price for every group.
 
 The command is a dry run unless --apply is supplied. Authentication uses an
 in-memory cookie jar and an interactive password prompt; secrets are not saved.
@@ -314,7 +315,7 @@ def build_plan(
         group_ratio[group_name] = json_number(ratio)
         usable_groups.setdefault(
             group_name,
-            f"{group_name}（{int(ratio * 100)}档）",
+            f"{group_name}（Seedance {int(ratio * 100)}档）",
         )
 
     next_values = {
@@ -454,14 +455,14 @@ def print_summary(summary: dict[str, Any], rmb_per_usd: Decimal) -> None:
     print(f"CSV 数据行：{summary['source_rows']}")
     print(f"人民币/USD：{rmb_per_usd}")
     print("价格口径：对比原生价按人民币/秒直接导入，不按计费单位换算")
-    print("固定分组：" + ", ".join(f"{name}={ratio}" for name, ratio in GROUPS.items()))
+    print("Seedance 专用折扣分组：" + ", ".join(f"{name}={ratio}" for name, ratio in GROUPS.items()))
     if summary["exempt_resolutions"]:
         print("保持原价：" + ", ".join(summary["exempt_resolutions"]))
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="从 Seedance 零售价 CSV 一键导入任务价格矩阵和 VIP1-VIP5 固定分组"
+        description="从 Seedance 零售价 CSV 一键导入任务价格矩阵和 Seedance 专用 VIP1-VIP5 折扣分组"
     )
     parser.add_argument("csv_file", type=Path, help="零售价 CSV 文件")
     parser.add_argument("--base-url", required=True, help="NewAPI 地址，例如 https://api.example.com")
@@ -512,7 +513,7 @@ def main() -> int:
 
     backup_path = apply_plan(client, plan, args.backup_dir)
     print(f"导入成功，回滚备份：{backup_path.resolve()}")
-    print("请确认 AIPDD 渠道已启用 VIP1、VIP2、VIP3、VIP4、VIP5 分组。")
+    print("请确认 AIPDD 渠道已启用 VIP1、VIP2、VIP3、VIP4、VIP5 分组；这些折扣只作用于 Seedance。")
     return 0
 
 

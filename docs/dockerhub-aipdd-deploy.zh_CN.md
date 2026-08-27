@@ -99,6 +99,8 @@ services:
       - REDIS_CONN_STRING=redis://:${REDIS_PASSWORD}@redis:6379
       - AIPDD_API_KEY=${AIPDD_API_KEY}
       - AIPDD_CATALOG_SYNC_ON_BOOT=true
+      # 已接受 Token Market 对应版本隐私条款后才填写
+      - AIPDD_TOKEN_MARKET_PRIVACY_ACCEPTED=${AIPDD_TOKEN_MARKET_PRIVACY_ACCEPTED:-}
       - SESSION_SECRET=${SESSION_SECRET}
       - TZ=Asia/Shanghai
       - ERROR_LOG_ENABLED=true
@@ -229,6 +231,8 @@ docker run -d \
 
 ```env
 AIPDD_API_KEY=你的 AIPDD 上游 API Key
+# 可选：部署者接受对应版本隐私条款后才填写
+AIPDD_TOKEN_MARKET_PRIVACY_ACCEPTED=2026-08-v1
 ```
 
 系统启动时会自动：
@@ -239,6 +243,7 @@ AIPDD_API_KEY=你的 AIPDD 上游 API Key
 - 分组设置为 `default`。
 - 将 `AIPDD_API_KEY` 作为上游密钥使用。
 - 优先从 AIPDD 上游 catalog 获取模型列表、workflow 参数、端点类型和价格。
+- 同步以 `free-` 开头且由 catalog 显式标记 `free=true` 的零价模型；普通零价配置仍会被拒绝，避免误配成免费。
 - 上游 catalog 获取失败时，回退到内置 AIPDD 默认模型列表。
 - 创建或同步 AIPDD 模型目录元数据。
 
@@ -249,6 +254,7 @@ AIPDD_API_KEY=你的 AIPDD 上游 API Key
 | `AIPDD_BASE_URL` | `https://api.aipdd.work` | AIPDD 上游地址 |
 | `AIPDD_CATALOG_SYNC_ON_BOOT` | `true` | 容器启动时是否同步上游模型 catalog |
 | `AIPDD_CATALOG_SYNC_TIMEOUT_SECONDS` | `10` | 启动同步超时时间 |
+| `AIPDD_TOKEN_MARKET_PRIVACY_ACCEPTED` | 空 | Token Market 隐私条款版本；只有部署者显式填写时才会透传给 AIPDD，例如 `2026-08-v1` |
 
 ### 后台手动添加
 

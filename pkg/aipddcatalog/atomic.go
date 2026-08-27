@@ -42,6 +42,7 @@ type AtomicPricing struct {
 	PricingBasis         string                                             `json:"pricingBasis,omitempty"`
 	BillingMode          string                                             `json:"billingMode,omitempty"`
 	Enabled              bool                                               `json:"enabled"`
+	Free                 bool                                               `json:"free,omitempty"`
 	ChargeConfig         map[string]any                                     `json:"chargeConfig"`
 	PromptPerMillion     float64                                            `json:"promptPerMillion"`
 	CompletionPerMillion float64                                            `json:"completionPerMillion"`
@@ -261,7 +262,20 @@ func (catalog AtomicCatalog) Validate() error {
 		if model.Pricing.CacheWritePerMillion != nil && *model.Pricing.CacheWritePerMillion < 0 {
 			return fmt.Errorf("AIPDD LLM model %q has a negative cache write price", model.ID)
 		}
-		if model.Pricing.PromptPerMillion == 0 && model.Pricing.CompletionPerMillion == 0 {
+		if model.Pricing.Free {
+			if !strings.EqualFold(strings.TrimSpace(model.Pricing.PricingModel), "per_token") ||
+				!strings.EqualFold(strings.TrimSpace(model.Pricing.Currency), "awcoin") || !model.Pricing.Enabled {
+				return fmt.Errorf("AIPDD free LLM model %q has invalid pricing metadata", model.ID)
+			}
+			if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(model.ID)), "free-") {
+				return fmt.Errorf("AIPDD LLM model %q declares free pricing without a free- model ID", model.ID)
+			}
+			if model.Pricing.PromptPerMillion != 0 || model.Pricing.CompletionPerMillion != 0 ||
+				(model.Pricing.CacheReadPerMillion != nil && *model.Pricing.CacheReadPerMillion != 0) ||
+				(model.Pricing.CacheWritePerMillion != nil && *model.Pricing.CacheWritePerMillion != 0) {
+				return fmt.Errorf("AIPDD free LLM model %q must have zero prices in every token lane", model.ID)
+			}
+		} else if model.Pricing.PromptPerMillion == 0 && model.Pricing.CompletionPerMillion == 0 {
 			return fmt.Errorf("AIPDD LLM model %q has no effective price", model.ID)
 		}
 		if catalog.SchemaVersion >= 2 {
