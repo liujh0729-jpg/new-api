@@ -23,8 +23,8 @@ func TestFetchAtomicFiltersExcludedFamiliesOnReceiver(t *testing.T) {
 					{"id":"aipdd_lightx2v_ltx23_distilled_fp8_i2av","code":"aipdd_lightx2v_ltx23_distilled_fp8_i2av","adapterCode":"lightx2v_python","execution":{"protocol":"shared_task","path":"/shared-tasks/tasks"},"pricing":{"enabled":true,"chargeConfig":{"amountAwcoin":10}}}
 				],
 				"models":[
-					{"id":"qwen3:8b","execution":{"protocol":"openai","path":"/v1/chat/completions"},"pricing":{"enabled":true,"promptPerMillion":10,"completionPerMillion":20}},
-					{"id":"funasr-llm","execution":{"protocol":"openai","path":"/v1/chat/completions"},"pricing":{"enabled":true,"promptPerMillion":10,"completionPerMillion":20}}
+					{"id":"qwen3:8b","execution":{"protocol":"openai","path":"/v1/chat/completions"},"pricing":{"enabled":true,"promptPerMillion":10,"completionPerMillion":20,"cacheReadPerMillion":0,"cacheWritePerMillion":10}},
+					{"id":"funasr-llm","execution":{"protocol":"openai","path":"/v1/chat/completions"},"pricing":{"enabled":true,"promptPerMillion":10,"completionPerMillion":20,"cacheReadPerMillion":0,"cacheWritePerMillion":10}}
 				]
 			}
 		}`))
@@ -37,6 +37,65 @@ func TestFetchAtomicFiltersExcludedFamiliesOnReceiver(t *testing.T) {
 	runtimeCapabilities := catalog.RuntimeCapabilities()
 	require.Len(t, runtimeCapabilities, 1)
 	require.Equal(t, "keep-comfy", runtimeCapabilities[0].ModelName)
+}
+
+func TestAtomicCatalogV2AcceptsVisionAndFunctionToolMetadata(t *testing.T) {
+	cacheRead := 2.0
+	cacheWrite := 12.5
+	catalog := AtomicCatalog{
+		SchemaVersion: 2,
+		Revision:      "vision-tools-v2",
+		AWCoinRate:    AtomicAWCoinRate{RMBPerAWCoin: 0.01, USDPerAWCoin: 0.0015},
+		Models: []AtomicModel{{
+			ID: "market/vision-tools", InputModalities: []string{"text", "image"}, OutputModalities: []string{"text"},
+			Available: true, Execution: AtomicExecution{Protocol: "openai", Path: "/v1/chat/completions"},
+			Pricing: AtomicPricing{
+				Enabled: true, PromptPerMillion: 10, CompletionPerMillion: 20,
+				CacheReadPerMillion: &cacheRead, CacheWritePerMillion: &cacheWrite,
+			},
+			Protocols: []string{"chat", "responses"},
+			Features: &AtomicFeatures{
+				ImageSources:  []string{"https", "data"},
+				FunctionTools: AtomicFunctionTools{Basic: true, Strict: true, Streaming: true, MultiRound: true},
+				Usage:         AtomicUsage{Streaming: true, NonStreaming: true},
+				ByProtocol: map[string]AtomicProtocolCapabilities{
+					"chat": {
+						InputModalities: []string{"text", "image"},
+						ImageSources:    []string{"data", "https"},
+						FunctionTools:   AtomicFunctionTools{Basic: true, Streaming: true},
+						Usage:           AtomicUsage{Streaming: true, NonStreaming: true},
+					},
+				},
+			},
+		}},
+	}
+	require.NoError(t, catalog.Validate())
+	encoded, err := MarshalAtomic(catalog)
+	require.NoError(t, err)
+	decoded, err := UnmarshalAtomic(encoded)
+	require.NoError(t, err)
+	require.Equal(t, []string{"chat", "responses"}, decoded.Models[0].Protocols)
+	require.True(t, decoded.Models[0].Features.FunctionTools.Strict)
+	require.True(t, decoded.Models[0].Features.Usage.NonStreaming)
+	require.True(t, decoded.Models[0].Features.ByProtocol["chat"].FunctionTools.Streaming)
+	require.Equal(t, 2.0, *decoded.Models[0].Pricing.CacheReadPerMillion)
+	require.Equal(t, 12.5, *decoded.Models[0].Pricing.CacheWritePerMillion)
+}
+
+func TestAtomicCatalogRejectsLLMWithoutFourTierPricing(t *testing.T) {
+	catalog := AtomicCatalog{
+		SchemaVersion: 2,
+		Revision:      "missing-cache-prices",
+		AWCoinRate:    AtomicAWCoinRate{RMBPerAWCoin: 0.01, USDPerAWCoin: 0.0015},
+		Models: []AtomicModel{{
+			ID: "market/incomplete",
+			Pricing: AtomicPricing{
+				Enabled: true, PromptPerMillion: 10, CompletionPerMillion: 20,
+			},
+		}},
+	}
+
+	require.ErrorContains(t, catalog.Validate(), "must provide cache read and cache write prices")
 }
 
 func TestTaskAWCoinPriceUsesStrictSeedanceDisplayContract(t *testing.T) {

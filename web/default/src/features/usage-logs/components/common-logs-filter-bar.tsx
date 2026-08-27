@@ -158,13 +158,14 @@ export function CommonLogsFilterBar<TData>(
   )
 
   const hasExpandedFilters =
-    !!filters.token ||
-    !!filters.username ||
-    !!filters.channel ||
-    !!filters.requestId
+    !!filters.token || !!filters.channel || !!filters.requestId
 
   const hasAdditionalFilters =
-    !!filters.model || !!filters.group || !!logType || hasExpandedFilters
+    !!filters.model ||
+    !!filters.group ||
+    !!logType ||
+    !!filters.username ||
+    hasExpandedFilters
 
   const inputClass = 'w-full sm:w-[140px] lg:w-[160px]'
   const sensitiveType = sensitiveVisible ? 'text' : 'password'
@@ -210,6 +211,15 @@ export function CommonLogsFilterBar<TData>(
       }
       additionalSearch={
         <>
+          {isAdmin && (
+            <Input
+              placeholder={t('Username or ID')}
+              value={filters.username || ''}
+              onChange={(e) => handleChange('username', e.target.value)}
+              onKeyDown={handleKeyDown}
+              className={inputClass}
+            />
+          )}
           <Input
             placeholder={t('Model Name')}
             value={filters.model || ''}
@@ -264,16 +274,6 @@ export function CommonLogsFilterBar<TData>(
             onKeyDown={handleKeyDown}
             className={inputClass}
           />
-          {isAdmin && (
-            <Input
-              placeholder={t('Username')}
-              type={sensitiveType}
-              value={filters.username || ''}
-              onChange={(e) => handleChange('username', e.target.value)}
-              onKeyDown={handleKeyDown}
-              className={inputClass}
-            />
-          )}
           {isAdmin && (
             <Input
               placeholder={t('Channel ID')}

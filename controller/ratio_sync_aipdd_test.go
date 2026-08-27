@@ -12,6 +12,8 @@ import (
 func TestAIPDDCatalogRatioDataSkipsPerSecondTaskPrices(t *testing.T) {
 	displayAmount := 40.0
 	displayVideoAmount := 60.0
+	cacheRead := 0.0
+	cacheWrite := 0.0
 	seedancePricing := aipddcatalog.AtomicPricing{
 		PricingModel: "per_second", Currency: "awcoin", PricingBasis: "display", Enabled: true,
 		ByResolution: map[string]constant.AIPDDSeedanceResolutionPricing{
@@ -46,6 +48,7 @@ func TestAIPDDCatalogRatioDataSkipsPerSecondTaskPrices(t *testing.T) {
 			Pricing: aipddcatalog.AtomicPricing{
 				PricingModel: "per_token", Currency: "awcoin", Enabled: true,
 				PromptPerMillion: 10, CompletionPerMillion: 30,
+				CacheReadPerMillion: &cacheRead, CacheWritePerMillion: &cacheWrite,
 			},
 		}},
 	}
@@ -61,7 +64,30 @@ func TestAIPDDCatalogRatioDataSkipsPerSecondTaskPrices(t *testing.T) {
 	require.Equal(t, billing_setting.BillingModeTieredExpr, modes["aipdd-llm"])
 	exprs, ok := data[billing_setting.BillingExprField].(map[string]string)
 	require.True(t, ok)
-	require.Equal(t, `tier("aipdd", p * 0.1 + c * 0.3)`, exprs["aipdd-llm"])
+	require.Equal(t, `tier("aipdd", p * 0.1 + c * 0.3 + cr * 0 + cc * 0 + cc1h * 0)`, exprs["aipdd-llm"])
+}
+
+func TestAIPDDCatalogRatioDataUsesCacheAwareExpressionWhenPricesArePresent(t *testing.T) {
+	cacheRead := 2.0
+	cacheWrite := 12.5
+	catalog := aipddcatalog.AtomicCatalog{
+		AWCoinRate: aipddcatalog.AtomicAWCoinRate{USDPerAWCoin: 0.01},
+		Models: []aipddcatalog.AtomicModel{{
+			ID: "market/cache-aware",
+			Pricing: aipddcatalog.AtomicPricing{
+				PricingModel: "per_token", Currency: "awcoin", Enabled: true,
+				PromptPerMillion: 10, CompletionPerMillion: 30,
+				CacheReadPerMillion: &cacheRead, CacheWritePerMillion: &cacheWrite,
+			},
+		}},
+	}
+
+	data := aipddCatalogRatioData(catalog)
+	exprs := data[billing_setting.BillingExprField].(map[string]string)
+	require.Equal(
+		t,
+		`tier("aipdd", p * 0.1 + c * 0.3 + cr * 0.02 + cc * 0.125 + cc1h * 0.125)`,
+		exprs["market/cache-aware"])
 }
 
 func TestStripTaskPricingSyncModelsRemovesDerivedLegacyPrices(t *testing.T) {

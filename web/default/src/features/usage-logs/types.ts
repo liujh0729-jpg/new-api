@@ -59,6 +59,7 @@ export interface CommonLogFilters extends CommonFilters {
  */
 export interface DrawingLogFilters extends CommonFilters {
   mjId?: string
+  username?: string
 }
 
 /**
@@ -66,6 +67,7 @@ export interface DrawingLogFilters extends CommonFilters {
  */
 export interface TaskLogFilters extends CommonFilters {
   taskId?: string
+  username?: string
 }
 
 /**
@@ -329,6 +331,7 @@ export interface GetMidjourneyLogsParams {
   page_size?: number
   channel_id?: string
   mj_id?: string
+  username?: string
   start_timestamp?: number
   end_timestamp?: number
 }
@@ -342,6 +345,7 @@ export interface GetTaskLogsParams {
   page_size?: number
   channel_id?: string
   task_id?: string
+  username?: string
   start_timestamp?: number
   end_timestamp?: number
 }

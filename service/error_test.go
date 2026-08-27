@@ -1,13 +1,33 @@
 package service
 
 import (
+	"context"
 	"errors"
+	"io"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/types"
 	"github.com/stretchr/testify/require"
 )
+
+func TestRelayErrorHandlerPreservesRecoveryHeaders(t *testing.T) {
+	t.Parallel()
+	header := http.Header{}
+	header.Set("Retry-After", "45")
+	header.Set("X-RateLimit-Reset", "1798483200")
+	response := &http.Response{
+		StatusCode: http.StatusTooManyRequests,
+		Header:     header,
+		Body: io.NopCloser(strings.NewReader(`{"error":{"message":"rate limited","type":"rate_limit_error","code":"rate_limit"}}`)),
+	}
+
+	apiErr := RelayErrorHandler(context.Background(), response, false)
+	require.NotNil(t, apiErr)
+	require.Equal(t, "45", apiErr.RetryAfter)
+	require.Equal(t, "1798483200", apiErr.RateLimitReset)
+}
 
 func TestTaskErrorFromAPIError_MarksLocalError(t *testing.T) {
 	t.Parallel()

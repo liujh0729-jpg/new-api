@@ -268,6 +268,12 @@ func upsertAIPDDModelsTx(tx *gorm.DB, catalog aipddcatalog.AtomicCatalog, vendor
 		} else if model, ok := llmByName[modelName]; ok {
 			description = model.Description
 			tags = "AIPDD,Ollama,LLM,OpenAI兼容"
+			if containsCatalogValue(model.InputModalities, "image") {
+				tags += ",视觉理解"
+			}
+			if model.Features != nil && model.Features.FunctionTools.Basic {
+				tags += ",Function Tools"
+			}
 		}
 		var item Model
 		err := tx.Unscoped().Where("model_name = ?", modelName).First(&item).Error
@@ -288,6 +294,15 @@ func upsertAIPDDModelsTx(tx *gorm.DB, catalog aipddcatalog.AtomicCatalog, vendor
 		}
 	}
 	return nil
+}
+
+func containsCatalogValue(values []string, expected string) bool {
+	for _, value := range values {
+		if strings.EqualFold(strings.TrimSpace(value), expected) {
+			return true
+		}
+	}
+	return false
 }
 
 func upsertManagedAIPDDChannelTx(tx *gorm.DB, baseURL, apiKey string, modelNames []string) (*Channel, error) {

@@ -163,6 +163,9 @@ export function buildBaseParams(config: {
           channel_id: String(searchParams.channel),
         }
       : {}),
+    ...(searchParams.username
+      ? { username: String(searchParams.username) }
+      : {}),
     ...buildTimeRangeParams(searchParams, useMilliseconds),
   }
 }

@@ -174,8 +174,8 @@ func TestFetchChannelUpstreamModelIDsMergesAIPDDTaskAndOpenAIModels(t *testing.T
 						]
 					}],
 					"models": [
-						{"id": "gemma3:1b", "pricing": {"enabled": true, "promptPerMillion": 10, "completionPerMillion": 20}, "execution": {"protocol": "openai", "path": "/v1/chat/completions"}},
-						{"id": "qwen2.5:0.5b", "pricing": {"enabled": true, "promptPerMillion": 10, "completionPerMillion": 20}, "execution": {"protocol": "openai", "path": "/v1/chat/completions"}}
+						{"id": "gemma3:1b", "pricing": {"enabled": true, "promptPerMillion": 10, "completionPerMillion": 20, "cacheReadPerMillion": 0, "cacheWritePerMillion": 10}, "execution": {"protocol": "openai", "path": "/v1/chat/completions"}},
+						{"id": "qwen2.5:0.5b", "pricing": {"enabled": true, "promptPerMillion": 10, "completionPerMillion": 20, "cacheReadPerMillion": 0, "cacheWritePerMillion": 10}, "execution": {"protocol": "openai", "path": "/v1/chat/completions"}}
 					]
 				}
 			}`))

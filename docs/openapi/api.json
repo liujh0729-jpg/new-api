@@ -3567,9 +3567,9 @@
     },
     "/api/usage/token/": {
       "get": {
-        "summary": "获取令牌使用情况",
+        "summary": "查询当前 API Key 的额度和用量",
         "deprecated": false,
-        "description": "🔑 需要令牌认证（TokenAuth）",
+        "description": "🔑 使用 API Key 只读鉴权。返回当前 API Key 的总额度、已用额度和剩余额度。注意：这里是 API Key 维度，不是账号下所有 Key 的账号总余额；额度数值均为站点内部原始额度单位（quota units），不会自动换算为人民币或美元。",
         "tags": [
           "令牌管理"
         ],
@@ -3577,9 +3577,9 @@
           {
             "name": "Authorization",
             "in": "header",
-            "description": "",
-            "required": false,
-            "example": "",
+            "description": "Bearer 格式的 API Key。此接口必须包含 Bearer 前缀。",
+            "required": true,
+            "example": "Bearer sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
             "schema": {
               "type": "string"
             }
@@ -3587,7 +3587,131 @@
         ],
         "responses": {
           "200": {
-            "description": "成功",
+            "description": "查询成功",
+            "headers": {},
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "data"
+                  ],
+                  "properties": {
+                    "code": {
+                      "type": "boolean",
+                      "description": "是否成功；成功时为 true"
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "响应消息；成功时为 ok"
+                    },
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "object",
+                        "name",
+                        "total_granted",
+                        "total_used",
+                        "total_available",
+                        "unlimited_quota",
+                        "model_limits",
+                        "model_limits_enabled",
+                        "expires_at"
+                      ],
+                      "properties": {
+                        "object": {
+                          "type": "string",
+                          "description": "对象类型，固定为 token_usage",
+                          "enum": [
+                            "token_usage"
+                          ]
+                        },
+                        "name": {
+                          "type": "string",
+                          "description": "API Key 名称"
+                        },
+                        "total_granted": {
+                          "type": "integer",
+                          "description": "当前 Key 的总额度，等于 total_used + total_available；单位为原始额度单位"
+                        },
+                        "total_used": {
+                          "type": "integer",
+                          "description": "当前 Key 的累计已用额度；单位为原始额度单位"
+                        },
+                        "total_available": {
+                          "type": "integer",
+                          "description": "当前 Key 的剩余额度；单位为原始额度单位。通常将该字段作为 Key 余额"
+                        },
+                        "unlimited_quota": {
+                          "type": "boolean",
+                          "description": "是否为无限额度 Key；为 true 时不要用 total_available 判断 Key 是否可用"
+                        },
+                        "model_limits": {
+                          "type": "object",
+                          "description": "当前 Key 的模型调用上限映射；未配置时通常为空对象",
+                          "additionalProperties": {
+                            "type": "boolean"
+                          }
+                        },
+                        "model_limits_enabled": {
+                          "type": "boolean",
+                          "description": "是否启用模型调用上限"
+                        },
+                        "expires_at": {
+                          "type": "integer",
+                          "format": "int64",
+                          "description": "Key 过期时间，Unix 时间戳（秒）；0 表示永不过期"
+                        }
+                      }
+                    }
+                  }
+                },
+                "example": {
+                  "code": true,
+                  "message": "ok",
+                  "data": {
+                    "object": "token_usage",
+                    "name": "default",
+                    "total_granted": 100000,
+                    "total_used": 20000,
+                    "total_available": 80000,
+                    "unlimited_quota": false,
+                    "model_limits": {},
+                    "model_limits_enabled": false,
+                    "expires_at": 0
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未提供 Authorization、Bearer 格式错误或 API Key 无效",
+            "headers": {},
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": false
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "example": {
+                  "success": false,
+                  "message": "Invalid Bearer token"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API Key 所属用户已被封禁",
             "headers": {}
           }
         },

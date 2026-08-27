@@ -104,7 +104,8 @@ type seedanceOfficialTaskResponse struct {
 	Content        struct {
 		VideoURL string `json:"video_url"`
 	} `json:"content"`
-	Error any `json:"error"`
+	Usage *dto.VideoUsage `json:"usage,omitempty"`
+	Error any             `json:"error"`
 }
 
 type aipddTask struct {
@@ -959,9 +960,6 @@ func (a *TaskAdaptor) ConvertToSeedanceOfficialTask(originTask *model.Task) ([]b
 	stripSeedanceInternalResponseFields(response)
 	delete(response, "task_id")
 	delete(response, "taskId")
-	if _, exists := response["usage"]; exists {
-		response["usage"] = map[string]any{}
-	}
 	response["id"] = originTask.TaskID
 
 	publicModel := firstNonEmpty(originTask.Properties.OriginModelName, anyToString(response["model"]))
@@ -1090,6 +1088,9 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, erro
 		}
 		if strings.TrimSpace(official.Resolution) != "" {
 			openAIVideo.SetMetadata("resolution", official.Resolution)
+		}
+		if official.Usage != nil && official.Usage.CompletionTokens > 0 && official.Usage.TotalTokens > 0 {
+			openAIVideo.Usage = official.Usage
 		}
 		if isSeedanceOfficialFailure(official.Status) || originTask.Status == model.TaskStatusFailure {
 			rawMessage, rawCode := seedanceOfficialErrorDetails(official)

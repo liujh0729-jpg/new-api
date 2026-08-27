@@ -45,6 +45,8 @@ type AtomicPricing struct {
 	ChargeConfig         map[string]any                                     `json:"chargeConfig"`
 	PromptPerMillion     float64                                            `json:"promptPerMillion"`
 	CompletionPerMillion float64                                            `json:"completionPerMillion"`
+	CacheReadPerMillion  *float64                                           `json:"cacheReadPerMillion"`
+	CacheWritePerMillion *float64                                           `json:"cacheWritePerMillion"`
 	ByResolution         map[string]constant.AIPDDSeedanceResolutionPricing `json:"byResolution"`
 }
 
@@ -75,6 +77,35 @@ type AtomicModel struct {
 	Available        bool            `json:"available"`
 	Execution        AtomicExecution `json:"execution"`
 	Pricing          AtomicPricing   `json:"pricing"`
+	Protocols        []string        `json:"protocols,omitempty"`
+	Features         *AtomicFeatures `json:"features,omitempty"`
+}
+
+type AtomicFeatures struct {
+	ImageSources  []string                              `json:"imageSources,omitempty"`
+	FunctionTools AtomicFunctionTools                   `json:"functionTools"`
+	Usage         AtomicUsage                           `json:"usage"`
+	ByProtocol    map[string]AtomicProtocolCapabilities `json:"byProtocol,omitempty"`
+}
+
+type AtomicProtocolCapabilities struct {
+	InputModalities []string            `json:"inputModalities,omitempty"`
+	ImageSources    []string            `json:"imageSources,omitempty"`
+	FunctionTools   AtomicFunctionTools `json:"functionTools"`
+	Usage           AtomicUsage         `json:"usage"`
+}
+
+type AtomicFunctionTools struct {
+	Basic      bool `json:"basic"`
+	Strict     bool `json:"strict"`
+	Parallel   bool `json:"parallel"`
+	Streaming  bool `json:"streaming"`
+	MultiRound bool `json:"multiRound"`
+}
+
+type AtomicUsage struct {
+	Streaming    bool `json:"streaming"`
+	NonStreaming bool `json:"nonStreaming"`
 }
 
 type atomicCatalogResponse struct {
@@ -189,7 +220,7 @@ func excludedAIPDDCatalogText(values ...string) bool {
 }
 
 func (catalog AtomicCatalog) Validate() error {
-	if catalog.SchemaVersion != 1 {
+	if catalog.SchemaVersion != 1 && catalog.SchemaVersion != 2 {
 		return fmt.Errorf("unsupported AIPDD catalog schemaVersion %d", catalog.SchemaVersion)
 	}
 	if strings.TrimSpace(catalog.Revision) == "" {
@@ -219,8 +250,33 @@ func (catalog AtomicCatalog) Validate() error {
 		if strings.TrimSpace(model.ID) == "" || model.Pricing.PromptPerMillion < 0 || model.Pricing.CompletionPerMillion < 0 {
 			return fmt.Errorf("invalid AIPDD LLM model entry")
 		}
+		if model.Pricing.CacheReadPerMillion == nil || model.Pricing.CacheWritePerMillion == nil {
+			return fmt.Errorf("AIPDD LLM model %q must provide cache read and cache write prices", model.ID)
+		}
+		if *model.Pricing.CacheReadPerMillion < 0 {
+			return fmt.Errorf("AIPDD LLM model %q has a negative cache read price", model.ID)
+		}
+		if *model.Pricing.CacheWritePerMillion < 0 {
+			return fmt.Errorf("AIPDD LLM model %q has a negative cache write price", model.ID)
+		}
 		if model.Pricing.PromptPerMillion == 0 && model.Pricing.CompletionPerMillion == 0 {
 			return fmt.Errorf("AIPDD LLM model %q has no effective price", model.ID)
+		}
+		if catalog.SchemaVersion >= 2 {
+			for _, protocol := range model.Protocols {
+				value := strings.ToLower(strings.TrimSpace(protocol))
+				if value != "chat" && value != "responses" && value != "messages" {
+					return fmt.Errorf("AIPDD LLM model %q has unsupported protocol %q", model.ID, protocol)
+				}
+			}
+			if model.Features != nil {
+				for protocol := range model.Features.ByProtocol {
+					value := strings.ToLower(strings.TrimSpace(protocol))
+					if value != "chat" && value != "responses" && value != "messages" {
+						return fmt.Errorf("AIPDD LLM model %q has unsupported capability protocol %q", model.ID, protocol)
+					}
+				}
+			}
 		}
 	}
 	return nil

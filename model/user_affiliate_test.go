@@ -105,6 +105,66 @@ func TestOAuthInsertPersistsAndCountsInvitationWhenRewardDisabled(t *testing.T) 
 	assertInvitationRecorded(t, db, inviter.Id, invitee.Id)
 }
 
+func TestInsertAlwaysRecordsUserCreatedLogWhenGiftQuotaDisabled(t *testing.T) {
+	db := setupUserAffiliateTestDB(t)
+
+	user := User{
+		Username: "User_082602",
+		Password: "password123",
+		Role:     common.RoleCommonUser,
+		Status:   common.UserStatusEnabled,
+	}
+	require.NoError(t, user.Insert(0))
+
+	var logs []Log
+	require.NoError(t, db.Where("user_id = ?", user.Id).Order("id asc").Find(&logs).Error)
+	require.Len(t, logs, 1)
+	require.Equal(t, LogTypeSystem, logs[0].Type)
+	require.Equal(t, "User_082602", logs[0].Username)
+	require.Equal(t, "新用户创建", logs[0].Content)
+	require.NotZero(t, logs[0].CreatedAt)
+}
+
+func TestOAuthInsertAlwaysRecordsUserCreatedLogWhenGiftQuotaDisabled(t *testing.T) {
+	db := setupUserAffiliateTestDB(t)
+
+	user := User{
+		Username: "User_082603",
+		Role:     common.RoleCommonUser,
+		Status:   common.UserStatusEnabled,
+	}
+	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
+		return user.InsertWithTx(tx, 0)
+	}))
+	user.FinalizeOAuthUserCreation(0)
+
+	var logs []Log
+	require.NoError(t, db.Where("user_id = ?", user.Id).Order("id asc").Find(&logs).Error)
+	require.Len(t, logs, 1)
+	require.Equal(t, LogTypeSystem, logs[0].Type)
+	require.Equal(t, "User_082603", logs[0].Username)
+	require.Equal(t, "新用户创建", logs[0].Content)
+}
+
+func TestInsertRecordsGiftLogTogetherWithCreatedLog(t *testing.T) {
+	db := setupUserAffiliateTestDB(t)
+	common.QuotaForNewUser = 1000
+
+	user := User{
+		Username: "gifted-user",
+		Password: "password123",
+		Role:     common.RoleCommonUser,
+		Status:   common.UserStatusEnabled,
+	}
+	require.NoError(t, user.Insert(0))
+
+	var logs []Log
+	require.NoError(t, db.Where("user_id = ?", user.Id).Order("id asc").Find(&logs).Error)
+	require.Len(t, logs, 2)
+	require.Equal(t, "新用户创建", logs[0].Content)
+	require.Contains(t, logs[1].Content, "新用户注册赠送")
+}
+
 func TestInsertPreservesConfiguredInviterReward(t *testing.T) {
 	db := setupUserAffiliateTestDB(t)
 	common.QuotaForInviter = 250

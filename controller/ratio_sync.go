@@ -160,9 +160,17 @@ func aipddCatalogRatioData(catalog aipddcatalog.AtomicCatalog) map[string]any {
 		promptUSD := modelItem.Pricing.PromptPerMillion * catalog.AWCoinRate.USDPerAWCoin
 		completionUSD := modelItem.Pricing.CompletionPerMillion * catalog.AWCoinRate.USDPerAWCoin
 		modes[modelItem.ID] = billing_setting.BillingModeTieredExpr
-		exprs[modelItem.ID] = fmt.Sprintf("tier(\"aipdd\", p * %s + c * %s)",
-			strconv.FormatFloat(promptUSD, 'f', -1, 64),
-			strconv.FormatFloat(completionUSD, 'f', -1, 64))
+		promptPrice := strconv.FormatFloat(promptUSD, 'f', -1, 64)
+		completionPrice := strconv.FormatFloat(completionUSD, 'f', -1, 64)
+		cacheReadUSD := *modelItem.Pricing.CacheReadPerMillion * catalog.AWCoinRate.USDPerAWCoin
+		cacheWriteUSD := *modelItem.Pricing.CacheWritePerMillion * catalog.AWCoinRate.USDPerAWCoin
+		exprs[modelItem.ID] = fmt.Sprintf(
+			"tier(\"aipdd\", p * %s + c * %s + cr * %s + cc * %s + cc1h * %s)",
+			promptPrice,
+			completionPrice,
+			strconv.FormatFloat(cacheReadUSD, 'f', -1, 64),
+			strconv.FormatFloat(cacheWriteUSD, 'f', -1, 64),
+			strconv.FormatFloat(cacheWriteUSD, 'f', -1, 64))
 	}
 	data := make(map[string]any)
 	if len(prices) > 0 {

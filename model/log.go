@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -377,9 +378,7 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 	if modelName != "" {
 		tx = tx.Where("logs.model_name like ?", modelName)
 	}
-	if username != "" {
-		tx = tx.Where("logs.username = ?", username)
-	}
+	tx = applyLogUserFilter(tx, username)
 	if tokenName != "" {
 		tx = tx.Where("logs.token_name = ?", tokenName)
 	}
@@ -509,10 +508,8 @@ func SumUsedQuota(logType int, startTimestamp int64, endTimestamp int64, modelNa
 	// 为rpm和tpm创建单独的查询
 	rpmTpmQuery := LOG_DB.Table("logs").Select("count(*) rpm, sum(prompt_tokens) + sum(completion_tokens) tpm")
 
-	if username != "" {
-		tx = tx.Where("username = ?", username)
-		rpmTpmQuery = rpmTpmQuery.Where("username = ?", username)
-	}
+	tx = applyLogUserFilter(tx, username)
+	rpmTpmQuery = applyLogUserFilter(rpmTpmQuery, username)
 	if tokenName != "" {
 		tx = tx.Where("token_name = ?", tokenName)
 		rpmTpmQuery = rpmTpmQuery.Where("token_name = ?", tokenName)
@@ -561,9 +558,7 @@ func SumUsedQuota(logType int, startTimestamp int64, endTimestamp int64, modelNa
 
 func SumUsedToken(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string) (token int) {
 	tx := LOG_DB.Table("logs").Select("ifnull(sum(prompt_tokens),0) + ifnull(sum(completion_tokens),0)")
-	if username != "" {
-		tx = tx.Where("username = ?", username)
-	}
+	tx = applyLogUserFilter(tx, username)
 	if tokenName != "" {
 		tx = tx.Where("token_name = ?", tokenName)
 	}
@@ -578,6 +573,18 @@ func SumUsedToken(logType int, startTimestamp int64, endTimestamp int64, modelNa
 	}
 	tx.Where("type = ?", LogTypeConsume).Scan(&token)
 	return token
+}
+
+func applyLogUserFilter(tx *gorm.DB, keyword string) *gorm.DB {
+	keyword = strings.TrimSpace(keyword)
+	if keyword == "" {
+		return tx
+	}
+	userIDs := ResolveUserIDsByKeyword(keyword)
+	if len(userIDs) > 0 {
+		return tx.Where("user_id IN (?) OR username = ?", userIDs, keyword)
+	}
+	return tx.Where("username = ?", keyword)
 }
 
 func DeleteOldLog(ctx context.Context, targetTimestamp int64, limit int) (int64, error) {

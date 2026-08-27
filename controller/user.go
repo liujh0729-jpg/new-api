@@ -883,6 +883,12 @@ func CreateUser(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	model.RecordLogWithAdminInfo(cleanUser.Id, model.LogTypeManage,
+		fmt.Sprintf("管理员创建用户 %s", cleanUser.Username),
+		map[string]interface{}{
+			"admin_id":       c.GetInt("id"),
+			"admin_username": c.GetString("username"),
+		})
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,

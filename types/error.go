@@ -90,6 +90,8 @@ const (
 type NewAPIError struct {
 	Err            error
 	RelayError     any
+	RetryAfter     string
+	RateLimitReset string
 	skipRetry      bool
 	recordErrorLog *bool
 	errorType      ErrorType

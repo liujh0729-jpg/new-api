@@ -543,6 +543,103 @@
         ]
       }
     },
+    "/api/v3/contents/generations/tasks": {
+      "post": {
+        "summary": "创建 Seedance 视频任务",
+        "deprecated": false,
+        "description": "Seedance 官方兼容的视频任务创建接口。请求参数遵循当前模型支持的 Seedance 2.0 或 2.5 参数集合。",
+        "operationId": "createSeedanceOfficialTask",
+        "tags": [
+          "视频生成/Seedance官方兼容格式"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "model"
+                ],
+                "properties": {
+                  "model": {
+                    "type": "string",
+                    "description": "公开 Seedance 模型名"
+                  }
+                },
+                "additionalProperties": true
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "任务已创建",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeedanceTaskCreateResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v3/contents/generations/tasks/{task_id}": {
+      "get": {
+        "summary": "获取 Seedance 视频任务",
+        "deprecated": false,
+        "description": "Seedance 官方兼容的任务查询接口。成功终态在折算条件完整时返回零售价等价 usage；其他状态或条件不完整时省略 usage。",
+        "operationId": "getSeedanceOfficialTask",
+        "tags": [
+          "视频生成/Seedance官方兼容格式"
+        ],
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "description": "公开任务 ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Seedance 官方兼容任务对象",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeedanceOfficialTask"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "任务不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
+      }
+    },
     "/v1/videos": {
       "post": {
         "summary": "创建视频 ",
@@ -690,7 +787,7 @@
       "get": {
         "summary": "获取视频任务状态 ",
         "deprecated": false,
-        "description": "OpenAI 兼容的视频任务状态查询接口。\n\n返回视频任务的详细状态信息。`status` 使用 OpenAI 状态枚举：`queued`（排队中）、`in_progress`（生成中）、`completed`（已完成）、`failed`（失败）。\n",
+        "description": "OpenAI 兼容的视频任务状态查询接口。\n\n返回视频任务的详细状态信息。`status` 使用 OpenAI 状态枚举：`queued`（排队中）、`in_progress`（生成中）、`completed`（已完成）、`failed`（失败）。Seedance 成功任务在折算条件完整时还会返回 `usage`；它是零售价等价输出 Token，不参与 New API 的任务计费。\n",
         "operationId": "getVideo",
         "tags": [
           "视频生成/Sora兼容格式"
@@ -742,6 +839,9 @@
                     },
                     "seconds": {
                       "type": "string"
+                    },
+                    "usage": {
+                      "$ref": "#/components/schemas/VideoUsage"
                     }
                   },
                   "required": [
@@ -4505,6 +4605,116 @@
           }
         }
       },
+      "SeedanceTaskCreateResponse": {
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "公开任务 ID"
+          }
+        }
+      },
+      "SeedanceOfficialUsage": {
+        "type": "object",
+        "description": "Seedance 官方字段形状的零售价等价输出 Token。按 ceil(最终计费秒数 × 冻结的建议零售价（元/秒） × 1,000,000 ÷ 冻结的折算零售价（元/百万输出 Token）) 计算；不表示模型真实计算 Token，也不参与 New API 的任务计费。",
+        "required": [
+          "completion_tokens",
+          "total_tokens"
+        ],
+        "properties": {
+          "completion_tokens": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          },
+          "total_tokens": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          },
+          "tool_usage": {
+            "type": "object",
+            "description": "上游官方响应原有的工具用量（如存在）。",
+            "additionalProperties": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "SeedanceOfficialTask": {
+        "type": "object",
+        "description": "Seedance 官方兼容任务对象。usage 仅在成功终态且折算条件完整时出现。",
+        "required": [
+          "id",
+          "status"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "running",
+              "succeeded",
+              "failed",
+              "cancelled"
+            ]
+          },
+          "duration": {
+            "type": "number",
+            "description": "最终或请求时长，单位为秒"
+          },
+          "resolution": {
+            "type": "string"
+          },
+          "content": {
+            "type": "object",
+            "properties": {
+              "video_url": {
+                "type": "string",
+                "format": "uri"
+              }
+            },
+            "additionalProperties": true
+          },
+          "usage": {
+            "$ref": "#/components/schemas/SeedanceOfficialUsage"
+          },
+          "error": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "additionalProperties": true
+      },
+      "VideoUsage": {
+        "type": "object",
+        "description": "Seedance 成功任务可选的零售价等价输出 Token。按 ceil(最终计费秒数 × 冻结的建议零售价（元/秒） × 1,000,000 ÷ 冻结的折算零售价（元/百万输出 Token）) 计算；不表示模型真实计算 Token，也不参与 New API 的任务计费。折算条件不完整时省略整个 usage 字段。",
+        "required": [
+          "completion_tokens",
+          "total_tokens"
+        ],
+        "properties": {
+          "completion_tokens": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          },
+          "total_tokens": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          }
+        },
+        "additionalProperties": false
+      },
       "OpenAIVideo": {
         "type": "object",
         "description": "OpenAI 兼容的视频对象",
@@ -4577,6 +4787,9 @@
             "description": "额外元数据",
             "additionalProperties": true,
             "properties": {}
+          },
+          "usage": {
+            "$ref": "#/components/schemas/VideoUsage"
           }
         }
       },

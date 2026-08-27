@@ -28,6 +28,15 @@ type OpenAIVideo struct {
 	RemixedFromVideoID string            `json:"remixed_from_video_id,omitempty"`
 	Error              *OpenAIVideoError `json:"error,omitempty"`
 	Metadata           map[string]any    `json:"metadata,omitempty"`
+	Usage              *VideoUsage       `json:"usage,omitempty"`
+}
+
+// VideoUsage mirrors the compact usage object returned by the official
+// Seedance task API. These are retail-equivalent output tokens and are not an
+// input to New API's task-pricing settlement.
+type VideoUsage struct {
+	CompletionTokens int64 `json:"completion_tokens"`
+	TotalTokens      int64 `json:"total_tokens"`
 }
 
 func (m *OpenAIVideo) SetProgressStr(progress string) {

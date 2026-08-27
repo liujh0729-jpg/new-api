@@ -2,6 +2,7 @@
 
 | 接口 | 说明 |
 | --- | --- |
+| `GET /api/usage/token/` | 查询**当前 API Key** 的总额度、已用额度和剩余额度 |
 | `GET /api/log/token` | 分页查询**当前 API Key** 的用量日志 |
 | `GET /api/task/token` | 分页查询**当前 API Key 所属用户**的异步任务 |
 
@@ -9,12 +10,12 @@ Base URL：`https://susciyuan.com`
 
 ---
 
-## 鉴权（两个接口相同）
+## 鉴权
 
 | 项 | 说明 |
 | --- | --- |
 | Header | `Authorization: Bearer sk-<API_KEY>` |
-| 兼容 | 也可省略 `Bearer`，直接传 `sk-<API_KEY>` |
+| 兼容 | `/api/log/token`、`/api/task/token` 可省略 `Bearer`，直接传 `sk-<API_KEY>`；`/api/usage/token/` 必须使用 Bearer 格式 |
 | 校验策略 | 只读鉴权：Key 存在即可；**不检查** Key 是否禁用、过期、额度耗尽 |
 | 用户状态 | 所属用户被封禁时拒绝（HTTP `403`） |
 
@@ -42,7 +43,7 @@ Authorization: Bearer sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
 ## 通用分页
 
-两个接口均使用同一套分页参数与响应结构。
+`GET /api/log/token` 与 `GET /api/task/token` 使用同一套分页参数与响应结构。余额接口不分页。
 
 ### Query 参数
 
@@ -69,7 +70,7 @@ Authorization: Bearer sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 | `total` | int | 总条数（见各接口说明） |
 | `items` | array | 当前页数据 |
 
-### 通用成功/失败外壳
+### 分页接口通用成功/失败外壳
 
 成功：
 
@@ -92,7 +93,69 @@ Authorization: Bearer sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
 ---
 
-## 1. `GET /api/log/token`
+## 1. `GET /api/usage/token/`
+
+查询当前 API Key 的额度和累计用量。该接口返回的是 **API Key 维度**的数据，不是账号下所有 Key 共享的账号总余额。
+
+### 基本信息
+
+| 项 | 值 |
+| --- | --- |
+| Method / Path | `GET /api/usage/token/`（规范路径包含末尾 `/`） |
+| 数据范围 | **仅当前 Key** |
+| Query 参数 | 无 |
+| 额度单位 | 原始额度单位（quota units），不是人民币或美元 |
+
+### 请求示例
+
+```bash
+curl -sS 'https://susciyuan.com/api/usage/token/' \
+  -H 'Authorization: Bearer sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'
+```
+
+### 成功响应示例
+
+```json
+{
+  "code": true,
+  "message": "ok",
+  "data": {
+    "object": "token_usage",
+    "name": "default",
+    "total_granted": 100000,
+    "total_used": 20000,
+    "total_available": 80000,
+    "unlimited_quota": false,
+    "model_limits": {},
+    "model_limits_enabled": false,
+    "expires_at": 0
+  }
+}
+```
+
+### `data` 字段
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `object` | string | 固定为 `token_usage` |
+| `name` | string | API Key 名称 |
+| `total_granted` | int | 当前 Key 的总额度，等于 `total_used + total_available` |
+| `total_used` | int | 当前 Key 的累计已用额度 |
+| `total_available` | int | 当前 Key 的剩余额度；通常将该字段作为 Key 余额 |
+| `unlimited_quota` | bool | 是否为无限额度 Key；为 `true` 时不要用 `total_available` 判断是否可用 |
+| `model_limits` | object | 当前 Key 的模型调用上限映射；未配置时通常为空对象 |
+| `model_limits_enabled` | bool | 是否启用模型调用上限 |
+| `expires_at` | int64 | Key 过期时间，Unix 时间戳（秒）；`0` 表示永不过期 |
+
+### 注意
+
+1. `total_granted`、`total_used`、`total_available` 都是站点内部原始额度单位，接口不会自动换算成人民币或美元。
+2. 该接口查询的是当前 Key，不是账号余额。需要账号级余额时，应使用控制台登录态接口 `GET /api/user/self`，读取响应中的 `quota`。
+3. 成功响应使用 `code: true`，与另外两个分页接口的 `success: true` 外壳不同。
+
+---
+
+## 2. `GET /api/log/token`
 
 分页查询当前 API Key 产生的用量日志。
 
@@ -220,7 +283,7 @@ curl -sS 'https://susciyuan.com/api/log/token?p=1&page_size=20' \
 
 ---
 
-## 2. `GET /api/task/token`
+## 3. `GET /api/task/token`
 
 分页查询当前 API Key 所属用户的异步任务列表。
 
@@ -358,22 +421,23 @@ curl -sS 'https://susciyuan.com/api/task/token?task_id=task_abc123' \
 
 ## 对比
 
-| 对比项 | `GET /api/log/token` | `GET /api/task/token` |
-| --- | --- | --- |
-| 鉴权 | API Key（只读） | API Key（只读） |
-| 数据范围 | 当前 Key 的日志 | 当前用户的全部任务 |
-| 分页 | `p` / `page_size` | `p` / `page_size` |
-| 业务过滤 | 无 | `platform` / `task_id` / `status` / `action` / 时间窗 |
-| 典型用途 | 对账、用量排查 | 查询/轮询视频、音乐等异步任务 |
+| 对比项 | `GET /api/usage/token/` | `GET /api/log/token` | `GET /api/task/token` |
+| --- | --- | --- | --- |
+| 鉴权 | API Key（只读，必须 Bearer 格式） | API Key（只读） | API Key（只读） |
+| 数据范围 | 当前 Key 的额度与用量 | 当前 Key 的日志 | 当前用户的全部任务 |
+| 分页 | 无 | `p` / `page_size` | `p` / `page_size` |
+| 业务过滤 | 无 | 无 | `platform` / `task_id` / `status` / `action` / 时间窗 |
+| 典型用途 | 查询 Key 余额 | 对账、用量排查 | 查询/轮询视频、音乐等异步任务 |
 
 ---
 
 ## HTTP 状态摘要
 
-| 场景 | HTTP | `success` |
+| 场景 | HTTP | 成功标记 |
 | --- | --- | --- |
-| 成功 | 200 | `true` |
-| 业务错误（如无效令牌上下文） | 200 | `false` |
-| 未带 / 无效 Authorization | 401 | `false` |
-| 用户被封禁 | 403 | `false` |
-| 服务端异常 | 500 | `false` |
+| 余额查询成功 | 200 | `code: true` |
+| 日志/任务查询成功 | 200 | `success: true` |
+| 业务错误（如无效令牌上下文） | 200 | 通常为 `success: false` |
+| 未带 / 无效 Authorization | 401 | `success: false` |
+| 用户被封禁 | 403 | `success: false` |
+| 服务端异常 | 500 | `success: false` |

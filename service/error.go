@@ -84,6 +84,14 @@ func ClaudeErrorWrapperLocal(err error, code string, statusCode int) *dto.Claude
 }
 
 func RelayErrorHandler(ctx context.Context, resp *http.Response, showBodyWhenFail bool) (newApiErr *types.NewAPIError) {
+	retryAfter := resp.Header.Get("Retry-After")
+	rateLimitReset := resp.Header.Get("X-RateLimit-Reset")
+	defer func() {
+		if newApiErr != nil {
+			newApiErr.RetryAfter = retryAfter
+			newApiErr.RateLimitReset = rateLimitReset
+		}
+	}()
 	newApiErr = types.InitOpenAIError(types.ErrorCodeBadResponseStatusCode, resp.StatusCode)
 
 	responseBody, err := io.ReadAll(resp.Body)

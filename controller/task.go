@@ -2,6 +2,7 @@ package controller
 
 import (
 	"strconv"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -33,6 +34,7 @@ func GetAllTask(c *gin.Context) {
 		StartTimestamp: startTimestamp,
 		EndTimestamp:   endTimestamp,
 		ChannelID:      c.Query("channel_id"),
+		UserIDs:        resolveAdminUserIDs(c.Query("username")),
 	}
 
 	items := model.TaskGetAllTasks(pageInfo.GetStartIdx(), pageInfo.GetPageSize(), queryParams)
@@ -77,6 +79,18 @@ func respondUserTaskPage(c *gin.Context, userId int) {
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(tasksToDto(items, false))
 	common.ApiSuccess(c, pageInfo)
+}
+
+func resolveAdminUserIDs(keyword string) []int {
+	keyword = strings.TrimSpace(keyword)
+	if keyword == "" {
+		return nil
+	}
+	ids := model.ResolveUserIDsByKeyword(keyword)
+	if len(ids) == 0 {
+		return []int{-1}
+	}
+	return ids
 }
 
 func tasksToDto(tasks []*model.Task, fillUser bool) []*dto.TaskDto {

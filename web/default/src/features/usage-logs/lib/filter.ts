@@ -62,6 +62,7 @@ export function buildSearchParams(
       return {
         ...baseParams,
         ...(drawingFilters.mjId && { filter: drawingFilters.mjId }),
+        ...(drawingFilters.username && { username: drawingFilters.username }),
       }
     }
     case 'task': {
@@ -69,6 +70,7 @@ export function buildSearchParams(
       return {
         ...baseParams,
         ...(taskFilters.taskId && { filter: taskFilters.taskId }),
+        ...(taskFilters.username && { username: taskFilters.username }),
       }
     }
     default:

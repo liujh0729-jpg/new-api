@@ -307,6 +307,24 @@ func GetUserById(id int, selectAll bool) (*User, error) {
 	return &user, err
 }
 
+// ResolveUserIDsByKeyword maps an admin user search box value to user IDs.
+// A numeric value matches id; otherwise username and display_name are matched exactly.
+func ResolveUserIDsByKeyword(keyword string) []int {
+	keyword = strings.TrimSpace(keyword)
+	if keyword == "" {
+		return nil
+	}
+	query := DB.Unscoped().Model(&User{})
+	if id, err := strconv.Atoi(keyword); err == nil && id > 0 {
+		query = query.Where("id = ? OR username = ? OR display_name = ?", id, keyword, keyword)
+	} else {
+		query = query.Where("username = ? OR display_name = ?", keyword, keyword)
+	}
+	var ids []int
+	_ = query.Pluck("id", &ids).Error
+	return ids
+}
+
 func GetUserIdByAffCode(affCode string) (int, error) {
 	if affCode == "" {
 		return 0, errors.New("affCode 为空！")
@@ -443,10 +461,7 @@ func (user *User) Insert(inviterId int) error {
 		}
 	}
 
-	if common.QuotaForNewUser > 0 {
-		RecordLog(user.Id, LogTypeSystem, fmt.Sprintf("新用户注册赠送 %s", logger.LogQuota(common.QuotaForNewUser)))
-	}
-	finalizeUserInvitation(user.Id, inviterId)
+	recordNewUserLifecycleLogs(user, inviterId)
 	return nil
 }
 
@@ -495,10 +510,34 @@ func (user *User) FinalizeOAuthUserCreation(inviterId int) {
 		}
 	}
 
+	recordNewUserLifecycleLogs(user, inviterId)
+}
+
+func recordNewUserLifecycleLogs(user *User, inviterId int) {
+	recordUserCreatedLog(user)
 	if common.QuotaForNewUser > 0 {
 		RecordLog(user.Id, LogTypeSystem, fmt.Sprintf("新用户注册赠送 %s", logger.LogQuota(common.QuotaForNewUser)))
 	}
 	finalizeUserInvitation(user.Id, inviterId)
+}
+
+// recordUserCreatedLog writes an always-on creation audit log.
+// Gift-quota logs are optional and disappear when QuotaForNewUser is 0,
+// which used to make new accounts look like they had no creation history.
+func recordUserCreatedLog(user *User) {
+	if user == nil || user.Id == 0 {
+		return
+	}
+	log := &Log{
+		UserId:    user.Id,
+		Username:  user.Username,
+		CreatedAt: common.GetTimestamp(),
+		Type:      LogTypeSystem,
+		Content:   "新用户创建",
+	}
+	if err := LOG_DB.Create(log).Error; err != nil {
+		common.SysLog("failed to record user created log: " + err.Error())
+	}
 }
 
 func (user *User) Update(updatePassword bool) error {

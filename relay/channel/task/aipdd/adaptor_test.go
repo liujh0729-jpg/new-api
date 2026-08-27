@@ -73,7 +73,7 @@ func TestAIPDDTaskSnapshotPersistsImageMediaMetadata(t *testing.T) {
 	}
 }
 
-func TestConvertToSeedanceOfficialTaskUsesPublicFieldsAndActualDuration(t *testing.T) {
+func TestConvertToSeedanceOfficialTaskUsesPublicFieldsActualDurationAndUsage(t *testing.T) {
 	requestedDuration := 6.0
 	task := &model.Task{
 		TaskID: "task_public",
@@ -104,12 +104,48 @@ func TestConvertToSeedanceOfficialTaskUsesPublicFieldsAndActualDuration(t *testi
 	require.NotContains(t, response, "task_id")
 	require.NotContains(t, response, "billing_mode")
 	require.NotContains(t, response, "finance_cost")
-	require.Equal(t, map[string]any{}, response["usage"])
-	require.NotContains(t, string(data), "38830")
+	usage, ok := response["usage"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, float64(38830), usage["completion_tokens"])
+	require.Equal(t, float64(38830), usage["total_tokens"])
 	content, ok := response["content"].(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, "https://cdn.example.com/out.mp4", content["video_url"])
 	require.NotContains(t, content, "upstream_model_id")
+}
+
+func TestConvertToOpenAIVideoReturnsEquivalentUsageWhenPresent(t *testing.T) {
+	task := &model.Task{
+		TaskID: "task_seedance_usage",
+		Status: model.TaskStatusSuccess,
+		Properties: model.Properties{
+			OriginModelName: "AP Seedance-2.0 标准版",
+		},
+		Data: json.RawMessage(`{
+			"id":"upstream-seedance-task","status":"succeeded",
+			"usage":{"completion_tokens":1600000,"total_tokens":1600000}
+		}`),
+	}
+
+	data, err := (&TaskAdaptor{}).ConvertToOpenAIVideo(task)
+	require.NoError(t, err)
+	var response dto.OpenAIVideo
+	require.NoError(t, common.Unmarshal(data, &response))
+	require.NotNil(t, response.Usage)
+	require.Equal(t, int64(1_600_000), response.Usage.CompletionTokens)
+	require.Equal(t, int64(1_600_000), response.Usage.TotalTokens)
+}
+
+func TestConvertToOpenAIVideoOmitsUsageWhenAIPDDEmitsNone(t *testing.T) {
+	task := &model.Task{
+		TaskID: "task_seedance_without_usage",
+		Status: model.TaskStatusSuccess,
+		Data:   json.RawMessage(`{"id":"upstream-seedance-task","status":"succeeded"}`),
+	}
+
+	data, err := (&TaskAdaptor{}).ConvertToOpenAIVideo(task)
+	require.NoError(t, err)
+	require.NotContains(t, string(data), `"usage"`)
 }
 
 func TestConvertToSeedanceOfficialTaskDurationFallbackAndAutoOmission(t *testing.T) {
@@ -154,6 +190,18 @@ func TestConvertToSeedanceOfficialTaskNormalizesCancelledStatus(t *testing.T) {
 	var response map[string]any
 	require.NoError(t, common.Unmarshal(data, &response))
 	require.Equal(t, "cancelled", response["status"])
+}
+
+func TestParseTaskResultIgnoresEquivalentUsageForBilling(t *testing.T) {
+	info, err := (&TaskAdaptor{}).ParseTaskResult([]byte(`{
+		"id":"task-usage","model":"AP Seedance-2.0 标准版","status":"succeeded",
+		"duration":5,"usage":{"completion_tokens":1600000,"total_tokens":1600000},
+		"content":{"video_url":"https://cdn.example.com/out.mp4"}
+	}`))
+	require.NoError(t, err)
+	require.Equal(t, model.TaskStatusSuccess, info.Status)
+	require.Zero(t, info.CompletionTokens)
+	require.Zero(t, info.TotalTokens)
 }
 
 func TestSeedanceOfficialPublicPathRejectsNonOfficialCapability(t *testing.T) {

@@ -267,6 +267,7 @@ func GetAllMidjourney(c *gin.Context) {
 		MjID:           c.Query("mj_id"),
 		StartTimestamp: c.Query("start_timestamp"),
 		EndTimestamp:   c.Query("end_timestamp"),
+		UserIDs:        resolveAdminUserIDs(c.Query("username")),
 	}
 
 	items := model.GetAllTasks(pageInfo.GetStartIdx(), pageInfo.GetPageSize(), queryParams)

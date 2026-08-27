@@ -89,10 +89,16 @@ export function TaskLogsFilterBar<TData>(props: TaskLogsFilterBarProps<TData>) {
         ? {
             ...baseFilters,
             ...(searchParams.filter ? { mjId: searchParams.filter } : {}),
+            ...(searchParams.username
+              ? { username: searchParams.username }
+              : {}),
           }
         : {
             ...baseFilters,
             ...(searchParams.filter ? { taskId: searchParams.filter } : {}),
+            ...(searchParams.username
+              ? { username: searchParams.username }
+              : {}),
           }
 
     setFilters(next)
@@ -102,6 +108,7 @@ export function TaskLogsFilterBar<TData>(props: TaskLogsFilterBarProps<TData>) {
     searchParams.endTime,
     searchParams.channel,
     searchParams.filter,
+    searchParams.username,
   ])
 
   const handleChange = useCallback(
@@ -161,7 +168,8 @@ export function TaskLogsFilterBar<TData>(props: TaskLogsFilterBarProps<TData>) {
       ? t('Filter by Midjourney task ID')
       : t('Filter by task ID')
   const inputClass = 'w-full sm:w-[180px] lg:w-[200px]'
-  const hasAdditionalFilters = !!filterValue || !!filters.channel
+  const hasAdditionalFilters =
+    !!filterValue || !!filters.channel || !!filters.username
 
   return (
     <DataTableToolbar
@@ -187,6 +195,15 @@ export function TaskLogsFilterBar<TData>(props: TaskLogsFilterBarProps<TData>) {
             onKeyDown={handleKeyDown}
             className={inputClass}
           />
+          {isAdmin && (
+            <Input
+              placeholder={t('Username or ID')}
+              value={filters.username || ''}
+              onChange={(e) => handleChange('username', e.target.value)}
+              onKeyDown={handleKeyDown}
+              className={inputClass}
+            />
+          )}
           {isAdmin && (
             <Input
               placeholder={t('Channel ID')}
