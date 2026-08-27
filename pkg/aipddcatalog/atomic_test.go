@@ -98,6 +98,23 @@ func TestAtomicCatalogRejectsLLMWithoutFourTierPricing(t *testing.T) {
 	require.ErrorContains(t, catalog.Validate(), "must provide cache read and cache write prices")
 }
 
+func TestAtomicCatalogV1AcceptsLegacyLLMWithoutCachePrices(t *testing.T) {
+	catalog, err := UnmarshalAtomic([]byte(`{
+		"schemaVersion":1,
+		"revision":"legacy-v1-without-cache-prices",
+		"awcoinRate":{"rmbPerAwcoin":0.01,"usdPerAwcoin":0.0015},
+		"models":[{
+			"id":"deepseek-r1:8b",
+			"pricing":{"promptPerMillion":10,"completionPerMillion":20}
+		}]
+	}`))
+
+	require.NoError(t, err)
+	require.Len(t, catalog.Models, 1)
+	require.Nil(t, catalog.Models[0].Pricing.CacheReadPerMillion)
+	require.Nil(t, catalog.Models[0].Pricing.CacheWritePerMillion)
+}
+
 func TestTaskAWCoinPriceUsesStrictSeedanceDisplayContract(t *testing.T) {
 	display4K := float64(100)
 	display720P := float64(20.1)

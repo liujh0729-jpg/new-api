@@ -162,6 +162,16 @@ func aipddCatalogRatioData(catalog aipddcatalog.AtomicCatalog) map[string]any {
 		modes[modelItem.ID] = billing_setting.BillingModeTieredExpr
 		promptPrice := strconv.FormatFloat(promptUSD, 'f', -1, 64)
 		completionPrice := strconv.FormatFloat(completionUSD, 'f', -1, 64)
+		// Schema v1 catalogs did not expose separate cache prices. Omitting
+		// cache variables preserves their historical semantics: cached input
+		// remains in p and is charged at the ordinary prompt price.
+		if modelItem.Pricing.CacheReadPerMillion == nil || modelItem.Pricing.CacheWritePerMillion == nil {
+			exprs[modelItem.ID] = fmt.Sprintf(
+				"tier(\"aipdd\", p * %s + c * %s)",
+				promptPrice,
+				completionPrice)
+			continue
+		}
 		cacheReadUSD := *modelItem.Pricing.CacheReadPerMillion * catalog.AWCoinRate.USDPerAWCoin
 		cacheWriteUSD := *modelItem.Pricing.CacheWritePerMillion * catalog.AWCoinRate.USDPerAWCoin
 		exprs[modelItem.ID] = fmt.Sprintf(

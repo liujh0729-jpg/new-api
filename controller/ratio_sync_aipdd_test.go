@@ -90,6 +90,27 @@ func TestAIPDDCatalogRatioDataUsesCacheAwareExpressionWhenPricesArePresent(t *te
 		exprs["market/cache-aware"])
 }
 
+func TestAIPDDCatalogRatioDataPreservesLegacyInputPricingWhenCachePricesAreMissing(t *testing.T) {
+	catalog := aipddcatalog.AtomicCatalog{
+		SchemaVersion: 1,
+		AWCoinRate:    aipddcatalog.AtomicAWCoinRate{USDPerAWCoin: 0.01},
+		Models: []aipddcatalog.AtomicModel{{
+			ID: "deepseek-r1:8b",
+			Pricing: aipddcatalog.AtomicPricing{
+				PricingModel: "per_token", Currency: "awcoin", Enabled: true,
+				PromptPerMillion: 10, CompletionPerMillion: 30,
+			},
+		}},
+	}
+
+	data := aipddCatalogRatioData(catalog)
+	exprs := data[billing_setting.BillingExprField].(map[string]string)
+	require.Equal(
+		t,
+		`tier("aipdd", p * 0.1 + c * 0.3)`,
+		exprs["deepseek-r1:8b"])
+}
+
 func TestStripTaskPricingSyncModelsRemovesDerivedLegacyPrices(t *testing.T) {
 	data := map[string]any{
 		billing_setting.BillingModeField: map[string]any{

@@ -222,6 +222,30 @@ func TestEnsureAIPDDDefaultsSkipsWhenAtomicSyncDisabled(t *testing.T) {
 	require.Zero(t, count)
 }
 
+func TestEnsureAIPDDDefaultsRestoresLegacyV1SnapshotWithoutCachePrices(t *testing.T) {
+	truncateTables(t)
+	constant.ResetAIPDDCapabilities()
+	constant.ResetAIPDDOpenAIModels()
+	t.Cleanup(func() {
+		constant.ResetAIPDDCapabilities()
+		constant.ResetAIPDDOpenAIModels()
+		aipddcatalog.ResetV1ModelsListHidden()
+	})
+
+	const baseURL = "https://aipdd.legacy-snapshot.test"
+	require.NoError(t, DB.Create(&AIPDDCatalogSnapshot{
+		ID: aipddCatalogSnapshotID, SchemaVersion: 1, Revision: "legacy-v1-without-cache-prices",
+		SourceBaseURL: baseURL,
+		Payload:       `{"schemaVersion":1,"revision":"legacy-v1-without-cache-prices","awcoinRate":{"rmbPerAwcoin":0.01,"usdPerAwcoin":0.0015},"models":[{"id":"deepseek-v4-flash","pricing":{"promptPerMillion":10,"completionPerMillion":20}}]}`,
+	}).Error)
+
+	t.Setenv("AIPDD_API_KEY", "sk-legacy-snapshot-test")
+	t.Setenv("AIPDD_BASE_URL", baseURL)
+	t.Setenv("AIPDD_CATALOG_SYNC_ON_BOOT", "false")
+	require.NoError(t, EnsureAIPDDDefaults())
+	require.Contains(t, constant.GetAIPDDOpenAIModelList(), "deepseek-v4-flash")
+}
+
 func TestEnsureAIPDDDefaultsRestoresRuntimeSnapshotWhenSyncDisabled(t *testing.T) {
 	truncateTables(t)
 	constant.ResetAIPDDCapabilities()

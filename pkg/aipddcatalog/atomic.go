@@ -250,13 +250,15 @@ func (catalog AtomicCatalog) Validate() error {
 		if strings.TrimSpace(model.ID) == "" || model.Pricing.PromptPerMillion < 0 || model.Pricing.CompletionPerMillion < 0 {
 			return fmt.Errorf("invalid AIPDD LLM model entry")
 		}
-		if model.Pricing.CacheReadPerMillion == nil || model.Pricing.CacheWritePerMillion == nil {
+		// Cache lanes became mandatory in schema v2. Schema v1 snapshots did
+		// not carry them, so they must remain readable during startup/fallback.
+		if catalog.SchemaVersion >= 2 && (model.Pricing.CacheReadPerMillion == nil || model.Pricing.CacheWritePerMillion == nil) {
 			return fmt.Errorf("AIPDD LLM model %q must provide cache read and cache write prices", model.ID)
 		}
-		if *model.Pricing.CacheReadPerMillion < 0 {
+		if model.Pricing.CacheReadPerMillion != nil && *model.Pricing.CacheReadPerMillion < 0 {
 			return fmt.Errorf("AIPDD LLM model %q has a negative cache read price", model.ID)
 		}
-		if *model.Pricing.CacheWritePerMillion < 0 {
+		if model.Pricing.CacheWritePerMillion != nil && *model.Pricing.CacheWritePerMillion < 0 {
 			return fmt.Errorf("AIPDD LLM model %q has a negative cache write price", model.ID)
 		}
 		if model.Pricing.PromptPerMillion == 0 && model.Pricing.CompletionPerMillion == 0 {
