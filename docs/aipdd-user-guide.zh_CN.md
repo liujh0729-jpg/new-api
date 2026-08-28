@@ -558,8 +558,8 @@ curl "$BASE_URL/v1/audio/speech" \
 | 档位 | 模型名 | 可用 `resolution` | 说明 |
 | --- | --- | --- | --- |
 | VIP | `AP Seedance-2.0 VIP` | `720p`、`1080p`、`4k` | 全分辨率高优先级档 |
-| 标准版 | `AP Seedance-2.0 标准版` | `720p`、`1080p`、`4k` | 与 VIP 同分辨率能力 |
-| 轻量版 | `AP Seedance-2.0 轻量版` | `720p`、`1080p` | 不支持 `4k` |
+| 标准版 | `AP Seedance-2.0 标准版` | `480p`、`720p` | Fast 官方原生档 |
+| 轻量版 | `AP Seedance-2.0 轻量版` | `480p`、`720p` | Mini 官方原生档 |
 | 高性价比版 | `AP Seedance-2.0 高性价比版` | `1080p`、`4k` | 不支持 `720p` |
 
 > 实测同步价格目录中：`480p` 在 VIP / 标准版 / 轻量版均返回 `model_price_error`（HTTP 400），**当前不可用**。Playground 若仍展示 `480p`，以价格目录校验结果为准，不要按 UI 展示直接提交。  
@@ -686,7 +686,7 @@ curl "$BASE_URL/v1/videos" \
   -H "Content-Type: application/json" \
   -d '{
     "model": "AP Seedance-2.0 轻量版",
-    "resolution": "1080p",
+    "resolution": "720p",
     "ratio": "9:16",
     "duration": 5,
     "content": [
@@ -710,7 +710,7 @@ curl "$BASE_URL/v1/videos" \
 ```json
 {
   "model": "AP Seedance-2.0 轻量版",
-  "resolution": "1080p",
+  "resolution": "720p",
   "duration": 5,
   "content": [
     {"type": "text", "text": "..."},
@@ -733,7 +733,7 @@ curl "$BASE_URL/v1/videos" \
 }
 ```
 
-轻量版（仅 `720p` / `1080p`）：
+轻量版（仅 `480p` / `720p`）：
 
 ```json
 {
@@ -758,23 +758,25 @@ curl "$BASE_URL/v1/videos" \
 }
 ```
 
-#### 4.13.5 角色图片 `asset://` 与角色库引用
+#### 4.13.5 素材 `asset://` 与 Seedance 素材库引用
 
-Seedance 2.0 支持引用火山托管角色图片。**上游官方写法**是把素材 ID 写成 `asset://{asset_id}`，放在 `content` 的 `image_url.url`（`role` 为 `reference_image`）中。NewAPI 会先把每个 `asset://` 反查到本地角色库并鉴权，再转发上游；未知或重复注册的 Asset ID 会被拒绝。NewAPI 角色库采用“一角色一图”：虚拟形象在创建角色时上传图片；真人形象先完成 H5 身份核验，再为本次预留的角色上传一张肖像图片。
+Seedance 支持引用火山托管素材。**上游官方写法**是把素材 ID 写成 `asset://{asset_id}`，按类型放在 `content` 的 `image_url.url`（`reference_image`）、`video_url.url`（`reference_video`）或 `audio_url.url`（`reference_audio`）中。NewAPI 会先把每个 `asset://` 反查到本地素材库并鉴权，再转发上游；未知或重复注册的 Asset ID 会被拒绝。
+
+私有素材（`volc_aigc`）一条记录对应一个火山 Asset，可上传图片、视频或音频。官方目录和真人形象仍只收图片：真人形象先完成 H5 身份核验，再为本次预留的角色上传一张肖像图片。使用 `character_id` 时，NewAPI 按该记录的 `asset_type` 注入对应参考字段。
 
 真人形象使用独立的私有链路：火山 H5 身份核验成功后，NewAPI 只保存返回的 `LivenessFace GroupId`，此时角色状态为“等待上传肖像”；随后用户上传同一人的图片，NewAPI 使用管理员配置的火山 AK/SK 和 Project 调用 `CreateAsset`，并只轮询本次返回的准确 `AssetId`。素材达到 `Active` 后角色才可用于生成。完整设计及管理员前置条件见 [真人形象素材库实施说明](real-person-character-library.zh_CN.md)。
 
 API Key 角色接口：
 
-- 创建虚拟形象：`POST /v1/virtual-characters`，请求格式为 `multipart/form-data`；`name` 和 `file` 必填，`description`、`tags` 可选。
+- 创建私有素材：`POST /v1/virtual-characters`，请求格式为 `multipart/form-data`；`name` 和 `file` 必填，`description`、`tags`、`asset_type`（`Image` / `Video` / `Audio`，可省略并由扩展名推断）可选。
 - 创建真人核验：`POST /v1/virtual-characters/validation-sessions`；`name` 必填，`description`、`tags`、`language`（`zh` 或 `en`）可选。
 - 查询真人核验：`GET /v1/virtual-characters/validation-sessions/{session_id}`。用户仍须本人打开 `launch_url` 完成火山 H5，API Key 不能绕过该步骤。
 - 上传真人肖像：核验成功后调用 `POST /v1/virtual-characters/{character_id}/asset`，请求格式为 `multipart/form-data`，图片字段名为 `file`。
 - 同步真人状态：`POST /v1/virtual-characters/{character_id}/sync`；也可直接查询角色详情等待后台自动同步。
-- 列表：`GET /v1/virtual-characters?scope=public` 查询公开角色；`scope=private` 查询当前 API Key 用户的私有角色。可用 `source_type=volc_aigc` 或 `source_type=volc_real_person` 区分“我的虚拟形象”和“我的真人”。不传 `scope` 时默认为 `public`。
+- 列表：`GET /v1/virtual-characters?scope=public` 查询公开角色；`scope=private` 查询当前 API Key 用户的私有素材。可用 `source_type=volc_aigc` 或 `source_type=volc_real_person` 区分“我的素材”和“我的真人”，也可用 `asset_type=Image|Video|Audio` 过滤私有素材类型。不传 `scope` 时默认为 `public`。
 - 查询：`GET /v1/virtual-characters/{id}`。虚拟形象通常为 `creating → active/failed`；真人形象在未上传时返回 `asset_upload_required: true`，上传后为 `creating → active`，审核或授权异常时可能进入 `blocked`，原因见 `last_error`。
 - 鉴权：以上 `/v1` 接口均使用 `Authorization: Bearer $NEW_API_TOKEN`。角色归属于 API Key 对应的用户，并沿用该用户的角色配额与上传限流；不能查询、上传或使用其他用户的私有真人角色。
-- 图片：支持 JPG/JPEG、PNG、WebP、GIF、HEIC，最大 30 MB。
+- 素材格式：图片 JPG/JPEG、PNG、WebP、GIF、HEIC，最大 30 MB；视频 MP4/MOV，最大 50 MB；音频 MP3/WAV，最大 15 MB。官方目录和真人肖像仍只接受图片。
 
 公开角色支持分页及条件筛选：
 

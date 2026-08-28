@@ -16,17 +16,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import {
-  Zap,
-  Shield,
-  Globe,
-  Code,
-  Gauge,
-  DollarSign,
-  Users,
-  HeartHandshake,
-} from 'lucide-react'
+'use client'
+
+import { Link } from '@tanstack/react-router'
+import { ArrowRight01Icon } from '@hugeicons/core-free-icons'
+import { HugeiconsIcon } from '@hugeicons/react'
+import { useReducedMotion } from 'motion/react'
 import { useTranslation } from 'react-i18next'
+import { Button } from '@/components/ui/button'
 import { AnimateInView } from '@/components/animate-in-view'
 
 interface FeaturesProps {
@@ -35,204 +32,156 @@ interface FeaturesProps {
 
 export function Features(_props: FeaturesProps) {
   const { t } = useTranslation()
+  const shouldReduceMotion = useReducedMotion()
 
-  const features = [
-    {
-      id: 'fast',
-      num: '01',
-      title: t('Lightning Fast'),
-      desc: t(
-        'Optimized network architecture ensures millisecond response times'
-      ),
-      span: 'md:col-span-2',
-      icon: <Zap className='size-4 text-blue-400' />,
-      visual: (
-        <div className='mt-4 grid grid-cols-3 gap-2'>
-          {['OpenAI', 'Claude', 'Gemini', 'DeepSeek', 'Qwen', 'Llama'].map(
-            (name) => (
-              <div
-                key={name}
-                className='border-border/30 bg-muted/20 text-muted-foreground flex items-center justify-center rounded-lg border px-3 py-2 text-xs transition-colors duration-300 hover:border-blue-500/30 hover:bg-blue-500/5'
-              >
-                {name}
-              </div>
-            )
-          )}
-        </div>
-      ),
-    },
-    {
-      id: 'secure',
-      num: '02',
-      title: t('Secure & Reliable'),
-      desc: t(
-        'Enterprise-grade security with comprehensive permission management'
-      ),
-      span: 'md:col-span-1',
-      icon: <Shield className='size-4 text-emerald-400' />,
-      visual: (
-        <div className='mt-4 flex items-center justify-center'>
-          <div className='relative'>
-            <div className='flex size-16 items-center justify-center rounded-2xl border border-emerald-500/20 bg-emerald-500/5'>
-              <Shield
-                className='size-7 text-emerald-500/70'
-                strokeWidth={1.5}
-              />
-            </div>
-            <div className='absolute -top-1 -right-1 flex size-4 items-center justify-center rounded-full bg-emerald-500'>
-              <svg
-                className='size-2.5 text-white'
-                fill='none'
-                viewBox='0 0 24 24'
-                stroke='currentColor'
-                strokeWidth={3}
-              >
-                <path
-                  strokeLinecap='round'
-                  strokeLinejoin='round'
-                  d='m4.5 12.75 6 6 9-13.5'
-                />
-              </svg>
-            </div>
-          </div>
-        </div>
-      ),
-    },
-    {
-      id: 'global',
-      num: '03',
-      title: t('Global Coverage'),
-      desc: t('Multi-region deployment for stable global access'),
-      span: 'md:col-span-1',
-      icon: <Globe className='size-4 text-violet-400' />,
-      visual: (
-        <div className='mt-4 space-y-2'>
-          {[t('Load Balancing'), t('Rate Limiting'), t('Cost Tracking')].map(
-            (step, i) => (
-              <div key={step} className='flex items-center gap-2'>
-                <div
-                  className={`flex size-6 items-center justify-center rounded-full text-[10px] font-bold ${
-                    i === 1
-                      ? 'border border-blue-500/30 bg-blue-500/20 text-blue-500'
-                      : 'border-border/40 bg-muted text-muted-foreground border'
-                  }`}
-                >
-                  {i + 1}
-                </div>
-                <div className='bg-border/40 h-px flex-1' />
-                <span className='text-muted-foreground text-xs'>{step}</span>
-              </div>
-            )
-          )}
-        </div>
-      ),
-    },
-    {
-      id: 'developer',
-      num: '04',
-      title: t('Developer Friendly'),
-      desc: t('Compatible API routes for common AI application workflows'),
-      span: 'md:col-span-2',
-      icon: <Code className='size-4 text-amber-400' />,
-      visual: (
-        <div className='mt-4 flex items-center gap-3'>
-          <div className='flex -space-x-2'>
-            {['API', 'SDK', 'CLI', 'Docs'].map((n) => (
-              <div
-                key={n}
-                className='border-background from-muted to-muted/60 text-muted-foreground flex size-8 items-center justify-center rounded-full border-2 bg-gradient-to-br text-[9px] font-bold'
-              >
-                {n}
-              </div>
-            ))}
-          </div>
-          <div className='text-muted-foreground flex items-center gap-1.5 text-xs'>
-            <Code className='size-3.5 text-blue-500' />
-            {t('Multi-protocol Compatible')}
-          </div>
-        </div>
-      ),
-    },
-  ]
-
-  const additionalFeatures = [
-    {
-      icon: <Gauge className='size-5' strokeWidth={1.5} />,
-      title: t('High Performance'),
-      desc: t('Support for high concurrency with automatic load balancing'),
-    },
-    {
-      icon: <DollarSign className='size-5' strokeWidth={1.5} />,
-      title: t('Transparent Billing'),
-      desc: t('Pay-as-you-go with real-time usage monitoring'),
-    },
-    {
-      icon: <Users className='size-5' strokeWidth={1.5} />,
-      title: t('Team Collaboration'),
-      desc: t('Multi-user management with flexible permission allocation'),
-    },
-    {
-      icon: <HeartHandshake className='size-5' strokeWidth={1.5} />,
-      title: t('Open Source'),
-      desc: t('Community driven, self-hosted, and extensible'),
-    },
+  const capabilities = [
+    t('Text, image, video, and audio references'),
+    t('Native audio and cinematic camera control'),
+    t('Editing and extension in one workflow'),
   ]
 
   return (
-    <section className='relative z-10 px-6 py-24 md:py-32'>
-      <div className='mx-auto max-w-6xl'>
-        <AnimateInView className='mb-16 max-w-lg'>
-          <p className='text-muted-foreground mb-3 text-xs font-medium tracking-widest uppercase'>
-            {t('Core Features')}
-          </p>
-          <h2 className='text-2xl leading-tight font-bold tracking-tight md:text-3xl'>
-            {t('Built for developers,')}
-            <br />
-            {t('designed for scale')}
+    <section className='home-model-showcase px-4 py-20 text-[#111217] sm:px-6 md:py-28'>
+      <div className='mx-auto max-w-7xl'>
+        <AnimateInView className='mx-auto mb-10 max-w-4xl text-center md:mb-14'>
+          <h2 className='text-3xl leading-[1.02] font-semibold tracking-[-0.05em] text-balance md:text-5xl lg:text-6xl'>
+            {t('Use the right model for every workload')}
           </h2>
+          <p className='mx-auto mt-4 max-w-[60ch] text-sm leading-relaxed text-[#312c38]/75 md:text-base'>
+            {t(
+              'Move from language to image and video without rebuilding your integration.'
+            )}
+          </p>
+          <div className='mt-7 flex flex-wrap items-center justify-center gap-3'>
+            <Button
+              className='h-10 rounded-full bg-[#111217] px-5 text-white hover:bg-[#24252b] active:scale-[0.98]'
+              render={<Link to='/pricing' />}
+            >
+              {t('Explore models')}
+            </Button>
+            <Button
+              variant='outline'
+              className='h-10 rounded-full border-[#211b27]/20 bg-white/10 px-5 text-[#111217] hover:bg-white/35 active:scale-[0.98]'
+              render={<Link to='/docs' />}
+            >
+              {t('Read docs')}
+            </Button>
+          </div>
         </AnimateInView>
 
-        {/* Bento grid */}
-        <div className='border-border/40 bg-border/40 grid gap-px overflow-hidden rounded-xl border md:grid-cols-3'>
-          {features.map((f, i) => (
-            <AnimateInView
-              key={f.id}
-              delay={i * 100}
-              animation='scale-in'
-              className={`bg-background group hover:bg-muted/20 p-7 transition-colors duration-300 md:p-8 ${f.span}`}
-            >
-              <div className='mb-3 flex items-center gap-3'>
-                <span className='border-border/40 bg-muted text-muted-foreground flex size-7 items-center justify-center rounded-md border text-[10px] font-semibold tabular-nums'>
-                  {f.num}
-                </span>
-                <h3 className='text-sm font-semibold'>{f.title}</h3>
+        <div className='grid grid-cols-1 gap-2.5 lg:grid-cols-12'>
+          <AnimateInView className='lg:col-span-5'>
+            <article className='flex h-full min-h-[390px] flex-col rounded-2xl bg-[#f4f1f4] p-7 shadow-[0_24px_70px_-45px_rgba(54,12,42,0.35)] md:p-9'>
+              <div>
+                <p className='text-sm font-medium text-[#5f5563]'>
+                  Seedance 2.5
+                </p>
+                <h3 className='mt-2 max-w-md text-3xl leading-[1.04] font-semibold tracking-[-0.04em] md:text-4xl'>
+                  {t('Production video from multimodal references')}
+                </h3>
+                <p className='mt-4 max-w-[48ch] text-sm leading-relaxed text-[#5f5962]'>
+                  {t(
+                    'Generate, edit, and extend coherent video through the same task API.'
+                  )}
+                </p>
               </div>
-              <p className='text-muted-foreground text-sm leading-relaxed'>
-                {f.desc}
-              </p>
-              {f.visual}
-            </AnimateInView>
-          ))}
+
+              <dl className='mt-auto grid grid-cols-3 border-t border-[#17131b]/10 pt-7'>
+                <div>
+                  <dd className='text-lg font-semibold'>1080p</dd>
+                  <dt className='mt-1 text-xs text-[#6a626c]'>{t('Output')}</dt>
+                </div>
+                <div className='border-l border-[#17131b]/10 pl-5'>
+                  <dd className='text-lg font-semibold'>30s</dd>
+                  <dt className='mt-1 text-xs text-[#6a626c]'>
+                    {t('Duration')}
+                  </dt>
+                </div>
+                <div className='border-l border-[#17131b]/10 pl-5'>
+                  <dd className='text-lg font-semibold'>50</dd>
+                  <dt className='mt-1 text-xs text-[#6a626c]'>
+                    {t('References')}
+                  </dt>
+                </div>
+              </dl>
+            </article>
+          </AnimateInView>
+
+          <AnimateInView className='lg:col-span-7' delay={80}>
+            <article className='relative min-h-[390px] overflow-hidden rounded-2xl bg-[#111217] text-white'>
+              <video
+                aria-label={t('Cinematic AI video generation sample')}
+                src='/seedance-cinematic.mp4'
+                poster='/seedance-cinematic.webp'
+                autoPlay={!shouldReduceMotion}
+                controls={Boolean(shouldReduceMotion)}
+                muted
+                loop
+                playsInline
+                preload='metadata'
+                className='absolute inset-0 h-full w-full object-cover'
+              />
+              <div className='home-media-scrim absolute inset-0' />
+              <div className='absolute inset-x-0 bottom-0 p-7 md:p-9'>
+                <h3 className='max-w-lg text-2xl leading-tight font-semibold tracking-[-0.03em] md:text-3xl'>
+                  {t('Keep character, motion, and atmosphere consistent')}
+                </h3>
+                <p className='mt-3 max-w-[46ch] text-sm leading-relaxed text-white/70'>
+                  {t(
+                    'One model carries the creative direction across every shot.'
+                  )}
+                </p>
+              </div>
+            </article>
+          </AnimateInView>
+
+          <AnimateInView className='lg:col-span-12' delay={120}>
+            <article className='relative min-h-[430px] overflow-hidden rounded-2xl bg-[#10161c] text-white md:min-h-[520px]'>
+              <video
+                aria-label={t('Long-form AI video story sample')}
+                src='/seedance-story.mp4'
+                poster='/seedance-story.webp'
+                autoPlay={!shouldReduceMotion}
+                controls={Boolean(shouldReduceMotion)}
+                muted
+                loop
+                playsInline
+                preload='metadata'
+                className='absolute inset-0 h-full w-full object-cover'
+              />
+              <div className='home-media-scrim home-media-scrim-strong absolute inset-0' />
+              <div className='absolute inset-y-0 left-0 flex max-w-xl flex-col justify-center p-7 md:p-12'>
+                <h3 className='text-3xl leading-[1.06] font-semibold tracking-[-0.04em] md:text-5xl'>
+                  {t('A complete creative workflow')}
+                </h3>
+                <div className='mt-8 grid gap-4'>
+                  {capabilities.map((capability) => (
+                    <div
+                      key={capability}
+                      className='border-l border-white/30 pl-4 text-sm font-medium text-white/85 md:text-base'
+                    >
+                      {capability}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </article>
+          </AnimateInView>
         </div>
 
-        {/* Additional features row */}
-        <div className='mt-12 grid grid-cols-2 gap-8 md:grid-cols-4 md:gap-12'>
-          {additionalFeatures.map((f, i) => (
-            <AnimateInView
-              key={f.title}
-              delay={i * 100}
-              animation='fade-up'
-              className='flex flex-col items-center text-center'
-            >
-              <div className='text-muted-foreground border-border/50 bg-muted/30 group-hover:text-foreground mb-3 flex size-12 items-center justify-center rounded-xl border transition-colors'>
-                {f.icon}
-              </div>
-              <h3 className='mb-1.5 text-sm font-semibold'>{f.title}</h3>
-              <p className='text-muted-foreground max-w-[200px] text-xs leading-relaxed'>
-                {f.desc}
-              </p>
-            </AnimateInView>
-          ))}
+        <div className='mt-8 flex justify-end'>
+          <Link
+            to='/pricing'
+            className='group inline-flex items-center gap-2 text-sm font-semibold text-[#171218] underline-offset-4 hover:underline'
+          >
+            {t('Explore models')}
+            <HugeiconsIcon
+              icon={ArrowRight01Icon}
+              size={17}
+              strokeWidth={2}
+              className='transition-transform group-hover:translate-x-0.5'
+            />
+          </Link>
         </div>
       </div>
     </section>

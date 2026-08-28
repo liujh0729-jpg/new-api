@@ -189,10 +189,11 @@ func CountVirtualCharacterProviderAssets() (int64, error) {
 
 // CreateAIGCVirtualCharacter reserves a private slot for a user-created virtual
 // character (volc_aigc). The provider group must be attached after CreateAssetGroup.
-func CreateAIGCVirtualCharacter(userID, providerAccountID int, name, description, tagsJSON string) (*VirtualCharacter, int, error) {
+func CreateAIGCVirtualCharacter(userID, providerAccountID int, name, description, tagsJSON, assetType string) (*VirtualCharacter, int, error) {
 	if userID <= 0 || providerAccountID <= 0 {
 		return nil, 0, errors.New("invalid user or provider account")
 	}
+	assetType = EffectiveVirtualCharacterAssetType(assetType)
 	limit := GetVirtualCharacterEffectiveLimit(userID)
 	for slot := 1; slot <= limit; slot++ {
 		candidateSlot := slot
@@ -207,6 +208,7 @@ func CreateAIGCVirtualCharacter(userID, providerAccountID int, name, description
 			Status:            VirtualCharacterStatusCreating,
 			ValidationStatus:  VirtualCharacterValidationAccepted,
 			ProviderAccountID: providerAccountID,
+			AssetType:         assetType,
 		}
 		result := DB.Clauses(clause.OnConflict{DoNothing: true}).Create(item)
 		if result.Error != nil {
@@ -300,7 +302,7 @@ func DiscardFailedAIGCVirtualCharacterUpload(characterID int64, providerGroupID,
 	})
 }
 
-func AttachVirtualCharacterImage(characterID int64, providerAssetID, stagingFileID, mimeType string, fileSize int64) error {
+func AttachVirtualCharacterImage(characterID int64, providerAssetID, stagingFileID, mimeType, assetType string, fileSize int64) error {
 	providerAssetID = strings.TrimPrefix(strings.TrimSpace(providerAssetID), "asset://")
 	if characterID <= 0 || providerAssetID == "" {
 		return errors.New("invalid character asset")
@@ -309,6 +311,7 @@ func AttachVirtualCharacterImage(characterID int64, providerAssetID, stagingFile
 	return DB.Model(&VirtualCharacter{}).Where("id = ?", characterID).Updates(map[string]any{
 		"provider_asset_id":   providerAssetID,
 		"staging_file_id":     strings.TrimSpace(stagingFileID),
+		"asset_type":          EffectiveVirtualCharacterAssetType(assetType),
 		"mime_type":           strings.TrimSpace(mimeType),
 		"file_size":           fileSize,
 		"cover_url":           virtualCharacterPreviewPath(characterID),
@@ -419,7 +422,7 @@ func CompleteVirtualCharacterValidation(id, providerGroupID string) (*VirtualCha
 		var created *VirtualCharacter
 		for slot := 1; slot <= limit; slot++ {
 			candidateSlot := slot
-			item := &VirtualCharacter{UserID: session.UserID, Slot: &candidateSlot, Scope: VirtualCharacterScopePrivate, Name: session.Name, Description: session.Description, TagsJSON: session.TagsJSON, SourceType: VirtualCharacterSourceVolcRealPerson, Status: VirtualCharacterStatusActive, ValidationStatus: VirtualCharacterValidationAccepted, ProviderAccountID: session.ProviderAccountID, ProviderGroupID: providerGroupID}
+			item := &VirtualCharacter{UserID: session.UserID, Slot: &candidateSlot, Scope: VirtualCharacterScopePrivate, Name: session.Name, Description: session.Description, TagsJSON: session.TagsJSON, SourceType: VirtualCharacterSourceVolcRealPerson, Status: VirtualCharacterStatusActive, ValidationStatus: VirtualCharacterValidationAccepted, ProviderAccountID: session.ProviderAccountID, ProviderGroupID: providerGroupID, AssetType: VirtualCharacterAssetTypeImage}
 			result := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(item)
 			if result.Error != nil {
 				return result.Error
@@ -491,6 +494,7 @@ func virtualCharacterCatalogUpdates(entry VirtualCharacterCatalogEntry, status s
 		"status":              status,
 		"validation_status":   VirtualCharacterValidationAccepted,
 		"provider_account_id": providerAccountID,
+		"asset_type":          VirtualCharacterAssetTypeImage,
 		"catalog_version":     version,
 		"updated_at":          time.Now().Unix(),
 	}
@@ -538,7 +542,8 @@ func ApplyVirtualCharacterCatalog(version, contentHash string, entries []Virtual
 					TagsJSON: entry.TagsJSON, Nationality: entry.Nationality, Gender: entry.Gender,
 					AgeMin: entry.AgeMin, AgeMax: entry.AgeMax, Occupation: entry.Occupation, Temperament: entry.Temperament,
 					SourceType: VirtualCharacterSourceVolcPreset, Status: status, ValidationStatus: VirtualCharacterValidationAccepted,
-					CoverURL: entry.CoverURL, ProviderAccountID: providerAccountID, ProviderAssetID: assetID, CatalogVersion: version,
+					CoverURL: entry.CoverURL, ProviderAccountID: providerAccountID, ProviderAssetID: assetID,
+					AssetType: VirtualCharacterAssetTypeImage, CatalogVersion: version,
 				}
 				if err := tx.Create(&character).Error; err != nil {
 					return err

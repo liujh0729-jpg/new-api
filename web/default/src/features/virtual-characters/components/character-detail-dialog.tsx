@@ -46,7 +46,13 @@ import {
   virtualCharacterQueryKeys,
 } from '../api'
 import type { VirtualCharacter } from '../types'
-import { authorizationStatusLabel, errorMessage, statusLabel } from './utils'
+import { MaterialMedia } from './material-media'
+import {
+  authorizationStatusLabel,
+  effectiveVirtualCharacterAssetType,
+  errorMessage,
+  statusLabel,
+} from './utils'
 
 export function CharacterDetailDialog({
   characterID,
@@ -151,9 +157,11 @@ function CharacterDetailContent({
         <div className='flex flex-col gap-3'>
           <div className='bg-muted aspect-[3/4] overflow-hidden rounded-md'>
             {coverURL ? (
-              <img
-                src={coverURL}
-                alt={character.name}
+              <MaterialMedia
+                url={coverURL}
+                name={character.name}
+                assetType={effectiveVirtualCharacterAssetType(character)}
+                controls
                 className='size-full object-contain'
               />
             ) : (
@@ -170,13 +178,16 @@ function CharacterDetailContent({
             >
               {statusLabel(character.status, t)}
             </Badge>
+            <Badge variant='outline'>
+              {t(effectiveVirtualCharacterAssetType(character))}
+            </Badge>
             {character.mime_type ? (
               <Badge variant='outline'>{character.mime_type}</Badge>
             ) : null}
           </div>
           {character.status === 'creating' ? (
             <Progress value={null}>
-              <ProgressLabel>{t('Processing character image')}</ProgressLabel>
+              <ProgressLabel>{t('Processing material')}</ProgressLabel>
             </Progress>
           ) : null}
           {assetReference ? (

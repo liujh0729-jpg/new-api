@@ -173,6 +173,49 @@ func TestListVirtualCharactersFiltersByStructuredFacets(t *testing.T) {
 	require.Equal(t, "JP Female", items[0].Name)
 }
 
+func TestListVirtualCharactersFiltersByAssetType(t *testing.T) {
+	cleanupVirtualCharacterABTables(t)
+	slotImage, slotVideo, slotEmpty := 1, 2, 3
+	require.NoError(t, DB.Create(&VirtualCharacter{
+		UserID: 91, Slot: &slotImage, Scope: VirtualCharacterScopePrivate, SourceType: VirtualCharacterSourceVolcAIGC,
+		Name: "Image material", Status: VirtualCharacterStatusActive, ValidationStatus: VirtualCharacterValidationAccepted,
+		AssetType: VirtualCharacterAssetTypeImage,
+	}).Error)
+	require.NoError(t, DB.Create(&VirtualCharacter{
+		UserID: 91, Slot: &slotVideo, Scope: VirtualCharacterScopePrivate, SourceType: VirtualCharacterSourceVolcAIGC,
+		Name: "Video material", Status: VirtualCharacterStatusActive, ValidationStatus: VirtualCharacterValidationAccepted,
+		AssetType: VirtualCharacterAssetTypeVideo,
+	}).Error)
+	require.NoError(t, DB.Create(&VirtualCharacter{
+		UserID: 91, Slot: &slotEmpty, Scope: VirtualCharacterScopePrivate, SourceType: VirtualCharacterSourceVolcAIGC,
+		Name: "Legacy material", Status: VirtualCharacterStatusActive, ValidationStatus: VirtualCharacterValidationAccepted,
+	}).Error)
+
+	items, total, err := ListVirtualCharacters(91, VirtualCharacterScopePrivate, false, VirtualCharacterListFilter{
+		AssetType: VirtualCharacterAssetTypeVideo,
+	}, 0, 20)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, total)
+	require.Equal(t, "Video material", items[0].Name)
+
+	items, total, err = ListVirtualCharacters(91, VirtualCharacterScopePrivate, false, VirtualCharacterListFilter{
+		AssetType: VirtualCharacterAssetTypeImage,
+	}, 0, 20)
+	require.NoError(t, err)
+	require.EqualValues(t, 2, total)
+	names := []string{items[0].Name, items[1].Name}
+	require.Contains(t, names, "Image material")
+	require.Contains(t, names, "Legacy material")
+}
+
+func TestEffectiveVirtualCharacterAssetTypeDefaultsToImage(t *testing.T) {
+	require.Equal(t, VirtualCharacterAssetTypeImage, EffectiveVirtualCharacterAssetType(""))
+	require.Equal(t, VirtualCharacterAssetTypeImage, EffectiveVirtualCharacterAssetType("image"))
+	require.Equal(t, VirtualCharacterAssetTypeVideo, EffectiveVirtualCharacterAssetType("VIDEO"))
+	require.Equal(t, VirtualCharacterAssetTypeAudio, EffectiveVirtualCharacterAssetType("audio"))
+	require.Equal(t, VirtualCharacterAssetTypeImage, EffectiveVirtualCharacterAssetType("unknown"))
+}
+
 func TestBackfillVirtualCharacterStructuredFacetsFromTags(t *testing.T) {
 	cleanupVirtualCharacterABTables(t)
 	character := &VirtualCharacter{

@@ -148,6 +148,105 @@ func TestConvertToOpenAIVideoOmitsUsageWhenAIPDDEmitsNone(t *testing.T) {
 	require.NotContains(t, string(data), `"usage"`)
 }
 
+func TestSeedanceUsageIsIdenticalAcrossPublicResponseShapes(t *testing.T) {
+	tests := []struct {
+		name            string
+		data            string
+		wantUsage       bool
+		completionToken int64
+		totalToken      int64
+	}{
+		{
+			name:            "valid usage",
+			data:            `{"id":"cgt-valid","status":"succeeded","usage":{"completion_tokens":190910,"total_tokens":190910}}`,
+			wantUsage:       true,
+			completionToken: 190910,
+			totalToken:      190910,
+		},
+		{
+			name:      "usage omitted by aipdd",
+			data:      `{"id":"cgt-missing","status":"succeeded"}`,
+			wantUsage: false,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			task := &model.Task{
+				TaskID:     "task-public",
+				Status:     model.TaskStatusSuccess,
+				Properties: model.Properties{OriginModelName: "AP Seedance-2.0 标准版"},
+				Data:       json.RawMessage(test.data),
+			}
+
+			officialData, err := (&TaskAdaptor{}).ConvertToSeedanceOfficialTask(task)
+			require.NoError(t, err)
+			videoData, err := (&TaskAdaptor{}).ConvertToOpenAIVideo(task)
+			require.NoError(t, err)
+			var official map[string]any
+			var video map[string]any
+			require.NoError(t, common.Unmarshal(officialData, &official))
+			require.NoError(t, common.Unmarshal(videoData, &video))
+
+			officialUsage, officialHasUsage := official["usage"].(map[string]any)
+			videoUsage, videoHasUsage := video["usage"].(map[string]any)
+			require.Equal(t, test.wantUsage, officialHasUsage)
+			require.Equal(t, test.wantUsage, videoHasUsage)
+			if test.wantUsage {
+				require.Equal(t, officialUsage["completion_tokens"], videoUsage["completion_tokens"])
+				require.Equal(t, officialUsage["total_tokens"], videoUsage["total_tokens"])
+				require.Equal(t, float64(test.completionToken), officialUsage["completion_tokens"])
+				require.Equal(t, float64(test.totalToken), officialUsage["total_tokens"])
+			}
+		})
+	}
+}
+
+func TestSeedanceToolUsageIsKeptOnlyInOfficialResponse(t *testing.T) {
+	task := &model.Task{
+		TaskID:     "task-tool-usage",
+		Status:     model.TaskStatusSuccess,
+		Properties: model.Properties{OriginModelName: "AP Seedance-2.0 VIP"},
+		Data: json.RawMessage(`{
+			"id":"cgt-tool-usage","status":"succeeded",
+			"usage":{"completion_tokens":52174,"total_tokens":52174,
+			         "tool_usage":{"web_search":1}}
+		}`),
+	}
+
+	officialData, err := (&TaskAdaptor{}).ConvertToSeedanceOfficialTask(task)
+	require.NoError(t, err)
+	videoData, err := (&TaskAdaptor{}).ConvertToOpenAIVideo(task)
+	require.NoError(t, err)
+	var official map[string]any
+	var video map[string]any
+	require.NoError(t, common.Unmarshal(officialData, &official))
+	require.NoError(t, common.Unmarshal(videoData, &video))
+	officialUsage := official["usage"].(map[string]any)
+	videoUsage := video["usage"].(map[string]any)
+	require.Equal(t, float64(1), officialUsage["tool_usage"].(map[string]any)["web_search"])
+	require.ElementsMatch(t, []string{"completion_tokens", "total_tokens"}, mapKeys(videoUsage))
+}
+
+func TestConvertToOpenAIVideoSupportsInt64Usage(t *testing.T) {
+	task := &model.Task{
+		TaskID: "task-max-usage",
+		Status: model.TaskStatusSuccess,
+		Data: json.RawMessage(`{
+			"id":"cgt-max-usage","status":"succeeded",
+			"usage":{"completion_tokens":9223372036854775807,"total_tokens":9223372036854775807}
+		}`),
+	}
+
+	data, err := (&TaskAdaptor{}).ConvertToOpenAIVideo(task)
+	require.NoError(t, err)
+	var response dto.OpenAIVideo
+	require.NoError(t, common.Unmarshal(data, &response))
+	require.NotNil(t, response.Usage)
+	require.Equal(t, int64(9223372036854775807), response.Usage.CompletionTokens)
+	require.Equal(t, int64(9223372036854775807), response.Usage.TotalTokens)
+}
+
 func TestConvertToSeedanceOfficialTaskDurationFallbackAndAutoOmission(t *testing.T) {
 	requestedDuration := 5.5
 	withFallback := &model.Task{
@@ -202,6 +301,40 @@ func TestParseTaskResultIgnoresEquivalentUsageForBilling(t *testing.T) {
 	require.Equal(t, model.TaskStatusSuccess, info.Status)
 	require.Zero(t, info.CompletionTokens)
 	require.Zero(t, info.TotalTokens)
+}
+
+func TestParseTaskResultNeverUsesSeedanceUsageForBillingAcrossStatuses(t *testing.T) {
+	tests := []struct {
+		status string
+		want   model.TaskStatus
+	}{
+		{status: "queued", want: model.TaskStatusQueued},
+		{status: "running", want: model.TaskStatusInProgress},
+		{status: "succeeded", want: model.TaskStatusSuccess},
+		{status: "failed", want: model.TaskStatusFailure},
+		{status: "cancelled", want: model.TaskStatusFailure},
+	}
+
+	for _, test := range tests {
+		t.Run(test.status, func(t *testing.T) {
+			body := `{"id":"task-status","model":"AP Seedance-2.0 标准版","status":"` + test.status +
+				`","duration":4,"usage":{"completion_tokens":640000,"total_tokens":640000},` +
+				`"content":{"video_url":"https://cdn.example.com/out.mp4"}}`
+			info, err := (&TaskAdaptor{}).ParseTaskResult([]byte(body))
+			require.NoError(t, err)
+			require.Equal(t, test.want, model.TaskStatus(info.Status))
+			require.Zero(t, info.CompletionTokens)
+			require.Zero(t, info.TotalTokens)
+		})
+	}
+}
+
+func mapKeys(value map[string]any) []string {
+	keys := make([]string, 0, len(value))
+	for key := range value {
+		keys = append(keys, key)
+	}
+	return keys
 }
 
 func TestSeedanceOfficialPublicPathRejectsNonOfficialCapability(t *testing.T) {

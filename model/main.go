@@ -470,6 +470,7 @@ func ensureSQLiteUniqueColumnsBeforeAutoMigrate() error {
 		{&TopUp{}, "top_ups", "provider_transaction_id", "`provider_transaction_id` varchar(64)", "idx_top_ups_provider_transaction_id"},
 		{&WechatPayTestOrder{}, "wechat_pay_test_orders", "provider_transaction_id", "`provider_transaction_id` varchar(64)", "idx_wechat_pay_test_orders_provider_transaction_id"},
 		{&WechatPayTestOrder{}, "wechat_pay_test_orders", "notify_id", "`notify_id` varchar(64)", "idx_wechat_pay_test_orders_notify_id"},
+		{&VirtualCharacter{}, "virtual_characters", "real_person_slot", "`real_person_slot` integer", ""},
 	}
 	for _, spec := range specs {
 		if !DB.Migrator().HasTable(spec.table) {

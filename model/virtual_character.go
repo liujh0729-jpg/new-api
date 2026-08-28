@@ -53,6 +53,10 @@ const (
 	VirtualCharacterTaskAction = "virtual_character_video"
 
 	VirtualCharacterDefaultLimit = 100
+
+	VirtualCharacterAssetTypeImage = "Image"
+	VirtualCharacterAssetTypeVideo = "Video"
+	VirtualCharacterAssetTypeAudio = "Audio"
 )
 
 // Seedance / AIPDD official catalog facet values (exact-match filters).
@@ -86,6 +90,7 @@ type VirtualCharacterListFilter struct {
 	AgeMax      *int
 	Status      string
 	SourceType  string
+	AssetType   string
 }
 
 // VirtualCharacter stores role-library metadata. Private provider binary content
@@ -120,6 +125,7 @@ type VirtualCharacter struct {
 	AssetPollAttempts int            `json:"-"`
 	AssetNextPollAt   int64          `json:"-" gorm:"index"`
 	CatalogVersion    string         `json:"catalog_version,omitempty" gorm:"type:varchar(191);index"`
+	AssetType         string         `json:"asset_type,omitempty" gorm:"type:varchar(16);index"`
 	MimeType          string         `json:"mime_type,omitempty" gorm:"type:varchar(100)"`
 	FileSize          int64          `json:"file_size,omitempty"`
 	LastError         string         `json:"last_error,omitempty" gorm:"type:text"`
@@ -358,7 +364,34 @@ func applyVirtualCharacterListFilter(query *gorm.DB, filter VirtualCharacterList
 	if sourceType := strings.TrimSpace(filter.SourceType); sourceType != "" {
 		query = query.Where("source_type = ?", sourceType)
 	}
+	if assetType := NormalizeVirtualCharacterAssetType(filter.AssetType); assetType != "" {
+		if assetType == VirtualCharacterAssetTypeImage {
+			query = query.Where("asset_type = ? OR asset_type = ? OR asset_type IS NULL", VirtualCharacterAssetTypeImage, "")
+		} else {
+			query = query.Where("asset_type = ?", assetType)
+		}
+	}
 	return query
+}
+
+func NormalizeVirtualCharacterAssetType(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "image":
+		return VirtualCharacterAssetTypeImage
+	case "video":
+		return VirtualCharacterAssetTypeVideo
+	case "audio":
+		return VirtualCharacterAssetTypeAudio
+	default:
+		return ""
+	}
+}
+
+func EffectiveVirtualCharacterAssetType(value string) string {
+	if assetType := NormalizeVirtualCharacterAssetType(value); assetType != "" {
+		return assetType
+	}
+	return VirtualCharacterAssetTypeImage
 }
 
 func escapeVirtualCharacterLike(value string) string {

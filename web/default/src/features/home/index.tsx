@@ -19,10 +19,29 @@ For commercial licensing, please contact support@quantumnous.com
 import { useTranslation } from 'react-i18next'
 import { useAuthStore } from '@/stores/auth-store'
 import { Markdown } from '@/components/ui/markdown'
+import { Skeleton } from '@/components/ui/skeleton'
 import { PublicLayout } from '@/components/layout'
 import { Footer } from '@/components/layout/components/footer'
 import { CTA, Features, Hero, HowItWorks, Stats } from './components'
+import './home.css'
 import { useHomePageContent } from './hooks'
+
+function HomeSkeleton() {
+  return (
+    <main className='home-landing min-h-[100dvh] bg-[var(--home-bg)] px-6 pt-24 text-[var(--home-text)]'>
+      <div className='mx-auto flex max-w-5xl flex-col items-center py-12 text-center'>
+        <Skeleton className='h-4 w-44 rounded-full bg-[var(--home-skeleton)]' />
+        <Skeleton className='mt-5 h-16 w-full max-w-3xl rounded-xl bg-[var(--home-skeleton)]' />
+        <Skeleton className='mt-4 h-5 w-full max-w-xl rounded-lg bg-[var(--home-skeleton)]' />
+        <div className='mt-7 flex gap-3'>
+          <Skeleton className='h-11 w-32 rounded-full bg-[var(--home-skeleton)]' />
+          <Skeleton className='h-11 w-32 rounded-full bg-[var(--home-skeleton)]' />
+        </div>
+        <Skeleton className='mt-10 aspect-[16/8] w-full rounded-2xl bg-[var(--home-skeleton)]' />
+      </div>
+    </main>
+  )
+}
 
 export function Home() {
   const { t } = useTranslation()
@@ -33,9 +52,7 @@ export function Home() {
   if (!isLoaded) {
     return (
       <PublicLayout showMainContainer={false}>
-        <main className='flex min-h-screen items-center justify-center'>
-          <div className='text-muted-foreground'>{t('Loading...')}</div>
-        </main>
+        <HomeSkeleton />
       </PublicLayout>
     )
   }
@@ -47,7 +64,7 @@ export function Home() {
           {isUrl ? (
             <iframe
               src={content}
-              className='h-screen w-full border-none'
+              className='min-h-[calc(100dvh-4rem)] w-full border-none pt-16'
               title={t('Custom Home Page')}
             />
           ) : (
@@ -62,12 +79,14 @@ export function Home() {
 
   return (
     <PublicLayout showMainContainer={false}>
-      <Hero isAuthenticated={isAuthenticated} />
-      <Stats />
-      <Features />
-      <HowItWorks />
-      <CTA isAuthenticated={isAuthenticated} />
-      <Footer />
+      <main className='home-landing overflow-x-clip'>
+        <Hero isAuthenticated={isAuthenticated} />
+        <Stats />
+        <Features />
+        <HowItWorks />
+        <CTA isAuthenticated={isAuthenticated} />
+      </main>
+      <Footer className='home-footer' />
     </PublicLayout>
   )
 }

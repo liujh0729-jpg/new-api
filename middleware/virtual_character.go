@@ -74,13 +74,7 @@ func BindVirtualCharacter() gin.HandlerFunc {
 			}
 			characters = append(characters, item)
 			snapshots[item.ID] = snapshot
-			referenceURL := "asset://" + strings.TrimPrefix(strings.TrimSpace(item.ProviderAssetID), "asset://")
-			req.Images = []string{referenceURL}
-			req.Image = ""
-			req.ImageTail = ""
-			req.FirstFrame = ""
-			req.LastFrame = ""
-			req.InputReference = ""
+			applyVirtualCharacterReference(&req, item)
 			payload, marshalErr := common.Marshal(req)
 			if marshalErr != nil {
 				abortVirtualCharacterBinding(c, http.StatusInternalServerError, "character_bind_failed", marshalErr.Error())
@@ -240,7 +234,7 @@ func collectVirtualCharacterAssetReferenceValues(value interface{}, result *[]st
 	case map[string]interface{}:
 		for key, item := range typed {
 			switch strings.ToLower(strings.TrimSpace(key)) {
-			case "url", "image_url", "video_url", "input_reference", "image", "images", "source":
+			case "url", "image_url", "video_url", "audio_url", "input_reference", "image", "images", "source":
 				collectVirtualCharacterAssetReferenceValues(item, result)
 			case "content":
 				collectVirtualCharacterAssetReferenceValues(item, result)
@@ -282,7 +276,7 @@ func virtualCharacterContentHasReference(value interface{}) bool {
 		}
 		for key, item := range typed {
 			switch strings.ToLower(strings.TrimSpace(key)) {
-			case "url", "image_url", "video_url", "input_reference", "image", "images", "source":
+			case "url", "image_url", "video_url", "audio_url", "input_reference", "image", "images", "source":
 				if item != nil {
 					return true
 				}
@@ -294,6 +288,44 @@ func virtualCharacterContentHasReference(value interface{}) bool {
 		}
 	}
 	return false
+}
+
+func applyVirtualCharacterReference(req *relaycommon.TaskSubmitReq, item *model.VirtualCharacter) {
+	referenceURL := "asset://" + strings.TrimPrefix(strings.TrimSpace(item.ProviderAssetID), "asset://")
+	req.Image = ""
+	req.ImageTail = ""
+	req.FirstFrame = ""
+	req.LastFrame = ""
+	req.InputReference = ""
+	req.Images = nil
+	switch model.EffectiveVirtualCharacterAssetType(item.AssetType) {
+	case model.VirtualCharacterAssetTypeVideo:
+		req.Metadata = virtualCharacterOfficialContent(req, "video_url", "reference_video", referenceURL)
+	case model.VirtualCharacterAssetTypeAudio:
+		req.Metadata = virtualCharacterOfficialContent(req, "audio_url", "reference_audio", referenceURL)
+	default:
+		req.Images = []string{referenceURL}
+	}
+}
+
+func virtualCharacterOfficialContent(req *relaycommon.TaskSubmitReq, mediaType, role, referenceURL string) map[string]interface{} {
+	metadata := req.Metadata
+	if metadata == nil {
+		metadata = make(map[string]interface{})
+	}
+	content := make([]interface{}, 0, 2)
+	if prompt := strings.TrimSpace(req.Prompt); prompt != "" {
+		content = append(content, map[string]interface{}{"type": "text", "text": prompt})
+	}
+	content = append(content, map[string]interface{}{
+		"type": mediaType,
+		"role": role,
+		mediaType: map[string]interface{}{
+			"url": referenceURL,
+		},
+	})
+	metadata["content"] = content
+	return metadata
 }
 
 func abortVirtualCharacterBinding(c *gin.Context, status int, code, message string) {

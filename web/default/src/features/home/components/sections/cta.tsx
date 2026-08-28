@@ -17,7 +17,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { Link } from '@tanstack/react-router'
-import { ArrowRight } from 'lucide-react'
+import { ArrowRight01Icon } from '@hugeicons/core-free-icons'
+import { HugeiconsIcon } from '@hugeicons/react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { AnimateInView } from '@/components/animate-in-view'
@@ -30,52 +31,57 @@ interface CTAProps {
 export function CTA(props: CTAProps) {
   const { t } = useTranslation()
 
-  if (props.isAuthenticated) {
-    return null
-  }
+  if (props.isAuthenticated) return null
 
   return (
-    <section className='relative z-10 overflow-hidden px-6 py-24 md:py-32'>
-      {/* Gradient mesh background */}
-      <div
-        aria-hidden
-        className='absolute inset-0 -z-10 opacity-20 dark:opacity-[0.08]'
-        style={{
-          background: [
-            'radial-gradient(ellipse 50% 50% at 30% 50%, oklch(0.7 0.15 250 / 70%) 0%, transparent 70%)',
-            'radial-gradient(ellipse 40% 40% at 70% 40%, oklch(0.65 0.12 200 / 50%) 0%, transparent 70%)',
-          ].join(', '),
-        }}
-      />
-
+    <section className='bg-[var(--home-bg)] px-4 pt-6 pb-20 sm:px-6 md:pb-28'>
       <AnimateInView
-        className='mx-auto max-w-2xl text-center'
         animation='scale-in'
+        className='relative mx-auto flex min-h-[520px] max-w-7xl items-center justify-center overflow-hidden rounded-2xl text-center text-[#f6f6f2]'
       >
-        <h2 className='text-2xl leading-tight font-bold tracking-tight md:text-4xl'>
-          {t('Ready to simplify')}
-          <br />
-          <span className='bg-gradient-to-r from-blue-400 via-violet-400 to-purple-500 bg-clip-text text-transparent'>
-            {t('your AI integration?')}
-          </span>
-        </h2>
-        <p className='text-muted-foreground/80 mx-auto mt-5 max-w-md text-sm leading-relaxed md:text-base'>
-          {t(
-            'Deploy your own gateway and start routing requests through your configured upstream services.'
-          )}
-        </p>
-        <div className='mt-8 flex items-center justify-center gap-3'>
-          <Button className='group rounded-lg' render={<Link to='/sign-up' />}>
-            {t('Get Started')}
-            <ArrowRight className='ml-1 size-3.5 transition-transform duration-200 group-hover:translate-x-0.5' />
-          </Button>
-          <Button
-            variant='outline'
-            className='border-border/50 hover:border-border hover:bg-muted/50 rounded-lg'
-            render={<Link to='/pricing' />}
-          >
-            {t('View Pricing')}
-          </Button>
+        <img
+          src='/home-ai-gateway.webp'
+          alt=''
+          aria-hidden='true'
+          width={1672}
+          height={941}
+          loading='lazy'
+          className='absolute inset-0 h-full w-full object-cover'
+        />
+        <div className='absolute inset-0 bg-[#08090b]/72' />
+        <div className='home-cta-vignette absolute inset-0' />
+
+        <div className='relative mx-auto max-w-3xl px-6 py-16 md:px-10'>
+          <h2 className='text-3xl leading-[1.03] font-semibold tracking-[-0.05em] text-balance md:text-5xl'>
+            {t('Build on every model with one integration')}
+          </h2>
+          <p className='mx-auto mt-4 max-w-[54ch] text-sm leading-relaxed text-[#b2b4bc] md:text-base'>
+            {t(
+              'Start with a compatible API, transparent usage, and production controls from day one.'
+            )}
+          </p>
+          <div className='mt-8 flex flex-wrap justify-center gap-3'>
+            <Button
+              size='lg'
+              className='group/button h-11 rounded-full bg-[#f6f6f2] px-5 text-[#101114] hover:bg-white active:scale-[0.98]'
+              render={<Link to='/sign-up' />}
+            >
+              {t('Start building')}
+              <HugeiconsIcon
+                icon={ArrowRight01Icon}
+                className='transition-transform group-hover/button:translate-x-0.5'
+                strokeWidth={2}
+              />
+            </Button>
+            <Button
+              size='lg'
+              variant='outline'
+              className='h-11 rounded-full border-white/20 bg-white/5 px-5 text-[#f6f6f2] hover:border-white/35 hover:bg-white/10 hover:text-white active:scale-[0.98]'
+              render={<Link to='/docs' />}
+            >
+              {t('Read docs')}
+            </Button>
+          </div>
         </div>
       </AnimateInView>
     </section>

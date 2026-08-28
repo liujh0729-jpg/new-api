@@ -18,10 +18,44 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import type {
   VirtualCharacter,
+  VirtualCharacterAssetType,
   VirtualCharacterAuthorizationStatus,
   VirtualCharacterStatus,
   VirtualCharacterValidationSession,
 } from '../types'
+
+export function effectiveVirtualCharacterAssetType(
+  item: Pick<VirtualCharacter, 'asset_type'> | string | undefined
+): VirtualCharacterAssetType {
+  const value =
+    typeof item === 'string' || item == null
+      ? item
+      : item.asset_type
+  switch ((value || '').toLowerCase()) {
+    case 'video':
+      return 'Video'
+    case 'audio':
+      return 'Audio'
+    default:
+      return 'Image'
+  }
+}
+
+export function inferVirtualCharacterAssetTypeFromFile(
+  file: File | null
+): VirtualCharacterAssetType | undefined {
+  if (!file) return undefined
+  const name = file.name.toLowerCase()
+  if (/\.(mp4|mov)$/.test(name) || file.type.startsWith('video/')) return 'Video'
+  if (/\.(mp3|wav)$/.test(name) || file.type.startsWith('audio/')) return 'Audio'
+  if (
+    /\.(jpe?g|png|webp|gif|heic)$/.test(name) ||
+    file.type.startsWith('image/')
+  ) {
+    return 'Image'
+  }
+  return undefined
+}
 
 export function splitTags(value: string): string[] {
   return value

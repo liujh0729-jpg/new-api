@@ -27,7 +27,9 @@ import (
 
 const (
 	virtualCharacterValidationTTL = 30 * time.Minute
-	virtualCharacterUploadMaxBody = int64(31 << 20)
+	virtualCharacterVideoMaxBytes = int64(50 << 20)
+	virtualCharacterAudioMaxBytes = int64(15 << 20)
+	virtualCharacterUploadMaxBody = virtualCharacterVideoMaxBytes + (1 << 20)
 )
 
 type virtualCharacterStagingStorage interface {
@@ -71,6 +73,7 @@ type virtualCharacterGroupResponse struct {
 	ValidationStatus    string                                 `json:"validation_status"`
 	CoverURL            string                                 `json:"cover_url,omitempty"`
 	ProviderAssetID     string                                 `json:"provider_asset_id,omitempty"`
+	AssetType           string                                 `json:"asset_type,omitempty"`
 	AssetUploadRequired bool                                   `json:"asset_upload_required,omitempty"`
 	MimeType            string                                 `json:"mime_type,omitempty"`
 	FileSize            int64                                  `json:"file_size,omitempty"`
@@ -98,6 +101,7 @@ func parseVirtualCharacterListFilter(c *gin.Context) (model.VirtualCharacterList
 		Gender:      strings.TrimSpace(c.Query("gender")),
 		Status:      strings.TrimSpace(c.Query("status")),
 		SourceType:  strings.TrimSpace(c.Query("source_type")),
+		AssetType:   strings.TrimSpace(c.Query("asset_type")),
 	}
 	if ageBand := strings.TrimSpace(c.Query("age_band")); ageBand != "" {
 		ageMin, ageMax, ok := model.ParseVirtualCharacterAgeBandKey(ageBand)
@@ -122,6 +126,13 @@ func parseVirtualCharacterListFilter(c *gin.Context) (model.VirtualCharacterList
 		default:
 			return filter, errors.New("invalid source_type filter")
 		}
+	}
+	if filter.AssetType != "" {
+		normalized := model.NormalizeVirtualCharacterAssetType(filter.AssetType)
+		if normalized == "" {
+			return filter, errors.New("asset_type must be Image, Video, or Audio")
+		}
+		filter.AssetType = normalized
 	}
 	return filter, nil
 }
@@ -194,7 +205,7 @@ func GetVirtualCharacterABConfig(c *gin.Context) {
 	account, err := model.GetEnabledVirtualCharacterProviderAccount()
 	libraryEnabled := err == nil && common.HasStableCryptoSecret()
 	common.ApiSuccess(c, gin.H{
-		"image_max_mb": 30, "task_retention_days": 90,
+		"image_max_mb": 30, "video_max_mb": 50, "audio_max_mb": 15, "task_retention_days": 90,
 		"official_enabled":    libraryEnabled && account.OfficialEnabled,
 		"virtual_enabled":     libraryEnabled && account.VirtualEnabled,
 		"real_person_enabled": libraryEnabled && account.RealPersonEnabled,
@@ -219,10 +230,15 @@ func CreateVirtualCharacter(c *gin.Context) {
 	}
 	header, err := c.FormFile("file")
 	if err != nil {
-		virtualCharacterError(c, http.StatusBadRequest, "missing_file", "primary image file is required")
+		virtualCharacterError(c, http.StatusBadRequest, "missing_file", "material file is required")
 		return
 	}
-	if _, err := validateVolcCharacterImageUpload(header); err != nil {
+	assetType, err := inferVirtualCharacterAssetType(header, c.PostForm("asset_type"))
+	if err != nil {
+		virtualCharacterError(c, http.StatusBadRequest, "invalid_file", err.Error())
+		return
+	}
+	if _, err := validateVolcCharacterAssetUpload(header, assetType); err != nil {
 		virtualCharacterError(c, http.StatusBadRequest, "invalid_file", err.Error())
 		return
 	}
@@ -247,7 +263,7 @@ func CreateVirtualCharacter(c *gin.Context) {
 		virtualCharacterError(c, http.StatusBadRequest, "invalid_metadata", err.Error())
 		return
 	}
-	item, _, err := model.CreateAIGCVirtualCharacter(userID, account.ID, metadata.Name, metadata.Description, tagsJSON)
+	item, _, err := model.CreateAIGCVirtualCharacter(userID, account.ID, metadata.Name, metadata.Description, tagsJSON, assetType)
 	if err != nil {
 		if strings.Contains(err.Error(), "limit reached") {
 			virtualCharacterError(c, http.StatusConflict, "limit_reached", err.Error())
@@ -525,7 +541,11 @@ func stageAndCreateVirtualCharacterImage(
 	header *multipart.FileHeader,
 	name string,
 ) *virtualCharacterImageCreateError {
-	mimeType, err := validateVolcCharacterImageUpload(header)
+	assetType := model.VirtualCharacterAssetTypeImage
+	if character != nil && character.SourceType != model.VirtualCharacterSourceVolcRealPerson {
+		assetType = model.EffectiveVirtualCharacterAssetType(character.AssetType)
+	}
+	mimeType, err := validateVolcCharacterAssetUpload(header, assetType)
 	if err != nil {
 		return &virtualCharacterImageCreateError{Status: http.StatusBadRequest, Code: "invalid_file", Message: err.Error()}
 	}
@@ -566,7 +586,7 @@ func stageAndCreateVirtualCharacterImage(
 	if name == "" {
 		name = strings.TrimSuffix(filepath.Base(header.Filename), filepath.Ext(header.Filename))
 	}
-	providerAssetID, err := client.CreateAsset(ctx, character.ProviderGroupID, signed.URL, "Image", name, account.ProjectName)
+	providerAssetID, err := client.CreateAsset(ctx, character.ProviderGroupID, signed.URL, assetType, name, account.ProjectName)
 	if err != nil {
 		return &virtualCharacterImageCreateError{Status: http.StatusBadGateway, Code: "provider_asset_failed", Message: service.LocalizeVolcAssetError(err)}
 	}
@@ -574,7 +594,7 @@ func stageAndCreateVirtualCharacterImage(
 	if character.SourceType == model.VirtualCharacterSourceVolcRealPerson {
 		attachErr = model.AttachRealPersonVirtualCharacterImage(character.ID, providerAssetID, stored.FileID, mimeType, header.Size)
 	} else {
-		attachErr = model.AttachVirtualCharacterImage(character.ID, providerAssetID, stored.FileID, mimeType, header.Size)
+		attachErr = model.AttachVirtualCharacterImage(character.ID, providerAssetID, stored.FileID, mimeType, assetType, header.Size)
 	}
 	if attachErr != nil {
 		_ = model.CreateVirtualCharacterCleanupJob(&model.VirtualCharacterCleanupJob{
@@ -764,7 +784,7 @@ func virtualCharacterPreviewContentType(upstream, stored string) string {
 		if index := strings.Index(candidate, ";"); index >= 0 {
 			candidate = strings.TrimSpace(candidate[:index])
 		}
-		if strings.HasPrefix(candidate, "image/") {
+		if strings.HasPrefix(candidate, "image/") || strings.HasPrefix(candidate, "video/") || strings.HasPrefix(candidate, "audio/") {
 			return candidate
 		}
 	}
@@ -1043,7 +1063,8 @@ func virtualCharacterGroupToResponse(item *model.VirtualCharacter) virtualCharac
 		Tags: decodeVirtualCharacterTags(item.TagsJSON), Nationality: item.Nationality, Gender: item.Gender,
 		AgeMin: item.AgeMin, AgeMax: item.AgeMax, Occupation: item.Occupation, Temperament: item.Temperament,
 		Status: item.Status, ValidationStatus: item.ValidationStatus, CoverURL: item.CoverURL,
-		ProviderAssetID: item.ProviderAssetID, MimeType: item.MimeType, FileSize: item.FileSize,
+		ProviderAssetID: item.ProviderAssetID, AssetType: model.EffectiveVirtualCharacterAssetType(item.AssetType),
+		MimeType: item.MimeType, FileSize: item.FileSize,
 		LastError: item.LastError, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt, CatalogVersion: item.CatalogVersion,
 	}
 	response.AssetUploadRequired = item.SourceType == model.VirtualCharacterSourceVolcRealPerson &&
@@ -1236,18 +1257,62 @@ func parseVirtualCharacterCatalog(filename string, payload []byte, fallbackVersi
 	return version, entries, nil
 }
 
+func inferVirtualCharacterAssetType(header *multipart.FileHeader, requested string) (string, error) {
+	if assetType := model.NormalizeVirtualCharacterAssetType(requested); assetType != "" {
+		return assetType, nil
+	}
+	if header == nil {
+		return "", errors.New("unsupported material file type")
+	}
+	switch strings.ToLower(filepath.Ext(header.Filename)) {
+	case ".jpg", ".jpeg", ".png", ".webp", ".gif", ".heic":
+		return model.VirtualCharacterAssetTypeImage, nil
+	case ".mp4", ".mov":
+		return model.VirtualCharacterAssetTypeVideo, nil
+	case ".mp3", ".wav":
+		return model.VirtualCharacterAssetTypeAudio, nil
+	default:
+		return "", errors.New("unsupported material file type")
+	}
+}
+
 func validateVolcCharacterImageUpload(header *multipart.FileHeader) (string, error) {
+	return validateVolcCharacterAssetUpload(header, model.VirtualCharacterAssetTypeImage)
+}
+
+func validateVolcCharacterAssetUpload(header *multipart.FileHeader, assetType string) (string, error) {
 	if header == nil || header.Size <= 0 {
 		return "", errors.New("file is empty")
 	}
+	assetType = model.NormalizeVirtualCharacterAssetType(assetType)
+	if assetType == "" {
+		return "", errors.New("asset_type must be Image, Video, or Audio")
+	}
 	ext := strings.ToLower(filepath.Ext(header.Filename))
 	mimeType := strings.ToLower(strings.TrimSpace(header.Header.Get("Content-Type")))
-	allowed := map[string]bool{".jpg": true, ".jpeg": true, ".png": true, ".webp": true, ".gif": true, ".heic": true}
-	if !allowed[ext] {
-		return "", errors.New("character image must be JPG, PNG, WebP, GIF, or HEIC")
-	}
-	if header.Size > 30<<20 {
-		return "", errors.New("character image exceeds the 30 MB limit")
+	switch assetType {
+	case model.VirtualCharacterAssetTypeImage:
+		allowed := map[string]bool{".jpg": true, ".jpeg": true, ".png": true, ".webp": true, ".gif": true, ".heic": true}
+		if !allowed[ext] {
+			return "", errors.New("character image must be JPG, PNG, WebP, GIF, or HEIC")
+		}
+		if header.Size > virtualCharacterImageMaxBytes {
+			return "", errors.New("character image exceeds the 30 MB limit")
+		}
+	case model.VirtualCharacterAssetTypeVideo:
+		if ext != ".mp4" && ext != ".mov" {
+			return "", errors.New("video material must be MP4 or MOV")
+		}
+		if header.Size > virtualCharacterVideoMaxBytes {
+			return "", errors.New("video material exceeds the 50 MB limit")
+		}
+	case model.VirtualCharacterAssetTypeAudio:
+		if ext != ".mp3" && ext != ".wav" {
+			return "", errors.New("audio material must be MP3 or WAV")
+		}
+		if header.Size > virtualCharacterAudioMaxBytes {
+			return "", errors.New("audio material exceeds the 15 MB limit")
+		}
 	}
 	return mimeType, nil
 }

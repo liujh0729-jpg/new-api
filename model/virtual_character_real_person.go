@@ -115,6 +115,7 @@ func ReserveRealPersonVirtualCharacter(userID, providerAccountID int, name, desc
 				Name: name, Description: description, TagsJSON: tagsJSON,
 				SourceType: VirtualCharacterSourceVolcRealPerson, Status: VirtualCharacterStatusCreating,
 				ValidationStatus: VirtualCharacterValidationUnverified, ProviderAccountID: providerAccountID,
+				AssetType: VirtualCharacterAssetTypeImage,
 			}
 			result := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(item)
 			if result.Error != nil {
@@ -327,7 +328,7 @@ func AttachRealPersonVirtualCharacterImage(characterID int64, providerAssetID, s
 		}
 		if err := tx.Model(&character).Updates(map[string]any{
 			"provider_asset_id": providerAssetID, "staging_file_id": strings.TrimSpace(stagingFileID),
-			"mime_type": strings.TrimSpace(mimeType), "file_size": fileSize,
+			"asset_type": VirtualCharacterAssetTypeImage, "mime_type": strings.TrimSpace(mimeType), "file_size": fileSize,
 			"cover_url": virtualCharacterPreviewPath(characterID), "status": VirtualCharacterStatusCreating,
 			"asset_poll_attempts": 0, "asset_next_poll_at": now, "last_error": "", "updated_at": now,
 		}).Error; err != nil {

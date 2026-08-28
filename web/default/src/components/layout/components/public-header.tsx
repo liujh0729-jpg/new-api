@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Link, useRouterState } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
 import { useAuthStore } from '@/stores/auth-store'
@@ -65,6 +65,7 @@ export function PublicHeader(props: PublicHeaderProps) {
   } = props
 
   const { t } = useTranslation()
+  const scrollSentinelRef = useRef<HTMLDivElement>(null)
   const [scrolled, setScrolled] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
   const { auth } = useAuthStore()
@@ -78,6 +79,7 @@ export function PublicHeader(props: PublicHeaderProps) {
   const notifications = useNotifications()
   const routerState = useRouterState()
   const pathname = routerState.location.pathname
+  const isHomePage = pathname === '/'
 
   const user = auth.user
   const isAuthenticated = !!user
@@ -85,10 +87,15 @@ export function PublicHeader(props: PublicHeaderProps) {
   const links = dynamicLinks.length > 0 ? dynamicLinks : navLinks
 
   useEffect(() => {
-    const onScroll = () => setScrolled(window.scrollY > 20)
-    onScroll()
-    window.addEventListener('scroll', onScroll, { passive: true })
-    return () => window.removeEventListener('scroll', onScroll)
+    const sentinel = scrollSentinelRef.current
+    if (!sentinel) return
+
+    const observer = new IntersectionObserver(
+      ([entry]) => setScrolled(!entry.isIntersecting),
+      { rootMargin: '0px' }
+    )
+    observer.observe(sentinel)
+    return () => observer.disconnect()
   }, [])
 
   useEffect(() => {
@@ -100,19 +107,29 @@ export function PublicHeader(props: PublicHeaderProps) {
 
   return (
     <>
+      <div
+        ref={scrollSentinelRef}
+        aria-hidden='true'
+        className='pointer-events-none absolute top-5 left-0 h-px w-px'
+      />
       <header className='pointer-events-none fixed inset-x-0 top-0 z-50'>
         <div
           className={cn(
             'pointer-events-auto mx-auto transition-all duration-700 ease-[cubic-bezier(0.16,1,0.3,1)]',
-            scrolled ? 'max-w-[52rem] px-3 pt-3' : 'max-w-7xl px-4 pt-0 md:px-6'
+            scrolled ? 'max-w-6xl px-3 pt-3' : 'max-w-7xl px-4 pt-0 md:px-6'
           )}
         >
           <nav
             className={cn(
               'flex items-center justify-between transition-all duration-700 ease-[cubic-bezier(0.16,1,0.3,1)]',
-              scrolled
-                ? 'bg-background/60 ring-border/50 h-12 rounded-2xl pr-1.5 pl-4 shadow-[0_2px_16px_-6px_rgba(0,0,0,0.08),0_0_0_0.5px_rgba(0,0,0,0.02)] ring-[0.5px] backdrop-blur-2xl dark:shadow-[0_2px_16px_-6px_rgba(0,0,0,0.4)]'
-                : 'h-16 px-2'
+              !scrolled && 'h-16 px-2',
+              scrolled &&
+                !isHomePage &&
+                'bg-background/60 ring-border/50 h-12 rounded-2xl pr-1.5 pl-4 shadow-[0_2px_16px_-6px_rgba(0,0,0,0.08),0_0_0_0.5px_rgba(0,0,0,0.02)] ring-[0.5px] backdrop-blur-2xl dark:shadow-[0_2px_16px_-6px_rgba(0,0,0,0.4)]',
+              scrolled &&
+                isHomePage &&
+                'h-12 rounded-2xl bg-white/82 pr-1.5 pl-4 text-[#14151a] shadow-[0_8px_30px_-14px_rgba(32,35,43,0.18)] ring-[0.5px] ring-black/10 backdrop-blur-2xl dark:bg-[#111216]/82 dark:text-white dark:shadow-[0_8px_30px_-14px_rgba(0,0,0,0.7)] dark:ring-white/15',
+              isHomePage && 'text-[#14151a] dark:text-white'
             )}
           >
             {/* Logo */}
@@ -120,7 +137,12 @@ export function PublicHeader(props: PublicHeaderProps) {
               to={homeUrl}
               className='group flex shrink-0 items-center gap-2.5'
             >
-              <div className='flex size-7 shrink-0 items-center justify-center transition-all duration-300 group-hover:scale-105'>
+              <div
+                className={cn(
+                  'flex size-7 shrink-0 items-center justify-center transition-all duration-300 group-hover:scale-105',
+                  isHomePage && 'rounded-lg bg-white/95 p-0.5'
+                )}
+              >
                 {loading ? (
                   <Skeleton className='size-full rounded-lg' />
                 ) : customLogo ? (
@@ -150,7 +172,12 @@ export function PublicHeader(props: PublicHeaderProps) {
                       href={link.href}
                       target='_blank'
                       rel='noopener noreferrer'
-                      className='text-muted-foreground hover:text-foreground rounded-lg px-3 py-1.5 text-[13px] font-medium transition-colors duration-200'
+                      className={cn(
+                        'rounded-lg px-3 py-1.5 text-[13px] font-medium transition-colors duration-200',
+                        isHomePage
+                          ? 'text-[#50545d] hover:text-[#14151a] dark:text-white/70 dark:hover:text-white'
+                          : 'text-muted-foreground hover:text-foreground'
+                      )}
                     >
                       {t(link.title)}
                     </a>
@@ -162,9 +189,14 @@ export function PublicHeader(props: PublicHeaderProps) {
                     to={link.href}
                     className={cn(
                       'rounded-lg px-3 py-1.5 text-[13px] font-medium transition-colors duration-200',
-                      isActive
-                        ? 'text-foreground'
-                        : 'text-muted-foreground hover:text-foreground'
+                      isHomePage &&
+                        (isActive
+                          ? 'text-[#14151a] dark:text-white'
+                          : 'text-[#50545d] hover:text-[#14151a] dark:text-white/70 dark:hover:text-white'),
+                      !isHomePage &&
+                        (isActive
+                          ? 'text-foreground'
+                          : 'text-muted-foreground hover:text-foreground')
                     )}
                   >
                     {t(link.title)}
@@ -175,7 +207,12 @@ export function PublicHeader(props: PublicHeaderProps) {
               {(showLanguageSwitcher ||
                 showThemeSwitch ||
                 showNotifications) && (
-                <div className='bg-border/40 mx-2 h-4 w-px' />
+                <div
+                  className={cn(
+                    'mx-2 h-4 w-px',
+                    isHomePage ? 'bg-black/15 dark:bg-white/20' : 'bg-border/40'
+                  )}
+                />
               )}
 
               {showLanguageSwitcher && <LanguageSwitcher />}
@@ -189,7 +226,14 @@ export function PublicHeader(props: PublicHeaderProps) {
 
               {showAuthButtons && (
                 <>
-                  <div className='bg-border/40 mx-1 h-4 w-px' />
+                  <div
+                    className={cn(
+                      'mx-1 h-4 w-px',
+                      isHomePage
+                        ? 'bg-black/15 dark:bg-white/20'
+                        : 'bg-border/40'
+                    )}
+                  />
                   {loading ? (
                     <Skeleton className='h-8 w-20 rounded-lg' />
                   ) : isAuthenticated ? (
@@ -197,7 +241,11 @@ export function PublicHeader(props: PublicHeaderProps) {
                   ) : (
                     <Button
                       size='sm'
-                      className='h-8 rounded-lg px-3.5 text-xs font-medium'
+                      className={cn(
+                        'h-8 rounded-full px-3.5 text-xs font-medium',
+                        isHomePage &&
+                          'bg-[#15161a] text-white hover:bg-[#2a2c32] dark:bg-[#f6f6f2] dark:text-[#101114] dark:hover:bg-white'
+                      )}
                       render={<Link to='/sign-in' />}
                     >
                       {t('Sign in')}
@@ -250,7 +298,10 @@ export function PublicHeader(props: PublicHeaderProps) {
       {/* Mobile full-screen overlay */}
       <div
         className={cn(
-          'bg-background/98 fixed inset-0 z-40 backdrop-blur-2xl transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] sm:pointer-events-none sm:hidden',
+          'fixed inset-0 z-40 backdrop-blur-2xl transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] sm:pointer-events-none sm:hidden',
+          pathname === '/'
+            ? 'bg-[#f5f6f8]/98 text-[#14151a] dark:bg-[#08090b]/98 dark:text-[#f6f6f2]'
+            : 'bg-background/98',
           mobileOpen
             ? 'pointer-events-auto opacity-100'
             : 'pointer-events-none opacity-0'
@@ -265,7 +316,12 @@ export function PublicHeader(props: PublicHeaderProps) {
                 mobileOpen
                   ? 'translate-y-0 opacity-100'
                   : 'translate-y-4 opacity-0',
-                isActive ? 'text-foreground' : 'text-muted-foreground'
+                pathname === '/' &&
+                  (isActive
+                    ? 'text-[#14151a] dark:text-white'
+                    : 'text-[#50545d] dark:text-white/65'),
+                pathname !== '/' &&
+                  (isActive ? 'text-foreground' : 'text-muted-foreground')
               )
               const linkStyle = {
                 transitionDelay: mobileOpen ? `${100 + i * 50}ms` : '0ms',
@@ -314,7 +370,12 @@ export function PublicHeader(props: PublicHeaderProps) {
               <Link
                 to={isAuthenticated ? '/dashboard' : '/sign-in'}
                 onClick={() => setMobileOpen(false)}
-                className='bg-foreground text-background inline-flex h-10 items-center justify-center rounded-lg text-sm font-medium transition-opacity hover:opacity-90 active:opacity-80'
+                className={cn(
+                  'inline-flex h-10 items-center justify-center rounded-full text-sm font-medium transition-opacity hover:opacity-90 active:opacity-80',
+                  pathname === '/'
+                    ? 'bg-[#15161a] text-white dark:bg-[#f6f6f2] dark:text-[#101114]'
+                    : 'bg-foreground text-background'
+                )}
               >
                 {isAuthenticated ? t('Go to Dashboard') : t('Sign in')}
               </Link>

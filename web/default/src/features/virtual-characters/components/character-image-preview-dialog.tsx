@@ -24,10 +24,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import type { VirtualCharacterAssetType } from '../types'
+import { MaterialMedia } from './material-media'
 
 export type CharacterImagePreview = {
   name: string
   url: string
+  assetType?: VirtualCharacterAssetType
 }
 
 export function CharacterImagePreviewDialog(props: {
@@ -47,9 +50,11 @@ export function CharacterImagePreviewDialog(props: {
           <DialogDescription>{t('Preview')}</DialogDescription>
         </DialogHeader>
         {props.preview ? (
-          <img
-            src={props.preview.url}
-            alt={props.preview.name}
+          <MaterialMedia
+            url={props.preview.url}
+            name={props.preview.name}
+            assetType={props.preview.assetType ?? 'Image'}
+            controls
             className='bg-muted max-h-[75vh] w-full rounded-md object-contain'
           />
         ) : null}

@@ -187,8 +187,8 @@ GET /api/pricing
 | 公开模型 | 可用分辨率 |
 |---|---|
 | `AP Seedance-2.0 VIP` | `480p`、`720p`、`1080p`、`4k` |
-| `AP Seedance-2.0 标准版` | `480p`、`720p`、`1080p`、`4k` |
-| `AP Seedance-2.0 轻量版` | `480p`、`720p`、`1080p` |
+| `AP Seedance-2.0 标准版` | `480p`、`720p` |
+| `AP Seedance-2.0 轻量版` | `480p`、`720p` |
 | `AP Seedance-2.0 高性价比版` | `1080p`、`4k` |
 
 最终可用档位以 `GET /api/pricing` 返回的动态目录为准。其中 VIP、标准版和轻量版提供 `480p`，高性价比版不提供。
@@ -264,7 +264,7 @@ GET /api/pricing
 {
   "model": "AP Seedance-2.0 标准版",
   "prompt": "雨后的霓虹街道，镜头缓慢向前移动",
-  "resolution": "1080p",
+  "resolution": "720p",
   "ratio": "16:9",
   "duration": 5,
   "generate_audio": false,
@@ -285,7 +285,7 @@ GET /api/pricing
       "role": "reference_image"
     }
   ],
-  "resolution": "1080p",
+  "resolution": "720p",
   "ratio": "9:16",
   "duration": 5
 }
@@ -578,69 +578,11 @@ PLATFORM 与 BYOK 的客户单价、平台成本可能不同；是否含参考�
 | `material_limit_exceeded` | 素材数量、大小、尺寸、格式、FPS 或总时长超限 |
 | `insufficient_quota` | 30 秒预授权或固定时长额度不足 |
 
-## 9. 素材库与角色库
+## 9. Seedance 素材库
 
-普通素材库和角色库是两种不同的功能：
+素材库保存火山 Asset，生成时使用 NewAPI 的 `character_id`，或者使用已登记且已授权的 `asset://{asset_id}`。私有素材（`volc_aigc`）可上传图片、视频或音频；官方目录和真人角色仍只收图片。真人角色必须先完成本人 H5 身份核验，再上传同一人的肖像图片。
 
-- 普通素材库保存图片、视频和音频文件，生成时使用素材记录返回的公网 `url`。
-- 角色库保存火山角色 Asset，生成时使用 NewAPI 的 `character_id`，或者使用已登记且已授权的 `asset://{asset_id}`。
-- 真人角色必须先完成本人 H5 身份核验，再上传同一人的肖像图片。普通素材上传不能代替真人核验。
-
-### 9.1 普通素材库（控制台 / Playground）
-
-普通素材库接口位于 `/pg`，使用控制台用户会话鉴权，不接受 NewAPI Bearer Token：
-
-~~~http
-POST   /pg/material/upload
-GET    /pg/material
-GET    /pg/material/search
-PUT    /pg/material
-DELETE /pg/material/{id}
-~~~
-
-上传使用 `multipart/form-data`：
-
-| 字段 | 必填 | 说明 |
-|---|---:|---|
-| `file` | 是 | 图片、视频或音频文件 |
-| `source_type` | 否 | 普通上传使用 `material` |
-
-上传成功后使用响应 `data.url` 作为 Seedance 参考素材：
-
-~~~json
-{
-  "success": true,
-  "data": {
-    "id": 123,
-    "name": "reference.png",
-    "type": "image",
-    "source_type": "material",
-    "url": "https://example.com/static/materials/reference.png"
-  }
-}
-~~~
-
-~~~json
-{
-  "model": "AP Seedance-2.5 标准版",
-  "content": [
-    { "type": "text", "text": "保持参考图中的主体外观" },
-    {
-      "type": "image_url",
-      "image_url": { "url": "https://example.com/static/materials/reference.png" },
-      "role": "reference_image"
-    }
-  ],
-  "resolution": "720p",
-  "ratio": "adaptive",
-  "duration": 4,
-  "omni_reference_task_type": "reference"
-}
-~~~
-
-纯 API Key 调用方不能使用 `/pg/material`。这类调用方应把文件放在 Ark 可访问的公网 URL，再把 URL 写入 `content`。无论素材来自平台素材库还是外部 URL，仍需满足所选 Seedance 版本的格式、大小、数量和模式限制。
-
-### 9.2 查询官方角色、虚拟角色和真人角色
+### 9.1 查询官方角色、虚拟角色和真人角色
 
 角色库 `/v1` 接口使用 NewAPI Token：
 
@@ -653,7 +595,7 @@ Authorization: Bearer <NEWAPI_TOKEN>
 | `source_type` | 含义 | 范围 |
 |---|---|---|
 | `volc_preset` | 平台同步的火山官方角色 | `scope=public` |
-| `volc_aigc` | 当前用户上传创建的虚拟角色 | `scope=private` |
+| `volc_aigc` | 当前用户上传的私有素材（图片 / 视频 / 音频） | `scope=private` |
 | `volc_real_person` | 当前用户完成核验的真人角色 | `scope=private` |
 
 查询可用官方角色：
@@ -668,7 +610,7 @@ GET /v1/virtual-characters?scope=public&source_type=volc_preset&status=active
 GET /v1/virtual-characters?scope=private&source_type=volc_real_person&status=active
 ~~~
 
-还可以使用 `keyword`、`gender`、`nationality`、`age_band` 和分页参数过滤。角色记录中的关键字段为：
+还可以使用 `keyword`、`gender`、`nationality`、`age_band`、`asset_type`（`Image` / `Video` / `Audio`）和分页参数过滤。记录中的关键字段为：
 
 ~~~json
 {
@@ -678,15 +620,22 @@ GET /v1/virtual-characters?scope=private&source_type=volc_real_person&status=act
   "name": "签约演员 A",
   "status": "active",
   "validation_status": "accepted",
+  "asset_type": "Image",
   "provider_asset_id": "provider-asset-id"
 }
 ~~~
 
 只有 `status=active` 的角色可以创建新任务。真人角色还必须具有有效授权且火山 Asset 状态正常。
 
-### 9.3 创建个人虚拟角色（非真人）
+### 9.2 创建个人素材（非真人）
 
-虚拟角色使用一张非真人角色图片创建，不走真人身份核验：
+私有素材使用一张图片、一段视频或一段音频创建，不走真人身份核验。可显式传 `asset_type`（`Image` / `Video` / `Audio`）；不传则按文件扩展名推断。
+
+| 类型 | 扩展名 | 大小 |
+|---|---|---|
+| Image | jpg / jpeg / png / webp / gif / heic | 30MB |
+| Video | mp4 / mov | 50MB |
+| Audio | mp3 / wav | 15MB |
 
 ~~~bash
 curl -X POST "$BASE_URL/v1/virtual-characters" \
@@ -695,15 +644,27 @@ curl -X POST "$BASE_URL/v1/virtual-characters" \
   -F "name=虚拟角色 A" \
   -F "description=原创非真人角色" \
   -F "tags=[\"虚拟角色\"]"
+
+curl -X POST "$BASE_URL/v1/virtual-characters" \
+  -H "Authorization: Bearer $NEWAPI_TOKEN" \
+  -F "file=@clip.mp4" \
+  -F "asset_type=Video" \
+  -F "name=参考视频 A"
+
+curl -X POST "$BASE_URL/v1/virtual-characters" \
+  -H "Authorization: Bearer $NEWAPI_TOKEN" \
+  -F "file=@voice.mp3" \
+  -F "asset_type=Audio" \
+  -F "name=参考音频 A"
 ~~~
 
-创建响应的 `data.id` 即 `character_id`。处理期间角色通常为 `creating`；轮询 `GET /v1/virtual-characters/{id}`，直到 `status=active` 后再用于视频生成。
+创建响应的 `data.id` 即 `character_id`。处理期间通常为 `creating`；轮询 `GET /v1/virtual-characters/{id}`，直到 `status=active` 后再用于视频生成。`character_id` 出片时按 `asset_type` 注入：图片走 `image_url`，视频走 `video_url`，音频走 `audio_url`。官方目录和真人角色仍只支持图片。
 
-### 9.4 创建真人角色
+### 9.3 创建真人角色
 
 真人入库必须按以下顺序执行。
 
-#### 9.4.1 创建本人核验会话
+#### 9.3.1 创建本人核验会话
 
 ~~~http
 POST /v1/virtual-characters/validation-sessions
@@ -737,7 +698,7 @@ Content-Type: application/json
 
 必须由肖像权人本人打开 `launch_url` 并完成火山 H5 核验。不得把 NewAPI Token 交给被核验人。
 
-#### 9.4.2 查询核验结果
+#### 9.3.2 查询核验结果
 
 ~~~http
 GET /v1/virtual-characters/validation-sessions/{session_id}
@@ -750,7 +711,7 @@ Authorization: Bearer <NEWAPI_TOKEN>
 DELETE /v1/virtual-characters/validation-sessions/{session_id}
 ~~~
 
-#### 9.4.3 上传已核验人员的肖像
+#### 9.3.3 上传已核验人员的肖像
 
 H5 成功后先查询角色：
 
@@ -786,11 +747,11 @@ POST /v1/virtual-characters/321/sync
 DELETE /v1/virtual-characters/321
 ~~~
 
-### 9.5 在 Seedance 请求中使用角色
+### 9.4 在 Seedance 请求中使用角色
 
 Seedance 2.0 和 Seedance 2.5 都支持角色库，但所选模型名必须包含 `Seedance`。
 
-#### 9.5.1 单角色：使用 `character_id`
+#### 9.4.1 单角色：使用 `character_id`
 
 这是推荐的单角色调用方式。使用兼容入口 `POST /v1/video/generations`；NewAPI 会鉴权并把角色转换成对应的 `asset://` 引用。由于该入口使用兼容请求结构，`resolution`、`ratio` 等 Seedance 参数放入 `metadata`：
 
@@ -826,7 +787,7 @@ Seedance 2.0 的写法相同，只需换成 2.0 模型并使用 2.0 支持的比
 
 旧字段 `character_asset_id` 会被忽略，不要继续使用。
 
-#### 9.5.2 多角色：使用已登记的 `asset://`
+#### 9.4.2 多角色：使用已登记的 `asset://`
 
 需要组合多个角色时，可使用 `POST /v1/videos`，在官方 `content` 中直接引用各角色记录的 `provider_asset_id`：
 

@@ -76,6 +76,7 @@ import {
 } from './constants'
 import type {
   VirtualCharacter,
+  VirtualCharacterAssetType,
   VirtualCharacterValidationSession,
 } from './types'
 
@@ -98,6 +99,7 @@ export function VirtualCharacters() {
   const [gender, setGender] = useState('')
   const [ageBand, setAgeBand] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
+  const [assetTypeFilter, setAssetTypeFilter] = useState('')
   const [createOpen, setCreateOpen] = useState(false)
   const [createVirtualOpen, setCreateVirtualOpen] = useState(false)
   const [validation, setValidation] =
@@ -130,6 +132,7 @@ export function VirtualCharacters() {
     keyword,
     status: statusFilter === 'all' ? '' : statusFilter,
     sourceType: 'volc_aigc' as const,
+    assetType: (assetTypeFilter || undefined) as VirtualCharacterAssetType | undefined,
   }
   const realListParams = {
     scope: 'private' as const,
@@ -228,6 +231,7 @@ export function VirtualCharacters() {
     setGender('')
     setAgeBand('')
     setStatusFilter('all')
+    setAssetTypeFilter('')
     setPublicPage(1)
     setVirtualPage(1)
     setRealPage(1)
@@ -290,7 +294,7 @@ export function VirtualCharacters() {
               onClick={() => setCreateVirtualOpen(true)}
             >
               <HugeiconsIcon icon={Add01Icon} data-icon='inline-start' />
-              {t('Upload character')}
+              {t('Upload material')}
             </Button>
           )}
           {tab === 'real' && (
@@ -319,7 +323,7 @@ export function VirtualCharacters() {
                   {t('Public characters')}
                 </TabsTrigger>
                 <TabsTrigger value='virtual'>
-                  {t('My virtual characters')}
+                  {t('My materials')}
                 </TabsTrigger>
                 <TabsTrigger value='real'>{t('My real people')}</TabsTrigger>
                 <TabsTrigger value='history'>{t('Task history')}</TabsTrigger>
@@ -396,6 +400,28 @@ export function VirtualCharacters() {
                       </NativeSelect>
                     </>
                   )}
+                  {tab === 'virtual' && (
+                    <NativeSelect
+                      value={assetTypeFilter}
+                      onChange={(event) => {
+                        setAssetTypeFilter(event.target.value)
+                        setVirtualPage(1)
+                      }}
+                    >
+                      <NativeSelectOption value=''>
+                        {t('All material types')}
+                      </NativeSelectOption>
+                      <NativeSelectOption value='Image'>
+                        {t('Image')}
+                      </NativeSelectOption>
+                      <NativeSelectOption value='Video'>
+                        {t('Video')}
+                      </NativeSelectOption>
+                      <NativeSelectOption value='Audio'>
+                        {t('Audio')}
+                      </NativeSelectOption>
+                    </NativeSelect>
+                  )}
                   {(tab === 'virtual' || tab === 'real') && (
                     <NativeSelect
                       value={statusFilter}
@@ -439,7 +465,7 @@ export function VirtualCharacters() {
               </Button>
               {tab === 'virtual' && virtualQuery.data && (
                 <Badge variant='outline'>
-                  {t('{{used}} of {{limit}} characters', {
+                  {t('{{used}} of {{limit}} materials', {
                     used: virtualQuery.data.data.used ?? 0,
                     limit: virtualQuery.data.data.limit ?? 0,
                   })}
@@ -518,7 +544,7 @@ export function VirtualCharacters() {
                               'The authoritative official catalog has no matching active characters.'
                             )
                           : tab === 'virtual'
-                            ? t('Create your first private virtual character.')
+                            ? t('Upload your first private material.')
                             : t(
                                 'Complete identity authorization to add your first real person.'
                               )}

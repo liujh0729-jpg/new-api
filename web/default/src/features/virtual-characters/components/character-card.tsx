@@ -42,7 +42,12 @@ import { Spinner } from '@/components/ui/spinner'
 import { virtualCharacterPreviewURL } from '../api'
 import type { VirtualCharacter } from '../types'
 import type { CharacterImagePreview } from './character-image-preview-dialog'
-import { statusLabel, virtualCharacterFacetMeta } from './utils'
+import { MaterialMedia } from './material-media'
+import {
+  effectiveVirtualCharacterAssetType,
+  statusLabel,
+  virtualCharacterFacetMeta,
+} from './utils'
 
 export function CharacterCard({
   item,
@@ -81,6 +86,7 @@ export function CharacterCard({
     (item.source_type !== 'volc_real_person' ||
       item.authorization?.status === 'active')
   const facetMeta = virtualCharacterFacetMeta(item)
+  const assetType = effectiveVirtualCharacterAssetType(item)
   return (
     <Card className='gap-0 overflow-hidden py-0'>
       <div className='bg-muted relative aspect-[3/4] overflow-hidden'>
@@ -89,13 +95,14 @@ export function CharacterCard({
             type='button'
             className='group focus-visible:ring-ring size-full cursor-zoom-in focus-visible:ring-2 focus-visible:outline-none focus-visible:ring-inset'
             aria-label={`${t('Preview')}: ${item.name}`}
-            onClick={() => onPreview({ name: item.name, url: coverURL })}
+            onClick={() =>
+              onPreview({ name: item.name, url: coverURL, assetType })
+            }
           >
-            <img
-              src={coverURL}
-              alt={item.name}
-              loading='lazy'
-              decoding='async'
+            <MaterialMedia
+              url={coverURL}
+              name={item.name}
+              assetType={assetType}
               className='size-full object-contain transition-transform duration-200 group-hover:scale-[1.02]'
             />
           </button>
@@ -108,7 +115,7 @@ export function CharacterCard({
           <div className='absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/45 px-2 text-center text-white'>
             <Spinner className='size-5 text-white' />
             <p className='text-[11px] leading-tight font-medium'>
-              {t('Processing character image')}
+              {t('Processing material')}
             </p>
           </div>
         ) : null}
@@ -163,12 +170,17 @@ export function CharacterCard({
               {t('Processing')}
             </Badge>
           ) : (
-            <Badge
-              variant={item.status === 'active' ? 'default' : 'secondary'}
-              className='mr-1 shrink-0 px-1.5 text-[10px]'
-            >
-              {statusLabel(item.status, t)}
-            </Badge>
+            <div className='mr-1 flex shrink-0 flex-col items-end gap-1'>
+              <Badge
+                variant={item.status === 'active' ? 'default' : 'secondary'}
+                className='px-1.5 text-[10px]'
+              >
+                {statusLabel(item.status, t)}
+              </Badge>
+              <Badge variant='outline' className='px-1.5 text-[10px]'>
+                {t(assetType)}
+              </Badge>
+            </div>
           )}
         </div>
       </CardHeader>
@@ -180,7 +192,7 @@ export function CharacterCard({
         ) : isUploading ? (
           <Progress value={null}>
             <ProgressLabel className='text-muted-foreground text-[10px]'>
-              {t('Processing character image')}
+              {t('Processing material')}
             </ProgressLabel>
           </Progress>
         ) : (

@@ -35,7 +35,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
 import { createCharacterVideo } from '../api'
 import type { VirtualCharacter } from '../types'
-import { errorMessage } from './utils'
+import { effectiveVirtualCharacterAssetType, errorMessage } from './utils'
 
 type GenerateTarget = {
   character: VirtualCharacter
@@ -90,6 +90,7 @@ function GenerateDialogForm(props: {
         duration,
         ratio,
         resolution,
+        assetType: effectiveVirtualCharacterAssetType(props.target.character),
       })
       if (response.error?.message) throw new Error(response.error.message)
       toast.success(t('Video task created'))
@@ -112,7 +113,7 @@ function GenerateDialogForm(props: {
           </DialogTitle>
           <DialogDescription>
             {t(
-              'Choose a Seedance model available to your account. The character image is sent as an asset:// reference.'
+              'Choose a Seedance model available to your account. The selected material is sent as an asset:// reference.'
             )}
           </DialogDescription>
         </DialogHeader>
@@ -147,9 +148,7 @@ function GenerateDialogForm(props: {
               required
               value={prompt}
               onChange={(event) => setPrompt(event.target.value)}
-              placeholder={t(
-                'Describe how 图片1中的角色 should move and what scene to create'
-              )}
+              placeholder={t(generatePromptPlaceholder(props.target.character))}
             />
           </Field>
           <div className='grid gap-4 sm:grid-cols-3'>
@@ -207,4 +206,20 @@ function GenerateDialogForm(props: {
       </form>
     </DialogContent>
   )
+}
+
+function generatePromptPlaceholder(character: VirtualCharacter): string {
+  const assetType = effectiveVirtualCharacterAssetType(character)
+  switch (assetType) {
+    case 'Video':
+      return 'Describe how 视频1 should be used as the motion or scene reference'
+    case 'Audio':
+      return 'Describe how 音频1 should be used as the audio reference'
+    case 'Image':
+      return 'Describe how 图片1中的角色 should move and what scene to create'
+    default: {
+      const _exhaustive: never = assetType
+      return _exhaustive
+    }
+  }
 }

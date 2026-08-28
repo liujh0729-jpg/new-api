@@ -34,6 +34,7 @@ export type VirtualCharacterSourceType =
   | 'volc_preset'
   | 'volc_aigc'
   | 'volc_real_person'
+export type VirtualCharacterAssetType = 'Image' | 'Video' | 'Audio'
 
 export type VirtualCharacterAuthorizationStatus =
   | 'pending'
@@ -73,6 +74,7 @@ export interface VirtualCharacter {
   validation_status: 'unverified' | 'accepted' | 'rejected'
   cover_url?: string
   provider_asset_id?: string
+  asset_type?: VirtualCharacterAssetType
   asset_upload_required?: boolean
   mime_type?: string
   file_size?: number
@@ -92,6 +94,7 @@ export interface VirtualCharacterListParams {
   ageBand?: string
   status?: string
   sourceType?: VirtualCharacterSourceType
+  assetType?: VirtualCharacterAssetType
 }
 
 export interface PageData<T> {
@@ -117,6 +120,8 @@ export interface VirtualCharacterListData {
 
 export interface VirtualCharacterConfig {
   image_max_mb: number
+  video_max_mb?: number
+  audio_max_mb?: number
   task_retention_days: number
   official_enabled: boolean
   virtual_enabled: boolean

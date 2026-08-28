@@ -38,7 +38,11 @@ import { Input } from '@/components/ui/input'
 import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
 import { createVirtualCharacter } from '../api'
-import { errorMessage, splitTags } from './utils'
+import {
+  errorMessage,
+  inferVirtualCharacterAssetTypeFromFile,
+  splitTags,
+} from './utils'
 
 export function CreateVirtualCharacterDialog(props: {
   open: boolean
@@ -62,7 +66,12 @@ export function CreateVirtualCharacterDialog(props: {
   const onSubmit = async (event: FormEvent) => {
     event.preventDefault()
     if (!file) {
-      toast.error(t('Character image is required'))
+      toast.error(t('Material file is required'))
+      return
+    }
+    const assetType = inferVirtualCharacterAssetTypeFromFile(file)
+    if (!assetType) {
+      toast.error(t('Unsupported material file type'))
       return
     }
     setSubmitting(true)
@@ -72,13 +81,14 @@ export function CreateVirtualCharacterDialog(props: {
         description,
         tags: splitTags(tags),
         file,
+        assetType,
       })
-      toast.success(t('Character uploaded'))
+      toast.success(t('Material uploaded'))
       reset()
       props.onOpenChange(false)
       await props.onCreated()
     } catch (error) {
-      toast.error(errorMessage(error, t('Failed to upload character')))
+      toast.error(errorMessage(error, t('Failed to upload material')))
     } finally {
       setSubmitting(false)
     }
@@ -93,10 +103,10 @@ export function CreateVirtualCharacterDialog(props: {
     <Dialog open={props.open} onOpenChange={changeOpen}>
       <DialogContent className='sm:max-w-lg'>
         <DialogHeader>
-          <DialogTitle>{t('Upload character')}</DialogTitle>
+          <DialogTitle>{t('Upload material')}</DialogTitle>
           <DialogDescription>
             {t(
-              'Upload one image for this character. A new image must be uploaded as a new character.'
+              'Upload one image, video, or audio file. Each file becomes a separate material.'
             )}
           </DialogDescription>
         </DialogHeader>
@@ -138,18 +148,18 @@ export function CreateVirtualCharacterDialog(props: {
             </Field>
             <Field>
               <FieldLabel htmlFor='virtual-character-primary-image'>
-                {t('Character image')}
+                {t('Material file')}
               </FieldLabel>
               <Input
                 id='virtual-character-primary-image'
                 type='file'
-                accept='image/jpeg,image/png,image/webp,image/gif,image/heic,.jpg,.jpeg,.png,.webp,.gif,.heic'
+                accept='image/jpeg,image/png,image/webp,image/gif,image/heic,.jpg,.jpeg,.png,.webp,.gif,.heic,video/mp4,video/quicktime,.mp4,.mov,audio/mpeg,audio/wav,.mp3,.wav'
                 required
                 onChange={(event) => setFile(event.target.files?.[0] ?? null)}
               />
               <FieldDescription>
                 {t(
-                  'This image is the character subject reference (asset://). Images up to 30 MB.'
+                  'Images up to 30 MB. Videos (MP4/MOV) up to 50 MB. Audio (MP3/WAV) up to 15 MB.'
                 )}
               </FieldDescription>
             </Field>

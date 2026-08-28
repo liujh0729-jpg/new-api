@@ -16,113 +16,73 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useRef, useEffect, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
-
-interface CounterProps {
-  end: number
-  suffix?: string
-  prefix?: string
-  duration?: number
-  decimals?: number
-}
-
-function Counter(props: CounterProps) {
-  const { end, suffix = '', prefix = '', duration = 1600, decimals = 0 } = props
-  const ref = useRef<HTMLSpanElement>(null)
-  const startedRef = useRef(false)
-
-  const formatValue = useCallback(
-    (v: number) =>
-      decimals > 0 ? v.toFixed(decimals) : Math.round(v).toLocaleString(),
-    [decimals]
-  )
-
-  const animate = useCallback(() => {
-    const el = ref.current
-    if (!el) return
-    const start = performance.now()
-    const step = (now: number) => {
-      const progress = Math.min((now - start) / duration, 1)
-      const eased = 1 - Math.pow(1 - progress, 3)
-      el.textContent = `${prefix}${formatValue(eased * end)}${suffix}`
-      if (progress < 1) requestAnimationFrame(step)
-    }
-    requestAnimationFrame(step)
-  }, [end, duration, prefix, suffix, formatValue])
-
-  useEffect(() => {
-    const el = ref.current
-    if (!el) return
-
-    const mq = window.matchMedia('(prefers-reduced-motion: reduce)')
-    if (mq.matches) {
-      el.textContent = `${prefix}${formatValue(end)}${suffix}`
-      return
-    }
-
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        if (entry.isIntersecting && !startedRef.current) {
-          startedRef.current = true
-          animate()
-          observer.unobserve(el)
-        }
-      },
-      { threshold: 0.5 }
-    )
-
-    observer.observe(el)
-    return () => observer.disconnect()
-  }, [animate, end, prefix, suffix, formatValue])
-
-  return (
-    <span ref={ref} className='tabular-nums'>
-      {prefix}0{suffix}
-    </span>
-  )
-}
 
 interface StatsProps {
   className?: string
 }
 
-interface StatItem {
-  end: number
-  suffix: string
-  label: string
-  decimals?: number
-}
+const MODEL_NAMES = [
+  'ap-deepseek-v4-flash',
+  'ap-doubao-seed-2.1-turbo',
+  'ap-glm-5.3-flash',
+  'ap-gpt-5.6-luna',
+  'ap-kimi-k3',
+  'ap-qwen3.8-max',
+  'ap-agnes-2.5-flash',
+  'AP Seedance-2.5 标准版',
+  'AP Seedance-2.0 VIP',
+  'AP Seedance-2.0 轻量版',
+]
 
 export function Stats(_props: StatsProps) {
   const { t } = useTranslation()
 
-  const stats: StatItem[] = [
-    { end: 50, suffix: '+', label: t('upstream services integrated') },
-    { end: 100, suffix: '+', label: t('model billing support') },
-    { end: 50, suffix: '+', label: t('compatible API routes') },
-    { end: 10, suffix: '+', label: t('scheduling controls') },
+  const facts = [
+    { value: '40+', label: t('Upstream AI providers') },
+    { value: '100+', label: t('Models with unified billing') },
+    { value: '1', label: t('Compatible API surface') },
+    { value: t('Live'), label: t('Usage and cost visibility') },
   ]
 
   return (
-    <div className='border-border/40 bg-muted/10 relative z-10 border-y'>
-      <div className='mx-auto max-w-6xl px-6 py-10 md:py-12'>
-        <div className='grid grid-cols-2 gap-8 md:grid-cols-4 md:gap-12'>
-          {stats.map((s) => (
+    <section className='home-stats overflow-hidden border-y border-[var(--home-border)] bg-[var(--home-bg)] text-[var(--home-text)]'>
+      <div className='home-model-marquee border-b border-[var(--home-border)] py-4'>
+        <div
+          className='home-model-marquee-track'
+          aria-label={t('Supported AI providers and model families')}
+        >
+          {[0, 1].map((group) => (
             <div
-              key={s.label}
-              className='flex flex-col items-center text-center'
+              key={group}
+              className='home-model-marquee-group'
+              aria-hidden={group === 1}
             >
-              <span className='text-2xl font-bold tracking-tight md:text-3xl'>
-                <Counter end={s.end} suffix={s.suffix} decimals={s.decimals} />
-              </span>
-              <span className='text-muted-foreground mt-1.5 text-xs'>
-                {s.label}
-              </span>
+              {MODEL_NAMES.map((name) => (
+                <span key={name} className='home-model-marquee-item'>
+                  {name}
+                </span>
+              ))}
             </div>
           ))}
         </div>
       </div>
-    </div>
+
+      <dl className='mx-auto grid max-w-7xl grid-cols-2 gap-x-5 gap-y-8 px-4 py-9 sm:px-6 md:grid-cols-4 md:gap-0 md:py-11'>
+        {facts.map((fact) => (
+          <div
+            key={fact.label}
+            className='flex flex-col text-left md:border-l md:border-[var(--home-border)] md:px-8 md:first:border-l-0 md:first:pl-0'
+          >
+            <dd className='text-2xl font-semibold tracking-[-0.04em] md:text-3xl'>
+              {fact.value}
+            </dd>
+            <dt className='mt-1.5 max-w-[21ch] text-xs leading-relaxed text-[var(--home-text-subtle)]'>
+              {fact.label}
+            </dt>
+          </div>
+        ))}
+      </dl>
+    </section>
   )
 }

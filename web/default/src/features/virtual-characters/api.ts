@@ -21,6 +21,7 @@ import type {
   ApiResponse,
   CharacterVideoInput,
   VirtualCharacter,
+  VirtualCharacterAssetType,
   VirtualCharacterAIPDDCatalogSyncResult,
   VirtualCharacterConfig,
   VirtualCharacterListData,
@@ -71,6 +72,7 @@ export async function listVirtualCharacters(
       age_band: params.ageBand || undefined,
       status: params.status || undefined,
       source_type: params.sourceType || undefined,
+      asset_type: params.assetType || undefined,
     },
   })
   return res.data
@@ -95,14 +97,31 @@ export async function createVirtualCharacter(input: {
   description: string
   tags: string[]
   file: File
+  assetType?: VirtualCharacterAssetType
 }): Promise<ApiResponse<VirtualCharacter>> {
   const form = new FormData()
   form.append('name', input.name)
   form.append('description', input.description)
   form.append('tags', JSON.stringify(input.tags))
   form.append('file', input.file)
+  if (input.assetType) {
+    form.append('asset_type', input.assetType)
+  }
   const res = await api.post('/api/virtual-characters', form)
   return res.data
+}
+
+function withMaterialPromptPrefix(
+  prompt: string,
+  assetType?: VirtualCharacterAssetType
+): string {
+  const prefixes = {
+    Image: { token: '图片1', text: '以图片1中的角色为主体，' },
+    Video: { token: '视频1', text: '以视频1为参考，' },
+    Audio: { token: '音频1', text: '以音频1为参考，' },
+  } as const
+  const prefix = prefixes[assetType === 'Video' || assetType === 'Audio' ? assetType : 'Image']
+  return prompt.includes(prefix.token) ? prompt : `${prefix.text}${prompt}`
 }
 
 export function virtualCharacterPreviewURL(characterId: number): string {
@@ -183,11 +202,9 @@ export async function getVirtualCharacterHistory(
 }
 
 export async function createCharacterVideo(
-  input: CharacterVideoInput
+  input: CharacterVideoInput & { assetType?: VirtualCharacterAssetType }
 ): Promise<{ id?: string; task_id?: string; error?: { message?: string } }> {
-  const prompt = input.prompt.includes('图片1')
-    ? input.prompt
-    : `以图片1中的角色为主体，${input.prompt}`
+  const prompt = withMaterialPromptPrefix(input.prompt, input.assetType)
   const res = await api.post(
     '/pg/video/generations',
     {

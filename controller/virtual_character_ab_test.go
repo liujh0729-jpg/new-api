@@ -55,6 +55,37 @@ func TestValidateVolcCharacterImageUploadEnforcesTypeAndLimits(t *testing.T) {
 	require.ErrorContains(t, err, "must be JPG")
 }
 
+func TestValidateVolcCharacterAssetUploadAcceptsVideoAndAudio(t *testing.T) {
+	video := &multipart.FileHeader{Filename: "clip.mp4", Size: 50 << 20, Header: textproto.MIMEHeader{"Content-Type": []string{"video/mp4"}}}
+	mimeType, err := validateVolcCharacterAssetUpload(video, model.VirtualCharacterAssetTypeVideo)
+	require.NoError(t, err)
+	require.Equal(t, "video/mp4", mimeType)
+	video.Size++
+	_, err = validateVolcCharacterAssetUpload(video, model.VirtualCharacterAssetTypeVideo)
+	require.ErrorContains(t, err, "50 MB")
+
+	audio := &multipart.FileHeader{Filename: "voice.wav", Size: 15 << 20, Header: textproto.MIMEHeader{"Content-Type": []string{"audio/wav"}}}
+	mimeType, err = validateVolcCharacterAssetUpload(audio, model.VirtualCharacterAssetTypeAudio)
+	require.NoError(t, err)
+	require.Equal(t, "audio/wav", mimeType)
+	audio.Size++
+	_, err = validateVolcCharacterAssetUpload(audio, model.VirtualCharacterAssetTypeAudio)
+	require.ErrorContains(t, err, "15 MB")
+
+	_, err = validateVolcCharacterAssetUpload(
+		&multipart.FileHeader{Filename: "clip.mp4", Size: 1, Header: textproto.MIMEHeader{"Content-Type": []string{"video/mp4"}}},
+		model.VirtualCharacterAssetTypeImage,
+	)
+	require.ErrorContains(t, err, "must be JPG")
+}
+
+func TestVirtualCharacterPreviewContentTypeAllowsMedia(t *testing.T) {
+	require.Equal(t, "image/png", virtualCharacterPreviewContentType("image/png", ""))
+	require.Equal(t, "video/mp4", virtualCharacterPreviewContentType("video/mp4", "video/mp4"))
+	require.Equal(t, "audio/mpeg", virtualCharacterPreviewContentType("", "audio/mpeg"))
+	require.Equal(t, "application/octet-stream", virtualCharacterPreviewContentType("application/pdf", "text/plain"))
+}
+
 func TestListVirtualCharacterGroupsSeparatesPublicAndAPIKeyOwnerPrivateCharacters(t *testing.T) {
 	db := setupVirtualCharacterControllerTestDB(t)
 	require.NoError(t, db.AutoMigrate(&model.VirtualCharacterUserLimit{}))
@@ -205,6 +236,7 @@ type stubVolcAssetClient struct {
 	createGroupErr error
 	createAssetID  string
 	createAssetErr error
+	lastAssetType  string
 }
 
 func (s *stubVolcAssetClient) CreateVisualValidateSession(context.Context, string, string, string) (*service.VolcValidationSessionResult, error) {
@@ -219,7 +251,8 @@ func (s *stubVolcAssetClient) CreateAssetGroup(context.Context, string, string, 
 func (s *stubVolcAssetClient) UpdateAssetGroup(context.Context, string, string, string, string) error {
 	return nil
 }
-func (s *stubVolcAssetClient) CreateAsset(context.Context, string, string, string, string, string) (string, error) {
+func (s *stubVolcAssetClient) CreateAsset(_ context.Context, _, _, assetType, _, _ string) (string, error) {
+	s.lastAssetType = assetType
 	if s.createAssetErr != nil {
 		return "", s.createAssetErr
 	}
@@ -379,8 +412,67 @@ func TestCreateVirtualCharacterRequiresComplianceAndRollsBackOnGroupFailure(t *t
 	require.Equal(t, "asset-primary-1", creating.ProviderAssetID)
 	require.Equal(t, "file-staging-1", creating.StagingFileID)
 	require.Equal(t, "image/png", creating.MimeType)
+	require.Equal(t, model.VirtualCharacterAssetTypeImage, creating.AssetType)
 	require.NotNil(t, creating.Slot)
 	require.Contains(t, creating.CoverURL, "/preview")
+}
+
+func TestCreateVirtualCharacterUploadsVideoAndAudioAssets(t *testing.T) {
+	db := setupVirtualCharacterControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.VirtualCharacterProviderAccount{}, &model.VirtualCharacterCleanupJob{}))
+	previousSecret := common.CryptoSecret
+	previousConfigured := common.CryptoSecretConfigured
+	previousFactory := newVolcAssetClientForVirtualCharacters
+	previousStaging := newVirtualCharacterStagingStorage
+	previousOptions := common.OptionMap
+	common.CryptoSecret = strings.Repeat("s", 32)
+	common.CryptoSecretConfigured = true
+	common.OptionMap = map[string]string{"VirtualCharacterAccountAssetCap": "50"}
+	newVirtualCharacterStagingStorage = func() (virtualCharacterStagingStorage, error) {
+		return &stubVirtualCharacterStagingStorage{}, nil
+	}
+	stub := &stubVolcAssetClient{createGroupID: "group-media", createAssetID: "asset-video-1"}
+	newVolcAssetClientForVirtualCharacters = func(*model.VirtualCharacterProviderAccount) (service.VolcAssetClient, error) {
+		return stub, nil
+	}
+	t.Cleanup(func() {
+		common.CryptoSecret = previousSecret
+		common.CryptoSecretConfigured = previousConfigured
+		newVolcAssetClientForVirtualCharacters = previousFactory
+		newVirtualCharacterStagingStorage = previousStaging
+		common.OptionMap = previousOptions
+	})
+	require.NoError(t, db.Create(&model.VirtualCharacterProviderAccount{
+		ID: 1, Enabled: true, VirtualEnabled: true, Region: "cn-beijing", ProjectName: "default",
+	}).Error)
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.POST("/api/virtual-characters", func(c *gin.Context) {
+		c.Set("id", 81)
+		CreateVirtualCharacter(c)
+	})
+
+	videoRecorder := httptest.NewRecorder()
+	router.ServeHTTP(videoRecorder, newCreateVirtualCharacterMultipartRequest(t, map[string]string{
+		"name": "Clip", "asset_type": "Video",
+	}, "clip.mp4", "video/mp4", []byte("mp4-bytes")))
+	require.Equal(t, http.StatusCreated, videoRecorder.Code, videoRecorder.Body.String())
+	require.Equal(t, model.VirtualCharacterAssetTypeVideo, stub.lastAssetType)
+	var video model.VirtualCharacter
+	require.NoError(t, db.Where("user_id = ? AND name = ?", 81, "Clip").First(&video).Error)
+	require.Equal(t, model.VirtualCharacterAssetTypeVideo, video.AssetType)
+
+	stub.createAssetID = "asset-audio-1"
+	audioRecorder := httptest.NewRecorder()
+	router.ServeHTTP(audioRecorder, newCreateVirtualCharacterMultipartRequest(t, map[string]string{
+		"name": "Voice",
+	}, "voice.mp3", "audio/mpeg", []byte("mp3-bytes")))
+	require.Equal(t, http.StatusCreated, audioRecorder.Code, audioRecorder.Body.String())
+	require.Equal(t, model.VirtualCharacterAssetTypeAudio, stub.lastAssetType)
+	var audio model.VirtualCharacter
+	require.NoError(t, db.Where("user_id = ? AND name = ?", 81, "Voice").First(&audio).Error)
+	require.Equal(t, model.VirtualCharacterAssetTypeAudio, audio.AssetType)
 }
 
 func TestUploadRealPersonVirtualCharacterAssetCreatesSelectedProviderAsset(t *testing.T) {
