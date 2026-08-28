@@ -99,8 +99,6 @@ services:
       - REDIS_CONN_STRING=redis://:${REDIS_PASSWORD}@redis:6379
       - AIPDD_API_KEY=${AIPDD_API_KEY}
       - AIPDD_CATALOG_SYNC_ON_BOOT=true
-      # 已接受 Token Market 对应版本隐私条款后才填写
-      - AIPDD_TOKEN_MARKET_PRIVACY_ACCEPTED=${AIPDD_TOKEN_MARKET_PRIVACY_ACCEPTED:-}
       - SESSION_SECRET=${SESSION_SECRET}
       - TZ=Asia/Shanghai
       - ERROR_LOG_ENABLED=true
@@ -231,8 +229,6 @@ docker run -d \
 
 ```env
 AIPDD_API_KEY=你的 AIPDD 上游 API Key
-# 可选：部署者接受对应版本隐私条款后才填写
-AIPDD_TOKEN_MARKET_PRIVACY_ACCEPTED=2026-08-v1
 ```
 
 系统启动时会自动：
@@ -254,7 +250,6 @@ AIPDD_TOKEN_MARKET_PRIVACY_ACCEPTED=2026-08-v1
 | `AIPDD_BASE_URL` | `https://api.aipdd.work` | AIPDD 上游地址 |
 | `AIPDD_CATALOG_SYNC_ON_BOOT` | `true` | 容器启动时是否同步上游模型 catalog |
 | `AIPDD_CATALOG_SYNC_TIMEOUT_SECONDS` | `10` | 启动同步超时时间 |
-| `AIPDD_TOKEN_MARKET_PRIVACY_ACCEPTED` | 空 | Token Market 隐私条款版本；只有部署者显式填写时才会透传给 AIPDD，例如 `2026-08-v1` |
 
 ### 后台手动添加
 

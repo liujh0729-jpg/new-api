@@ -21,3 +21,11 @@ func TestExplicitFreeModelsRuntimeStateUsesOnlyAvailableEnabledEntries(t *testin
 	require.False(t, IsExplicitFreeModel("free-disabled"))
 	require.False(t, IsExplicitFreeModel("paid-model"))
 }
+
+func TestBenefitDescriptionUsesUpstreamNameAndBenefitLabel(t *testing.T) {
+	require.Equal(t, "hy3 福利免费版", BenefitDescription("free-hy3"))
+	require.Equal(t, "deepseek-v4-flash 福利免费版", BenefitDescription("free-deepseek-v4-flash"))
+	require.Empty(t, BenefitDescription("ap-hy3"))
+	require.Empty(t, BenefitDescription("free-"))
+	require.Empty(t, BenefitDescription(""))
+}

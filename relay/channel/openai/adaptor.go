@@ -9,7 +9,6 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -41,8 +40,6 @@ type Adaptor struct {
 	ChannelType    int
 	ResponseFormat string
 }
-
-const aipddTokenMarketPrivacyAcceptedEnv = "AIPDD_TOKEN_MARKET_PRIVACY_ACCEPTED"
 
 func (a *Adaptor) ConvertGeminiRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.GeminiChatRequest) (any, error) {
 	// 使用 service.GeminiToOpenAIRequest 转换请求格式
@@ -198,9 +195,6 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, header *http.Header, info *
 	}
 	if info.ChannelType == constant.ChannelTypeAIPDD {
 		header.Set("X-API-Key", info.ApiKey)
-		if acceptedVersion := strings.TrimSpace(os.Getenv(aipddTokenMarketPrivacyAcceptedEnv)); acceptedVersion != "" {
-			header.Set("X-AIPDD-Token-Market-Privacy-Accepted", acceptedVersion)
-		}
 		setAIPDDFinanceHeaders(header, info)
 		return nil
 	}

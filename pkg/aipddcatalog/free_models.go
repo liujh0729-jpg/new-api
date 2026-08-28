@@ -60,3 +60,18 @@ func ResetExplicitFreeModels() {
 	explicitFreeModelNames = nil
 	explicitFreeModelsMu.Unlock()
 }
+
+// BenefitDescription is the NewAPI model description for a token-market free
+// model, for example "hy3 福利免费版". Paid or malformed IDs return empty.
+func BenefitDescription(modelName string) string {
+	modelName = strings.TrimSpace(modelName)
+	const prefix = "free-"
+	if len(modelName) <= len(prefix) || !strings.EqualFold(modelName[:len(prefix)], prefix) {
+		return ""
+	}
+	base := strings.TrimSpace(modelName[len(prefix):])
+	if base == "" {
+		return ""
+	}
+	return base + " 福利免费版"
+}

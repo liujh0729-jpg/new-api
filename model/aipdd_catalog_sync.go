@@ -267,7 +267,7 @@ func upsertAIPDDModelsTx(tx *gorm.DB, catalog aipddcatalog.AtomicCatalog, vendor
 				endpoints = []constant.EndpointType{endpoint}
 			}
 		} else if model, ok := llmByName[modelName]; ok {
-			description = model.Description
+			description = aipddLLMModelDescription(model)
 			tags = "AIPDD,Ollama,LLM,OpenAI兼容"
 			if containsCatalogValue(model.InputModalities, "image") {
 				tags += ",视觉理解"
@@ -295,6 +295,16 @@ func upsertAIPDDModelsTx(tx *gorm.DB, catalog aipddcatalog.AtomicCatalog, vendor
 		}
 	}
 	return nil
+}
+
+func aipddLLMModelDescription(model aipddcatalog.AtomicModel) string {
+	if description := strings.TrimSpace(model.Description); description != "" {
+		return description
+	}
+	if benefit := aipddcatalog.BenefitDescription(model.ID); benefit != "" {
+		return benefit
+	}
+	return "AIPDD 上游目录同步模型。"
 }
 
 func containsCatalogValue(values []string, expected string) bool {

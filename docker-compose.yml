@@ -40,8 +40,6 @@ services:
       - AIPDD_BASE_URL=${AIPDD_BASE_URL:-}
       - AIPDD_INSTANCE_ID=${AIPDD_INSTANCE_ID:?set AIPDD_INSTANCE_ID to the registered site UUID}
       - AIPDD_CATALOG_SYNC_ON_BOOT=${AIPDD_CATALOG_SYNC_ON_BOOT:-true}
-      # 仅在部署者已接受对应版本的 Token Market 隐私条款时设置，例如 2026-08-v1。
-      - AIPDD_TOKEN_MARKET_PRIVACY_ACCEPTED=${AIPDD_TOKEN_MARKET_PRIVACY_ACCEPTED:-}
       - TZ=Asia/Shanghai
       - ERROR_LOG_ENABLED=true # 是否启用错误日志记录 (Whether to enable error log recording)
       - BATCH_UPDATE_ENABLED=true  # 是否启用批量更新 (Whether to enable batch update)

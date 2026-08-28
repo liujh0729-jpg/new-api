@@ -106,8 +106,6 @@ services:
       REDIS_CONN_STRING: redis://:${REDIS_PASSWORD}@redis:6379
       AIPDD_API_KEY: ${AIPDD_API_KEY}
       AIPDD_CATALOG_SYNC_ON_BOOT: "true"
-      # 已接受 Token Market 对应版本隐私条款后才填写
-      AIPDD_TOKEN_MARKET_PRIVACY_ACCEPTED: ${AIPDD_TOKEN_MARKET_PRIVACY_ACCEPTED:-}
       AIPDD_CHANNEL_OVERWRITE_ON_BOOT: "true"
       SESSION_SECRET: ${SESSION_SECRET}
       CRYPTO_SECRET: ${CRYPTO_SECRET}
@@ -274,7 +272,6 @@ AIPDD_CHANNEL_OVERWRITE_ON_BOOT=false
 | AIPDD_API_KEY | AIPDD 上游 API Key；使用 AIPDD 内置任务模型时必填 |
 | AIPDD_BASE_URL | AIPDD 上游地址，默认 https://api.aipdd.work |
 | AIPDD_CATALOG_SYNC_ON_BOOT | 是否在启动时同步 AIPDD 模型目录 |
-| AIPDD_TOKEN_MARKET_PRIVACY_ACCEPTED | Token Market 隐私条款版本；仅在部署者显式接受后设置，例如 `2026-08-v1` |
 | AIPDD_CHANNEL_OVERWRITE_ON_BOOT | 是否允许启动同步覆盖 AIPDD 渠道配置；手动维护渠道时可设为 false |
 | MATERIAL_PUBLIC_BASE_URL | 本地素材的公网访问地址；异步任务或文件上传时按部署域名配置 |
 | ERROR_LOG_ENABLED | 是否记录错误日志 |

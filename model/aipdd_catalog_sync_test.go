@@ -282,6 +282,46 @@ func TestApplyAIPDDCatalogKeepsDisabledModelsInDBAndChannel(t *testing.T) {
 	}
 }
 
+func TestApplyAIPDDCatalogWritesFreeModelBenefitDescription(t *testing.T) {
+	truncateTables(t)
+	t.Cleanup(func() {
+		constant.ResetAIPDDCapabilities()
+		constant.ResetAIPDDOpenAIModels()
+		aipddcatalog.ResetV1ModelsListHidden()
+		aipddcatalog.ResetExplicitFreeModels()
+	})
+
+	catalog := aipddTestCatalog("free-description-revision", "task-model", "llm-model")
+	catalog.Models = append(catalog.Models,
+		aipddcatalog.AtomicModel{
+			ID: "free-hy3", Name: "free-hy3", Available: true,
+			Execution: aipddcatalog.AtomicExecution{Protocol: "openai", Path: "/v1/chat/completions"},
+			Pricing: aipddcatalog.AtomicPricing{
+				PricingModel: "per_token", Currency: "awcoin", Enabled: true, Free: true,
+			},
+		},
+		aipddcatalog.AtomicModel{
+			ID: "free-deepseek-v4-flash", Name: "free-deepseek-v4-flash",
+			Description: "custom free description", Available: true,
+			Execution: aipddcatalog.AtomicExecution{Protocol: "openai", Path: "/v1/chat/completions"},
+			Pricing: aipddcatalog.AtomicPricing{
+				PricingModel: "per_token", Currency: "awcoin", Enabled: true, Free: true,
+			},
+		},
+	)
+
+	_, err := applyAIPDDCatalog(catalog, "https://aipdd.example", "sk-test")
+	require.NoError(t, err)
+
+	var hy3, paid, custom Model
+	require.NoError(t, DB.Where("model_name = ?", "free-hy3").First(&hy3).Error)
+	require.NoError(t, DB.Where("model_name = ?", "llm-model").First(&paid).Error)
+	require.NoError(t, DB.Where("model_name = ?", "free-deepseek-v4-flash").First(&custom).Error)
+	require.Equal(t, "hy3 福利免费版", hy3.Description)
+	require.Equal(t, "AIPDD 上游目录同步模型。", paid.Description)
+	require.Equal(t, "custom free description", custom.Description)
+}
+
 func TestEnsureAIPDDOpenAIModelDefaultsDoesNotCreateLocalPricing(t *testing.T) {
 	truncateTables(t)
 	constant.ResetAIPDDCapabilities()
