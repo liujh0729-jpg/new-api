@@ -10,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/pkg/aipddcatalog"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/config"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/stretchr/testify/require"
 )
@@ -158,7 +159,7 @@ func TestApplyAIPDDCatalogReplacesModelsAndCleansOnlySeededCNChannels(t *testing
 	require.Equal(t, "tier(\"local\", p * 1 + c * 2)", mustAIPDDBillingExpr(t, "llm-old"))
 }
 
-func TestApplyAIPDDCatalogDoesNotCreatePricingOptions(t *testing.T) {
+func TestApplyAIPDDCatalogDoesNotCreateSeedancePricingOptions(t *testing.T) {
 	truncateTables(t)
 	t.Cleanup(func() {
 		constant.ResetAIPDDCapabilities()
@@ -207,6 +208,104 @@ func TestApplyAIPDDCatalogDoesNotCreatePricingOptions(t *testing.T) {
 	require.True(t, ok)
 	require.NotNil(t, capability.SeedancePricing)
 	require.Contains(t, capability.SeedancePricing.ByResolution, "1080p")
+}
+
+func TestApplyAIPDDCatalogImportsTokenMarketDisplayPrices(t *testing.T) {
+	truncateTables(t)
+	t.Cleanup(func() {
+		constant.ResetAIPDDCapabilities()
+		constant.ResetAIPDDOpenAIModels()
+		aipddcatalog.ResetV1ModelsListHidden()
+	})
+	preserveAIPDDPricingRuntime(t)
+	previousExchangeRate := operation_setting.USDExchangeRate
+	operation_setting.USDExchangeRate = 8
+	t.Cleanup(func() { operation_setting.USDExchangeRate = previousExchangeRate })
+
+	require.NoError(t, UpdateOption(
+		aipddBillingModeOptionKey,
+		`{"AP Seedance":"task_pricing","unrelated-model":"ratio"}`,
+	))
+	require.NoError(t, UpdateOption(
+		aipddTaskPricingOptionKey,
+		`{"AP Seedance":{"unit":"second","by_resolution":{"1080p":{"no_reference_video_unit_price":0.5,"reference_video_policy":"same"}}}}`,
+	))
+
+	display480p := 9.0
+	display768p := 12.0
+	display768pVideoInput := 15.0
+	catalog := aipddTestCatalog("token-market-price-revision", "unused-task", "llm-model")
+	catalog.AWCoinRate.RMBPerAWCoin = 0.01
+	catalog.Capabilities = []aipddcatalog.AtomicCapability{{
+		ID: "ap-minimax-h3-text-to-video", Code: "ap-minimax-h3-text-to-video",
+		Name: "MiniMax H3 Text to Video", AdapterCode: "token_market_media",
+		EndpointType: "openai-video", TaskKind: "video_generation", Available: aipddcatalog.BoolPtr(true),
+		Execution: aipddcatalog.AtomicExecution{Protocol: "token_market_video", Path: "/v1/videos"},
+		Pricing: aipddcatalog.AtomicPricing{
+			PricingModel: "per_second", Currency: "awcoin", PricingBasis: "display", Enabled: true,
+			ByResolution: map[string]constant.AIPDDSeedanceResolutionPricing{
+				"480p": {
+					TargetResolution: "480p", DisplayAmountAWCoinPerSecond: &display480p,
+					DisplayVideoInputAWCoinPerSecond: &display480p,
+					DefaultDurationSeconds:           1, DefaultFramesPerSecond: 24,
+				},
+				"768p": {
+					TargetResolution: "768p", DisplayAmountAWCoinPerSecond: &display768p,
+					DisplayVideoInputAWCoinPerSecond: &display768pVideoInput,
+					DefaultDurationSeconds:           1, DefaultFramesPerSecond: 24,
+				},
+			},
+		},
+	}}
+
+	result, err := applyAIPDDCatalog(catalog, "https://aipdd.example", "sk-test")
+	require.NoError(t, err)
+	require.Equal(t, 1, result.UpdatedPrices)
+	require.Equal(t, billing_setting.BillingModeTaskPricing,
+		billing_setting.GetBillingMode("ap-minimax-h3-text-to-video"))
+
+	config, ok := billing_setting.GetTaskPricing("ap-minimax-h3-text-to-video")
+	require.True(t, ok)
+	require.Equal(t, billing_setting.TaskPricingUnitSecond, config.Unit)
+	require.InDelta(t, 0.01125, config.ByResolution["480p"].NoReferenceVideoUnitPrice, 1e-12)
+	require.Equal(t, billing_setting.ReferenceVideoPolicySame,
+		config.ByResolution["480p"].ReferenceVideoPolicy)
+	require.InDelta(t, 0.015, config.ByResolution["768p"].NoReferenceVideoUnitPrice, 1e-12)
+	require.Equal(t, billing_setting.ReferenceVideoPolicyCustom,
+		config.ByResolution["768p"].ReferenceVideoPolicy)
+	require.InDelta(t, 0.01875, config.ByResolution["768p"].ReferenceVideoUnitPrice, 1e-12)
+	pricingVisible := false
+	for _, item := range GetPricing() {
+		if item.ModelName != "ap-minimax-h3-text-to-video" {
+			continue
+		}
+		pricingVisible = true
+		require.Equal(t, billing_setting.BillingModeTaskPricing, item.BillingMode)
+		require.NotNil(t, item.TaskPricing)
+		require.ElementsMatch(t, []string{"480p", "768p"}, item.TaskPricingResolutions)
+	}
+	require.True(t, pricingVisible, "Token Market duration model must appear in the pricing list after catalog sync")
+
+	seedance, ok := billing_setting.GetTaskPricing("AP Seedance")
+	require.True(t, ok)
+	require.InDelta(t, 0.5, seedance.ByResolution["1080p"].NoReferenceVideoUnitPrice, 1e-12)
+	require.Equal(t, "ratio", billing_setting.GetBillingMode("unrelated-model"))
+
+	second, err := applyAIPDDCatalog(catalog, "https://aipdd.example", "sk-test")
+	require.NoError(t, err)
+	require.Zero(t, second.UpdatedPrices)
+
+	catalog.Revision = "token-market-unavailable-revision"
+	catalog.Capabilities[0].Available = aipddcatalog.BoolPtr(false)
+	removed, err := applyAIPDDCatalog(catalog, "https://aipdd.example", "sk-test")
+	require.NoError(t, err)
+	require.Equal(t, 1, removed.UpdatedPrices)
+	_, ok = billing_setting.GetTaskPricing("ap-minimax-h3-text-to-video")
+	require.False(t, ok)
+	require.NotEqual(t, billing_setting.BillingModeTaskPricing,
+		billing_setting.GetBillingMode("ap-minimax-h3-text-to-video"))
+	_, ok = billing_setting.GetTaskPricing("AP Seedance")
+	require.True(t, ok)
 }
 
 func TestApplyAIPDDCatalogKeepsDisabledModelsInDBAndChannel(t *testing.T) {

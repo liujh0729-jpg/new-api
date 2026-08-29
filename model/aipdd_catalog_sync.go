@@ -116,6 +116,7 @@ func applyAIPDDCatalog(catalog aipddcatalog.AtomicCatalog, baseURL, apiKey strin
 		USDPerAWCoin: catalog.AWCoinRate.USDPerAWCoin,
 		RMBPerAWCoin: catalog.AWCoinRate.RMBPerAWCoin,
 	}
+	var pricingOptionUpdates map[string]string
 	for modelName := range currentSet {
 		if !previousSet[modelName] {
 			result.AddedModels++
@@ -159,6 +160,9 @@ func applyAIPDDCatalog(catalog aipddcatalog.AtomicCatalog, baseURL, apiKey strin
 		err = cleanupCNProviderDefaultsTx(tx, currentSet)
 	}
 	if err == nil {
+		result.UpdatedPrices, pricingOptionUpdates, err = syncAIPDDTokenMarketTaskPricingTx(tx, catalog)
+	}
+	if err == nil {
 		snapshot := AIPDDCatalogSnapshot{
 			ID: aipddCatalogSnapshotID, SchemaVersion: catalog.SchemaVersion,
 			Revision: catalog.Revision, SourceBaseURL: baseURL,
@@ -178,6 +182,15 @@ func applyAIPDDCatalog(catalog aipddcatalog.AtomicCatalog, baseURL, apiKey strin
 	}
 
 	activateAIPDDCatalog(catalog)
+	for _, key := range []string{aipddBillingModeOptionKey, aipddTaskPricingOptionKey} {
+		value, ok := pricingOptionUpdates[key]
+		if !ok {
+			continue
+		}
+		if err := updateOptionMap(key, value); err != nil {
+			common.SysLog("failed to activate synced AIPDD Token Market pricing: " + err.Error())
+		}
+	}
 	InitChannelCache()
 	InvalidatePricingCache()
 	ratio_setting.InvalidateExposedDataCache()

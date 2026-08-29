@@ -108,8 +108,9 @@ func valueMap(value any) map[string]any {
 
 // stripTaskPricingSyncModels removes duration-priced models from generic
 // remote pricing imports. Their derived model_price is a per-second sorting
-// value, not a legacy per-request price, and this release intentionally does
-// not auto-import structured task_pricing.
+// value, not a legacy per-request price. The AIPDD catalog sync separately
+// provisions token_market_media display prices as structured task_pricing;
+// Seedance and other remote sources remain administrator-managed here.
 func stripTaskPricingSyncModels(data map[string]any) {
 	modes := valueMap(data[billing_setting.BillingModeField])
 	if len(modes) == 0 {
