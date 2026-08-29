@@ -249,7 +249,8 @@ AIPDD_API_KEY=你的 AIPDD 上游 API Key
 | --- | --- | --- |
 | `AIPDD_BASE_URL` | `https://api.aipdd.work` | AIPDD 上游地址 |
 | `AIPDD_CATALOG_SYNC_ON_BOOT` | `true` | 容器启动时是否同步上游模型 catalog |
-| `AIPDD_CATALOG_SYNC_TIMEOUT_SECONDS` | `10` | 启动同步超时时间 |
+| `AIPDD_CATALOG_SYNC_INTERVAL_MINUTES` | `5` | 定时同步上游模型 catalog 的间隔（分钟）；设为 `0` 禁用 |
+| `AIPDD_CATALOG_SYNC_TIMEOUT_SECONDS` | `10` | 单次同步超时时间 |
 
 ### 后台手动添加
 

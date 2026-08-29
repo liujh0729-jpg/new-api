@@ -1,0 +1,1243 @@
+{
+  "openapi": "3.0.1",
+  "info": {
+    "title": "NewAPI 公开用户接口",
+    "version": "1.0.0",
+    "description": "按调用场景分组：基础接口、通用文本生成、通用图片生成、通用视频生成、Seedance、MiniMax H3。\n\n认证统一使用 `Authorization: Bearer <NEWAPI_TOKEN>`。价格和可用档位以 `GET /api/pricing` 为准，不要硬编码。"
+  },
+  "tags": [
+    {
+      "name": "基础接口",
+      "description": "模型目录、任务列表、余额和账单"
+    },
+    {
+      "name": "通用文本生成",
+      "description": "OpenAI Chat Completions"
+    },
+    {
+      "name": "通用图片生成",
+      "description": "文生图与图编辑"
+    },
+    {
+      "name": "通用视频生成",
+      "description": "OpenAI Video 风格的创建与查询。Seedance 官方格式见 Seedance；MiniMax H3 模型约束见 MiniMax H3。"
+    },
+    {
+      "name": "Seedance",
+      "description": "Seedance 2.0 / 2.5：官方兼容任务、OpenAI Video 入口、素材库"
+    },
+    {
+      "name": "MiniMax H3",
+      "description": "MiniMax H3 五个公开模型，走 /v1/videos。请使用 duration_seconds、video_resolution、image_urls 和 audio_urls 等 H3 字段"
+    }
+  ],
+  "paths": {
+    "/v1/models": {
+      "get": {
+        "tags": ["基础接口"],
+        "summary": "获取模型列表",
+        "operationId": "listModels",
+        "description": "返回当前 Token 可用的模型。默认 OpenAI 格式。",
+        "security": [{ "BearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "模型列表",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ModelList" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/pricing": {
+      "get": {
+        "tags": ["基础接口"],
+        "summary": "获取价格目录",
+        "operationId": "getPricing",
+        "description": "动态价格与可用分辨率。同一模型可能因分辨率、是否含参考视频、PLATFORM/BYOK 而不同。",
+        "security": [{ "BearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "价格目录"
+          }
+        }
+      }
+    },
+    "/api/usage/token/": {
+      "get": {
+        "tags": ["基础接口"],
+        "summary": "查询当前 API Key 余额",
+        "operationId": "getTokenUsage",
+        "description": "查询当前 Key 的总额度、已用和剩余额度，不是账号下所有 Key 的总余额。数值是站点内部额度单位。此接口必须使用 Bearer 前缀。",
+        "security": [{ "BearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "当前 Key 额度",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/TokenUsageResponse" },
+                "example": {
+                  "code": true,
+                  "message": "ok",
+                  "data": {
+                    "object": "token_usage",
+                    "name": "default",
+                    "total_granted": 100000,
+                    "total_used": 20000,
+                    "total_available": 80000,
+                    "unlimited_quota": false,
+                    "model_limits": {},
+                    "model_limits_enabled": false,
+                    "expires_at": 0
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/log/token": {
+      "get": {
+        "tags": ["基础接口"],
+        "summary": "查询当前 API Key 账单",
+        "operationId": "listTokenLogs",
+        "description": "分页查询当前 Key 的逐笔日志，按最新在前。仅当前 Key，不支持按时间或模型过滤。",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "p", "in": "query", "schema": { "type": "integer", "default": 1 }, "description": "页码，从 1 开始" },
+          { "name": "page_size", "in": "query", "schema": { "type": "integer", "default": 10, "maximum": 100 }, "description": "每页条数，兼容别名 ps、size" }
+        ],
+        "responses": {
+          "200": {
+            "description": "账单分页"
+          }
+        }
+      }
+    },
+    "/api/task/token": {
+      "get": {
+        "tags": ["基础接口"],
+        "summary": "获取任务列表",
+        "operationId": "listTokenTasks",
+        "description": "分页查询当前 API Key 所属用户的异步任务。同账号下所有 Key 看到同一列表。",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "p", "in": "query", "schema": { "type": "integer", "default": 1 } },
+          { "name": "page_size", "in": "query", "schema": { "type": "integer", "default": 10, "maximum": 100 } },
+          { "name": "task_id", "in": "query", "schema": { "type": "string" }, "description": "公开任务 ID" },
+          { "name": "status", "in": "query", "schema": { "type": "string", "enum": ["NOT_START", "SUBMITTED", "QUEUED", "IN_PROGRESS", "SUCCESS", "FAILURE", "UNKNOWN"] } },
+          { "name": "action", "in": "query", "schema": { "type": "string" } },
+          { "name": "start_timestamp", "in": "query", "schema": { "type": "integer", "format": "int64" } },
+          { "name": "end_timestamp", "in": "query", "schema": { "type": "integer", "format": "int64" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "任务分页",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/TaskListResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/chat/completions": {
+      "post": {
+        "tags": ["通用文本生成"],
+        "summary": "创建聊天对话",
+        "operationId": "createChatCompletion",
+        "description": "OpenAI Chat Completions。`model` 必须与 `GET /v1/models` 中的名称完全匹配。",
+        "security": [{ "BearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/ChatCompletionRequest" },
+              "example": {
+                "model": "qwen3:8b",
+                "messages": [{ "role": "user", "content": "用一句话介绍 Seedance" }],
+                "stream": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "模型回复"
+          }
+        }
+      }
+    },
+    "/v1/images/generations": {
+      "post": {
+        "tags": ["通用图片生成"],
+        "summary": "文生图",
+        "operationId": "createImage",
+        "description": "同步图片生成。常见字段为 `model` + `prompt`；部分千问模型使用 `input.messages`。",
+        "security": [{ "BearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/ImageGenerateRequest" },
+              "example": {
+                "model": "qwen-image-2.0-pro",
+                "prompt": "雨后霓虹街道，电影感"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "图片结果，常见字段 data[0].url"
+          }
+        }
+      }
+    },
+    "/v1/images/edits": {
+      "post": {
+        "tags": ["通用图片生成"],
+        "summary": "图编辑",
+        "operationId": "editImage",
+        "description": "同步图片编辑。按模型要求提供原图和文本。",
+        "security": [{ "BearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/ImageEditRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "编辑后的图片"
+          }
+        }
+      }
+    },
+    "/v1/videos": {
+      "post": {
+        "tags": ["通用视频生成"],
+        "summary": "创建视频任务",
+        "operationId": "createVideo",
+        "description": "OpenAI Video 风格创建入口。Wan / LTX / Seedance / MiniMax H3 都可走此路径。\n\n查询必须用 `GET /v1/videos/{task_id}`。Seedance 若要用官方响应格式，改走 Seedance 分类的 `/api/v3/contents/generations/tasks`。MiniMax H3 必须使用 `duration_seconds`、`video_resolution`、`image_urls` 和 `audio_urls` 等 H3 字段，完整模型约束见 MiniMax H3 分类。",
+        "security": [{ "BearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/VideoCreateRequest" },
+              "examples": {
+                "generic": {
+                  "summary": "通用文生视频",
+                  "value": {
+                    "model": "aipdd-wan2.2-wanx",
+                    "prompt": "镜头缓慢推向海边灯塔",
+                    "duration": 5
+                  }
+                },
+                "seedance": {
+                  "summary": "Seedance 2.0",
+                  "value": {
+                    "model": "AP Seedance-2.0 标准版",
+                    "prompt": "雨后的霓虹街道",
+                    "resolution": "720p",
+                    "ratio": "16:9",
+                    "duration": 5
+                  }
+                },
+                "minimax": {
+                  "summary": "MiniMax H3 文生视频",
+                  "value": {
+                    "model": "ap-minimax-h3-text-to-video",
+                    "prompt": "一只橘猫在木桌旁喝水",
+                    "duration_seconds": 5,
+                    "video_resolution": "480p",
+                    "ratio": "16:9"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "任务已创建",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/OpenAIVideoTask" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/videos/{task_id}": {
+      "get": {
+        "tags": ["通用视频生成"],
+        "summary": "查询视频任务",
+        "operationId": "getVideo",
+        "description": "OpenAI Video 查询。成功状态为 `completed`，视频地址在 `metadata.url`。",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "task_id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "任务状态",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/OpenAIVideoTask" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/videos/{task_id}/content": {
+      "get": {
+        "tags": ["通用视频生成"],
+        "summary": "获取视频内容",
+        "operationId": "getVideoContent",
+        "description": "视频内容代理，不是任务状态查询接口。",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "task_id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "视频内容"
+          }
+        }
+      }
+    },
+    "/api/v3/contents/generations/tasks": {
+      "post": {
+        "tags": ["Seedance"],
+        "summary": "创建视频任务（Seedance官方协议）",
+        "operationId": "createSeedanceTask",
+        "description": "Seedance 官方兼容创建入口。请求体与 `POST /v1/videos` 的 Seedance 参数相同，成功只返回 `{ \"id\": \"task_xxx\" }`。\n\n查询必须用 `GET /api/v3/contents/generations/tasks/{task_id}`，不要拿这个 ID 去查 `/v1/videos/{task_id}` 再当官方格式用。\n\n2.0 与 2.5 的默认值、比例、时长和禁用字段不同，不要混用。",
+        "security": [{ "BearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/SeedanceCreateRequest" },
+              "examples": {
+                "v20Text": {
+                  "summary": "2.0 文生视频",
+                  "value": {
+                    "model": "AP Seedance-2.0 标准版",
+                    "prompt": "雨后的霓虹街道，镜头缓慢向前",
+                    "resolution": "720p",
+                    "ratio": "16:9",
+                    "duration": 5,
+                    "generate_audio": false,
+                    "output_format": "mp4"
+                  }
+                },
+                "v20Reference": {
+                  "summary": "2.0 参考图",
+                  "value": {
+                    "model": "AP Seedance-2.0 标准版",
+                    "content": [
+                      { "type": "text", "text": "保持角色外观，人物回头看向镜头" },
+                      { "type": "image_url", "image_url": { "url": "https://example.com/character.png" }, "role": "reference_image" }
+                    ],
+                    "resolution": "720p",
+                    "ratio": "9:16",
+                    "duration": 5
+                  }
+                },
+                "v20Frames": {
+                  "summary": "2.0 首尾帧",
+                  "value": {
+                    "model": "AP Seedance-2.0 VIP",
+                    "content": [
+                      { "type": "text", "text": "从清晨自然过渡到黄昏" },
+                      { "type": "image_url", "image_url": { "url": "https://example.com/first.png" }, "role": "first_frame" },
+                      { "type": "image_url", "image_url": { "url": "https://example.com/last.png" }, "role": "last_frame" }
+                    ],
+                    "resolution": "1080p",
+                    "ratio": "16:9",
+                    "duration": 5
+                  }
+                },
+                "v25Text": {
+                  "summary": "2.5 自动时长",
+                  "value": {
+                    "model": "AP Seedance-2.5 标准版",
+                    "content": [{ "type": "text", "text": "帆船穿过清晨薄雾" }],
+                    "resolution": "720p",
+                    "ratio": "adaptive",
+                    "duration": -1,
+                    "generate_audio": true
+                  }
+                },
+                "v25Reference": {
+                  "summary": "2.5 参考视频+音频",
+                  "value": {
+                    "model": "AP Seedance-2.5 标准版",
+                    "content": [
+                      { "type": "text", "text": "保留主体动作节奏，改成水墨风格" },
+                      { "type": "video_url", "video_url": { "url": "https://example.com/reference.mp4" }, "role": "reference_video" },
+                      { "type": "audio_url", "audio_url": { "url": "https://example.com/reference.mp3" }, "role": "reference_audio" }
+                    ],
+                    "resolution": "720p",
+                    "ratio": "16:9",
+                    "duration": 4,
+                    "omni_reference_task_type": "reference"
+                  }
+                },
+                "v25Edit": {
+                  "summary": "2.5 编辑参考视频",
+                  "value": {
+                    "model": "AP Seedance-2.5 标准版",
+                    "content": [
+                      { "type": "text", "text": "将天空替换为极光，保持原镜头运动" },
+                      { "type": "video_url", "video_url": { "url": "https://example.com/source.mov" }, "role": "reference_video" }
+                    ],
+                    "resolution": "1080p",
+                    "ratio": "adaptive",
+                    "duration": -1,
+                    "omni_reference_task_type": "edit",
+                    "output_format": "mov"
+                  }
+                },
+                "v25Asset": {
+                  "summary": "多角色 asset://",
+                  "value": {
+                    "model": "AP Seedance-2.5 标准版",
+                    "content": [
+                      { "type": "text", "text": "两位角色在咖啡馆交谈" },
+                      { "type": "image_url", "image_url": { "url": "asset://provider-asset-a" }, "role": "reference_image" },
+                      { "type": "image_url", "image_url": { "url": "asset://provider-asset-b" }, "role": "reference_image" }
+                    ],
+                    "resolution": "720p",
+                    "ratio": "adaptive",
+                    "duration": 4,
+                    "omni_reference_task_type": "reference"
+                  }
+                },
+                "character": {
+                  "summary": "单角色 character_id",
+                  "value": {
+                    "model": "AP Seedance-2.5 标准版",
+                    "prompt": "角色在城市街道上自然行走",
+                    "character_id": 321,
+                    "resolution": "720p",
+                    "ratio": "adaptive",
+                    "duration": 4
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "公开任务 ID",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SeedanceTaskCreateResponse" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "502": { "$ref": "#/components/responses/UpstreamError" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
+    "/api/v3/contents/generations/tasks/{task_id}": {
+      "get": {
+        "tags": ["Seedance"],
+        "summary": "查询视频任务（Seedance官方协议）",
+        "operationId": "getSeedanceTask",
+        "description": "官方兼容查询。成功状态为 `succeeded`，视频地址在 `content.video_url`，时长在顶层 `duration`。\n\n状态：`queued`、`running`、`succeeded`、`failed`、`cancelled`。`usage` 可选，形状为 Seedance 官方字段。",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "task_id", "in": "path", "required": true, "schema": { "type": "string" }, "description": "创建时返回的公开任务 ID" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Seedance 任务对象",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SeedanceOfficialTask" },
+                "example": {
+                  "id": "task_xxx",
+                  "model": "AP Seedance-2.5 标准版",
+                  "status": "succeeded",
+                  "duration": 8,
+                  "resolution": "1080p",
+                  "content": { "video_url": "https://example.com/result.mp4" },
+                  "usage": { "completion_tokens": 400000, "total_tokens": 400000 }
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "502": { "$ref": "#/components/responses/UpstreamError" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
+    "/v1/virtual-characters": {
+      "get": {
+        "tags": ["Seedance"],
+        "summary": "查询 Seedance 素材库",
+        "operationId": "listVirtualCharacters",
+        "description": "查询官方角色、私有素材或真人角色。只有 `status=active` 的角色能用于出片。真人角色还需有效授权且火山 Asset 正常。",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "scope", "in": "query", "schema": { "type": "string", "enum": ["public", "private"], "default": "public" } },
+          { "name": "source_type", "in": "query", "schema": { "type": "string", "enum": ["volc_preset", "volc_aigc", "volc_real_person"] }, "description": "volc_preset=官方角色，volc_aigc=私有素材，volc_real_person=真人" },
+          { "name": "status", "in": "query", "schema": { "type": "string", "enum": ["creating", "active", "blocked", "offline", "deleting", "failed"] } },
+          { "name": "keyword", "in": "query", "schema": { "type": "string" } },
+          { "name": "gender", "in": "query", "schema": { "type": "string" } },
+          { "name": "nationality", "in": "query", "schema": { "type": "string" } },
+          { "name": "age_band", "in": "query", "schema": { "type": "string", "enum": ["0-20", "20-40", "40-60", "60-80", "80-100"] } },
+          { "name": "asset_type", "in": "query", "schema": { "type": "string", "enum": ["Image", "Video", "Audio"] } },
+          { "name": "p", "in": "query", "schema": { "type": "integer", "minimum": 1, "default": 1 }, "description": "页码，从 1 开始" },
+          { "name": "page_size", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 20 }, "description": "每页条数，兼容别名 ps、size" }
+        ],
+        "responses": {
+          "200": {
+            "description": "角色分页",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/VirtualCharacterListResponse" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      },
+      "post": {
+        "tags": ["Seedance"],
+        "summary": "创建个人素材",
+        "operationId": "createVirtualCharacter",
+        "description": "上传一张图片、一段视频或一段音频，创建私有素材。`name` 必填；可显式传 `asset_type`（Image / Video / Audio），不传则按扩展名推断。`tags` 支持 JSON 数组字符串或逗号分隔。\n\n响应 `data.id` 即 `character_id`。处理中通常为 `creating`，轮询详情直到 `status=active` 再出片。",
+        "security": [{ "BearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": ["file", "name"],
+                "properties": {
+                  "file": { "type": "string", "format": "binary", "description": "图片 jpg/jpeg/png/webp/gif/heic ≤30MB；视频 mp4/mov ≤50MB；音频 mp3/wav ≤15MB" },
+                  "name": { "type": "string", "maxLength": 191, "description": "素材名称，必填" },
+                  "description": { "type": "string", "maxLength": 2000 },
+                  "tags": { "type": "string", "description": "JSON 数组字符串或逗号分隔；最多 20 个，每个最多 32 字符" },
+                  "asset_type": { "type": "string", "enum": ["Image", "Video", "Audio"], "description": "不传时按文件扩展名推断" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "已创建",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/VirtualCharacterMutationResponse" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "502": { "$ref": "#/components/responses/UpstreamError" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
+    "/v1/virtual-characters/{id}": {
+      "get": {
+        "tags": ["Seedance"],
+        "summary": "查询素材详情",
+        "operationId": "getVirtualCharacter",
+        "description": "查询单个角色。真人角色在核验通过后可能返回 `asset_upload_required=true`，此时需再上传肖像。出片前确认 `status=active`，真人还需 `validation_status=accepted` 且 `provider_asset_id` 非空。",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "integer", "format": "int64" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "角色详情",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/VirtualCharacterMutationResponse" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
+      "delete": {
+        "tags": ["Seedance"],
+        "summary": "删除或撤回素材",
+        "operationId": "deleteVirtualCharacter",
+        "description": "删除私有素材，或撤回真人授权并进入清理流程。",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "integer", "format": "int64" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "已删除或已进入清理",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/VirtualCharacterDeleteResponse" } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/v1/virtual-characters/validation-sessions": {
+      "post": {
+        "tags": ["Seedance"],
+        "summary": "创建真人核验会话",
+        "operationId": "createVirtualCharacterValidationSession",
+        "description": "真人入库第一步。必须由肖像权人本人打开 `launch_url` 完成火山 H5 核验。不要把 NewAPI Token 交给被核验人。",
+        "security": [{ "BearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/VirtualCharacterValidationCreateRequest" },
+              "example": {
+                "name": "签约演员 A",
+                "description": "品牌宣传片演员",
+                "tags": ["真人", "演员"],
+                "language": "zh"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "核验会话",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/VirtualCharacterValidationSessionResponse" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "502": { "$ref": "#/components/responses/UpstreamError" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
+    "/v1/virtual-characters/validation-sessions/{session_id}": {
+      "get": {
+        "tags": ["Seedance"],
+        "summary": "查询真人核验会话",
+        "operationId": "getVirtualCharacterValidationSession",
+        "description": "状态：`pending`、`succeeded`、`failed`、`expired`、`cancelled`。只有 `succeeded` 才能继续上传肖像。",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "session_id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "核验会话",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/VirtualCharacterValidationSessionResponse" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
+      "delete": {
+        "tags": ["Seedance"],
+        "summary": "取消真人核验会话",
+        "operationId": "cancelVirtualCharacterValidationSession",
+        "description": "取消仍在等待中的核验会话。",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "session_id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "已取消",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/VirtualCharacterCancelResponse" } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/v1/virtual-characters/{id}/asset": {
+      "post": {
+        "tags": ["Seedance"],
+        "summary": "上传已核验真人肖像",
+        "operationId": "uploadVirtualCharacterAsset",
+        "description": "H5 核验成功且详情返回 `asset_upload_required=true` 后，上传与已核验人员一致的图片。支持 jpg/jpeg/png/webp/gif/heic，最大 30MB；同一真人素材只能上传一次。",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "integer", "format": "int64" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": ["file"],
+                "properties": {
+                  "file": { "type": "string", "format": "binary", "description": "真人肖像图片，jpg/jpeg/png/webp/gif/heic，最大 30MB" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "已上传",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/VirtualCharacterMutationResponse" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "502": { "$ref": "#/components/responses/UpstreamError" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
+    "/v1/virtual-characters/{id}/sync": {
+      "post": {
+        "tags": ["Seedance"],
+        "summary": "同步真人素材状态",
+        "operationId": "syncVirtualCharacter",
+        "description": "由所有者主动同步一次火山 Asset 状态。",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "integer", "format": "int64" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "同步后的角色",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/VirtualCharacterMutationResponse" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "502": { "$ref": "#/components/responses/UpstreamError" }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Authorization: Bearer <NEWAPI_TOKEN>"
+      }
+    },
+    "responses": {
+      "BadRequest": {
+        "description": "请求参数或业务校验失败",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ApiErrorResponse" } } }
+      },
+      "Unauthorized": {
+        "description": "Token 缺失、无效或无权访问该资源",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ApiErrorResponse" } } }
+      },
+      "NotFound": {
+        "description": "资源或任务不存在",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ApiErrorResponse" } } }
+      },
+      "Conflict": {
+        "description": "资源当前状态不允许执行该操作",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ApiErrorResponse" } } }
+      },
+      "UpstreamError": {
+        "description": "上游服务返回错误",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ApiErrorResponse" } } }
+      },
+      "ServiceUnavailable": {
+        "description": "上游服务暂不可用或未配置",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ApiErrorResponse" } } }
+      }
+    },
+    "schemas": {
+      "ApiErrorResponse": {
+        "type": "object",
+        "description": "错误响应。个人素材接口会同时返回 success=false 和 message；OpenAI/Seedance 入口主要使用 error 对象。",
+        "additionalProperties": true,
+        "properties": {
+          "success": { "type": "boolean", "example": false },
+          "message": { "type": "string" },
+          "error": {
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+              "code": { "type": "string", "description": "稳定的机器可读错误码" },
+              "message": { "type": "string" },
+              "type": { "type": "string" },
+              "param": { "type": "string" }
+            }
+          }
+        }
+      },
+      "ModelList": {
+        "type": "object",
+        "properties": {
+          "object": { "type": "string", "example": "list" },
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": { "type": "string" },
+                "object": { "type": "string", "example": "model" },
+                "owned_by": { "type": "string" }
+              }
+            }
+          }
+        }
+      },
+      "TokenUsageResponse": {
+        "type": "object",
+        "properties": {
+          "code": { "type": "boolean" },
+          "message": { "type": "string" },
+          "data": {
+            "type": "object",
+            "properties": {
+              "object": { "type": "string" },
+              "name": { "type": "string" },
+              "total_granted": { "type": "integer" },
+              "total_used": { "type": "integer" },
+              "total_available": { "type": "integer" },
+              "unlimited_quota": { "type": "boolean" },
+              "expires_at": { "type": "integer", "format": "int64" }
+            }
+          }
+        }
+      },
+      "TaskListResponse": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean" },
+          "data": {
+            "type": "object",
+            "properties": {
+              "page": { "type": "integer" },
+              "page_size": { "type": "integer" },
+              "total": { "type": "integer" },
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "task_id": { "type": "string" },
+                    "status": { "type": "string" },
+                    "result_url": { "type": "string" },
+                    "progress": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "ChatCompletionRequest": {
+        "type": "object",
+        "required": ["model", "messages"],
+        "properties": {
+          "model": { "type": "string" },
+          "messages": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["role", "content"],
+              "properties": {
+                "role": { "type": "string", "enum": ["system", "user", "assistant"] },
+                "content": { "type": "string" }
+              }
+            }
+          },
+          "temperature": { "type": "number" },
+          "stream": { "type": "boolean", "default": false }
+        }
+      },
+      "ImageGenerateRequest": {
+        "type": "object",
+        "required": ["model"],
+        "properties": {
+          "model": { "type": "string" },
+          "prompt": { "type": "string" },
+          "n": { "type": "integer" },
+          "size": { "type": "string" }
+        }
+      },
+      "ImageEditRequest": {
+        "type": "object",
+        "required": ["model"],
+        "properties": {
+          "model": { "type": "string" },
+          "prompt": { "type": "string" },
+          "image": { "type": "string", "description": "原图 URL" }
+        }
+      },
+      "VideoCreateRequest": {
+        "type": "object",
+        "required": ["model"],
+        "properties": {
+          "model": { "type": "string" },
+          "prompt": { "type": "string" },
+          "duration": { "type": "number" },
+          "seconds": { "type": "number" },
+          "resolution": { "type": "string" },
+          "ratio": { "type": "string" },
+          "image": { "type": "string" },
+          "images": { "type": "array", "items": { "type": "string" } },
+          "content": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
+          "duration_seconds": { "type": "integer", "minimum": 1, "description": "MiniMax H3 必填，正整数秒" },
+          "video_resolution": { "type": "string", "description": "MiniMax H3 必填：480p / 768p / 1080p，受模型限制" },
+          "image_urls": { "type": "array", "items": { "type": "string", "format": "uri" }, "description": "MiniMax H3 参考图 URL 数组" },
+          "audio_urls": { "type": "array", "items": { "type": "string", "format": "uri" }, "description": "MiniMax H3 参考音频 URL 数组" },
+          "first_frame": { "type": "string", "format": "uri", "description": "MiniMax H3 首尾帧模型的首帧" },
+          "last_frame": { "type": "string", "format": "uri", "description": "MiniMax H3 首尾帧模型的尾帧" },
+          "seed": { "type": "integer", "description": "MiniMax H3 仅多图参考和多图多音频模型生效" }
+        }
+      },
+      "MinimaxH3Request": {
+        "type": "object",
+        "required": ["model", "duration_seconds", "video_resolution"],
+        "description": "prompt 除 image-audio-lipsync 外必填。模型会进一步限制素材数量、分辨率、比例和时长组合。",
+        "properties": {
+          "model": {
+            "type": "string",
+            "enum": [
+              "ap-minimax-h3-text-to-video",
+              "ap-minimax-h3-reference-to-video",
+              "ap-minimax-h3-multimodal-to-video",
+              "ap-minimax-h3-image-audio-lipsync",
+              "ap-minimax-h3-first-last-frame-to-video"
+            ]
+          },
+          "prompt": { "type": "string", "minLength": 1, "description": "text/reference/multimodal/first-last 模型必填；lipsync 不使用" },
+          "duration_seconds": { "type": "integer", "minimum": 1, "maximum": 15, "description": "必填。reference 和 multimodal 在 1080p 时最大 10，其他可用组合最大 15" },
+          "video_resolution": { "type": "string", "enum": ["480p", "768p", "1080p"], "description": "必填。text 和 first-last 不支持 1080p" },
+          "ratio": { "type": "string", "enum": ["16:9", "9:16", "1:1"], "default": "16:9", "description": "multimodal、lipsync 和 first-last 不支持 1:1" },
+          "image_urls": { "type": "array", "minItems": 1, "maxItems": 9, "items": { "type": "string", "format": "uri" }, "description": "reference/multimodal 需 1–9 个；lipsync 恰好 1 个" },
+          "audio_urls": { "type": "array", "minItems": 1, "maxItems": 3, "items": { "type": "string", "format": "uri" }, "description": "multimodal 需 1–3 个；lipsync 恰好 1 个" },
+          "first_frame": { "type": "string", "format": "uri", "description": "仅 first-last 模型，必须与 last_frame 同传" },
+          "last_frame": { "type": "string", "format": "uri", "description": "仅 first-last 模型，必须与 first_frame 同传" },
+          "seed": { "type": "integer", "description": "仅 reference 和 multimodal 模型生效" }
+        }
+      },
+      "OpenAIVideoTask": {
+        "type": "object",
+        "required": ["id", "object", "model", "status", "progress", "created_at"],
+        "properties": {
+          "id": { "type": "string" },
+          "task_id": { "type": "string", "deprecated": true, "description": "兼容旧客户端，后续请使用 id" },
+          "object": { "type": "string", "example": "video" },
+          "status": { "type": "string", "enum": ["queued", "in_progress", "completed", "failed"] },
+          "model": { "type": "string" },
+          "progress": { "type": "integer", "minimum": 0, "maximum": 100 },
+          "created_at": { "type": "integer", "format": "int64", "description": "Unix 时间戳（秒）" },
+          "completed_at": { "type": "integer", "format": "int64", "description": "完成时间，未完成时省略" },
+          "expires_at": { "type": "integer", "format": "int64", "description": "结果过期时间，未提供时省略" },
+          "seconds": { "type": "string", "description": "兼容 OpenAI Video 的时长字符串" },
+          "size": { "type": "string", "description": "兼容 OpenAI Video 的画面尺寸" },
+          "remixed_from_video_id": { "type": "string" },
+          "error": { "$ref": "#/components/schemas/OpenAIVideoError" },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+              "url": { "type": "string", "format": "uri" },
+              "duration": { "type": "number" },
+              "output_format": { "type": "string" },
+              "resolution": { "type": "string" }
+            }
+          },
+          "usage": { "$ref": "#/components/schemas/SeedanceOfficialUsage" }
+        }
+      },
+      "OpenAIVideoError": {
+        "type": "object",
+        "required": ["message", "code"],
+        "properties": {
+          "message": { "type": "string" },
+          "code": { "type": "string" },
+          "param": { "type": "string" },
+          "request_id": { "type": "string" },
+          "provider": { "type": "string" },
+          "category": { "type": "string" },
+          "upstream_code": { "type": "string" },
+          "retryable": { "type": "boolean" }
+        }
+      },
+      "SeedanceContentItem": {
+        "type": "object",
+        "required": ["type"],
+        "properties": {
+          "type": { "type": "string", "enum": ["text", "image_url", "video_url", "audio_url"] },
+          "text": { "type": "string", "description": "type=text 时填写" },
+          "role": { "type": "string", "enum": ["reference_image", "first_frame", "last_frame", "reference_video", "reference_audio"] },
+          "image_url": { "type": "object", "properties": { "url": { "type": "string", "description": "公网 URL 或 asset://{asset_id}" } } },
+          "video_url": { "type": "object", "properties": { "url": { "type": "string" } } },
+          "audio_url": { "type": "object", "properties": { "url": { "type": "string" } } }
+        },
+        "description": "每项只填写与 type 对应的 text/image_url/video_url/audio_url。2.5 最多 50 项，其中图片 30、视频 10、音频 10。"
+      },
+      "SeedanceCreateRequest": {
+        "type": "object",
+        "required": ["model"],
+        "description": "`prompt` 与 `content` 至少提供一个。顶层标准字段优先于 metadata 中的同名字段。2.5 不支持 frames/fps 变体、seed、camera_fixed、draft、service_tier；首尾帧不能与 reference 媒体混用，last_frame 必须搭配 first_frame。2.0 与 2.5 的其他约束详见各字段说明。",
+        "properties": {
+          "model": {
+            "type": "string",
+            "description": "公开模型名。2.0：VIP / 标准版 / 轻量版 / 高性价比版；2.5：AP Seedance-2.5 标准版"
+          },
+          "prompt": { "type": "string", "description": "与 content 至少提供一个。2.5 会转换为文本 content" },
+          "content": { "type": "array", "minItems": 1, "maxItems": 50, "items": { "$ref": "#/components/schemas/SeedanceContentItem" }, "description": "2.5 最多 50 项；其中图片最多 30、视频最多 10、音频最多 10" },
+          "resolution": { "type": "string", "description": "2.0：480p/720p/1080p/4k（受模型限制）；2.5：480p/720p/1080p，默认 720p" },
+          "ratio": { "type": "string", "description": "2.0：16:9/9:16/1:1/4:3/3:4。2.5 另支持 21:9、adaptive，默认 adaptive；首尾帧、edit、extend 必须 adaptive" },
+          "duration": { "type": "number", "description": "2.0：正数秒，默认 5。2.5：-1（自动）或 4–30，默认 -1；edit 必须 -1" },
+          "seconds": { "type": "number", "description": "duration 的兼容别名" },
+          "width": { "type": "integer", "minimum": 1, "description": "兼容字段；通常优先使用 resolution + ratio" },
+          "height": { "type": "integer", "minimum": 1, "description": "兼容字段；通常优先使用 resolution + ratio" },
+          "image": { "type": "string", "description": "单图兼容字段，可传公网 URL、Base64 或 asset://{asset_id}" },
+          "images": { "type": "array", "items": { "type": "string" }, "description": "多图兼容字段" },
+          "generate_audio": { "type": "boolean", "description": "2.5 默认 true；2.0 默认 false" },
+          "watermark": { "type": "boolean", "default": false },
+          "output_format": { "type": "string", "enum": ["mp4", "mov"], "default": "mp4" },
+          "seed": { "type": "integer", "description": "仅 2.0" },
+          "service_tier": { "type": "string", "description": "仅 2.0" },
+          "priority": { "type": "integer", "minimum": 0, "maximum": 9, "default": 0, "description": "仅 2.5" },
+          "character_id": { "type": "integer", "format": "int64", "description": "单角色；不能与其他参考素材同传。官方兼容和 /v1/videos 都支持" },
+          "callback_url": { "type": "string", "format": "uri" },
+          "return_last_frame": { "type": "boolean", "default": false, "description": "仅 2.5；请求返回生成视频的末帧" },
+          "omni_reference_task_type": { "type": "string", "enum": ["auto", "reference", "edit", "extend"], "default": "auto", "description": "仅 2.5。reference 需要参考媒体；edit 需要且只能有一个参考视频；extend 需要一个参考视频；无参考素材时不转发" },
+          "execution_expires_after": { "type": "integer", "minimum": 3600, "maximum": 259200, "default": 172800, "description": "仅 2.5，任务执行有效期（秒）" },
+          "safety_identifier": { "type": "string", "maxLength": 64, "description": "仅 2.5" },
+          "tools": {
+            "type": "array",
+            "description": "仅 2.5，当前支持 [{\"type\":\"web_search\"}]",
+            "items": { "type": "object", "required": ["type"], "properties": { "type": { "type": "string", "enum": ["web_search"] } } }
+          },
+          "metadata": { "type": "object", "additionalProperties": true, "description": "扩展参数；顶层标准字段优先于 metadata 中的同名字段" },
+          "media_mode": { "type": "string", "enum": ["first_frame", "first_last_frame", "start_end_frame", "last_frame"], "description": "兼容字段，用于为 images 自动分配首帧/尾帧角色。last_frame 需要同时提供首帧" }
+        }
+      },
+      "SeedanceTaskCreateResponse": {
+        "type": "object",
+        "required": ["id"],
+        "properties": {
+          "id": { "type": "string", "example": "task_xxx" }
+        }
+      },
+      "SeedanceOfficialUsage": {
+        "type": "object",
+        "properties": {
+          "completion_tokens": { "type": "integer", "format": "int64" },
+          "total_tokens": { "type": "integer", "format": "int64" },
+          "tool_usage": { "type": "object", "additionalProperties": true }
+        }
+      },
+      "SeedanceOfficialTask": {
+        "type": "object",
+        "required": ["id", "status"],
+        "properties": {
+          "id": { "type": "string" },
+          "model": { "type": "string" },
+          "status": { "type": "string", "enum": ["queued", "running", "succeeded", "failed", "cancelled"] },
+          "duration": { "type": "number", "description": "秒。优先上游实际时长" },
+          "resolution": { "type": "string" },
+          "output_format": { "type": "string", "enum": ["mp4", "mov"] },
+          "content": {
+            "type": "object",
+            "properties": {
+              "video_url": { "type": "string", "format": "uri" }
+            }
+          },
+          "usage": { "$ref": "#/components/schemas/SeedanceOfficialUsage" },
+          "error": {
+            "type": "object",
+            "description": "失败时返回",
+            "additionalProperties": true,
+            "properties": {
+              "code": { "type": "string" },
+              "message": { "type": "string" }
+            }
+          }
+        }
+      },
+      "VirtualCharacter": {
+        "type": "object",
+        "required": ["id", "scope", "source_type", "name", "status", "validation_status", "created_at", "updated_at"],
+        "properties": {
+          "id": { "type": "integer", "format": "int64" },
+          "scope": { "type": "string", "enum": ["public", "private"] },
+          "source_type": { "type": "string", "enum": ["volc_preset", "volc_aigc", "volc_real_person"] },
+          "name": { "type": "string" },
+          "description": { "type": "string" },
+          "tags": { "type": "array", "items": { "type": "string" } },
+          "nationality": { "type": "string" },
+          "gender": { "type": "string" },
+          "age_min": { "type": "integer" },
+          "age_max": { "type": "integer" },
+          "occupation": { "type": "string" },
+          "temperament": { "type": "string" },
+          "status": { "type": "string", "enum": ["creating", "active", "blocked", "offline", "deleting", "failed"] },
+          "validation_status": { "type": "string", "enum": ["unverified", "accepted", "rejected"] },
+          "asset_type": { "type": "string", "enum": ["Image", "Video", "Audio"] },
+          "provider_asset_id": { "type": "string" },
+          "asset_upload_required": { "type": "boolean" },
+          "cover_url": { "type": "string", "format": "uri" },
+          "mime_type": { "type": "string" },
+          "file_size": { "type": "integer", "format": "int64" },
+          "last_error": { "type": "string" },
+          "created_at": { "type": "integer", "format": "int64", "description": "Unix 时间戳（秒）" },
+          "updated_at": { "type": "integer", "format": "int64", "description": "Unix 时间戳（秒）" },
+          "catalog_version": { "type": "string" },
+          "authorization": { "$ref": "#/components/schemas/VirtualCharacterAuthorization" }
+        }
+      },
+      "VirtualCharacterAuthorization": {
+        "type": "object",
+        "properties": {
+          "status": { "type": "string", "enum": ["pending", "synchronizing", "active", "ambiguous", "provider_unavailable", "expired", "revoked", "failed"] },
+          "provider_group_status": { "type": "string" },
+          "provider_asset_status": { "type": "string" },
+          "provider_checked_at": { "type": "integer", "format": "int64" },
+          "authorized_at": { "type": "integer", "format": "int64" },
+          "revoked_at": { "type": "integer", "format": "int64" },
+          "last_error": { "type": "string" }
+        }
+      },
+      "VirtualCharacterListResponse": {
+        "type": "object",
+        "required": ["success", "data"],
+        "properties": {
+          "success": { "type": "boolean" },
+          "data": {
+            "type": "object",
+            "required": ["page", "used", "limit", "real_person_used", "real_person_limit"],
+            "properties": {
+              "page": {
+                "type": "object",
+                "required": ["page", "page_size", "total", "items"],
+                "properties": {
+                  "page": { "type": "integer" },
+                  "page_size": { "type": "integer" },
+                  "total": { "type": "integer", "format": "int64" },
+                  "items": { "type": "array", "items": { "$ref": "#/components/schemas/VirtualCharacter" } }
+                }
+              },
+              "used": { "type": "integer", "description": "当前用户已使用的私有素材数量" },
+              "limit": { "type": "integer", "description": "当前用户私有素材额度" },
+              "real_person_used": { "type": "integer", "description": "已使用的真人素材数量" },
+              "real_person_limit": { "type": "integer", "description": "真人素材额度" }
+            }
+          }
+        }
+      },
+      "VirtualCharacterMutationResponse": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean" },
+          "data": { "$ref": "#/components/schemas/VirtualCharacter" }
+        }
+      },
+      "VirtualCharacterDeleteResponse": {
+        "type": "object",
+        "required": ["success", "data"],
+        "properties": {
+          "success": { "type": "boolean" },
+          "data": {
+            "type": "object",
+            "required": ["id", "status"],
+            "properties": {
+              "id": { "type": "integer", "format": "int64" },
+              "status": { "type": "string", "description": "删除完成或清理流程中的当前状态" }
+            }
+          }
+        }
+      },
+      "VirtualCharacterCancelResponse": {
+        "type": "object",
+        "required": ["success", "data"],
+        "properties": {
+          "success": { "type": "boolean" },
+          "data": {
+            "type": "object",
+            "required": ["id", "cancelled"],
+            "properties": {
+              "id": { "type": "string" },
+              "cancelled": { "type": "boolean" }
+            }
+          }
+        }
+      },
+      "VirtualCharacterValidationCreateRequest": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": { "type": "string", "maxLength": 191 },
+          "description": { "type": "string", "maxLength": 2000 },
+          "tags": { "type": "array", "maxItems": 20, "items": { "type": "string", "maxLength": 32 } },
+          "language": { "type": "string", "enum": ["zh", "en"], "default": "zh" }
+        }
+      },
+      "VirtualCharacterValidationSessionResponse": {
+        "type": "object",
+        "required": ["success", "data"],
+        "properties": {
+          "success": { "type": "boolean" },
+          "data": {
+            "type": "object",
+            "required": ["id", "status", "expires_at", "character_id", "created_at", "updated_at"],
+            "properties": {
+              "id": { "type": "string" },
+              "status": { "type": "string", "enum": ["pending", "succeeded", "failed", "expired", "cancelled"] },
+              "launch_url": { "type": "string", "format": "uri", "description": "创建会话时返回；查询时可能为空" },
+              "expires_at": { "type": "integer", "format": "int64" },
+              "character_id": { "type": "integer", "format": "int64" },
+              "last_error": { "type": "string" },
+              "created_at": { "type": "integer", "format": "int64" },
+              "updated_at": { "type": "integer", "format": "int64" }
+            }
+          }
+        }
+      }
+    }
+  },
+  "security": [{ "BearerAuth": [] }]
+}

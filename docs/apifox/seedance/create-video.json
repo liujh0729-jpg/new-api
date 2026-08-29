@@ -1,0 +1,133 @@
+{
+  "name": "创建视频任务（OpenAI协议）",
+  "type": "http",
+  "method": "post",
+  "path": "/v1/videos",
+  "status": "released",
+  "operationId": "createSeedanceOpenAIVideo",
+  "description": "实际路径是 `POST /v1/videos`。请求体与 Seedance 官方兼容入口相同，成功返回 OpenAI Video 对象（`status=queued`）。查询必须用 `GET /v1/videos/{task_id}`，成功状态为 `completed`，视频地址在 `metadata.url`。\n\n`prompt` 与 `content` 至少提供一个。2.5 默认 resolution=720p、ratio=adaptive、duration=-1、generate_audio=true、watermark=false、output_format=mp4；不支持 frames/fps 变体、seed、camera_fixed、draft、service_tier。",
+  "tags": ["Seedance"],
+  "auth": { "type": "bearer", "bearer": { "token": "" } },
+  "requestBody": {
+    "type": "application/json",
+    "required": true,
+    "jsonSchema": {
+      "type": "object",
+      "required": ["model"],
+      "properties": {
+        "model": { "type": "string", "description": "公开模型名；2.5 使用 AP Seedance-2.5 标准版" },
+        "prompt": { "type": "string", "description": "与 content 至少提供一个" },
+        "content": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 50,
+          "description": "2.5 最多 50 项，其中图片 30、视频 10、音频 10",
+          "items": {
+            "type": "object",
+            "required": ["type"],
+            "properties": {
+              "type": { "type": "string", "enum": ["text", "image_url", "video_url", "audio_url"] },
+              "role": { "type": "string", "enum": ["reference_image", "first_frame", "last_frame", "reference_video", "reference_audio"] },
+              "text": { "type": "string" },
+              "image_url": { "type": "object", "properties": { "url": { "type": "string", "description": "公网 URL 或 asset://{asset_id}" } } },
+              "video_url": { "type": "object", "properties": { "url": { "type": "string" } } },
+              "audio_url": { "type": "object", "properties": { "url": { "type": "string" } } }
+            }
+          }
+        },
+        "resolution": { "type": "string", "description": "2.0：480p/720p/1080p/4k（受模型限制）；2.5：480p/720p/1080p，默认 720p" },
+        "ratio": { "type": "string", "description": "2.5 默认 adaptive；首尾帧、edit、extend 必须 adaptive" },
+        "duration": { "type": "number", "description": "2.0 默认 5；2.5 为 -1 或 4–30，默认 -1；edit 必须 -1" },
+        "seconds": { "type": "number", "description": "duration 的兼容别名" },
+        "width": { "type": "integer", "minimum": 1 },
+        "height": { "type": "integer", "minimum": 1 },
+        "image": { "type": "string", "description": "单图兼容字段，可传 URL、Base64 或 asset://{asset_id}" },
+        "images": { "type": "array", "items": { "type": "string" }, "description": "多图兼容字段" },
+        "generate_audio": { "type": "boolean", "description": "2.5 默认 true；2.0 默认 false" },
+        "watermark": { "type": "boolean", "default": false },
+        "output_format": { "type": "string", "enum": ["mp4", "mov"], "default": "mp4" },
+        "seed": { "type": "integer", "description": "仅 2.0" },
+        "service_tier": { "type": "string", "description": "仅 2.0" },
+        "priority": { "type": "integer", "minimum": 0, "maximum": 9, "default": 0, "description": "仅 2.5" },
+        "callback_url": { "type": "string", "format": "uri" },
+        "return_last_frame": { "type": "boolean", "default": false, "description": "仅 2.5" },
+        "omni_reference_task_type": { "type": "string", "enum": ["auto", "reference", "edit", "extend"], "default": "auto", "description": "reference 需要参考媒体；edit 需要且只能有一个参考视频；extend 需要一个参考视频" },
+        "execution_expires_after": { "type": "integer", "minimum": 3600, "maximum": 259200, "default": 172800, "description": "仅 2.5，单位秒" },
+        "safety_identifier": { "type": "string", "maxLength": 64, "description": "仅 2.5" },
+        "tools": { "type": "array", "items": { "type": "object", "required": ["type"], "properties": { "type": { "type": "string", "enum": ["web_search"] } } }, "description": "仅 2.5" },
+        "metadata": { "type": "object", "additionalProperties": true, "description": "扩展参数；顶层标准字段优先" },
+        "media_mode": { "type": "string", "enum": ["first_frame", "first_last_frame", "start_end_frame", "last_frame"], "description": "兼容字段，用于为 images 分配首尾帧角色；last_frame 需要首帧" },
+        "character_id": { "type": "integer", "description": "单角色；不能与其他参考素材同传" }
+      }
+    },
+    "data": "{\n  \"model\": \"AP Seedance-2.5 标准版\",\n  \"content\": [{ \"type\": \"text\", \"text\": \"帆船穿过清晨薄雾\" }],\n  \"resolution\": \"720p\",\n  \"ratio\": \"adaptive\",\n  \"duration\": -1,\n  \"generate_audio\": true\n}"
+  },
+  "responses": [
+    {
+      "name": "成功",
+      "code": 200,
+      "contentType": "json",
+      "description": "任务已创建",
+      "jsonSchema": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "task_id": { "type": "string" },
+          "object": { "type": "string", "example": "video" },
+          "status": { "type": "string", "enum": ["queued", "in_progress", "completed", "failed"] },
+          "model": { "type": "string" },
+          "progress": { "type": "integer" },
+          "created_at": { "type": "integer", "format": "int64" },
+          "completed_at": { "type": "integer", "format": "int64" },
+          "expires_at": { "type": "integer", "format": "int64" },
+          "seconds": { "type": "string" },
+          "size": { "type": "string" },
+          "remixed_from_video_id": { "type": "string" },
+          "error": {
+            "type": "object",
+            "properties": {
+              "message": { "type": "string" },
+              "code": { "type": "string" },
+              "param": { "type": "string" },
+              "request_id": { "type": "string" },
+              "provider": { "type": "string" },
+              "category": { "type": "string" },
+              "upstream_code": { "type": "string" },
+              "retryable": { "type": "boolean" }
+            }
+          },
+          "metadata": { "type": "object", "additionalProperties": true },
+          "usage": { "type": "object", "properties": { "completion_tokens": { "type": "integer", "format": "int64" }, "total_tokens": { "type": "integer", "format": "int64" } } }
+        }
+      }
+    },
+    {
+      "name": "请求错误",
+      "code": 400,
+      "contentType": "json",
+      "description": "参数或业务校验失败",
+      "jsonSchema": { "type": "object", "additionalProperties": true }
+    },
+    {
+      "name": "未认证",
+      "code": 401,
+      "contentType": "json",
+      "description": "Token 缺失或无效",
+      "jsonSchema": { "type": "object", "additionalProperties": true }
+    },
+    {
+      "name": "上游错误",
+      "code": 502,
+      "contentType": "json",
+      "description": "上游创建任务失败",
+      "jsonSchema": { "type": "object", "additionalProperties": true }
+    },
+    {
+      "name": "服务不可用",
+      "code": 503,
+      "contentType": "json",
+      "description": "上游未配置或暂不可用",
+      "jsonSchema": { "type": "object", "additionalProperties": true }
+    }
+  ]
+}

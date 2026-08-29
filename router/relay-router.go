@@ -98,7 +98,8 @@ func SetRelayRouter(router *gin.Engine) {
 	{
 		playgroundRouter.POST("/chat/completions", playgroundHandler(types.RelayFormatOpenAI))
 		playgroundRouter.POST("/images/generations", func(c *gin.Context) {
-			if common.GetContextKeyInt(c, constant.ContextKeyChannelType) == constant.ChannelTypeAIPDD {
+			if common.GetContextKeyInt(c, constant.ContextKeyChannelType) == constant.ChannelTypeAIPDD &&
+				!isAIPDDSynchronousMedia(c) {
 				controller.PlaygroundTask(c)
 				return
 			}
@@ -263,11 +264,18 @@ func playgroundHandler(relayFormat types.RelayFormat) gin.HandlerFunc {
 }
 
 func relayOrAIPDDTask(c *gin.Context, relayFormat types.RelayFormat) {
-	if common.GetContextKeyInt(c, constant.ContextKeyChannelType) == constant.ChannelTypeAIPDD {
+	if common.GetContextKeyInt(c, constant.ContextKeyChannelType) == constant.ChannelTypeAIPDD &&
+		!isAIPDDSynchronousMedia(c) {
 		controller.RelayTask(c)
 		return
 	}
 	controller.Relay(c, relayFormat)
+}
+
+func isAIPDDSynchronousMedia(c *gin.Context) bool {
+	modelName := common.GetContextKeyString(c, constant.ContextKeyOriginalModel)
+	capability, ok := constant.GetAIPDDCapability(modelName)
+	return ok && capability.ExecutionProtocol == "token_market_image"
 }
 
 func registerMjRouterGroup(relayMjRouter *gin.RouterGroup) {

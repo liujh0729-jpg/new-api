@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "API 文档": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "apifox-mcp-server@latest",
+        "--project-id=8772616"
+      ]
+    }
+  }
+}

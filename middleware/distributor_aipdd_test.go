@@ -58,7 +58,7 @@ func TestDistributeAllowsOpenAIVideoFetchWithModelLimitedToken(t *testing.T) {
 }
 
 func TestDistributeAllowsCompatibleVideoFetchWithModelLimitedToken(t *testing.T) {
-	ctx := newModelLimitedDistributorContext(t, http.MethodGet, "/v1/video/generations/task_123", "")
+	ctx := newModelLimitedDistributorContext(t, http.MethodGet, "/pg/video/generations/task_123", "")
 
 	Distribute()(ctx)
 

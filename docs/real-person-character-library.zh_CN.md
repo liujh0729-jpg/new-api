@@ -57,7 +57,7 @@ active -> revoked（历史记录带有效期时也可能 expired）
 - `character_id`：先反查当前用户可访问的角色，再注入该角色唯一的 `asset://`。
 - 直接 `asset://`：每一个 ID 都必须先在本地角色库唯一注册；未知、重复注册、非本人私有真人、过期或火山失效的 ID 均拒绝。
 
-校验中间件同时覆盖 `/v1/video/generations`、`/pg/video/generations`、`/v1/videos`、remix、Kling 和 Jimeng 的视频创建入口；入口或模型不支持 Seedance 角色素材时采用拒绝默认。使用 `character_id` 时不能再附带其他参考素材；直接 `asset://` 则允许组合多个已注册引用，并逐一鉴权和记录快照。
+校验中间件同时覆盖 `/v1/videos`、官方兼容入口、remix、控制台 `/pg/video/generations`、Kling 和 Jimeng 的视频创建入口；入口或模型不支持 Seedance 角色素材时采用拒绝默认。使用 `character_id` 时不能再附带其他参考素材；直接 `asset://` 则允许组合多个已注册引用，并逐一鉴权和记录快照。
 
 每次请求执行两次授权检查：第一次在创建本地任务绑定前；第二次在绑定后、进入转发处理前，用于封住撤权/过期/下线并发窗口。第二次失败会回滚仍处于 submitting 的绑定和多引用占位。删除或撤权会立即拒绝新请求，但会等待已进入处理中的任务终态后再清理火山 Asset Group。
 

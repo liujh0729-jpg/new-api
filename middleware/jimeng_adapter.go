@@ -49,7 +49,7 @@ func JimengRequestConvert() func(c *gin.Context) {
 			c.Set("action", constant.TaskActionTextGenerate)
 		}
 
-		c.Request.URL.Path = "/v1/video/generations"
+		c.Request.URL.Path = "/v1/videos"
 
 		if action == "CVSync2AsyncGetResult" {
 			taskId, ok := originalReq["task_id"].(string)
@@ -57,7 +57,7 @@ func JimengRequestConvert() func(c *gin.Context) {
 				abortWithOpenAiMessage(c, http.StatusBadRequest, "task_id is required for CVSync2AsyncGetResult")
 				return
 			}
-			c.Request.URL.Path = "/v1/video/generations/" + taskId
+			c.Request.URL.Path = "/v1/videos/" + taskId
 			c.Request.Method = http.MethodGet
 			c.Set("task_id", taskId)
 			c.Set("relay_mode", relayconstant.RelayModeVideoFetchByID)

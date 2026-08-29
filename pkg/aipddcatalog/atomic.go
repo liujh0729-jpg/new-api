@@ -231,13 +231,15 @@ func (catalog AtomicCatalog) Validate() error {
 		return fmt.Errorf("AIPDD catalog AWCoin rate must be positive")
 	}
 	for _, capability := range catalog.Capabilities {
-		if capability.AdapterCode != "comfyui" && capability.AdapterCode != "seedance" {
+		if capability.AdapterCode != "comfyui" && capability.AdapterCode != "seedance" && capability.AdapterCode != "token_market_media" {
 			return fmt.Errorf("unsupported AIPDD task adapter %q", capability.AdapterCode)
 		}
 		if strings.TrimSpace(capability.ID) == "" || strings.TrimSpace(capability.Execution.Protocol) == "" || strings.TrimSpace(capability.Execution.Path) == "" {
 			return fmt.Errorf("AIPDD task capability has incomplete execution metadata")
 		}
-		if capability.AdapterCode == "seedance" {
+		if capability.AdapterCode == "seedance" ||
+			(capability.AdapterCode == "token_market_media" &&
+				strings.EqualFold(strings.TrimSpace(capability.Pricing.PricingModel), "per_second")) {
 			if err := validateSeedancePricing(capability.ID, capability.Pricing); err != nil {
 				return err
 			}
@@ -417,7 +419,9 @@ func (catalog AtomicCatalog) RuntimeCapabilities() []constant.AIPDDCapability {
 		capability.ExecutionProtocol = item.Execution.Protocol
 		capability.ExecutionPath = item.Execution.Path
 		capability.AWCoinUSDPerCoin = catalog.AWCoinRate.USDPerAWCoin
-		if item.AdapterCode == "seedance" {
+		if item.AdapterCode == "seedance" ||
+			(item.AdapterCode == "token_market_media" &&
+				strings.EqualFold(strings.TrimSpace(item.Pricing.PricingModel), "per_second")) {
 			capability.BillingType = constant.AIPDDBillingTypeDurationSeconds
 			capability.SeedancePricing = &constant.AIPDDSeedancePricing{
 				BillingMode:  item.Pricing.BillingMode,

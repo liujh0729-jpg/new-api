@@ -116,6 +116,9 @@ func main() {
 	// Virtual character task recovery, retention, and deferred private-source cleanup.
 	service.StartVirtualCharacterMaintenanceTask()
 
+	// Keep the managed AIPDD model catalog current without requiring manual sync.
+	service.StartAIPDDCatalogSyncTask()
+
 	// Wire task polling adaptor factory (breaks service -> relay import cycle)
 	service.GetTaskAdaptorFunc = func(platform constant.TaskPlatform) service.TaskPollingAdaptor {
 		a := relay.GetTaskAdaptor(platform)

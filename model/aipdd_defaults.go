@@ -44,6 +44,25 @@ func EnsureAIPDDDefaults() error {
 	return nil
 }
 
+// IsAIPDDCatalogEnvironmentConfigured reports whether background catalog sync
+// has the credential it needs without exposing that credential to callers.
+func IsAIPDDCatalogEnvironmentConfigured() bool {
+	return strings.TrimSpace(getAIPDDKeyFromEnv()) != ""
+}
+
+// SyncAIPDDCatalogFromEnvironment refreshes the managed AIPDD catalog using
+// the same source and credential as the boot-time sync.
+func SyncAIPDDCatalogFromEnvironment(ctx context.Context) (AIPDDCatalogSyncResult, error) {
+	key := getAIPDDKeyFromEnv()
+	if err := validateAIPDDBootstrapKey(key); err != nil {
+		return AIPDDCatalogSyncResult{}, err
+	}
+	if strings.TrimSpace(key) == "" {
+		return AIPDDCatalogSyncResult{}, errors.New("AIPDD_API_KEY is not configured")
+	}
+	return SyncAIPDDCatalog(ctx, nil, getAIPDDBaseURLFromEnv(), key)
+}
+
 func EnsureAIPDDOpenAIModelDefaults(modelNames []string) error {
 	constant.SetAIPDDOpenAIModels(modelNames)
 	modelNames = constant.GetAIPDDOpenAIModelList()

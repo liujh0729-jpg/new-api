@@ -40,6 +40,8 @@ services:
       - AIPDD_BASE_URL=${AIPDD_BASE_URL:-}
       - AIPDD_INSTANCE_ID=${AIPDD_INSTANCE_ID:?set AIPDD_INSTANCE_ID to the registered site UUID}
       - AIPDD_CATALOG_SYNC_ON_BOOT=${AIPDD_CATALOG_SYNC_ON_BOOT:-true}
+      - AIPDD_CATALOG_SYNC_INTERVAL_MINUTES=${AIPDD_CATALOG_SYNC_INTERVAL_MINUTES:-5}
+      - AIPDD_CATALOG_SYNC_TIMEOUT_SECONDS=${AIPDD_CATALOG_SYNC_TIMEOUT_SECONDS:-10}
       - TZ=Asia/Shanghai
       - ERROR_LOG_ENABLED=true # 是否启用错误日志记录 (Whether to enable error log recording)
       - BATCH_UPDATE_ENABLED=true  # 是否启用批量更新 (Whether to enable batch update)

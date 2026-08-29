@@ -40,10 +40,11 @@ const DEFAULT_HEADER_NAV_MODULES = {
 
 const INTERNAL_DOCS_PATH = '/docs'
 const DEFAULT_DOCS_LINK =
-  'https://aiworkin.feishu.cn/wiki/RZXkwDbzqi2auAkuF3EcJGWknVh?from=from_copylink'
+  'https://s.apifox.cn/fea0b520-e6d9-489c-ae5e-109391c771dd/9376375m0'
 const LEGACY_DEFAULT_DOCS_LINKS = new Set([
   'https://docs.newapi.pro',
   'https://docs.newapi.pro/',
+  'https://aiworkin.feishu.cn/wiki/RZXkwDbzqi2auAkuF3EcJGWknVh?from=from_copylink',
 ])
 
 function parseAccessModule(

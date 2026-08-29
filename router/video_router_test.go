@@ -23,6 +23,10 @@ func TestVideoRouterRegistersAPIKeyVirtualCharacterEndpoints(t *testing.T) {
 	require.True(t, routes[http.MethodGet+" /v1/virtual-characters/:id"])
 	require.True(t, routes[http.MethodPost+" /api/v3/contents/generations/tasks"])
 	require.True(t, routes[http.MethodGet+" /api/v3/contents/generations/tasks/:task_id"])
+	require.True(t, routes[http.MethodPost+" /v1/videos"])
+	require.True(t, routes[http.MethodGet+" /v1/videos/:task_id"])
+	require.False(t, routes[http.MethodPost+" /v1/video/generations"])
+	require.False(t, routes[http.MethodGet+" /v1/video/generations/:task_id"])
 
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodPost, "/api/v3/contents/generations/tasks", nil)

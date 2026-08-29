@@ -2,7 +2,9 @@
 
 本文面向 API 用户，说明如何通过 NewAPI 调用 **AIPDD 渠道**已开放的模型。调用方只需要使用平台发放的 NewAPI Token，不需要也不应在客户端传递 AIPDD 上游 API Key。
 
-更新时间：2026-08-11。
+更新时间：2026-08-29。
+
+> 对外公开文档以 Apifox 为准，链接见 [`docs/apifox/project.json`](./apifox/project.json) 的 `publicDocsUrl`。公开契约以 [`openapi/public.json`](./openapi/public.json) 为准；变更后运行 `bin/sync-apifox.ps1`。
 
 > 模型目录和价格可能由服务方动态调整。实际可用模型、参数约束和价格请以 `GET /v1/models` 与 `/api/pricing` 返回结果为准。
 
@@ -13,7 +15,7 @@
 | 文本（同步/流式） | AIPDD 目录中的 Ollama 模型（如 `qwen3:8b`） | `POST /v1/chat/completions` 直接返回 |
 | 图片（同步） | 千问 `qwen-image` / `qwen-image-edit` 系列 | `POST /v1/images/generations` 或 `POST /v1/images/edits` 直接返回 |
 | 图片（异步） | Flux 图生图 / 文生图、AIPDD 千问单/双/三参考图编辑 | 创建后轮询，`succeeded` 后取结果 |
-| 视频（异步） | Wan2.2、LTX、MimicMotion、Latentsync、AP Seedance | 创建后轮询；`/v1/videos` 使用 `completed`，兼容路径实时查询使用 `succeeded`，非实时分支也可能返回内部大写状态 |
+| 视频（异步） | Wan2.2、LTX、MimicMotion、Latentsync、AP Seedance | 创建后轮询；`/v1/videos` 成功状态为 `completed` |
 | 音频（异步） | IndexTTS | 创建后轮询，`succeeded` 后取结果 |
 
 AIPDD 异步图片、视频、音频模型不能使用 `/v1/chat/completions` 或 `/v1/responses`；Ollama 文本模型应使用 `/v1/chat/completions`。
@@ -87,7 +89,7 @@ curl "$BASE_URL/v1/models" \
 - 素材字段填写图片、视频或音频的 **公网 HTTPS URL**。URL 必须能被 NewAPI 服务端和 AIPDD 上游访问。
 - **任务接口不会**把本地 multipart 文件自动上传到对象存储。本地文件请先上传到对象存储或其他文件服务，再把 URL 传入请求。
 - 业务参数可放在 JSON 顶层，也可放入 `metadata`（**顶层优先**）。
-- 视频模型可使用 `/v1/videos` 或兼容路径 `/v1/video/generations`。两条路径创建链路相同；查询响应格式不同，见第 7 节。
+- 视频模型使用 `POST /v1/videos` 创建、`GET /v1/videos/{task_id}` 查询。Seedance 也可走官方兼容入口，见 [4.13](#413-ap-seedance-20-视频)。
 - 目录同步后可能出现额外模型；参数与必填项以当前开放能力为准。
 - FunASR 等部分上游能力会被 NewAPI 刻意过滤，即使上游有目录项也不会对用户开放。
 
@@ -541,10 +543,13 @@ curl "$BASE_URL/v1/audio/speech" \
 
 ### 4.13 AP Seedance 2.0 视频
 
-> Seedance 2.0 与 2.5 使用独立契约，不能跨版本复用默认值。完整字段与约束见 [AP Seedance 2.0 / 2.5 API 文档](./aipdd-seedance-api.zh_CN.md)；2.5 不能沿用 2.0 的 5 秒默认值、旧比例、`seed` 或 `service_tier`。
+> 对外以 Apifox 为准（[`docs/apifox/project.json`](./apifox/project.json) 的 `publicDocsUrl`）。仓库对照见 [AP Seedance 2.0 / 2.5 API 文档](./aipdd-seedance-api.zh_CN.md)。2.0 与 2.5 不能跨版本复用默认值；2.5 不能沿用 2.0 的 5 秒默认值、旧比例、`seed` 或 `service_tier`。
 
-接口：`POST /v1/videos` 或 `POST /v1/video/generations`  
-查询：`GET /v1/videos/{task_id}`（OpenAI 风格，推荐）或 `GET /v1/video/generations/{task_id}`（兼容路径，返回通用 `code/data` 封装）
+接口：`POST /v1/videos`
+
+查询：`GET /v1/videos/{task_id}`（成功状态 `completed`，视频地址在 `metadata.url`）
+
+官方兼容入口见 [AP Seedance 2.0 / 2.5 API 文档](./aipdd-seedance-api.zh_CN.md)。
 
 执行协议为 `seedance_official` 时，NewAPI 会归一化请求并转发到 Seedance 官方任务接口。
 
@@ -577,7 +582,7 @@ curl "$BASE_URL/v1/audio/speech" \
 | `width`、`height` | 否 | 须同时为正整数 | 仅在未传 `resolution`/`ratio` 时用于推导；短边 `720`→`720p`，`1080`→`1080p`，`2160`→`4k` |
 | `content` | 否 | 非空数组；每项必须有 `type` | 官方多模态内容，见 [4.13.3](#4133-content-项与参考素材) |
 | `image` / `images` | 否 | 公网 HTTPS URL，或 `asset://{asset_id}` | 首帧 / 参考图简写；`images` 会转为 `reference_image`；也可写入 `content` |
-| `character_id` | 否 | 正整数 | NewAPI 角色库角色 ID；一个角色固定对应一张图片；仅 `POST /v1/video/generations`（及控制台 `/pg/video/generations`）支持，见 [4.13.5](#4135-角色图片-asset--与角色库引用) |
+| `character_id` | 否 | 正整数 | NewAPI 角色库角色 ID；一个角色固定对应一张图片；`POST /v1/videos`、官方兼容入口和控制台 `/pg/video/generations` 均支持，见 [4.13.5](#4135-角色图片-asset--与角色库引用) |
 | `character_asset_id` | 否 | 已废弃 | 仅为旧客户端兼容而静默忽略，不会选择图片、写入 metadata 或转发上游 |
 | `generate_audio` | 否 | `true` / `false` | 是否生成同步音频；显式 `false` 会保留 |
 | `seed` | 否 | 整数 | 随机种子 |
@@ -947,10 +952,10 @@ curl "$BASE_URL/v1/videos" \
   }'
 ```
 
-角色库封装示例（须走 `/v1/video/generations`）：
+角色库封装示例：
 
 ```bash
-curl "$BASE_URL/v1/video/generations" \
+curl "$BASE_URL/v1/videos" \
   -H "Authorization: Bearer $NEW_API_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -958,10 +963,8 @@ curl "$BASE_URL/v1/video/generations" \
     "character_id": 12,
     "prompt": "以图片1中的角色为主体，缓慢走向镜头，自然光",
     "duration": 5,
-    "metadata": {
-      "ratio": "16:9",
-      "resolution": "720p"
-    }
+    "resolution": "720p",
+    "ratio": "16:9"
   }'
 ```
 
@@ -983,7 +986,7 @@ curl "$BASE_URL/v1/video/generations" \
 | `aipdd-mimic-motion` | `motion_video`、`appearance_image` | `video`/`load_video`；`image` |
 | `aipdd-latentsync-1.5` | `video`、`LoadAudio` | `load_video`；`audio` |
 | `aipdd-indextts` | `input`、`audio` | `text`；`ref_audio`、`reference_audio`、`voice`、`metadata.audio` |
-| AP Seedance 2.0 | `content` / `prompt`、`resolution` | 参考图：`image`/`images`（HTTPS 或 `asset://`）；角色库：`character_id`（仅 `/v1/video/generations`；旧 `character_asset_id` 会被忽略） |
+| AP Seedance 2.0 | `content` / `prompt`、`resolution` | 参考图：`image`/`images`（HTTPS 或 `asset://`）；角色库：`character_id`（官方兼容和 `/v1/videos` 都支持；旧 `character_asset_id` 会被忽略） |
 
 ## 6. 创建响应
 
@@ -1028,12 +1031,8 @@ curl "$BASE_URL/v1/video/generations" \
 curl "$BASE_URL/v1/images/generations/$TASK_ID" \
   -H "Authorization: Bearer $NEW_API_TOKEN"
 
-# 视频 OpenAI 风格（推荐）
+# 视频
 curl "$BASE_URL/v1/videos/$TASK_ID" \
-  -H "Authorization: Bearer $NEW_API_TOKEN"
-
-# 视频兼容路径
-curl "$BASE_URL/v1/video/generations/$TASK_ID" \
   -H "Authorization: Bearer $NEW_API_TOKEN"
 
 # 音频
@@ -1041,9 +1040,9 @@ curl "$BASE_URL/v1/audio/speech/$TASK_ID" \
   -H "Authorization: Bearer $NEW_API_TOKEN"
 ```
 
-### 7.1 图片 / 音频 / 兼容视频路径查询响应
+### 7.1 图片 / 音频查询响应
 
-`GET /v1/images/generations/{task_id}`、`GET /v1/audio/speech/{task_id}`，以及 `GET /v1/video/generations/{task_id}`，在实时查询成功时通常返回：
+`GET /v1/images/generations/{task_id}`、`GET /v1/audio/speech/{task_id}` 在实时查询成功时通常返回：
 
 ```json
 {
@@ -1061,7 +1060,7 @@ curl "$BASE_URL/v1/audio/speech/$TASK_ID" \
 }
 ```
 
-如果渠道不支持实时查询，兼容路径会返回任务记录的通用 DTO，例如 `data.status` 可能是 `IN_PROGRESS` 或 `SUCCESS`，而不是上例中的小写状态。客户端处理兼容路径时应同时接受这两组值；如果需要固定的 OpenAI 状态枚举，请使用 `GET /v1/videos/{task_id}`。
+如果渠道不支持实时查询，图片/音频查询会返回任务记录的通用 DTO，例如 `data.status` 可能是 `IN_PROGRESS` 或 `SUCCESS`，而不是上例中的小写状态。客户端应同时接受这两组值。视频请使用 `GET /v1/videos/{task_id}`。
 
 结果读取顺序建议：`data.output` → `data.url` → `data.metadata.urls` → `data.metadata.url`。
 
@@ -1101,9 +1100,9 @@ OpenAI Video 风格：
 | 状态 | 场景 | 含义 |
 | --- | --- | --- |
 | `queued` | 创建成功 / 查询 | 已提交或排队中 |
-| `processing` | 图片/音频/兼容视频路径查询 | 处理中 |
+| `processing` | 图片/音频查询 | 处理中 |
 | `in_progress` | `GET /v1/videos/{task_id}` | 处理中 |
-| `succeeded` | 图片/音频/兼容视频路径查询 | 完成，可取结果 |
+| `succeeded` | 图片/音频查询 | 完成，可取结果 |
 | `completed` | `GET /v1/videos/{task_id}` | 完成，可取结果 |
 | `failed` | 全部 | 失败，读取 `error` |
 | `NOT_START` | 兼容路径非实时查询 | 尚未开始 |

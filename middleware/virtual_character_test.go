@@ -73,7 +73,7 @@ func TestBindVirtualCharacterUsesActiveOwnedImageAndIgnoresLegacyAssetID(t *test
 		c.Set("id", 101)
 		common.SetContextKey(c, constant.ContextKeyChannelType, constant.ChannelTypeAIPDD)
 	}, BindVirtualCharacter())
-	router.POST("/v1/video/generations", func(c *gin.Context) {
+	router.POST("/v1/videos", func(c *gin.Context) {
 		var req relaycommon.TaskSubmitReq
 		require.NoError(t, common.UnmarshalBodyReusable(c, &req))
 		require.Equal(t, constant.ChannelTypeAIPDD, common.GetContextKeyInt(c, constant.ContextKeyChannelType))
@@ -90,7 +90,7 @@ func TestBindVirtualCharacterUsesActiveOwnedImageAndIgnoresLegacyAssetID(t *test
 
 	body := fmt.Sprintf(`{"character_id":%d,"character_asset_id":999999,"model":"%s","prompt":"test"}`, character.ID, testVirtualCharacterVideoModel)
 	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPost, "/v1/video/generations", strings.NewReader(body))
+	request := httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(body))
 	request.Header.Set("Content-Type", "application/json")
 	router.ServeHTTP(recorder, request)
 	require.Equal(t, http.StatusNoContent, recorder.Code)
@@ -108,7 +108,7 @@ func TestBindVirtualCharacterUsesActiveOwnedImageAndIgnoresLegacyAssetID(t *test
 	require.NoError(t, writer.WriteField("prompt", "multipart test"))
 	require.NoError(t, writer.Close())
 	multipartRecorder := httptest.NewRecorder()
-	multipartRequest := httptest.NewRequest(http.MethodPost, "/v1/video/generations", multipartBody)
+	multipartRequest := httptest.NewRequest(http.MethodPost, "/v1/videos", multipartBody)
 	multipartRequest.Header.Set("Content-Type", writer.FormDataContentType())
 	router.ServeHTTP(multipartRecorder, multipartRequest)
 	require.Equal(t, http.StatusNoContent, multipartRecorder.Code, multipartRecorder.Body.String())
@@ -116,7 +116,7 @@ func TestBindVirtualCharacterUsesActiveOwnedImageAndIgnoresLegacyAssetID(t *test
 	// Non-Seedance models are rejected.
 	badRecorder := httptest.NewRecorder()
 	badBody := fmt.Sprintf(`{"character_id":%d,"character_asset_id":999999,"model":"other-video","prompt":"test"}`, character.ID)
-	badRequest := httptest.NewRequest(http.MethodPost, "/v1/video/generations", strings.NewReader(badBody))
+	badRequest := httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(badBody))
 	badRequest.Header.Set("Content-Type", "application/json")
 	router.ServeHTTP(badRecorder, badRequest)
 	require.Equal(t, http.StatusBadRequest, badRecorder.Code)
@@ -129,9 +129,9 @@ func TestBindVirtualCharacterUsesActiveOwnedImageAndIgnoresLegacyAssetID(t *test
 		c.Set("id", 101)
 		common.SetContextKey(c, constant.ContextKeyChannelType, constant.ChannelTypeDoubaoVideo)
 	}, BindVirtualCharacter())
-	arbitraryChannelRouter.POST("/v1/video/generations", func(c *gin.Context) { c.Status(http.StatusNoContent) })
+	arbitraryChannelRouter.POST("/v1/videos", func(c *gin.Context) { c.Status(http.StatusNoContent) })
 	arbitraryChannelRecorder := httptest.NewRecorder()
-	arbitraryChannelRequest := httptest.NewRequest(http.MethodPost, "/v1/video/generations", strings.NewReader(body))
+	arbitraryChannelRequest := httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(body))
 	arbitraryChannelRequest.Header.Set("Content-Type", "application/json")
 	arbitraryChannelRouter.ServeHTTP(arbitraryChannelRecorder, arbitraryChannelRequest)
 	require.Equal(t, http.StatusNoContent, arbitraryChannelRecorder.Code)
@@ -142,9 +142,9 @@ func TestBindVirtualCharacterUsesActiveOwnedImageAndIgnoresLegacyAssetID(t *test
 		c.Set("id", 202)
 		common.SetContextKey(c, constant.ContextKeyChannelType, constant.ChannelTypeAIPDD)
 	}, BindVirtualCharacter())
-	otherRouter.POST("/v1/video/generations", func(c *gin.Context) { c.Status(http.StatusNoContent) })
+	otherRouter.POST("/v1/videos", func(c *gin.Context) { c.Status(http.StatusNoContent) })
 	otherRecorder := httptest.NewRecorder()
-	otherRequest := httptest.NewRequest(http.MethodPost, "/v1/video/generations", strings.NewReader(body))
+	otherRequest := httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(body))
 	otherRequest.Header.Set("Content-Type", "application/json")
 	otherRouter.ServeHTTP(otherRecorder, otherRequest)
 	require.Equal(t, http.StatusNotFound, otherRecorder.Code)
@@ -196,11 +196,11 @@ func TestBindVirtualCharacterAllowsAuthorizedRealPersonSource(t *testing.T) {
 		common.SetContextKey(c, constant.ContextKeyChannelId, 7)
 		common.SetContextKey(c, constant.ContextKeyChannelType, constant.ChannelTypeAIPDD)
 	}, BindVirtualCharacter())
-	router.POST("/v1/video/generations", func(c *gin.Context) { c.Status(http.StatusNoContent) })
+	router.POST("/v1/videos", func(c *gin.Context) { c.Status(http.StatusNoContent) })
 
 	body := fmt.Sprintf(`{"character_id":%d,"model":"%s","prompt":"test"}`, character.ID, testVirtualCharacterVideoModel)
 	recorder := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/v1/video/generations", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	router.ServeHTTP(recorder, req)
 	require.Equal(t, http.StatusNoContent, recorder.Code, recorder.Body.String())
@@ -243,11 +243,11 @@ func TestBindVirtualCharacterAllowsOfficialPresetSource(t *testing.T) {
 		c.Set("id", 404)
 		common.SetContextKey(c, constant.ContextKeyChannelType, constant.ChannelTypeAIPDD)
 	}, BindVirtualCharacter())
-	router.POST("/v1/video/generations", func(c *gin.Context) { c.Status(http.StatusNoContent) })
+	router.POST("/v1/videos", func(c *gin.Context) { c.Status(http.StatusNoContent) })
 
 	body := fmt.Sprintf(`{"character_id":%d,"model":"%s","prompt":"test"}`, character.ID, testVirtualCharacterVideoModel)
 	recorder := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/v1/video/generations", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	router.ServeHTTP(recorder, req)
 	require.Equal(t, http.StatusNoContent, recorder.Code)
@@ -381,7 +381,7 @@ func TestBindVirtualCharacterInjectsVideoAndAudioContent(t *testing.T) {
 			c.Set("id", 201)
 			common.SetContextKey(c, constant.ContextKeyChannelType, constant.ChannelTypeAIPDD)
 		}, BindVirtualCharacter())
-		router.POST("/v1/video/generations", func(c *gin.Context) {
+		router.POST("/v1/videos", func(c *gin.Context) {
 			var req relaycommon.TaskSubmitReq
 			require.NoError(t, common.UnmarshalBodyReusable(c, &req))
 			assertContent(t, req)
@@ -392,7 +392,7 @@ func TestBindVirtualCharacterInjectsVideoAndAudioContent(t *testing.T) {
 	}
 
 	videoRecorder := httptest.NewRecorder()
-	videoRequest := httptest.NewRequest(http.MethodPost, "/v1/video/generations", strings.NewReader(fmt.Sprintf(
+	videoRequest := httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(fmt.Sprintf(
 		`{"character_id":%d,"model":"%s","prompt":"walk"}`, video.ID, testVirtualCharacterVideoModel,
 	)))
 	videoRequest.Header.Set("Content-Type", "application/json")
@@ -409,7 +409,7 @@ func TestBindVirtualCharacterInjectsVideoAndAudioContent(t *testing.T) {
 	require.Equal(t, http.StatusNoContent, videoRecorder.Code, videoRecorder.Body.String())
 
 	audioRecorder := httptest.NewRecorder()
-	audioRequest := httptest.NewRequest(http.MethodPost, "/v1/video/generations", strings.NewReader(fmt.Sprintf(
+	audioRequest := httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(fmt.Sprintf(
 		`{"character_id":%d,"model":"%s","prompt":"speak"}`, audio.ID, testVirtualCharacterVideoModel,
 	)))
 	audioRequest.Header.Set("Content-Type", "application/json")

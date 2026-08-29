@@ -1180,7 +1180,6 @@ func endpointTypeFromTaskPath(requestPath string) constant.EndpointType {
 		strings.HasPrefix(requestPath, "/pg/audio/speech/"):
 		return constant.EndpointTypeAudioSpeech
 	case strings.HasPrefix(requestPath, "/v1/videos/"),
-		strings.HasPrefix(requestPath, "/v1/video/generations/"),
 		strings.HasPrefix(requestPath, "/pg/videos/"),
 		strings.HasPrefix(requestPath, "/pg/video/generations/"):
 		return constant.EndpointTypeOpenAIVideo

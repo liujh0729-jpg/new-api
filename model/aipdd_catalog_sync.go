@@ -262,6 +262,14 @@ func upsertAIPDDModelsTx(tx *gorm.DB, catalog aipddcatalog.AtomicCatalog, vendor
 			tags = "AIPDD,ComfyUI,异步任务"
 			if capability.AdapterCode == "seedance" {
 				tags = "AIPDD,Seedance,视频生成,异步任务"
+			} else if capability.AdapterCode == "token_market_media" {
+				if capability.EndpointType == string(constant.EndpointTypeImageGeneration) {
+					tags = "AIPDD,Agnes,图片生成"
+				} else if strings.Contains(strings.ToLower(modelName), "minimax") {
+					tags = "AIPDD,MiniMax,视频生成,异步任务"
+				} else {
+					tags = "AIPDD,Agnes,视频生成,异步任务"
+				}
 			}
 			if endpoint, ok := aipddCatalogEndpointType(capability.EndpointType); ok {
 				endpoints = []constant.EndpointType{endpoint}

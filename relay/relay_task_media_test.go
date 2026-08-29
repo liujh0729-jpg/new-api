@@ -123,7 +123,7 @@ func TestResolveTaskMediaInfoSupportsSnapshotsAndLegacyTasks(t *testing.T) {
 			},
 		}
 
-		info := resolveTaskMediaInfo(task, "/v1/video/generations/task_legacy")
+		info := resolveTaskMediaInfo(task, "/v1/videos/task_openai")
 
 		require.Equal(t, constant.EndpointTypeImageGeneration, info.EndpointType)
 		require.Equal(t, "image", info.MediaType)

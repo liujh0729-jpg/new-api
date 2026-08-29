@@ -19,13 +19,13 @@ import (
 // @Failure 401 {object} dto.OpenAIError "未授权"
 // @Failure 403 {object} dto.OpenAIError "无权限"
 // @Failure 500 {object} dto.OpenAIError "服务器内部错误"
-// @Router /v1/video/generations [post]
+// @Router /v1/videos [post]
 func VideoGenerations(c *gin.Context) {
 }
 
 // VideoGenerationsTaskId
 // @Summary 查询视频
-// @Description 根据任务 ID 查询兼容视频生成任务的状态和结果。该路径返回通用的 code/data 封装；实时查询通常使用 queued/processing/succeeded/failed，无法实时查询时可能返回内部大写状态。需要 OpenAI Video 格式请使用 /v1/videos/{task_id}。
+// @Description 根据任务 ID 查询 OpenAI Video 风格任务的状态和结果。
 // @Tags Video
 // @Accept json
 // @Produce json
@@ -36,7 +36,7 @@ func VideoGenerations(c *gin.Context) {
 // @Failure 401 {object} dto.OpenAIError "未授权"
 // @Failure 403 {object} dto.OpenAIError "无权限"
 // @Failure 500 {object} dto.OpenAIError "服务器内部错误"
-// @Router /v1/video/generations/{task_id} [get]
+// @Router /v1/videos/{task_id} [get]
 func VideoGenerationsTaskId(c *gin.Context) {
 }
 

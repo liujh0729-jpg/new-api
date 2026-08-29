@@ -102,7 +102,8 @@ LTX 首尾帧 与 Seedance 参考素材，是两套不同调用语义。
 
 ## 5. 正确调用方法
 
-接口：`POST /v1/videos` 或 `POST /v1/video/generations`  
+接口：`POST /v1/videos`
+
 鉴权：`Authorization: Bearer <用户令牌>`
 
 ### 5.1 方案 A：参考生视频（推荐）

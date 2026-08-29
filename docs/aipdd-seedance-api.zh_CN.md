@@ -1,5 +1,7 @@
 # AP Seedance 2.0 / 2.5 API 文档
 
+> 对外文档以 Apifox 为准，链接写在 [`docs/apifox/project.json`](./apifox/project.json) 的 `publicDocsUrl`。接口变更先改 [`openapi/public.json`](./openapi/public.json)，再运行 `bin/sync-apifox.ps1`。本文只作仓库内对照，不要再平行维护字段表。
+
 Seedance 2.0 与 Seedance 2.5 共用任务创建和查询入口，但模型名、参数集合、默认值和素材约束不同。下文按版本分别说明，请勿跨版本套用默认值。
 
 ## 1. 两套调用格式（先选一套）
@@ -43,10 +45,6 @@ Seedance 2.0 与 Seedance 2.5 共用任务创建和查询入口，但模型名�
 
 - **异步执行**：创建成功后保存返回的任务 ID，轮询与创建路径对应的查询接口，直到进入成功或失败终态。
 - **不提供的接口**：两套格式均不提供列表、删除或重试接口；Seedance 官方兼容格式也没有 `/result` 接口，视频地址直接位于查询响应的 `content.video_url`。OpenAI Video 格式的 `/v1/videos/{task_id}/content` 是视频内容代理地址，不是任务状态查询接口。
-
-### 2.1 旧版兼容格式（仅存量客户端）
-
-`POST /v1/video/generations` 与 `GET /v1/video/generations/{task_id}` 仅供已有客户端使用，新接入不建议使用。该格式响应为 `{"code":"success","data":{...}}` 结构，成功状态为 `succeeded`，当前不返回 `duration`。
 
 ## 3. Seedance 官方兼容格式
 
@@ -195,7 +193,7 @@ GET /api/pricing
 
 ### 7.2 创建任务
 
-创建请求可提交到第 3 节的 `POST /api/v3/contents/generations/tasks` 或第 4 节的 `POST /v1/videos`，不要在同一个调用流程中混用不同格式。旧版兼容入口为 `POST /v1/video/generations`。
+创建请求可提交到第 3 节的 `POST /api/v3/contents/generations/tasks` 或第 4 节的 `POST /v1/videos`，不要在同一个调用流程中混用不同格式。
 
 #### 7.2.1 请求字段
 
@@ -218,7 +216,7 @@ GET /api/pricing
 | `priority` | integer | 否 | 调度优先级 |
 | `callback_url` | string | 否 | 状态回调地址 |
 | `return_last_frame` | boolean | 否 | 是否返回末帧信息 |
-| `character_id` | integer | 否 | NewAPI 角色库兼容字段；使用 `/v1/video/generations` |
+| `character_id` | integer | 否 | NewAPI 角色库字段；官方兼容和 `/v1/videos` 都支持 |
 
 `width` 与 `height` 同时提供时，按较短边推断分辨率：`480` → `480p`、`720` → `720p`、`1080` → `1080p`、`2160` → `4k`。新调用建议直接提交 `resolution` 和 `ratio`。
 
@@ -309,7 +307,7 @@ GET /api/pricing
 
 ### 7.4 查询任务
 
-查询路径与创建路径配套：`GET /api/v3/contents/generations/tasks/{task_id}`（Seedance 官方兼容）或 `GET /v1/videos/{task_id}`（OpenAI Video）；旧版为 `GET /v1/video/generations/{task_id}`。
+查询路径与创建路径配套：`GET /api/v3/contents/generations/tasks/{task_id}`（Seedance 官方兼容）或 `GET /v1/videos/{task_id}`（OpenAI Video）。
 
 响应结构分别见第 3.2 节和第 4.2 节。调用方应识别 `queued`、`in_progress`、`completed`、`failed` 等状态，并为网络错误采用有限次数重试。
 
@@ -342,7 +340,7 @@ Seedance 2.5 的参数、默认值和条件约束与 2.0 不同。不要沿用 2
 
 ### 8.2 创建任务
 
-创建请求可提交到第 3 节的 `POST /api/v3/contents/generations/tasks` 或第 4 节的 `POST /v1/videos`，不要在同一个调用流程中混用不同格式。旧版兼容入口为 `POST /v1/video/generations`。
+创建请求可提交到第 3 节的 `POST /api/v3/contents/generations/tasks` 或第 4 节的 `POST /v1/videos`，不要在同一个调用流程中混用不同格式。
 
 #### 8.2.1 请求字段
 
@@ -546,7 +544,7 @@ Seedance 2.5 的参数、默认值和条件约束与 2.0 不同。不要沿用 2
 
 ### 8.6 查询任务
 
-查询路径与创建路径配套：`GET /api/v3/contents/generations/tasks/{task_id}`（Seedance 官方兼容）或 `GET /v1/videos/{task_id}`（OpenAI Video）；旧版为 `GET /v1/video/generations/{task_id}`。
+查询路径与创建路径配套：`GET /api/v3/contents/generations/tasks/{task_id}`（Seedance 官方兼容）或 `GET /v1/videos/{task_id}`（OpenAI Video）。
 
 响应结构分别见第 3.2 节和第 4.2 节。任务未结束时不会返回 `completed_at`。若官方终态暂时缺少有效 `duration`，任务保持待对账并继续重试，不会擅自按 5 秒或 30 秒结算。
 
@@ -753,7 +751,7 @@ Seedance 2.0 和 Seedance 2.5 都支持角色库，但所选模型名必须包�
 
 #### 9.4.1 单角色：使用 `character_id`
 
-这是推荐的单角色调用方式。使用兼容入口 `POST /v1/video/generations`；NewAPI 会鉴权并把角色转换成对应的 `asset://` 引用。由于该入口使用兼容请求结构，`resolution`、`ratio` 等 Seedance 参数放入 `metadata`：
+这是推荐的单角色调用方式。使用 `POST /v1/videos` 或官方兼容入口；NewAPI 会鉴权并把角色转换成对应的 `asset://` 引用。`resolution`、`ratio` 写在请求体顶层：
 
 ~~~json
 {
@@ -761,10 +759,8 @@ Seedance 2.0 和 Seedance 2.5 都支持角色库，但所选模型名必须包�
   "prompt": "角色在城市街道上自然行走",
   "character_id": 321,
   "duration": 4,
-  "metadata": {
-    "resolution": "720p",
-    "ratio": "adaptive"
-  }
+  "resolution": "720p",
+  "ratio": "adaptive"
 }
 ~~~
 
@@ -778,10 +774,8 @@ Seedance 2.0 的写法相同，只需换成 2.0 模型并使用 2.0 支持的比
   "prompt": "角色看向镜头并挥手",
   "character_id": 321,
   "duration": 5,
-  "metadata": {
-    "resolution": "480p",
-    "ratio": "16:9"
-  }
+  "resolution": "480p",
+  "ratio": "16:9"
 }
 ~~~
 

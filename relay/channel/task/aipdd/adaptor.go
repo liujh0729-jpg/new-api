@@ -32,6 +32,8 @@ import (
 const (
 	ChannelName                       = "aipdd"
 	seedanceOfficialPayloadContextKey = "aipdd_seedance_official_payload"
+	tokenMarketVideoPayloadContextKey = "aipdd_token_market_video_payload"
+	tokenMarketVideoProtocol          = "token_market_video"
 
 	ModelFluxGGUF         = constant.AIPDDModelFluxGGUF
 	ModelFluxGGUFT2I      = constant.AIPDDModelFluxGGUFT2I
@@ -104,8 +106,9 @@ type seedanceOfficialTaskResponse struct {
 	Content        struct {
 		VideoURL string `json:"video_url"`
 	} `json:"content"`
-	Usage *dto.VideoUsage `json:"usage,omitempty"`
-	Error any             `json:"error"`
+	ContentURL string          `json:"content_url"`
+	Usage      *dto.VideoUsage `json:"usage,omitempty"`
+	Error      any             `json:"error"`
 }
 
 type aipddTask struct {
@@ -218,7 +221,32 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 			}
 		}
 	}
-	if cfg.BillingType == constant.AIPDDBillingTypeDurationSeconds && cfg.SeedancePricing == nil && !isLtx23Config(cfg) {
+	if cfg.ExecutionProtocol == tokenMarketVideoProtocol {
+		var raw map[string]any
+		if err := common.UnmarshalBodyReusable(c, &raw); err != nil {
+			return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+		}
+		duration := positiveFloat(raw["duration_seconds"])
+		if duration <= 0 || math.IsNaN(duration) || math.IsInf(duration, 0) {
+			return service.TaskErrorWrapperLocal(
+				fmt.Errorf("duration_seconds must be a positive number"), "invalid_duration", http.StatusBadRequest)
+		}
+		resolution, err := billing_setting.NormalizeTaskPricingResolution(anyToString(raw["video_resolution"]))
+		if err != nil {
+			return service.TaskErrorWrapperLocal(err, "missing_resolution", http.StatusBadRequest)
+		}
+		if _, ok := seedanceResolutionPricing(cfg, resolution); !ok {
+			return service.TaskErrorWrapperLocal(
+				fmt.Errorf("video_resolution %q is not supported by AIPDD model %s", resolution, cfg.ModelName),
+				"unsupported_resolution", http.StatusBadRequest)
+		}
+		c.Set(tokenMarketVideoPayloadContextKey, raw)
+		if info.TaskRelayInfo != nil {
+			info.RequestedDuration = common.GetPointer(duration)
+		}
+	}
+	if cfg.BillingType == constant.AIPDDBillingTypeDurationSeconds && cfg.SeedancePricing == nil &&
+		cfg.ExecutionProtocol != tokenMarketVideoProtocol && !isLtx23Config(cfg) {
 		duration, err := normalizeDurationSeconds(&req, cfg)
 		if err != nil {
 			return service.TaskErrorWrapperLocal(err, "invalid_duration", http.StatusBadRequest)
@@ -277,6 +305,18 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 		if seedanceHasReferenceVideo(raw["content"]) {
 			ratios["has_reference_video"] = 1
 		}
+		return ratios
+	}
+	if cfg.ExecutionProtocol == tokenMarketVideoProtocol {
+		raw, err := getTokenMarketVideoPayload(c)
+		if err != nil {
+			return nil
+		}
+		duration := positiveFloat(raw["duration_seconds"])
+		if duration <= 0 || math.IsNaN(duration) || math.IsInf(duration, 0) {
+			return nil
+		}
+		ratios["seconds"] = duration
 		return ratios
 	}
 
@@ -363,6 +403,22 @@ func (a *TaskAdaptor) EstimateTaskPricingFacts(c *gin.Context, info *relaycommon
 			Resolution:        resolution,
 			HasReferenceVideo: seedanceHasReferenceVideo(raw["content"]),
 		}, nil
+	}
+	if cfg.ExecutionProtocol == tokenMarketVideoProtocol {
+		raw, err := getTokenMarketVideoPayload(c)
+		if err != nil {
+			return relaycommon.TaskPricingFacts{}, service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+		}
+		resolution, err := billing_setting.NormalizeTaskPricingResolution(anyToString(raw["video_resolution"]))
+		if err != nil {
+			return relaycommon.TaskPricingFacts{}, service.TaskErrorWrapperLocal(err, "missing_resolution", http.StatusBadRequest)
+		}
+		quantity := positiveFloat(raw["duration_seconds"])
+		if quantity <= 0 || math.IsNaN(quantity) || math.IsInf(quantity, 0) {
+			return relaycommon.TaskPricingFacts{}, service.TaskErrorWrapperLocal(
+				fmt.Errorf("invalid billing duration for model %s", info.OriginModelName), "invalid_duration", http.StatusBadRequest)
+		}
+		return relaycommon.TaskPricingFacts{Quantity: quantity, Resolution: resolution}, nil
 	}
 
 	quantity, err := taskPricingDurationSeconds(req, cfg)
@@ -476,6 +532,21 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		}
 		return bytes.NewReader(data), nil
 	}
+	if ok && cfg.ExecutionProtocol == tokenMarketVideoProtocol {
+		raw, err := getTokenMarketVideoPayload(c)
+		if err != nil {
+			return nil, err
+		}
+		raw = cloneAnyMap(raw)
+		if info.IsModelMapped {
+			raw["model"] = info.UpstreamModelName
+		}
+		data, err := common.Marshal(raw)
+		if err != nil {
+			return nil, err
+		}
+		return bytes.NewReader(data), nil
+	}
 
 	payload, err := a.convertToRequestPayload(req, info)
 	if err != nil {
@@ -500,7 +571,7 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	_ = resp.Body.Close()
 
 	cfg, _ := constant.GetAIPDDCapability(firstNonEmpty(info.UpstreamModelName, info.OriginModelName))
-	if cfg.ExecutionProtocol == "seedance_official" {
+	if cfg.ExecutionProtocol == "seedance_official" || cfg.ExecutionProtocol == tokenMarketVideoProtocol {
 		var official seedanceOfficialTaskResponse
 		if err := common.Unmarshal(responseBody, &official); err != nil {
 			return "", nil, service.TaskErrorWrapper(errors.Wrapf(err, "body: %s", responseBody), "unmarshal_response_body_failed", http.StatusInternalServerError)
@@ -611,7 +682,7 @@ func (a *TaskAdaptor) FetchTask(baseURL, key string, body map[string]any, proxy 
 
 	protocol, _ := body["execution_protocol"].(string)
 	endpoint, _ := body["execution_endpoint"].(string)
-	if protocol == "seedance_official" {
+	if protocol == "seedance_official" || protocol == tokenMarketVideoProtocol {
 		if strings.TrimSpace(endpoint) == "" {
 			endpoint = "/api/v3/contents/generations/tasks"
 		}
@@ -772,7 +843,8 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 				info.Status, info.Progress = model.TaskStatusInProgress, taskcommon.ProgressInProgress
 				return info, nil
 			}
-			info.Status, info.Progress, info.Url = model.TaskStatusSuccess, taskcommon.ProgressComplete, official.Content.VideoURL
+			info.Status, info.Progress, info.Url = model.TaskStatusSuccess, taskcommon.ProgressComplete,
+				firstNonEmpty(official.Content.VideoURL, official.ContentURL)
 		case "failed", "cancelled", "canceled":
 			rawMessage, rawCode := seedanceOfficialErrorDetails(official)
 			publicError := relaycommon.NormalizeUpstreamTaskError(
@@ -1077,8 +1149,8 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, erro
 	// upstream error.message is discarded and clients only see a generic failure.
 	var official seedanceOfficialTaskResponse
 	if err := common.Unmarshal(originTask.Data, &official); err == nil && strings.TrimSpace(official.Status) != "" {
-		if strings.TrimSpace(official.Content.VideoURL) != "" {
-			openAIVideo.SetMetadata("url", official.Content.VideoURL)
+		if contentURL := firstNonEmpty(official.Content.VideoURL, official.ContentURL); contentURL != "" {
+			openAIVideo.SetMetadata("url", contentURL)
 		}
 		if official.Duration > 0 {
 			openAIVideo.SetMetadata("duration", official.Duration)
@@ -1922,6 +1994,18 @@ func getSeedanceOfficialPayload(c *gin.Context) (map[string]any, error) {
 	return payload, nil
 }
 
+func getTokenMarketVideoPayload(c *gin.Context) (map[string]any, error) {
+	value, exists := c.Get(tokenMarketVideoPayloadContextKey)
+	if !exists {
+		return nil, fmt.Errorf("normalized Token Market video request not found in context")
+	}
+	payload, ok := value.(map[string]any)
+	if !ok || payload == nil {
+		return nil, fmt.Errorf("invalid normalized Token Market video request")
+	}
+	return payload, nil
+}
+
 func cloneAnyMap(source map[string]any) map[string]any {
 	cloned := make(map[string]any, len(source))
 	for key, value := range source {
@@ -1949,8 +2033,7 @@ func seedanceResolutionPricing(cfg modelConfig, resolution string) (constant.AIP
 
 func isSeedanceExecutionConfig(cfg modelConfig) bool {
 	return strings.EqualFold(strings.TrimSpace(cfg.AdapterCode), "seedance") ||
-		strings.EqualFold(strings.TrimSpace(cfg.ExecutionProtocol), "seedance_official") ||
-		cfg.SeedancePricing != nil
+		strings.EqualFold(strings.TrimSpace(cfg.ExecutionProtocol), "seedance_official")
 }
 
 func isSeedance25Config(cfg modelConfig) bool {
@@ -2125,7 +2208,7 @@ func endpointTypeFromPath(path string) constant.EndpointType {
 		return constant.EndpointTypeImageGeneration
 	case strings.HasPrefix(path, "/v1/audio/speech"), strings.HasPrefix(path, "/pg/audio/speech"):
 		return constant.EndpointTypeAudioSpeech
-	case strings.HasPrefix(path, "/v1/videos"), strings.HasPrefix(path, "/v1/video/generations"), strings.HasPrefix(path, "/pg/videos"), strings.HasPrefix(path, "/pg/video/generations"):
+	case strings.HasPrefix(path, "/v1/videos"), strings.HasPrefix(path, "/pg/videos"), strings.HasPrefix(path, "/pg/video/generations"):
 		return constant.EndpointTypeOpenAIVideo
 	case relayconstant.IsSeedanceOfficialTasksPath(path):
 		return constant.EndpointTypeOpenAIVideo

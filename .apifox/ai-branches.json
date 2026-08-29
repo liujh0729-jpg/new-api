@@ -1,0 +1,79 @@
+{
+  "version": 1,
+  "updatedAt": "2026-08-29T01:29:35.520Z",
+  "projects": {
+    "8772622": {
+      "branches": {
+        "8562345": {
+          "projectId": 8772622,
+          "branchId": 8562345,
+          "name": "openapi-sync",
+          "branchKind": "sprint",
+          "branchType": "SPRINT",
+          "isAiBranch": false,
+          "isAiWritableBranch": false,
+          "isArchived": false,
+          "fetchedAt": "2026-08-29T01:29:29.203Z"
+        }
+      },
+      "lastGuardError": {
+        "type": "guard_error",
+        "projectId": 8772622,
+        "message": "Automation caller branch required",
+        "createdAt": "2026-08-29T01:29:35.520Z"
+      },
+      "recentEvents": [
+        {
+          "type": "guard_error",
+          "projectId": 8772622,
+          "message": "Automation caller branch required",
+          "createdAt": "2026-08-29T01:28:58.983Z"
+        },
+        {
+          "type": "guard_error",
+          "projectId": 8772622,
+          "message": "Automation caller branch required",
+          "createdAt": "2026-08-29T01:29:17.153Z"
+        },
+        {
+          "type": "branch_recorded",
+          "projectId": 8772622,
+          "branchId": 8562345,
+          "createdAt": "2026-08-29T01:29:29.203Z"
+        },
+        {
+          "type": "guard_error",
+          "projectId": 8772622,
+          "message": "Automation caller branch required",
+          "createdAt": "2026-08-29T01:29:35.520Z"
+        }
+      ]
+    }
+  },
+  "recentEvents": [
+    {
+      "type": "guard_error",
+      "projectId": 8772622,
+      "message": "Automation caller branch required",
+      "createdAt": "2026-08-29T01:28:58.983Z"
+    },
+    {
+      "type": "guard_error",
+      "projectId": 8772622,
+      "message": "Automation caller branch required",
+      "createdAt": "2026-08-29T01:29:17.153Z"
+    },
+    {
+      "type": "branch_recorded",
+      "projectId": 8772622,
+      "branchId": 8562345,
+      "createdAt": "2026-08-29T01:29:29.203Z"
+    },
+    {
+      "type": "guard_error",
+      "projectId": 8772622,
+      "message": "Automation caller branch required",
+      "createdAt": "2026-08-29T01:29:35.520Z"
+    }
+  ]
+}

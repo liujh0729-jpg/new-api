@@ -272,6 +272,8 @@ AIPDD_CHANNEL_OVERWRITE_ON_BOOT=false
 | AIPDD_API_KEY | AIPDD 上游 API Key；使用 AIPDD 内置任务模型时必填 |
 | AIPDD_BASE_URL | AIPDD 上游地址，默认 https://api.aipdd.work |
 | AIPDD_CATALOG_SYNC_ON_BOOT | 是否在启动时同步 AIPDD 模型目录 |
+| AIPDD_CATALOG_SYNC_INTERVAL_MINUTES | AIPDD 模型目录定时同步间隔（分钟），默认 5；设为 0 禁用 |
+| AIPDD_CATALOG_SYNC_TIMEOUT_SECONDS | 单次 AIPDD 模型目录同步超时（秒），默认 10 |
 | AIPDD_CHANNEL_OVERWRITE_ON_BOOT | 是否允许启动同步覆盖 AIPDD 渠道配置；手动维护渠道时可设为 false |
 | MATERIAL_PUBLIC_BASE_URL | 本地素材的公网访问地址；异步任务或文件上传时按部署域名配置 |
 | ERROR_LOG_ENABLED | 是否记录错误日志 |

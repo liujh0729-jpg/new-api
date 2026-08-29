@@ -449,7 +449,7 @@ func TestLogTaskConsumption_WritesPreConsumedAndActualQuota(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
-	c.Request = httptest.NewRequest(http.MethodPost, "/v1/video/generations", nil)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", nil)
 	c.Set("token_name", "test_token")
 	c.Set("username", "test_user")
 

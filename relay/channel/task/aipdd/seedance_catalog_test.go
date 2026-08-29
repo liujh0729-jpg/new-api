@@ -84,6 +84,59 @@ func TestSeedanceCatalogNormalizesPlaygroundPayloadForOfficialEndpoint(t *testin
 	require.Equal(t, "image_url", content[0].(map[string]any)["type"])
 }
 
+func TestTokenMarketVideoCatalogPreservesH3RequestAndPricingFacts(t *testing.T) {
+	const modelName = "ap-minimax-h3-text-to-video"
+	capability := seedanceTestCapabilityForModel(modelName)
+	capability.AdapterCode = "token_market_media"
+	capability.ExecutionProtocol = tokenMarketVideoProtocol
+	capability.ExecutionPath = "/v1/videos"
+	capability.SeedancePricing.ByResolution["768p"] = capability.SeedancePricing.ByResolution["720p"]
+	constant.SetAIPDDCapabilities([]constant.AIPDDCapability{capability})
+	t.Cleanup(constant.ResetAIPDDCapabilities)
+
+	body := `{"model":"ap-minimax-h3-text-to-video","prompt":"hello","duration_seconds":6.5,"video_resolution":"768p","aspect_ratio":"16:9"}`
+	ctx, info, adaptor := seedanceRequestContextForModel(t, modelName, body)
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(ctx, info))
+
+	facts, taskErr := adaptor.EstimateTaskPricingFacts(ctx, info)
+	require.Nil(t, taskErr)
+	require.Equal(t, "768p", facts.Resolution)
+	require.InDelta(t, 6.5, facts.Quantity, 0.0000001)
+	require.Equal(t, map[string]float64{"seconds": 6.5}, adaptor.EstimateBilling(ctx, info))
+
+	requestBody, err := adaptor.BuildRequestBody(ctx, info)
+	require.NoError(t, err)
+	data, err := io.ReadAll(requestBody)
+	require.NoError(t, err)
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(data, &payload))
+	require.Equal(t, "768p", payload["video_resolution"])
+	require.Equal(t, 6.5, payload["duration_seconds"])
+	require.Equal(t, "16:9", payload["aspect_ratio"])
+}
+
+func TestTokenMarketVideoFetchAndContentURLResult(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/v1/videos/upstream-task", r.URL.Path)
+		require.Equal(t, "Bearer sk-test", r.Header.Get("Authorization"))
+		_, _ = w.Write([]byte(`{"id":"upstream-task","model":"ap-minimax-h3-text-to-video","status":"SUCCEEDED","content_url":"https://cdn.example.com/h3.mp4"}`))
+	}))
+	defer server.Close()
+
+	adaptor := &TaskAdaptor{}
+	resp, err := adaptor.FetchTask(server.URL, "sk-test", map[string]any{
+		"task_id": "upstream-task", "execution_protocol": tokenMarketVideoProtocol,
+		"execution_endpoint": "/v1/videos",
+	}, "")
+	require.NoError(t, err)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	result, err := adaptor.ParseTaskResult(body)
+	require.NoError(t, err)
+	require.Equal(t, model.TaskStatusSuccess, result.Status)
+	require.Equal(t, "https://cdn.example.com/h3.mp4", result.Url)
+}
+
 func TestSeedanceRemixResolutionInheritanceAndOverride(t *testing.T) {
 	constant.SetAIPDDCapabilities([]constant.AIPDDCapability{seedanceTestCapability()})
 	t.Cleanup(constant.ResetAIPDDCapabilities)

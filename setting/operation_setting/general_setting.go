@@ -24,7 +24,7 @@ type GeneralSetting struct {
 
 // 默认配置
 var generalSetting = GeneralSetting{
-	DocsLink:                   "https://aiworkin.feishu.cn/wiki/RZXkwDbzqi2auAkuF3EcJGWknVh?from=from_copylink",
+	DocsLink:                   "https://s.apifox.cn/fea0b520-e6d9-489c-ae5e-109391c771dd/9376375m0",
 	PingIntervalEnabled:        false,
 	PingIntervalSeconds:        60,
 	QuotaDisplayType:           QuotaDisplayTypeUSD,

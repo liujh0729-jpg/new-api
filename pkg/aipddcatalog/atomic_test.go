@@ -369,6 +369,68 @@ func TestAtomicCatalogMapsPerUnitSecondToDurationBilling(t *testing.T) {
 	require.Equal(t, float64(1800), runtimeCapabilities[0].TaskCost)
 }
 
+func TestAtomicCatalogAcceptsTokenMarketVideoAndBuildsRuntimeRouting(t *testing.T) {
+	display := 12.0
+	videoInput := 12.0
+	catalog := AtomicCatalog{
+		SchemaVersion: 2,
+		Revision:      "revision-minimax-h3",
+		AWCoinRate:    AtomicAWCoinRate{RMBPerAWCoin: 0.01, USDPerAWCoin: 0.0014},
+		Capabilities: []AtomicCapability{{
+			ID: "ap-minimax-h3-text-to-video", AdapterCode: "token_market_media",
+			EndpointType: "openai-video", TaskKind: "video_generation",
+			Execution: AtomicExecution{Protocol: "token_market_video", Path: "/v1/videos"},
+			Pricing: AtomicPricing{
+				PricingModel: "per_second", Currency: "awcoin", PricingBasis: "display", Enabled: true,
+				ByResolution: map[string]constant.AIPDDSeedanceResolutionPricing{
+					"768p": {
+						TargetResolution:                 "768p",
+						DisplayAmountAWCoinPerSecond:     &display,
+						DisplayVideoInputAWCoinPerSecond: &videoInput,
+						DefaultDurationSeconds:           1,
+						DefaultFramesPerSecond:           24,
+					},
+				},
+			},
+		}},
+	}
+
+	require.NoError(t, catalog.Validate())
+	require.Equal(t, []string{"ap-minimax-h3-text-to-video"}, catalog.ModelNames())
+	runtimeCapabilities := catalog.RuntimeCapabilities()
+	require.Len(t, runtimeCapabilities, 1)
+	require.Equal(t, "token_market_video", runtimeCapabilities[0].ExecutionProtocol)
+	require.Equal(t, "/v1/videos", runtimeCapabilities[0].ExecutionPath)
+	require.Equal(t, constant.AIPDDBillingTypeDurationSeconds, runtimeCapabilities[0].BillingType)
+	require.NotNil(t, runtimeCapabilities[0].SeedancePricing)
+	require.Equal(t, 12.0, runtimeCapabilities[0].SeedancePricing.ByResolution["768p"].AmountAWCoinPerSecond)
+}
+
+func TestAtomicCatalogAcceptsTokenMarketImageWithoutDurationBilling(t *testing.T) {
+	catalog := AtomicCatalog{
+		SchemaVersion: 2,
+		Revision:      "revision-agnes-image",
+		AWCoinRate:    AtomicAWCoinRate{RMBPerAWCoin: 0.01, USDPerAWCoin: 0.0014},
+		Capabilities: []AtomicCapability{{
+			ID: "ap-agnes-image-2.1-flash", AdapterCode: "token_market_media",
+			EndpointType: "image-generation", TaskKind: "image_generation",
+			Execution: AtomicExecution{Protocol: "token_market_image", Path: "/v1/images/generations"},
+			Pricing: AtomicPricing{
+				PricingModel: "per_call", Currency: "awcoin", Enabled: true,
+				ChargeConfig: map[string]any{"unit": "image", "amountAwcoin": float64(7)},
+			},
+		}},
+	}
+
+	require.NoError(t, catalog.Validate())
+	runtimeCapabilities := catalog.RuntimeCapabilities()
+	require.Len(t, runtimeCapabilities, 1)
+	require.Equal(t, "token_market_image", runtimeCapabilities[0].ExecutionProtocol)
+	require.Equal(t, constant.EndpointTypeImageGeneration, runtimeCapabilities[0].EndpointType)
+	require.Equal(t, float64(7), runtimeCapabilities[0].TaskCost)
+	require.Nil(t, runtimeCapabilities[0].SeedancePricing)
+}
+
 func TestAtomicCatalogRejectsUnsupportedPerUnitChargeUnit(t *testing.T) {
 	catalog := AtomicCatalog{
 		SchemaVersion: 1,

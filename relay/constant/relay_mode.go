@@ -81,9 +81,15 @@ func Path2RelayMode(path string) int {
 		relayMode = RelayModeTaskFetchByID
 	} else if strings.HasPrefix(path, "/v1/images/generations") || strings.HasPrefix(path, "/pg/images/generations") {
 		relayMode = RelayModeImagesGenerations
-	} else if strings.HasPrefix(path, "/v1/video/generations/") || strings.HasPrefix(path, "/pg/video/generations/") {
+	} else if strings.HasPrefix(path, "/pg/video/generations/") {
 		relayMode = RelayModeVideoFetchByID
-	} else if strings.HasPrefix(path, "/v1/video/generations") || strings.HasPrefix(path, "/pg/video/generations") {
+	} else if strings.HasPrefix(path, "/pg/video/generations") {
+		relayMode = RelayModeVideoSubmit
+	} else if strings.HasSuffix(path, "/remix") && strings.Contains(path, "/videos/") {
+		relayMode = RelayModeVideoSubmit
+	} else if strings.HasPrefix(path, "/v1/videos/") && !strings.HasSuffix(path, "/content") {
+		relayMode = RelayModeVideoFetchByID
+	} else if path == "/v1/videos" || strings.HasPrefix(path, "/pg/videos") {
 		relayMode = RelayModeVideoSubmit
 	} else if strings.HasPrefix(path, SeedanceOfficialTasksPath+"/") {
 		relayMode = RelayModeVideoFetchByID
