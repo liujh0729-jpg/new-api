@@ -575,7 +575,7 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	if err != nil {
 		return nil, service.TaskErrorWrapper(err, "do_request_failed", http.StatusInternalServerError)
 	}
-	if resp != nil && resp.StatusCode != http.StatusOK {
+	if resp != nil && !isSuccessfulTaskSubmitStatus(resp.StatusCode) {
 		responseBody, _ := io.ReadAll(resp.Body)
 		isAIPDD := platform == constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeAIPDD))
 		return nil, taskErrorFromUpstreamResponse(responseBody, resp.StatusCode, isAIPDD)
@@ -614,6 +614,10 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		result.AIPDDExecution = provider.AIPDDTaskSnapshot(info)
 	}
 	return result, nil
+}
+
+func isSuccessfulTaskSubmitStatus(statusCode int) bool {
+	return statusCode >= http.StatusOK && statusCode < http.StatusMultipleChoices
 }
 
 func boolFloat64(value bool) float64 {
