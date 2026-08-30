@@ -98,7 +98,7 @@ func TestAtomicCatalogRejectsLLMWithoutFourTierPricing(t *testing.T) {
 	require.ErrorContains(t, catalog.Validate(), "must provide cache read and cache write prices")
 }
 
-func TestAtomicCatalogAcceptsExplicitFreeLLMWithZeroPrices(t *testing.T) {
+func TestAtomicCatalogValidatesThenFiltersExplicitFreeLLM(t *testing.T) {
 	zero := 0.0
 	catalog := AtomicCatalog{
 		SchemaVersion: 2,
@@ -118,7 +118,7 @@ func TestAtomicCatalogAcceptsExplicitFreeLLMWithZeroPrices(t *testing.T) {
 	require.NoError(t, err)
 	decoded, err := UnmarshalAtomic(encoded)
 	require.NoError(t, err)
-	require.True(t, decoded.Models[0].Pricing.Free)
+	require.Empty(t, decoded.Models)
 }
 
 func TestAtomicCatalogRejectsAccidentalOrInconsistentFreePricing(t *testing.T) {

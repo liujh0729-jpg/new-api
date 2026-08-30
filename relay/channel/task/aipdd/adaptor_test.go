@@ -301,6 +301,8 @@ func TestParseTaskResultIgnoresEquivalentUsageForBilling(t *testing.T) {
 	require.Equal(t, model.TaskStatusSuccess, info.Status)
 	require.Zero(t, info.CompletionTokens)
 	require.Zero(t, info.TotalTokens)
+	require.Equal(t, int64(1_600_000), info.EquivalentUsageCompletionTokens)
+	require.Equal(t, int64(1_600_000), info.EquivalentUsageTotalTokens)
 }
 
 func TestParseTaskResultNeverUsesSeedanceUsageForBillingAcrossStatuses(t *testing.T) {
@@ -325,6 +327,13 @@ func TestParseTaskResultNeverUsesSeedanceUsageForBillingAcrossStatuses(t *testin
 			require.Equal(t, test.want, model.TaskStatus(info.Status))
 			require.Zero(t, info.CompletionTokens)
 			require.Zero(t, info.TotalTokens)
+			if test.want == model.TaskStatusSuccess {
+				require.Equal(t, int64(640000), info.EquivalentUsageCompletionTokens)
+				require.Equal(t, int64(640000), info.EquivalentUsageTotalTokens)
+			} else {
+				require.Zero(t, info.EquivalentUsageCompletionTokens)
+				require.Zero(t, info.EquivalentUsageTotalTokens)
+			}
 		})
 	}
 }

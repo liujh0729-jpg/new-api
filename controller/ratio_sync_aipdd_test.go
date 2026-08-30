@@ -90,7 +90,7 @@ func TestAIPDDCatalogRatioDataUsesCacheAwareExpressionWhenPricesArePresent(t *te
 		exprs["market/cache-aware"])
 }
 
-func TestAIPDDCatalogRatioDataCreatesExplicitZeroExpressionForFreeModel(t *testing.T) {
+func TestAIPDDCatalogRatioDataSkipsFreeModel(t *testing.T) {
 	zero := 0.0
 	catalog := aipddcatalog.AtomicCatalog{
 		SchemaVersion: 2,
@@ -105,13 +105,8 @@ func TestAIPDDCatalogRatioDataCreatesExplicitZeroExpressionForFreeModel(t *testi
 	}
 
 	data := aipddCatalogRatioData(catalog)
-	modes := data[billing_setting.BillingModeField].(map[string]string)
-	exprs := data[billing_setting.BillingExprField].(map[string]string)
-	require.Equal(t, billing_setting.BillingModeTieredExpr, modes["free-deepseek-v4-flash"])
-	require.Equal(
-		t,
-		`tier("aipdd", p * 0 + c * 0 + cr * 0 + cc * 0 + cc1h * 0)`,
-		exprs["free-deepseek-v4-flash"])
+	require.NotContains(t, data, billing_setting.BillingModeField)
+	require.NotContains(t, data, billing_setting.BillingExprField)
 }
 
 func TestAIPDDCatalogRatioDataPreservesLegacyInputPricingWhenCachePricesAreMissing(t *testing.T) {

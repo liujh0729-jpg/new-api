@@ -396,7 +396,7 @@ func TestEnsureAIPDDDefaultsSyncsDynamicCatalogOnBoot(t *testing.T) {
 	var channel Channel
 	require.NoError(t, DB.Where("type = ?", constant.ChannelTypeAIPDD).First(&channel).Error)
 	require.Equal(t, server.URL, *channel.BaseURL)
-	require.Equal(t, "dynamic-script-id,free-deepseek-v4-flash,gemma3:1b,qwen2.5:0.5b", channel.Models)
+	require.Equal(t, "dynamic-script-id,gemma3:1b,qwen2.5:0.5b", channel.Models)
 
 	var ability Ability
 	require.NoError(t, DB.Where("channel_id = ? AND model = ?", channel.Id, "dynamic-script-id").First(&ability).Error)
@@ -404,10 +404,10 @@ func TestEnsureAIPDDDefaultsSyncsDynamicCatalogOnBoot(t *testing.T) {
 	var llmAbility Ability
 	require.NoError(t, DB.Where("channel_id = ? AND model = ?", channel.Id, "gemma3:1b").First(&llmAbility).Error)
 	require.True(t, llmAbility.Enabled)
-	var freeAbility Ability
-	require.NoError(t, DB.Where("channel_id = ? AND model = ?", channel.Id, "free-deepseek-v4-flash").First(&freeAbility).Error)
-	require.True(t, freeAbility.Enabled)
-	require.True(t, aipddcatalog.IsExplicitFreeModel("free-deepseek-v4-flash"))
+	var freeAbilityCount int64
+	require.NoError(t, DB.Model(&Ability{}).Where("channel_id = ? AND model = ?", channel.Id, "free-deepseek-v4-flash").Count(&freeAbilityCount).Error)
+	require.Zero(t, freeAbilityCount)
+	require.False(t, aipddcatalog.IsExplicitFreeModel("free-deepseek-v4-flash"))
 
 	var item Model
 	require.NoError(t, DB.Where("model_name = ?", "dynamic-script-id").First(&item).Error)

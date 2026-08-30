@@ -1,0 +1,43 @@
+{
+  "name": "编辑 Agnes 图片",
+  "type": "http",
+  "method": "post",
+  "path": "/v1/images/edits",
+  "status": "released",
+  "operationId": "editAgnesImage",
+  "description": "使用 `multipart/form-data` 编辑图片。上传 1–8 个 `image` 文件，支持 PNG、JPEG、WebP；整个请求最大 64 MB。`model`、`prompt`、`size` 和 `image` 必填，`n` 只能为 1。",
+  "tags": ["Agnes"],
+  "auth": { "type": "bearer", "bearer": { "token": "" } },
+  "requestBody": {
+    "type": "multipart/form-data",
+    "required": true,
+    "additionalContentTypes": [],
+    "parameters": [
+      { "id": "model#body", "name": "model", "required": true, "enable": true, "type": "string", "description": "固定为 ap-agnes-image-2.1-flash", "schema": { "type": "string", "enum": ["ap-agnes-image-2.1-flash"] } },
+      { "id": "prompt#body", "name": "prompt", "required": true, "enable": true, "type": "string", "description": "编辑提示词", "schema": { "type": "string", "minLength": 1 } },
+      { "id": "size#body", "name": "size", "required": true, "enable": true, "type": "string", "description": "输出尺寸档位", "schema": { "type": "string", "enum": ["1K", "2K", "3K", "4K"] } },
+      { "id": "ratio#body", "name": "ratio", "required": false, "enable": true, "type": "string", "description": "输出比例", "schema": { "type": "string", "enum": ["1:1", "3:4", "4:3", "16:9", "9:16", "2:3", "3:2", "21:9"] } },
+      { "id": "n#body", "name": "n", "required": false, "enable": true, "type": "integer", "description": "只能为 1", "schema": { "type": "integer", "enum": [1], "default": 1 } },
+      { "id": "response_format#body", "name": "response_format", "required": false, "enable": true, "type": "string", "description": "控制 Agnes 上游返回方式；NewAPI 最终仍统一返回 data[].url", "schema": { "type": "string", "enum": ["url", "b64_json"], "default": "url" } },
+      { "id": "image#body", "name": "image", "required": true, "enable": true, "type": "file", "description": "重复上传 1–8 个 image 文件；PNG/JPEG/WebP", "schema": { "type": "string", "format": "binary" } }
+    ]
+  },
+  "responses": [
+    {
+      "name": "成功",
+      "code": 200,
+      "contentType": "json",
+      "description": "同步图片结果",
+      "jsonSchema": {
+        "type": "object",
+        "properties": {
+          "created": { "type": "integer", "format": "int64" },
+          "data": { "type": "array", "items": { "type": "object", "properties": { "url": { "type": "string", "format": "uri" } } } }
+        }
+      }
+    },
+    { "name": "请求错误", "code": 400, "contentType": "json", "description": "文件格式、数量、请求大小或输出参数不符合约束", "jsonSchema": { "type": "object", "additionalProperties": true } },
+    { "name": "未认证", "code": 401, "contentType": "json", "description": "Token 缺失或无效", "jsonSchema": { "type": "object", "additionalProperties": true } },
+    { "name": "服务不可用", "code": 503, "contentType": "json", "description": "Agnes 渠道暂不可用", "jsonSchema": { "type": "object", "additionalProperties": true } }
+  ]
+}

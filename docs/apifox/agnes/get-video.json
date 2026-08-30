@@ -1,0 +1,68 @@
+{
+  "name": "查询 Agnes 视频任务",
+  "type": "http",
+  "method": "get",
+  "path": "/v1/videos/{task_id}",
+  "status": "released",
+  "operationId": "getAgnesVideo",
+  "description": "使用创建接口返回的 NewAPI 公开 `id` 查询。状态可能为 `queued`、`in_progress`、`completed`、`failed`；完成时视频地址在 `metadata.url`，失败时查看 `error.code` 与 `error.message`。",
+  "tags": ["Agnes"],
+  "auth": { "type": "bearer", "bearer": { "token": "" } },
+  "parameters": {
+    "path": [
+      { "id": "task_id#0", "name": "task_id", "required": true, "enable": true, "type": "string", "description": "创建任务时返回的 id", "schema": { "type": "string" } }
+    ]
+  },
+  "responses": [
+    {
+      "name": "成功",
+      "code": 200,
+      "contentType": "json",
+      "description": "任务状态",
+      "jsonSchema": {
+        "type": "object",
+        "required": ["id", "object", "model", "status", "created_at"],
+        "properties": {
+          "id": { "type": "string" },
+          "task_id": { "type": "string", "description": "兼容字段，后续请使用 id" },
+          "object": { "type": "string", "example": "video" },
+          "status": { "type": "string", "enum": ["queued", "in_progress", "completed", "failed"] },
+          "model": { "type": "string", "enum": ["ap-agnes-video-2.5", "ap-agnes-video-2.5-flash"] },
+          "progress": { "type": "integer", "minimum": 0, "maximum": 100 },
+          "created_at": { "type": "integer", "format": "int64" },
+          "completed_at": { "type": "integer", "format": "int64" },
+          "expires_at": { "type": "integer", "format": "int64" },
+          "seconds": { "type": "string" },
+          "size": { "type": "string" },
+          "error": {
+            "type": "object",
+            "properties": {
+              "message": { "type": "string" },
+              "code": { "type": "string" },
+              "request_id": { "type": "string" },
+              "provider": { "type": "string" },
+              "category": { "type": "string" },
+              "upstream_code": { "type": "string" },
+              "retryable": { "type": "boolean" }
+            }
+          },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+              "url": { "type": "string", "format": "uri", "description": "completed 时的视频地址" },
+              "duration": { "type": "number" },
+              "output_format": { "type": "string" },
+              "resolution": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    { "name": "请求错误", "code": 400, "contentType": "json", "description": "任务 ID 无效", "jsonSchema": { "type": "object", "additionalProperties": true } },
+    { "name": "未认证", "code": 401, "contentType": "json", "description": "Token 缺失或无效", "jsonSchema": { "type": "object", "additionalProperties": true } },
+    { "name": "不存在", "code": 404, "contentType": "json", "description": "任务不存在或不属于当前用户", "jsonSchema": { "type": "object", "additionalProperties": true } },
+    { "name": "上游错误", "code": 502, "contentType": "json", "description": "查询 AIPDD/Agnes 任务失败", "jsonSchema": { "type": "object", "additionalProperties": true } },
+    { "name": "服务不可用", "code": 503, "contentType": "json", "description": "Agnes 渠道暂不可用", "jsonSchema": { "type": "object", "additionalProperties": true } }
+  ]
+}

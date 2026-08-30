@@ -1,0 +1,63 @@
+{
+  "name": "生成 Agnes 图片",
+  "type": "http",
+  "method": "post",
+  "path": "/v1/images/generations",
+  "status": "released",
+  "operationId": "createAgnesImage",
+  "description": "使用 `ap-agnes-image-2.1-flash` 同步生成图片。`model`、`prompt`、`size` 必填，`n` 只能为 1。可选 `image` / `images` 传入 URL 或图片 Data URI 作为参考图；文件上传编辑请改用 `POST /v1/images/edits`。NewAPI 会转存生成结果并统一返回 `data[].url`。",
+  "tags": ["Agnes"],
+  "auth": { "type": "bearer", "bearer": { "token": "" } },
+  "requestBody": {
+    "type": "application/json",
+    "required": true,
+    "jsonSchema": {
+      "type": "object",
+      "required": ["model", "prompt", "size"],
+      "additionalProperties": false,
+      "properties": {
+        "model": { "type": "string", "enum": ["ap-agnes-image-2.1-flash"] },
+        "prompt": { "type": "string", "minLength": 1 },
+        "size": { "type": "string", "enum": ["1K", "2K", "3K", "4K"] },
+        "ratio": { "type": "string", "enum": ["1:1", "3:4", "4:3", "16:9", "9:16", "2:3", "3:2", "21:9"] },
+        "n": { "type": "integer", "enum": [1], "default": 1 },
+        "image": {
+          "oneOf": [
+            { "type": "string", "description": "参考图 URL 或图片 Data URI" },
+            { "type": "array", "items": { "type": "string" } }
+          ]
+        },
+        "images": { "type": "array", "items": { "type": "string" }, "description": "参考图 URL 或图片 Data URI 数组" },
+        "response_format": { "type": "string", "enum": ["url", "b64_json"], "default": "url", "description": "控制 Agnes 上游返回方式；NewAPI 最终仍统一返回 data[].url" }
+      }
+    },
+    "data": "{\n  \"model\": \"ap-agnes-image-2.1-flash\",\n  \"prompt\": \"雨后霓虹街道，电影感\",\n  \"size\": \"2K\",\n  \"ratio\": \"16:9\",\n  \"n\": 1,\n  \"response_format\": \"url\"\n}"
+  },
+  "responses": [
+    {
+      "name": "成功",
+      "code": 200,
+      "contentType": "json",
+      "description": "同步图片结果",
+      "jsonSchema": {
+        "type": "object",
+        "properties": {
+          "created": { "type": "integer", "format": "int64" },
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "url": { "type": "string", "format": "uri" },
+                "revised_prompt": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    },
+    { "name": "请求错误", "code": 400, "contentType": "json", "description": "字段、尺寸、比例或参考图不符合约束", "jsonSchema": { "type": "object", "additionalProperties": true } },
+    { "name": "未认证", "code": 401, "contentType": "json", "description": "Token 缺失或无效", "jsonSchema": { "type": "object", "additionalProperties": true } },
+    { "name": "服务不可用", "code": 503, "contentType": "json", "description": "Agnes 渠道暂不可用", "jsonSchema": { "type": "object", "additionalProperties": true } }
+  ]
+}

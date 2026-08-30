@@ -239,7 +239,7 @@ AIPDD_API_KEY=你的 AIPDD 上游 API Key
 - 分组设置为 `default`。
 - 将 `AIPDD_API_KEY` 作为上游密钥使用。
 - 优先从 AIPDD 上游 catalog 获取模型列表、workflow 参数、端点类型和价格。
-- 同步以 `free-` 开头且由 catalog 显式标记 `free=true` 的零价模型；普通零价配置仍会被拒绝，避免误配成免费。
+- 不同步 catalog 中显式标记 `free=true` 的促销免费模型；普通零价配置仍会被拒绝，避免误配成免费。
 - 上游 catalog 获取失败时，回退到内置 AIPDD 默认模型列表。
 - 创建或同步 AIPDD 模型目录元数据。
 

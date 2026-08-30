@@ -9,7 +9,7 @@
   "publicDocsUrl": "https://s.apifox.cn/fea0b520-e6d9-489c-ae5e-109391c771dd",
   "notes": [
     "对外只发 publicDocsUrl。",
-    "公开文档契约是 docs/openapi/public.json，按 6 类整理：基础接口、通用文本生成、通用图片生成、通用视频生成、Seedance、MiniMax H3。",
+    "公开文档契约是 docs/openapi/public.json，按 7 类整理：基础接口、通用文本生成、通用图片生成、通用视频生成、Seedance、MiniMax H3、Agnes。",
     "完整中继目录仍在 docs/openapi/relay.json，不再导入公开文档站。",
     "接口变更先改 public.json，再运行 bin/sync-apifox.ps1。",
     "价格和可用分辨率以 GET /api/pricing 为准。"

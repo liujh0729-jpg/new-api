@@ -3,7 +3,7 @@
   "info": {
     "title": "NewAPI 公开用户接口",
     "version": "1.0.0",
-    "description": "按调用场景分组：基础接口、通用文本生成、通用图片生成、通用视频生成、Seedance、MiniMax H3。\n\n认证统一使用 `Authorization: Bearer <NEWAPI_TOKEN>`。价格和可用档位以 `GET /api/pricing` 为准，不要硬编码。"
+    "description": "按调用场景分组：基础接口、通用文本生成、通用图片生成、通用视频生成、Seedance、MiniMax H3、Agnes。\n\n认证统一使用 `Authorization: Bearer <NEWAPI_TOKEN>`。价格和可用档位以 `GET /api/pricing` 为准，不要硬编码。"
   },
   "tags": [
     {
@@ -29,6 +29,10 @@
     {
       "name": "MiniMax H3",
       "description": "MiniMax H3 五个公开模型，走 /v1/videos。请使用 duration_seconds、video_resolution、image_urls 和 audio_urls 等 H3 字段"
+    },
+    {
+      "name": "Agnes",
+      "description": "Agnes Image 2.1 Flash 与 Agnes Video 2.5 / 2.5 Flash，使用 OpenAI 兼容图片、视频路径"
     }
   ],
   "paths": {
@@ -177,16 +181,31 @@
         "tags": ["通用图片生成"],
         "summary": "文生图",
         "operationId": "createImage",
-        "description": "同步图片生成。常见字段为 `model` + `prompt`；部分千问模型使用 `input.messages`。",
+        "description": "同步图片生成。常见字段为 `model` + `prompt`；部分千问模型使用 `input.messages`。Agnes Image 2.1 Flash 还要求 `size`，可选 `ratio`，且 `n` 只能为 1。",
         "security": [{ "BearerAuth": [] }],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
               "schema": { "$ref": "#/components/schemas/ImageGenerateRequest" },
-              "example": {
-                "model": "qwen-image-2.0-pro",
-                "prompt": "雨后霓虹街道，电影感"
+              "examples": {
+                "generic": {
+                  "summary": "通用文生图",
+                  "value": {
+                    "model": "qwen-image-2.0-pro",
+                    "prompt": "雨后霓虹街道，电影感"
+                  }
+                },
+                "agnes": {
+                  "summary": "Agnes Image 2.1 Flash",
+                  "value": {
+                    "model": "ap-agnes-image-2.1-flash",
+                    "prompt": "雨后霓虹街道，电影感",
+                    "size": "2K",
+                    "ratio": "16:9",
+                    "n": 1
+                  }
+                }
               }
             }
           }
@@ -203,12 +222,12 @@
         "tags": ["通用图片生成"],
         "summary": "图编辑",
         "operationId": "editImage",
-        "description": "同步图片编辑。按模型要求提供原图和文本。",
+        "description": "同步图片编辑，使用 `multipart/form-data`。Agnes Image 2.1 Flash 接受 1–8 个 `image` 文件，支持 PNG、JPEG、WebP；整个请求最大 64 MB。",
         "security": [{ "BearerAuth": [] }],
         "requestBody": {
           "required": true,
           "content": {
-            "application/json": {
+            "multipart/form-data": {
               "schema": { "$ref": "#/components/schemas/ImageEditRequest" }
             }
           }
@@ -225,7 +244,7 @@
         "tags": ["通用视频生成"],
         "summary": "创建视频任务",
         "operationId": "createVideo",
-        "description": "OpenAI Video 风格创建入口。Wan / LTX / Seedance / MiniMax H3 都可走此路径。\n\n查询必须用 `GET /v1/videos/{task_id}`。Seedance 若要用官方响应格式，改走 Seedance 分类的 `/api/v3/contents/generations/tasks`。MiniMax H3 必须使用 `duration_seconds`、`video_resolution`、`image_urls` 和 `audio_urls` 等 H3 字段，完整模型约束见 MiniMax H3 分类。",
+        "description": "OpenAI Video 风格创建入口。Wan / LTX / Seedance / MiniMax H3 / Agnes 都可走此路径。\n\n查询必须用 `GET /v1/videos/{task_id}`。Seedance 若要用官方响应格式，改走 Seedance 分类的 `/api/v3/contents/generations/tasks`。MiniMax H3 与 Agnes 都使用 `duration_seconds`、`video_resolution`，但素材字段和模型约束不同，分别见对应分类。",
         "security": [{ "BearerAuth": [] }],
         "requestBody": {
           "required": true,
@@ -258,6 +277,17 @@
                     "prompt": "一只橘猫在木桌旁喝水",
                     "duration_seconds": 5,
                     "video_resolution": "480p",
+                    "ratio": "16:9"
+                  }
+                },
+                "agnes": {
+                  "summary": "Agnes Video 2.5 文生视频",
+                  "value": {
+                    "model": "ap-agnes-video-2.5",
+                    "prompt": "镜头缓慢推向海边灯塔",
+                    "mode": "text_to_video",
+                    "duration_seconds": 8,
+                    "video_resolution": "960P",
                     "ratio": "16:9"
                   }
                 }
@@ -895,11 +925,21 @@
       "ImageGenerateRequest": {
         "type": "object",
         "required": ["model"],
+        "additionalProperties": true,
         "properties": {
           "model": { "type": "string" },
           "prompt": { "type": "string" },
-          "n": { "type": "integer" },
-          "size": { "type": "string" }
+          "n": { "type": "integer", "minimum": 1 },
+          "size": { "type": "string", "description": "Agnes 必填：1K / 2K / 3K / 4K" },
+          "ratio": { "type": "string", "description": "Agnes：1:1 / 3:4 / 4:3 / 16:9 / 9:16 / 2:3 / 3:2 / 21:9" },
+          "image": {
+            "oneOf": [
+              { "type": "string", "description": "参考图 URL 或 Data URI" },
+              { "type": "array", "items": { "type": "string" } }
+            ]
+          },
+          "images": { "type": "array", "items": { "type": "string" }, "description": "参考图 URL 或 Data URI 数组" },
+          "response_format": { "type": "string", "enum": ["url", "b64_json"], "description": "Agnes 上游返回方式；NewAPI 会转存结果并统一返回 data[].url" }
         }
       },
       "ImageEditRequest": {
@@ -908,30 +948,58 @@
         "properties": {
           "model": { "type": "string" },
           "prompt": { "type": "string" },
-          "image": { "type": "string", "description": "原图 URL" }
+          "size": { "type": "string", "description": "Agnes：1K / 2K / 3K / 4K" },
+          "ratio": { "type": "string", "description": "Agnes 支持 1:1 / 3:4 / 4:3 / 16:9 / 9:16 / 2:3 / 3:2 / 21:9" },
+          "n": { "type": "integer", "enum": [1], "default": 1 },
+          "response_format": { "type": "string", "enum": ["url", "b64_json"], "description": "Agnes 上游返回方式；NewAPI 会转存结果并统一返回 data[].url" },
+          "image": {
+            "type": "string",
+            "format": "binary",
+            "description": "原图文件；Agnes 可重复上传 1–8 个 image 文件并支持 PNG、JPEG、WebP"
+          }
         }
       },
       "VideoCreateRequest": {
         "type": "object",
         "required": ["model"],
+        "additionalProperties": true,
         "properties": {
           "model": { "type": "string" },
           "prompt": { "type": "string" },
+          "mode": { "type": "string", "description": "Agnes：text / text_to_video / keyframe / first_last_frame_to_video / reference / reference_to_video" },
           "duration": { "type": "number" },
           "seconds": { "type": "number" },
           "resolution": { "type": "string" },
           "ratio": { "type": "string" },
+          "aspect_ratio": { "type": "string", "description": "Agnes 的 ratio 别名，优先于 ratio" },
           "image": { "type": "string" },
           "images": { "type": "array", "items": { "type": "string" } },
+          "audios": { "type": "array", "maxItems": 3, "items": { "type": "string" }, "description": "Agnes reference 模式的参考音频 URL/Data URI" },
+          "videos": { "type": "array", "maxItems": 3, "items": { "$ref": "#/components/schemas/AgnesVideoReference" }, "description": "仅 ap-agnes-video-2.5 的 reference 模式支持" },
           "content": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
-          "duration_seconds": { "type": "integer", "minimum": 1, "description": "MiniMax H3 必填，正整数秒" },
-          "video_resolution": { "type": "string", "description": "MiniMax H3 必填：480p / 768p / 1080p，受模型限制" },
+          "duration_seconds": { "type": "integer", "minimum": 1, "description": "MiniMax H3 必填；Agnes 取 4–12，默认 5" },
+          "video_resolution": { "type": "string", "description": "MiniMax H3：480p / 768p / 1080p；Agnes 普通版：720P / 960P / 2K，Flash：仅 720P" },
           "image_urls": { "type": "array", "items": { "type": "string", "format": "uri" }, "description": "MiniMax H3 参考图 URL 数组" },
           "audio_urls": { "type": "array", "items": { "type": "string", "format": "uri" }, "description": "MiniMax H3 参考音频 URL 数组" },
-          "first_frame": { "type": "string", "format": "uri", "description": "MiniMax H3 首尾帧模型的首帧" },
-          "last_frame": { "type": "string", "format": "uri", "description": "MiniMax H3 首尾帧模型的尾帧" },
+          "first_frame": { "type": "string", "description": "MiniMax H3 或 Agnes keyframe 模式的首帧；Agnes 接受 HTTPS URL 或图片 Data URI" },
+          "last_frame": { "type": "string", "description": "MiniMax H3 或 Agnes keyframe 模式的尾帧；Agnes 必须同时提供 first_frame" },
           "seed": { "type": "integer", "description": "MiniMax H3 仅多图参考和多图多音频模型生效" }
         }
+      },
+      "AgnesVideoReference": {
+        "oneOf": [
+          { "type": "string", "format": "uri", "description": "无凭证 HTTPS 视频 URL" },
+          {
+            "type": "object",
+            "required": ["url"],
+            "additionalProperties": false,
+            "properties": {
+              "url": { "type": "string", "format": "uri", "description": "无凭证 HTTPS 视频 URL" },
+              "start_seconds": { "type": "number", "minimum": 0 },
+              "require_audio": { "type": "boolean" }
+            }
+          }
+        ]
       },
       "MinimaxH3Request": {
         "type": "object",

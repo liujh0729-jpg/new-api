@@ -519,6 +519,7 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 	}
 
 	if shouldSettle {
+		SyncTaskEquivalentUsageLog(ctx, task, taskResult)
 		SettleTaskBillingOnComplete(ctx, adaptor, task, taskResult)
 	}
 	if shouldRefund {

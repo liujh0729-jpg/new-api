@@ -158,6 +158,9 @@ func aipddCatalogRatioData(catalog aipddcatalog.AtomicCatalog) map[string]any {
 		}
 	}
 	for _, modelItem := range catalog.Models {
+		if modelItem.Pricing.Free {
+			continue
+		}
 		promptUSD := modelItem.Pricing.PromptPerMillion * catalog.AWCoinRate.USDPerAWCoin
 		completionUSD := modelItem.Pricing.CompletionPerMillion * catalog.AWCoinRate.USDPerAWCoin
 		modes[modelItem.ID] = billing_setting.BillingModeTieredExpr

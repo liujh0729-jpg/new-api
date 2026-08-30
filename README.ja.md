@@ -130,7 +130,7 @@
 | `CRYPTO_SECRET` | Redis または複数インスタンス構成 | 共有キャッシュやインスタンス間データを復号できるようにする固定暗号化シークレット。 |
 | `REDIS_CONN_STRING` | 複数インスタンス、共有キャッシュ、タスクポーリング | Redis 接続文字列。単一インスタンスではメモリキャッシュから始められます。 |
 
-AIPDD モデルのリクエストパラメータは [AIPDD ユーザーガイド](./docs/aipdd-user-guide.zh_CN.md) を参照してください。よく使う必須項目は、`aipdd-wan2.2-wanx` が `image` と `prompt`、`aipdd-mimic-motion` が `motion_video` と `appearance_image`、`aipdd-indextts` が `input` と `metadata.audio` です。
+AIPDD モデルのパラメータとリクエスト例は、[Apifox 公開 API ドキュメント](https://s.apifox.cn/fea0b520-e6d9-489c-ae5e-109391c771dd/9376375m0) を参照してください。
 
 
 ### Docker Composeを使用（推奨）

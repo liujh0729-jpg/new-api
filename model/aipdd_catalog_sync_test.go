@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/pkg/aipddcatalog"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
@@ -381,7 +382,7 @@ func TestApplyAIPDDCatalogKeepsDisabledModelsInDBAndChannel(t *testing.T) {
 	}
 }
 
-func TestApplyAIPDDCatalogWritesFreeModelBenefitDescription(t *testing.T) {
+func TestApplyAIPDDCatalogSkipsFreeModelsAndCleansLegacyRows(t *testing.T) {
 	truncateTables(t)
 	t.Cleanup(func() {
 		constant.ResetAIPDDCapabilities()
@@ -389,6 +390,22 @@ func TestApplyAIPDDCatalogWritesFreeModelBenefitDescription(t *testing.T) {
 		aipddcatalog.ResetV1ModelsListHidden()
 		aipddcatalog.ResetExplicitFreeModels()
 	})
+
+	vendor := Vendor{Name: "AIPDD", Status: 1}
+	require.NoError(t, DB.Create(&vendor).Error)
+	require.NoError(t, DB.Create(&Model{
+		ModelName: "free-legacy", VendorID: vendor.Id, Status: 1, SyncOfficial: 1,
+	}).Error)
+	baseURL := "https://aipdd.example"
+	legacyChannel := Channel{
+		Type: constant.ChannelTypeAIPDD, Name: aipddEnvChannelName, Key: "sk-test",
+		Group: "default", Models: "free-legacy", Status: common.ChannelStatusEnabled,
+		BaseURL: &baseURL,
+	}
+	require.NoError(t, DB.Create(&legacyChannel).Error)
+	require.NoError(t, DB.Create(&Ability{
+		Group: "default", Model: "free-legacy", ChannelId: legacyChannel.Id, Enabled: true,
+	}).Error)
 
 	catalog := aipddTestCatalog("free-description-revision", "task-model", "llm-model")
 	catalog.Models = append(catalog.Models,
@@ -409,16 +426,32 @@ func TestApplyAIPDDCatalogWritesFreeModelBenefitDescription(t *testing.T) {
 		},
 	)
 
-	_, err := applyAIPDDCatalog(catalog, "https://aipdd.example", "sk-test")
+	result, err := applyAIPDDCatalog(catalog, baseURL, "sk-test")
 	require.NoError(t, err)
+	require.Equal(t, 2, result.AddedModels)
+	require.Equal(t, 1, result.RemovedModels)
 
-	var hy3, paid, custom Model
-	require.NoError(t, DB.Where("model_name = ?", "free-hy3").First(&hy3).Error)
+	var paid Model
 	require.NoError(t, DB.Where("model_name = ?", "llm-model").First(&paid).Error)
-	require.NoError(t, DB.Where("model_name = ?", "free-deepseek-v4-flash").First(&custom).Error)
-	require.Equal(t, "hy3 福利免费版", hy3.Description)
 	require.Equal(t, "AIPDD 上游目录同步模型。", paid.Description)
-	require.Equal(t, "custom free description", custom.Description)
+
+	for _, modelName := range []string{"free-legacy", "free-hy3", "free-deepseek-v4-flash"} {
+		var modelCount, abilityCount int64
+		require.NoError(t, DB.Unscoped().Model(&Model{}).Where("model_name = ?", modelName).Count(&modelCount).Error)
+		require.NoError(t, DB.Model(&Ability{}).Where("model = ?", modelName).Count(&abilityCount).Error)
+		require.Zero(t, modelCount, modelName)
+		require.Zero(t, abilityCount, modelName)
+	}
+
+	var managed Channel
+	require.NoError(t, DB.Where("id = ?", legacyChannel.Id).First(&managed).Error)
+	require.Equal(t, "llm-model,task-model", managed.Models)
+	require.False(t, aipddcatalog.IsExplicitFreeModel("free-hy3"))
+
+	var snapshot AIPDDCatalogSnapshot
+	require.NoError(t, DB.First(&snapshot, aipddCatalogSnapshotID).Error)
+	require.NotContains(t, snapshot.Payload, "free-hy3")
+	require.NotContains(t, snapshot.Payload, "free-deepseek-v4-flash")
 }
 
 func TestEnsureAIPDDOpenAIModelDefaultsDoesNotCreateLocalPricing(t *testing.T) {

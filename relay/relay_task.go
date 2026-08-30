@@ -899,6 +899,11 @@ func tryRealtimeFetch(ctx context.Context, task *model.Task, isOpenAIVideoAPI, i
 		// remain permanently consumed and the poller would skip the terminal row.
 		service.SettleTaskBillingOnComplete(ctx, adaptor, task, ti)
 	}
+	if ti.Status == model.TaskStatusSuccess {
+		// Usage log synchronization is intentionally independent of the status
+		// CAS so querying an already-completed legacy task can backfill the log.
+		service.SyncTaskEquivalentUsageLog(ctx, task, ti)
+	}
 
 	// Compatible video APIs are converted from the persisted upstream snapshot
 	// by their dedicated response builders after this realtime refresh.

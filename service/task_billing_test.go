@@ -483,6 +483,105 @@ func TestLogTaskConsumption_WritesPreConsumedAndActualQuota(t *testing.T) {
 	assert.Equal(t, float64(settleQuota), other["actual_quota"])
 }
 
+func TestSyncTaskEquivalentUsageLog_UpdatesOriginalLogWithoutChangingQuota(t *testing.T) {
+	truncate(t)
+
+	const userID, tokenID, channelID = 43, 43, 43
+	const requestID = "req-seedance-usage-log"
+	const originalQuota = 2750
+	seedUser(t, userID, 10000)
+	seedToken(t, tokenID, userID, "sk-seedance-log", 5000)
+	seedChannel(t, channelID)
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", nil)
+	c.Set("token_name", "test_token")
+	c.Set("username", "test_user")
+	c.Set(common.RequestIdKey, requestID)
+
+	info := &relaycommon.RelayInfo{
+		RequestId:       requestID,
+		UserId:          userID,
+		TokenId:         tokenID,
+		OriginModelName: "AP Seedance-2.0 标准版",
+		UsingGroup:      "default",
+		ChannelMeta:     &relaycommon.ChannelMeta{ChannelId: channelID},
+		TaskRelayInfo: &relaycommon.TaskRelayInfo{
+			Action:       "generate",
+			PublicTaskID: "task-seedance-usage-log",
+		},
+		PriceData: types.PriceData{
+			Quota:      originalQuota,
+			ModelPrice: 0.02,
+			GroupRatioInfo: types.GroupRatioInfo{
+				GroupRatio: 1,
+			},
+		},
+	}
+	LogTaskConsumption(c, info)
+
+	task := &model.Task{
+		TaskID:    "task-seedance-usage-log",
+		UserId:    userID,
+		ChannelId: channelID,
+		Quota:     originalQuota,
+		PrivateData: model.TaskPrivateData{
+			LogRequestID: requestID,
+		},
+	}
+	taskResult := &relaycommon.TaskInfo{
+		Status:                          string(model.TaskStatusSuccess),
+		EquivalentUsageCompletionTokens: 87300,
+		EquivalentUsageTotalTokens:      87300,
+	}
+
+	SyncTaskEquivalentUsageLog(context.Background(), task, taskResult)
+	SyncTaskEquivalentUsageLog(context.Background(), task, taskResult)
+
+	log := getLastLog(t)
+	require.NotNil(t, log)
+	assert.Equal(t, 0, log.PromptTokens)
+	assert.Equal(t, 87300, log.CompletionTokens)
+	assert.Equal(t, originalQuota, log.Quota)
+	assert.Equal(t, requestID, log.RequestId)
+	other, err := common.StrToMap(log.Other)
+	require.NoError(t, err)
+	assert.Equal(t, "task-seedance-usage-log", other["task_id"])
+
+	var count int64
+	require.NoError(t, model.DB.Model(&model.Log{}).Count(&count).Error)
+	assert.Equal(t, int64(1), count)
+}
+
+func TestSyncTaskEquivalentUsageLog_InvalidOrNonTerminalUsageIsIgnored(t *testing.T) {
+	truncate(t)
+	log := &model.Log{
+		UserId: 44, Type: model.LogTypeConsume, RequestId: "req-invalid-usage",
+		Quota: 900, PromptTokens: 0, CompletionTokens: 0,
+	}
+	require.NoError(t, model.DB.Create(log).Error)
+	task := &model.Task{TaskID: "task-invalid", UserId: 44, PrivateData: model.TaskPrivateData{LogRequestID: "req-invalid-usage"}}
+
+	SyncTaskEquivalentUsageLog(context.Background(), task, &relaycommon.TaskInfo{
+		Status:                          string(model.TaskStatusInProgress),
+		EquivalentUsageCompletionTokens: 87300,
+		EquivalentUsageTotalTokens:      87300,
+	})
+	SyncTaskEquivalentUsageLog(context.Background(), task, &relaycommon.TaskInfo{
+		Status:                          string(model.TaskStatusSuccess),
+		EquivalentUsageCompletionTokens: 900,
+		EquivalentUsageTotalTokens:      800,
+	})
+
+	var stored model.Log
+	require.NoError(t, model.DB.First(&stored, log.Id).Error)
+	assert.Zero(t, stored.PromptTokens)
+	assert.Zero(t, stored.CompletionTokens)
+	assert.Equal(t, 900, stored.Quota)
+}
+
 // ===========================================================================
 // RecalculateTaskQuota tests
 // ===========================================================================
@@ -917,6 +1016,32 @@ func TestSettle_NonPerCall_AdaptorAdjustWorks(t *testing.T) {
 	log := getLastLog(t)
 	require.NotNil(t, log)
 	assert.Equal(t, model.LogTypeRefund, log.Type)
+}
+
+func TestSettle_EquivalentUsageNeverTriggersTokenRecalculation(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID, tokenID, channelID = 34, 34, 34
+	const initQuota, preConsumed = 10000, 4000
+	const tokenRemain = 7000
+	seedUser(t, userID, initQuota)
+	seedToken(t, tokenID, userID, "sk-equivalent-usage", tokenRemain)
+	seedChannel(t, channelID)
+
+	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
+	taskResult := &relaycommon.TaskInfo{
+		Status:                          string(model.TaskStatusSuccess),
+		EquivalentUsageCompletionTokens: 196425,
+		EquivalentUsageTotalTokens:      196425,
+	}
+
+	SettleTaskBillingOnComplete(ctx, &mockAdaptor{}, task, taskResult)
+
+	assert.Equal(t, initQuota, getUserQuota(t, userID))
+	assert.Equal(t, tokenRemain, getTokenRemainQuota(t, tokenID))
+	assert.Equal(t, preConsumed, task.Quota)
+	assert.Equal(t, int64(0), countLogs(t))
 }
 
 func TestSettle_TaskPricingOverridesLegacyPerCallFlag(t *testing.T) {

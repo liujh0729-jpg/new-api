@@ -143,7 +143,7 @@ When a public user API changes (especially Seedance paths, request/response fiel
 
 1. Update `docs/openapi/public.json` first. `docs/openapi/relay.json` is the full relay catalog and is not the public docs source.
 2. Sync Apifox with `.\bin\sync-apifox.ps1`. If `projectId` is still `0`, stop and tell the user to fill `.apifox/settings.json` and `docs/apifox/project.json`.
-3. Do not only edit `docs/aipdd-seedance-api.zh_CN.md` or `docs/aipdd-user-guide.zh_CN.md`.
+3. Do not create or maintain separate Markdown copies of the public API field tables. Keep the contract in `docs/openapi/public.json` and the Apifox-only supplemental sources under `docs/apifox/`.
 4. Official `apifox-mcp-server` is read-only. Writes go through Apifox CLI. Never commit `APIFOX_ACCESS_TOKEN`.
 
 Setup notes: `docs/apifox/README.md`.

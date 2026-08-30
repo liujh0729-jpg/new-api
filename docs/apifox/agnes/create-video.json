@@ -1,0 +1,130 @@
+{
+  "name": "创建 Agnes 视频",
+  "type": "http",
+  "method": "post",
+  "path": "/v1/videos",
+  "status": "released",
+  "operationId": "createAgnesVideo",
+  "description": "使用 `ap-agnes-video-2.5` 或 `ap-agnes-video-2.5-flash` 创建异步视频任务。`prompt` 必填，`duration_seconds` 为 4–12 秒。普通版支持 720P/960P/2K，Flash 仅支持 720P。\n\n模式：`text_to_video` 不得带参考素材；`first_last_frame_to_video` 至少提供 `first_frame`，可再提供 `last_frame`；`reference_to_video` 至少提供 images/audios/videos 之一，且不得提供首尾帧。普通版最多 8 张图、3 段音频、3 段视频；Flash 最多 5 张图、3 段音频并且不支持参考视频。\n\n创建后使用返回的公开 `id` 请求 `GET /v1/videos/{task_id}`。",
+  "tags": ["Agnes"],
+  "auth": { "type": "bearer", "bearer": { "token": "" } },
+  "requestBody": {
+    "type": "application/json",
+    "required": true,
+    "jsonSchema": {
+      "type": "object",
+      "required": ["model", "prompt"],
+      "additionalProperties": false,
+      "properties": {
+        "model": { "type": "string", "enum": ["ap-agnes-video-2.5", "ap-agnes-video-2.5-flash"] },
+        "prompt": { "type": "string", "minLength": 1 },
+        "mode": {
+          "type": "string",
+          "enum": ["text_to_video", "first_last_frame_to_video", "reference_to_video", "text", "keyframe", "reference"],
+          "default": "text_to_video",
+          "description": "长短名称等价：text_to_video=text、first_last_frame_to_video=keyframe、reference_to_video=reference"
+        },
+        "duration_seconds": { "type": "integer", "minimum": 4, "maximum": 12, "default": 5 },
+        "video_resolution": { "type": "string", "enum": ["720P", "960P", "2K"], "default": "720P", "description": "Flash 仅支持 720P" },
+        "ratio": { "type": "string", "default": "16:9", "description": "画面比例，例如 16:9" },
+        "aspect_ratio": { "type": "string", "description": "ratio 的兼容别名；同时提供时优先" },
+        "first_frame": { "type": "string", "description": "keyframe 模式必填；图片 Data URI 或无凭证 HTTPS URL" },
+        "last_frame": { "type": "string", "description": "keyframe 模式可选；必须同时提供 first_frame" },
+        "images": {
+          "type": "array",
+          "maxItems": 8,
+          "description": "reference 模式参考图；普通版最多 8 张，Flash 最多 5 张",
+          "items": {
+            "oneOf": [
+              { "type": "string", "description": "图片 Data URI 或无凭证 HTTPS URL" },
+              { "type": "object", "required": ["url"], "additionalProperties": false, "properties": { "url": { "type": "string" } } }
+            ]
+          }
+        },
+        "audios": {
+          "type": "array",
+          "maxItems": 3,
+          "description": "reference 模式参考音频，最多 3 段",
+          "items": {
+            "oneOf": [
+              { "type": "string", "description": "音频 Data URI 或无凭证 HTTPS URL" },
+              { "type": "object", "required": ["url"], "additionalProperties": false, "properties": { "url": { "type": "string" } } }
+            ]
+          }
+        },
+        "videos": {
+          "type": "array",
+          "maxItems": 3,
+          "description": "仅普通版 reference 模式支持，最多 3 段；URL 必须是无凭证 HTTPS 地址",
+          "items": {
+            "oneOf": [
+              { "type": "string", "format": "uri" },
+              {
+                "type": "object",
+                "required": ["url"],
+                "additionalProperties": false,
+                "properties": {
+                  "url": { "type": "string", "format": "uri" },
+                  "start_seconds": { "type": "number", "minimum": 0 },
+                  "require_audio": { "type": "boolean" }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    "data": "{\n  \"model\": \"ap-agnes-video-2.5\",\n  \"prompt\": \"镜头缓慢推向海边灯塔，清晨薄雾\",\n  \"mode\": \"text_to_video\",\n  \"duration_seconds\": 8,\n  \"video_resolution\": \"960P\",\n  \"ratio\": \"16:9\"\n}"
+  },
+  "responses": [
+    {
+      "name": "成功",
+      "code": 200,
+      "contentType": "json",
+      "description": "任务已创建",
+      "jsonSchema": {
+        "type": "object",
+        "required": ["id", "object", "model", "status", "created_at"],
+        "properties": {
+          "id": { "type": "string", "description": "NewAPI 公开任务 ID" },
+          "task_id": { "type": "string", "description": "兼容字段，后续请使用 id" },
+          "object": { "type": "string", "example": "video" },
+          "status": { "type": "string", "enum": ["queued", "in_progress", "completed", "failed"] },
+          "model": { "type": "string" },
+          "progress": { "type": "integer", "minimum": 0, "maximum": 100 },
+          "created_at": { "type": "integer", "format": "int64", "description": "Unix 时间戳（秒）" },
+          "completed_at": { "type": "integer", "format": "int64" },
+          "expires_at": { "type": "integer", "format": "int64" },
+          "seconds": { "type": "string" },
+          "size": { "type": "string" },
+          "error": {
+            "type": "object",
+            "properties": {
+              "message": { "type": "string" },
+              "code": { "type": "string" },
+              "request_id": { "type": "string" },
+              "provider": { "type": "string" },
+              "category": { "type": "string" },
+              "upstream_code": { "type": "string" },
+              "retryable": { "type": "boolean" }
+            }
+          },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+              "url": { "type": "string", "format": "uri" },
+              "duration": { "type": "number" },
+              "resolution": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    { "name": "请求错误", "code": 400, "contentType": "json", "description": "字段、模式、素材数量、分辨率或时长不符合约束", "jsonSchema": { "type": "object", "additionalProperties": true } },
+    { "name": "未认证", "code": 401, "contentType": "json", "description": "Token 缺失或无效", "jsonSchema": { "type": "object", "additionalProperties": true } },
+    { "name": "冲突", "code": 409, "contentType": "json", "description": "Idempotency-Key 已用于不同请求", "jsonSchema": { "type": "object", "additionalProperties": true } },
+    { "name": "上游错误", "code": 502, "contentType": "json", "description": "AIPDD/Agnes 创建任务失败", "jsonSchema": { "type": "object", "additionalProperties": true } },
+    { "name": "服务不可用", "code": 503, "contentType": "json", "description": "Agnes 渠道暂不可用", "jsonSchema": { "type": "object", "additionalProperties": true } }
+  ]
+}

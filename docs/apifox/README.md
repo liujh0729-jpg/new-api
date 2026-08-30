@@ -1,6 +1,6 @@
 # Apifox 公开文档
 
-对外只发 `project.json` 里的 `publicDocsUrl`。仓库契约是 `docs/openapi/public.json`，按 6 类展示：
+对外只发 `project.json` 里的 `publicDocsUrl`。仓库契约是 `docs/openapi/public.json`，按 7 类展示：
 
 1. 基础接口
 2. 通用文本生成
@@ -8,8 +8,9 @@
 4. 通用视频生成
 5. Seedance
 6. MiniMax H3
+7. Agnes
 
-不要在 Apifox 云端手改字段后再当真相源。完整中继目录仍在 `docs/openapi/relay.json`，不再导入公开文档站。Seedance 的 OpenAI Video 入口与 MiniMax 一样，因路径与通用视频重复，由 `docs/apifox/seedance/` 在同步后补进 Seedance 目录。
+不要在 Apifox 云端手改字段后再当真相源。完整中继目录仍在 `docs/openapi/relay.json`，不再导入公开文档站。Seedance、MiniMax H3、Agnes 的专用 OpenAI 图片/视频入口会与通用路径重复，因此分别由 `docs/apifox/seedance/`、`docs/apifox/minimax/`、`docs/apifox/agnes/` 在同步后补进对应目录。
 
 ## 一次性准备
 
@@ -27,4 +28,4 @@
 .\bin\sync-apifox.ps1
 ```
 
-Agent 必须先改 `docs/openapi/public.json`，再跑同步。不要只改 `docs/aipdd-seedance-api.zh_CN.md`。
+Agent 必须先改 `docs/openapi/public.json`，再跑同步。不再平行维护独立的 Markdown 接口字段表。

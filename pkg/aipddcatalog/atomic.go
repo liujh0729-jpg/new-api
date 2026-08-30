@@ -154,6 +154,7 @@ func FetchAtomic(ctx context.Context, client *http.Client, baseURL, apiKey strin
 	if err := envelope.Data.Validate(); err != nil {
 		return AtomicCatalog{}, err
 	}
+	envelope.Data.FilterFreeModels()
 	return envelope.Data, nil
 }
 
@@ -501,5 +502,9 @@ func UnmarshalAtomic(data []byte) (AtomicCatalog, error) {
 	}
 	catalog.FilterExcluded()
 	catalog.NormalizePerUnitChargeUnits()
-	return catalog, catalog.Validate()
+	if err := catalog.Validate(); err != nil {
+		return catalog, err
+	}
+	catalog.FilterFreeModels()
+	return catalog, nil
 }

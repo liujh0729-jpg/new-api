@@ -323,6 +323,40 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 	}
 }
 
+// UpdateConsumeLogTokensByRequestID writes observational token usage onto the
+// original consume log. It only updates log columns; quota settlement never
+// reads these values. Looking up the row first keeps the update portable across
+// SQLite, MySQL and PostgreSQL and makes repeated terminal polls idempotent.
+func UpdateConsumeLogTokensByRequestID(requestID string, userID, promptTokens, completionTokens int) (bool, error) {
+	requestID = strings.TrimSpace(requestID)
+	if requestID == "" || userID <= 0 || promptTokens < 0 || completionTokens <= 0 {
+		return false, nil
+	}
+
+	var log Log
+	err := LOG_DB.Where(
+		"request_id = ? AND user_id = ? AND type = ?",
+		requestID,
+		userID,
+		LogTypeConsume,
+	).Order("id DESC").First(&log).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+
+	if log.PromptTokens == promptTokens && log.CompletionTokens == completionTokens {
+		return true, nil
+	}
+	result := LOG_DB.Model(&Log{}).Where("id = ?", log.Id).Updates(map[string]any{
+		"prompt_tokens":     promptTokens,
+		"completion_tokens": completionTokens,
+	})
+	return result.RowsAffected > 0, result.Error
+}
+
 type RecordTaskBillingLogParams struct {
 	UserId    int
 	LogType   int

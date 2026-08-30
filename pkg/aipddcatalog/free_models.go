@@ -11,6 +11,23 @@ var (
 	explicitFreeModelNames map[string]struct{}
 )
 
+// FilterFreeModels removes LLMs that the AIPDD catalog explicitly declares as
+// free. NewAPI deliberately does not mirror these promotional models into its
+// managed catalog, channels, abilities, or pricing candidates.
+func (catalog *AtomicCatalog) FilterFreeModels() {
+	if catalog == nil {
+		return
+	}
+	models := catalog.Models[:0]
+	for _, model := range catalog.Models {
+		if model.Pricing.Free {
+			continue
+		}
+		models = append(models, model)
+	}
+	catalog.Models = models
+}
+
 // ExplicitFreeModelNames returns available LLM IDs whose catalog pricing is
 // deliberately free. Validation guarantees these IDs use the free- prefix and
 // every token-price lane is zero.

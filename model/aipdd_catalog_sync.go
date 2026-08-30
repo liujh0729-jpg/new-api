@@ -99,6 +99,9 @@ func applyAIPDDCatalog(catalog aipddcatalog.AtomicCatalog, baseURL, apiKey strin
 	if err := catalog.Validate(); err != nil {
 		return AIPDDCatalogSyncResult{}, err
 	}
+	// Validate the upstream contract first, then exclude explicitly free LLMs
+	// from every persisted and runtime NewAPI catalog surface.
+	catalog.FilterFreeModels()
 	payload, err := aipddcatalog.MarshalAtomic(catalog)
 	if err != nil {
 		return AIPDDCatalogSyncResult{}, err
@@ -108,6 +111,18 @@ func applyAIPDDCatalog(catalog aipddcatalog.AtomicCatalog, baseURL, apiKey strin
 	previousNames, err := previousAIPDDCatalogModels(baseURL)
 	if err != nil {
 		return AIPDDCatalogSyncResult{}, err
+	}
+	// Snapshots written by this version no longer contain free models. Include
+	// legacy free-* entries still present on the managed channel so the normal
+	// stale-model cleanup removes rows created by older releases.
+	managedNames, err := managedAIPDDChannelModels()
+	if err != nil {
+		return AIPDDCatalogSyncResult{}, err
+	}
+	for _, modelName := range managedNames {
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(modelName)), "free-") {
+			previousNames = append(previousNames, modelName)
+		}
 	}
 	previousSet := stringSet(previousNames)
 
@@ -234,6 +249,7 @@ func managedAIPDDChannelModels() ([]string, error) {
 
 func activateAIPDDCatalog(catalog aipddcatalog.AtomicCatalog) {
 	catalog.FilterExcluded()
+	catalog.FilterFreeModels()
 	constant.SetAIPDDCapabilities(catalog.RuntimeCapabilities())
 	models := make([]string, 0, len(catalog.Models))
 	for _, model := range catalog.Models {

@@ -65,7 +65,7 @@
 
 本仓库是基于 New API 的 AIPDD 定制版，保留上游 New API 项目身份、许可证和 attribution，并将 AIPDD 作为一个上游供应商接入。
 
-AIPDD 渠道会把任务请求转发到 `https://api.aipdd.work`，渠道 Key 会作为 `X-API-Key` 发送给 AIPDD。当前内置 Flux 生图、Wan2.2 图生视频、Wan2.2 主体替换、mimicmotion 动作替换、Latentsync 对口型视频、IndexTTS 声音复刻六个任务模型。模型名和请求示例见 [docs/aipdd-user-guide.zh_CN.md](./docs/aipdd-user-guide.zh_CN.md)。
+AIPDD 渠道会把任务请求转发到 `https://api.aipdd.work`，渠道 Key 会作为 `X-API-Key` 发送给 AIPDD。当前内置 Flux 生图、Wan2.2 图生视频、Wan2.2 主体替换、mimicmotion 动作替换、Latentsync 对口型视频、IndexTTS 声音复刻六个任务模型。模型名和请求示例见 [Apifox 公开接口文档](https://s.apifox.cn/fea0b520-e6d9-489c-ae5e-109391c771dd/9376375m0)。
 
 ---
 
@@ -139,7 +139,7 @@ AIPDD 渠道会把任务请求转发到 `https://api.aipdd.work`，渠道 Key �
 | `CRYPTO_SECRET` | 使用 Redis 或多机部署时必须 | 固定加密密钥，避免共享缓存/跨实例数据无法解密。 |
 | `REDIS_CONN_STRING` | 多机部署、共享缓存或任务轮询推荐 | Redis 连接字符串；单机可先使用内存缓存。 |
 
-AIPDD 模型调用参数请参考 [AIPDD 能力用户调用指南](./docs/aipdd-user-guide.zh_CN.md)。常见必填项包括：`aipdd-wan2.2-wanx` 需要 `image`、`prompt`，`aipdd-mimic-motion` 需要 `motion_video`、`appearance_image`，`aipdd-indextts` 需要 `input` 和 `metadata.audio`。
+AIPDD 模型调用参数与请求示例请参考 [Apifox 公开接口文档](https://s.apifox.cn/fea0b520-e6d9-489c-ae5e-109391c771dd/9376375m0)。
 
 
 ### 使用 Docker Compose（推荐）

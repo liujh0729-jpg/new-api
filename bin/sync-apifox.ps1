@@ -110,6 +110,35 @@ function Write-Utf8Json {
     [System.IO.File]::WriteAllText($Path, $json, [System.Text.UTF8Encoding]::new($false))
 }
 
+function Sync-CustomEndpoint {
+    param(
+        $EndpointList,
+        [int]$FolderId,
+        [string]$Method,
+        [string]$Path,
+        [string]$FilePath,
+        [string]$Label
+    )
+    $endpoint = @($EndpointList) | Where-Object {
+        [int]$_.folderId -eq $FolderId -and
+        [string]$_.method -eq $Method -and
+        [string]$_.path -eq $Path
+    } | Select-Object -First 1
+    if (-not $endpoint) {
+        Write-Host "Creating $Label"
+        & apifox cli-schema validate endpoint-create --file $FilePath | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "$Label failed validation" }
+        & apifox endpoint create --project $ProjectId --folder-id $FolderId --file $FilePath
+        if ($LASTEXITCODE -ne 0) { throw "failed to create $Label" }
+        return
+    }
+    Write-Host "Updating $Label #$($endpoint.id)"
+    & apifox cli-schema validate endpoint-update --file $FilePath | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "$Label failed validation" }
+    & apifox endpoint update $endpoint.id --project $ProjectId --file $FilePath
+    if ($LASTEXITCODE -ne 0) { throw "failed to update $Label" }
+}
+
 $openApi = Read-JsonFile $openApiPath
 
 function Get-JsonProperty {
@@ -292,6 +321,7 @@ function Sync-SeedanceOpenApiEndpoints {
 
 $minimaxDir = Join-Path $repoRoot "docs\apifox\minimax"
 $seedanceDir = Join-Path $repoRoot "docs\apifox\seedance"
+$agnesDir = Join-Path $repoRoot "docs\apifox\agnes"
 $tempDir = Join-Path $repoRoot ".apifox\tmp"
 New-Item -ItemType Directory -Force -Path $tempDir | Out-Null
 
@@ -304,6 +334,15 @@ if (-not $minimaxFolder) {
     $minimaxFolderId = [int]$created.data.id
 } else {
     $minimaxFolderId = [int]$minimaxFolder.id
+}
+$agnesFolder = @($folders.data) | Where-Object { $_.name -eq "Agnes" } | Select-Object -First 1
+if (-not $agnesFolder) {
+    $folderFile = Join-Path $agnesDir "folder.json"
+    Write-Host "Creating Agnes folder"
+    $created = Invoke-ApifoxJson @("folder", "create", "--project", $ProjectId, "--type", "endpoint", "--file", $folderFile)
+    $agnesFolderId = [int]$created.data.id
+} else {
+    $agnesFolderId = [int]$agnesFolder.id
 }
 $seedanceFolder = @($folders.data) | Where-Object { $_.name -eq "Seedance" } | Select-Object -First 1
 if (-not $seedanceFolder) {
@@ -321,6 +360,16 @@ foreach ($legacy in $legacyEndpoints) {
     Write-Host "Deleting leftover $($legacy.method) $($legacy.path) ($($legacy.name) #$($legacy.id))"
     & apifox endpoint delete $legacy.id --project $ProjectId
     if ($LASTEXITCODE -ne 0) { throw "failed to delete leftover endpoint $($legacy.id)" }
+}
+$agnesEndpointSpecs = @(
+    @{ Method = "post"; Path = "/v1/images/generations"; File = "create-image.json"; Label = "Agnes image generation endpoint" },
+    @{ Method = "post"; Path = "/v1/images/edits"; File = "edit-image.json"; Label = "Agnes image edit endpoint" },
+    @{ Method = "post"; Path = "/v1/videos"; File = "create-video.json"; Label = "Agnes video create endpoint" },
+    @{ Method = "get"; Path = "/v1/videos/{task_id}"; File = "get-video.json"; Label = "Agnes video get endpoint" },
+    @{ Method = "get"; Path = "/v1/videos/{task_id}/content"; File = "get-video-content.json"; Label = "Agnes video content endpoint" }
+)
+foreach ($spec in $agnesEndpointSpecs) {
+    Sync-CustomEndpoint -EndpointList @($endpoints.data) -FolderId $agnesFolderId -Method $spec.Method -Path $spec.Path -FilePath (Join-Path $agnesDir $spec.File) -Label $spec.Label
 }
 $minimaxCreate = @($endpoints.data) | Where-Object {
     [int]$_.folderId -eq $minimaxFolderId -and [string]$_.method -eq "post" -and [string]$_.path -eq "/v1/videos"
@@ -491,6 +540,35 @@ if (-not $seedanceOverview) {
     if ($LASTEXITCODE -ne 0) { throw "Seedance overview doc failed validation" }
     & apifox doc update $seedanceOverview.id --project $ProjectId --file $docFile
     if ($LASTEXITCODE -ne 0) { throw "failed to update Seedance overview doc" }
+}
+$overviewMd = [System.IO.File]::ReadAllText((Join-Path $agnesDir "overview.md"))
+$agnesOverview = @($docs.data) | Where-Object { $_.name -eq "Agnes 图片与视频" } | Select-Object -First 1
+if (-not $agnesOverview) {
+    Write-Host "Creating Agnes overview doc"
+    $docFile = Join-Path $tempDir "agnes-overview.doc.json"
+    Write-Utf8Json @{
+        name = "Agnes 图片与视频"
+        folderId = $agnesFolderId
+        content = $overviewMd
+    } $docFile
+    & apifox cli-schema validate doc-create --file $docFile | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Agnes overview doc failed validation" }
+    & apifox doc create --project $ProjectId --file $docFile
+    if ($LASTEXITCODE -ne 0) { throw "failed to create Agnes overview doc" }
+} else {
+    Write-Host "Updating Agnes overview doc #$($agnesOverview.id)"
+    $existing = Invoke-ApifoxJson @("doc", "get", [string]$agnesOverview.id, "--project", $ProjectId)
+    $updatePayload = $existing.data
+    if (-not $updatePayload) {
+        $updatePayload = $existing
+    }
+    $updatePayload.content = $overviewMd
+    $docFile = Join-Path $tempDir "agnes-overview.doc.json"
+    Write-Utf8Json $updatePayload $docFile
+    & apifox cli-schema validate doc-update --file $docFile | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Agnes overview doc failed validation" }
+    & apifox doc update $agnesOverview.id --project $ProjectId --file $docFile
+    if ($LASTEXITCODE -ne 0) { throw "failed to update Agnes overview doc" }
 }
 
 $publicDocsUrl = ""

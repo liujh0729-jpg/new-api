@@ -912,18 +912,23 @@ func (t *TaskSubmitReq) UnmarshalMetadata(v any) error {
 }
 
 type TaskInfo struct {
-	Code             int     `json:"code"`
-	TaskID           string  `json:"task_id"`
-	Status           string  `json:"status"`
-	Reason           string  `json:"reason,omitempty"`
-	Url              string  `json:"url,omitempty"`
-	RemoteUrl        string  `json:"remote_url,omitempty"`
-	Progress         string  `json:"progress,omitempty"`
-	CompletionTokens int     `json:"completion_tokens,omitempty"` // 用于按倍率计费
-	TotalTokens      int     `json:"total_tokens,omitempty"`      // 用于按倍率计费
-	Duration         float64 `json:"duration,omitempty"`          // 实际生成时长（秒）
-	OutputFormat     string  `json:"output_format,omitempty"`     // 实际输出容器
-	Resolution       string  `json:"resolution,omitempty"`        // 实际输出分辨率
+	Code             int    `json:"code"`
+	TaskID           string `json:"task_id"`
+	Status           string `json:"status"`
+	Reason           string `json:"reason,omitempty"`
+	Url              string `json:"url,omitempty"`
+	RemoteUrl        string `json:"remote_url,omitempty"`
+	Progress         string `json:"progress,omitempty"`
+	CompletionTokens int    `json:"completion_tokens,omitempty"` // 用于按倍率计费
+	TotalTokens      int    `json:"total_tokens,omitempty"`      // 用于按倍率计费
+	// EquivalentUsage* is observability-only usage returned by async media
+	// providers. It may be written to usage logs, but must never participate in
+	// task quota settlement.
+	EquivalentUsageCompletionTokens int64   `json:"-"`
+	EquivalentUsageTotalTokens      int64   `json:"-"`
+	Duration                        float64 `json:"duration,omitempty"`      // 实际生成时长（秒）
+	OutputFormat                    string  `json:"output_format,omitempty"` // 实际输出容器
+	Resolution                      string  `json:"resolution,omitempty"`    // 实际输出分辨率
 }
 
 func FailTaskInfo(reason string) *TaskInfo {

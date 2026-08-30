@@ -40,6 +40,9 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo) {
 	other := make(map[string]interface{})
 	other["is_task"] = true
 	other["request_path"] = c.Request.URL.Path
+	if taskID := strings.TrimSpace(info.PublicTaskID); taskID != "" {
+		other["task_id"] = taskID
+	}
 	other["model_price"] = info.PriceData.ModelPrice
 	if info.PriceData.ModelRatio > 0 {
 		other["model_ratio"] = info.PriceData.ModelRatio
@@ -78,6 +81,47 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo) {
 	})
 	model.UpdateUserUsedQuotaAndRequestCount(info.UserId, info.PriceData.Quota)
 	model.UpdateChannelUsedQuota(info.ChannelId, info.PriceData.Quota)
+}
+
+// SyncTaskEquivalentUsageLog persists provider-reported equivalent Usage for
+// display and aggregate statistics without feeding it into token-based task
+// settlement. It is safe to call from both background and realtime polling.
+func SyncTaskEquivalentUsageLog(ctx context.Context, task *model.Task, taskResult *relaycommon.TaskInfo) {
+	if task == nil || taskResult == nil || taskResult.Status != string(model.TaskStatusSuccess) {
+		return
+	}
+	completion := taskResult.EquivalentUsageCompletionTokens
+	total := taskResult.EquivalentUsageTotalTokens
+	if completion <= 0 || total <= 0 || completion > total {
+		return
+	}
+	maxInt := int64(^uint(0) >> 1)
+	if completion > maxInt || total > maxInt {
+		logger.LogWarn(ctx, fmt.Sprintf("skip task equivalent usage log overflow task=%s completion=%d total=%d", task.TaskID, completion, total))
+		return
+	}
+
+	requestID := strings.TrimSpace(task.PrivateData.LogRequestID)
+	if requestID == "" && task.PrivateData.AIPDDFinance != nil {
+		requestID = strings.TrimSpace(task.PrivateData.AIPDDFinance.PlatformOrderID)
+	}
+	if requestID == "" {
+		return
+	}
+
+	updated, err := model.UpdateConsumeLogTokensByRequestID(
+		requestID,
+		task.UserId,
+		int(total-completion),
+		int(completion),
+	)
+	if err != nil {
+		logger.LogWarn(ctx, fmt.Sprintf("sync task equivalent usage log failed task=%s request_id=%s: %s", task.TaskID, requestID, err.Error()))
+		return
+	}
+	if !updated {
+		logger.LogWarn(ctx, fmt.Sprintf("task equivalent usage log not found task=%s request_id=%s", task.TaskID, requestID))
+	}
 }
 
 // ---------------------------------------------------------------------------

@@ -87,7 +87,7 @@ active -> revoked（历史记录带有效期时也可能 expired）
 }
 ```
 
-全部 `/v1` 接口使用 `Authorization: Bearer <用户 API Key>`。会话和角色归属于 API Key 对应的用户；H5 地址可以交给被核验人打开，但不得把 API Key 一并暴露。API Key 调用方仍必须让本人完成 H5，不能纯后台绕过真人核验。完整 curl 示例见 [AIPDD 用户指南 4.13.5](aipdd-user-guide.zh_CN.md#4135-角色图片-asset-与角色库引用)。
+全部 `/v1` 接口使用 `Authorization: Bearer <用户 API Key>`。会话和角色归属于 API Key 对应的用户；H5 地址可以交给被核验人打开，但不得把 API Key 一并暴露。API Key 调用方仍必须让本人完成 H5，不能纯后台绕过真人核验。公开调用方式见 [Apifox 公开接口文档](https://s.apifox.cn/fea0b520-e6d9-489c-ae5e-109391c771dd/9376375m0)。
 
 控制台角色库拆分为“公共角色 / 我的虚拟形象 / 我的真人 / 任务历史”。“我的真人”采用明确的两步界面：第 1 步完成 H5 身份核验，第 2 步上传肖像资产。关闭第 2 步窗口后，角色卡片显示“等待上传肖像”，不会误显示成火山处理中，并可随时继续。管理员设置包含独立真人额度、Premium 提示以及火山 Assets AK/SK、区域和 Project；不再显示视频通道绑定项。生成弹窗会从当前用户可用模型中筛选名称包含 `seedance`（不区分大小写）的模型。
 

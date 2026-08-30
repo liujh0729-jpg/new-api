@@ -845,6 +845,11 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 			}
 			info.Status, info.Progress, info.Url = model.TaskStatusSuccess, taskcommon.ProgressComplete,
 				firstNonEmpty(official.Content.VideoURL, official.ContentURL)
+			if official.Usage != nil && official.Usage.CompletionTokens > 0 &&
+				official.Usage.TotalTokens >= official.Usage.CompletionTokens {
+				info.EquivalentUsageCompletionTokens = official.Usage.CompletionTokens
+				info.EquivalentUsageTotalTokens = official.Usage.TotalTokens
+			}
 		case "failed", "cancelled", "canceled":
 			rawMessage, rawCode := seedanceOfficialErrorDetails(official)
 			publicError := relaycommon.NormalizeUpstreamTaskError(

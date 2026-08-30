@@ -130,7 +130,7 @@
 | `CRYPTO_SECRET` | Redis ou déploiement multi-instance | Secret de chiffrement fixe pour déchiffrer les données partagées entre cache et instances. |
 | `REDIS_CONN_STRING` | Multi-instance, cache partagé ou interrogation des tâches | Chaine de connexion Redis ; une instance unique peut commencer avec le cache mémoire. |
 
-Pour les paramètres de requête des modèles AIPDD, consultez le [guide utilisateur AIPDD](./docs/aipdd-user-guide.zh_CN.md). Champs requis courants : `aipdd-wan2.2-wanx` nécessite `image` et `prompt`; `aipdd-mimic-motion` nécessite `motion_video` et `appearance_image`; `aipdd-indextts` nécessite `input` et `metadata.audio`.
+Pour les paramètres et exemples de requête des modèles AIPDD, consultez la [documentation API publique Apifox](https://s.apifox.cn/fea0b520-e6d9-489c-ae5e-109391c771dd/9376375m0).
 
 
 ### Utilisation de Docker Compose (recommandé)
