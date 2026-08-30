@@ -181,7 +181,7 @@ export interface VideoGenerationContentItem {
 export interface VideoGenerationRequest {
   model: string
   group?: string
-  prompt: string
+  prompt?: string
   client_task_id?: string
   image?: string
   images?: string[]
@@ -191,6 +191,7 @@ export interface VideoGenerationRequest {
   timeline_data?: unknown
   duration?: number
   seconds?: string
+  duration_seconds?: number
   size?: string
   width?: number
   height?: number
@@ -199,6 +200,9 @@ export interface VideoGenerationRequest {
   content?: VideoGenerationContentItem[]
   ratio?: string
   resolution?: string
+  video_resolution?: string
+  image_urls?: string[]
+  audio_urls?: string[]
   generate_audio?: boolean
   seed?: number
   service_tier?: string

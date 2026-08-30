@@ -129,6 +129,11 @@ function normalizeConversation(
     config.model || '',
     config.video_resolution
   )
+  config.video_duration = normalizeVideoDurationForModel(
+    config.model || '',
+    config.video_duration,
+    config.video_resolution
+  )
   config.video_size = normalizeLTXVideoSizeForModel(
     config.model || '',
     config.video_size
@@ -235,15 +240,16 @@ export function loadConfig(): Partial<PlaygroundConfig> {
         )
         return migrated
       }
-      if (typeof config.video_duration === 'number') {
-        config.video_duration = normalizeVideoDurationForModel(
-          config.model || '',
-          config.video_duration
-        )
-      }
       if (typeof config.video_resolution === 'string') {
         config.video_resolution = normalizeVideoResolutionForModel(
           config.model || '',
+          config.video_resolution
+        )
+      }
+      if (typeof config.video_duration === 'number') {
+        config.video_duration = normalizeVideoDurationForModel(
+          config.model || '',
+          config.video_duration,
           config.video_resolution
         )
       }

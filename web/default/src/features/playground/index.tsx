@@ -57,6 +57,11 @@ import {
   resolveLTXStartEndTimeline,
   validateLTXStartEndImageCount,
 } from './lib/ltx-start-end'
+import {
+  isMinimaxH3Model,
+  isPublicHttpReferenceUrl,
+  validateMinimaxH3VideoInput,
+} from './lib/minimax-h3'
 import type {
   Message as MessageType,
   SeedanceReference,
@@ -159,12 +164,19 @@ export function Playground() {
 
     const normalizedDuration = normalizeVideoDurationForModel(
       config.model,
-      config.video_duration
+      config.video_duration,
+      config.video_resolution
     )
     if (normalizedDuration !== config.video_duration) {
       updateConfig('video_duration', normalizedDuration)
     }
-  }, [config.mode, config.model, config.video_duration, updateConfig])
+  }, [
+    config.mode,
+    config.model,
+    config.video_duration,
+    config.video_resolution,
+    updateConfig,
+  ])
 
   useEffect(() => {
     if (config.mode !== 'video') return
@@ -269,19 +281,21 @@ export function Playground() {
         config.model,
         config.ltx_timeline_data,
         config.video_duration,
+        config.video_resolution,
+        config.video_ratio,
         t
       )
       if (validationError) {
         toast.error(validationError)
         throw new Error(validationError)
       }
-      const durationValidationError = await validateSeedanceReferenceDurations(
-        referenceCandidates,
-        t
-      )
-      if (durationValidationError) {
-        toast.error(durationValidationError)
-        throw new Error(durationValidationError)
+      if (!isMinimaxH3Model(config.model)) {
+        const durationValidationError =
+          await validateSeedanceReferenceDurations(referenceCandidates, t)
+        if (durationValidationError) {
+          toast.error(durationValidationError)
+          throw new Error(durationValidationError)
+        }
       }
       if (referenceCandidates.some((reference) => reference.kind === 'video')) {
         toast.warning(
@@ -291,14 +305,34 @@ export function Playground() {
 
       const hasReferencesRequiringUpload = referenceCandidates.some(
         (reference) =>
-          reference.sourceFile && !hasUsableReferenceUrl(reference.url)
+          reference.sourceFile &&
+          (isMinimaxH3Model(config.model)
+            ? !isPublicHttpReferenceUrl(reference.url)
+            : !hasUsableReferenceUrl(reference.url))
       )
       if (hasReferencesRequiringUpload) {
         setIsUploadingReferences(true)
       }
       try {
-        const resolvedReferences =
-          await resolveSeedanceReferenceURLs(referenceCandidates)
+        const resolvedReferences = await resolveSeedanceReferenceURLs(
+          referenceCandidates,
+          isMinimaxH3Model(config.model)
+        )
+        const resolvedValidationError = validateVideoInput(
+          text,
+          resolvedReferences.requestReferences,
+          resolvedReferences.requestReferences.length,
+          config.model,
+          config.ltx_timeline_data,
+          config.video_duration,
+          config.video_resolution,
+          config.video_ratio,
+          t,
+          true
+        )
+        if (resolvedValidationError) {
+          throw new Error(resolvedValidationError)
+        }
         messageReferences = resolvedReferences.displayReferences
         videoReferences = resolvedReferences.requestReferences
       } catch (error) {
@@ -538,11 +572,23 @@ function buildSeedanceReferenceCandidates(
 }
 
 async function resolveSeedanceReferenceURLs(
-  references: SeedanceReferenceCandidate[]
+  references: SeedanceReferenceCandidate[],
+  requirePublicUrls = false
 ): Promise<ResolvedSeedanceReferences> {
   const resolvedReferences = await Promise.all(
     references.map(async ({ sourceFile, ...reference }) => {
       if (!sourceFile) {
+        if (requirePublicUrls) {
+          if (!isPublicHttpReferenceUrl(reference.url)) {
+            throw new Error(
+              'MiniMax H3 reference media must use a public HTTP(S) URL'
+            )
+          }
+          return {
+            displayReference: reference,
+            requestReference: reference,
+          }
+        }
         const requestUrl = hasUsableReferenceUrl(reference.url)
           ? reference.url
           : await fetchReferenceURLAsDataURL(reference.url)
@@ -552,7 +598,11 @@ async function resolveSeedanceReferenceURLs(
         }
       }
 
-      if (hasUsableReferenceUrl(reference.url)) {
+      if (
+        requirePublicUrls
+          ? isPublicHttpReferenceUrl(reference.url)
+          : hasUsableReferenceUrl(reference.url)
+      ) {
         return {
           displayReference: reference,
           requestReference: reference,
@@ -567,9 +617,18 @@ async function resolveSeedanceReferenceURLs(
           filename: uploaded.filename || reference.filename,
           media_type: uploaded.media_type || reference.media_type,
         }
-        const requestUrl = isProbablyPublicReferenceUrl(uploaded.url)
-          ? uploaded.url
-          : await resolveInlineReferenceURL(reference.url, sourceFile)
+        let requestUrl = uploaded.url
+        if (!isProbablyPublicReferenceUrl(uploaded.url)) {
+          if (requirePublicUrls) {
+            throw new Error(
+              'MiniMax H3 reference media must use a public HTTP(S) URL'
+            )
+          }
+          requestUrl = await resolveInlineReferenceURL(
+            reference.url,
+            sourceFile
+          )
+        }
         return {
           displayReference,
           requestReference: {
@@ -579,6 +638,7 @@ async function resolveSeedanceReferenceURLs(
         }
       } catch (error) {
         if (
+          !requirePublicUrls &&
           shouldInlineLocalReference(error) &&
           isDataReferenceUrl(reference.url)
         ) {
@@ -593,11 +653,17 @@ async function resolveSeedanceReferenceURLs(
   )
 
   if (
-    resolvedReferences.some(
-      (reference) => !isValidReferenceUrl(reference.requestReference.url)
+    resolvedReferences.some((reference) =>
+      requirePublicUrls
+        ? !isPublicHttpReferenceUrl(reference.requestReference.url)
+        : !isValidReferenceUrl(reference.requestReference.url)
     )
   ) {
-    throw new Error(ERROR_MESSAGES.VIDEO_REFERENCE_UPLOAD_REQUIRED)
+    throw new Error(
+      requirePublicUrls
+        ? 'MiniMax H3 reference media must use a public HTTP(S) URL'
+        : ERROR_MESSAGES.VIDEO_REFERENCE_UPLOAD_REQUIRED
+    )
   }
 
   return {
@@ -689,43 +755,7 @@ function hasUsableReferenceUrl(url: string): boolean {
 }
 
 function isProbablyPublicReferenceUrl(url: string): boolean {
-  const value = url.trim()
-  if (!isWebUrl(value)) return false
-
-  try {
-    const parsed = new URL(value)
-    const hostname = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '')
-    if (
-      hostname === 'localhost' ||
-      hostname === '0.0.0.0' ||
-      hostname === '::1' ||
-      hostname === '::' ||
-      hostname.endsWith('.local') ||
-      hostname.startsWith('127.') ||
-      hostname.startsWith('10.') ||
-      hostname.startsWith('192.168.') ||
-      hostname.startsWith('169.254.') ||
-      hostname.startsWith('fc') ||
-      hostname.startsWith('fd') ||
-      hostname.startsWith('fe80:')
-    ) {
-      return false
-    }
-
-    const parts = hostname.split('.').map((part) => Number(part))
-    if (
-      parts.length === 4 &&
-      parts.every((part) => Number.isInteger(part) && part >= 0 && part <= 255)
-    ) {
-      if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) {
-        return false
-      }
-    }
-
-    return true
-  } catch {
-    return false
-  }
+  return isPublicHttpReferenceUrl(url)
 }
 
 function getSeedanceReferenceKind(
@@ -761,7 +791,10 @@ function validateVideoInput(
   model: string,
   ltxTimelineData: string,
   videoDuration: number,
-  t: (key: string, options?: Record<string, unknown>) => string
+  videoResolution: string,
+  videoRatio: string,
+  t: (key: string, options?: Record<string, unknown>) => string,
+  requirePublicUrls = false
 ): string | null {
   if (rawFileCount !== references.length) {
     return t('Only image, video, and audio references are supported')
@@ -770,6 +803,19 @@ function validateVideoInput(
   const imageCount = references.filter((item) => item.kind === 'image').length
   const videoCount = references.filter((item) => item.kind === 'video').length
   const audioCount = references.filter((item) => item.kind === 'audio').length
+
+  if (isMinimaxH3Model(model)) {
+    const issue = validateMinimaxH3VideoInput({
+      model,
+      prompt: text,
+      references,
+      duration: videoDuration,
+      resolution: videoResolution,
+      ratio: videoRatio,
+      requirePublicUrls,
+    })
+    return issue ? t(issue.key, issue.options) : null
+  }
 
   if (isLTX23StartEndModel(model)) {
     if (videoCount > 0) {

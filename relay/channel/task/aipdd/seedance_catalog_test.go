@@ -94,15 +94,15 @@ func TestTokenMarketVideoCatalogPreservesH3RequestAndPricingFacts(t *testing.T) 
 	constant.SetAIPDDCapabilities([]constant.AIPDDCapability{capability})
 	t.Cleanup(constant.ResetAIPDDCapabilities)
 
-	body := `{"model":"ap-minimax-h3-text-to-video","prompt":"hello","duration_seconds":6.5,"video_resolution":"768p","aspect_ratio":"16:9"}`
+	body := `{"model":"ap-minimax-h3-text-to-video","prompt":"hello","duration_seconds":6,"video_resolution":"768p","ratio":"16:9"}`
 	ctx, info, adaptor := seedanceRequestContextForModel(t, modelName, body)
 	require.Nil(t, adaptor.ValidateRequestAndSetAction(ctx, info))
 
 	facts, taskErr := adaptor.EstimateTaskPricingFacts(ctx, info)
 	require.Nil(t, taskErr)
 	require.Equal(t, "768p", facts.Resolution)
-	require.InDelta(t, 6.5, facts.Quantity, 0.0000001)
-	require.Equal(t, map[string]float64{"seconds": 6.5}, adaptor.EstimateBilling(ctx, info))
+	require.InDelta(t, 6, facts.Quantity, 0.0000001)
+	require.Equal(t, map[string]float64{"seconds": 6}, adaptor.EstimateBilling(ctx, info))
 
 	requestBody, err := adaptor.BuildRequestBody(ctx, info)
 	require.NoError(t, err)
@@ -111,8 +111,8 @@ func TestTokenMarketVideoCatalogPreservesH3RequestAndPricingFacts(t *testing.T) 
 	var payload map[string]any
 	require.NoError(t, common.Unmarshal(data, &payload))
 	require.Equal(t, "768p", payload["video_resolution"])
-	require.Equal(t, 6.5, payload["duration_seconds"])
-	require.Equal(t, "16:9", payload["aspect_ratio"])
+	require.Equal(t, float64(6), payload["duration_seconds"])
+	require.Equal(t, "16:9", payload["ratio"])
 }
 
 func TestTokenMarketVideoFetchAndContentURLResult(t *testing.T) {

@@ -36,6 +36,10 @@ import type {
 } from '../types'
 import { LTX_23_FRAME_RATE, resolveLTXStartEndTimeline } from './ltx-start-end'
 import { formatMessageForAPI, isValidMessage } from './message-utils'
+import {
+  getMinimaxH3ModelSpec,
+  validateMinimaxH3VideoInput,
+} from './minimax-h3'
 
 function isWebUrl(url: string): boolean {
   return /^https?:\/\//i.test(url.trim())
@@ -53,6 +57,69 @@ function getOpenAIVideoSize(ratio: string): string | undefined {
   if (ratio === '16:9') return '1280x720'
   if (ratio === '9:16') return '720x1280'
   return undefined
+}
+
+function buildMinimaxH3VideoGenerationPayload(
+  prompt: string,
+  references: SeedanceReference[],
+  config: PlaygroundConfig,
+  clientTaskId?: string
+): VideoGenerationRequest | undefined {
+  const spec = getMinimaxH3ModelSpec(config.model)
+  if (!spec) return undefined
+
+  const validationIssue = validateMinimaxH3VideoInput({
+    model: config.model,
+    prompt,
+    references,
+    duration: config.video_duration,
+    resolution: config.video_resolution,
+    ratio: config.video_ratio,
+    requirePublicUrls: true,
+  })
+  if (validationIssue) {
+    throw new Error(validationIssue.key)
+  }
+
+  const imageReferences = references.filter(
+    (reference) => reference.kind === 'image'
+  )
+  const audioReferences = references.filter(
+    (reference) => reference.kind === 'audio'
+  )
+  const payload: VideoGenerationRequest = {
+    model: config.model,
+    group: config.group,
+    ...(clientTaskId ? { client_task_id: clientTaskId } : {}),
+    ...(spec.prompt === 'required' ? { prompt } : {}),
+    duration_seconds: config.video_duration,
+    video_resolution: config.video_resolution,
+    ratio: config.video_ratio,
+  }
+
+  if (
+    spec.kind === 'reference-to-video' ||
+    spec.kind === 'multimodal-to-video' ||
+    spec.kind === 'image-audio-lipsync'
+  ) {
+    payload.image_urls = imageReferences.map((reference) => reference.url)
+  }
+  if (
+    spec.kind === 'multimodal-to-video' ||
+    spec.kind === 'image-audio-lipsync'
+  ) {
+    payload.audio_urls = audioReferences.map((reference) => reference.url)
+  }
+  if (spec.kind === 'first-last-frame-to-video') {
+    payload.first_frame = imageReferences.find(
+      (reference) => reference.role === 'first_frame'
+    )?.url
+    payload.last_frame = imageReferences.find(
+      (reference) => reference.role === 'last_frame'
+    )?.url
+  }
+
+  return payload
 }
 
 /**
@@ -142,6 +209,14 @@ export function buildVideoGenerationPayload(
   config: PlaygroundConfig,
   clientTaskId?: string
 ): VideoGenerationRequest {
+  const minimaxH3Payload = buildMinimaxH3VideoGenerationPayload(
+    prompt,
+    references,
+    config,
+    clientTaskId
+  )
+  if (minimaxH3Payload) return minimaxH3Payload
+
   if (references.some((reference) => !isValidReferenceUrl(reference.url))) {
     throw new Error(ERROR_MESSAGES.VIDEO_REFERENCE_UPLOAD_REQUIRED)
   }

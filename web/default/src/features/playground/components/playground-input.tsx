@@ -83,6 +83,8 @@ import {
   assignLTXStartEndAttachmentRoles,
   getLTXStartEndAttachmentState,
 } from '../lib/ltx-start-end-attachments'
+import { getMinimaxH3ModelSpec } from '../lib/minimax-h3'
+import { getMinimaxH3PromptInputIssue } from '../lib/minimax-h3-input'
 import type {
   ModelOption,
   GroupOption,
@@ -91,6 +93,11 @@ import type {
 } from '../types'
 import { LTXStartEndPanel } from './ltx-start-end-panel'
 import { MaterialSelectorDialog } from './material-selector-dialog'
+import { MinimaxH3FirstLastFramePanel } from './minimax-h3-first-last-frame-panel'
+import {
+  MinimaxH3AttachmentPolicy,
+  MinimaxH3ValidationMessage,
+} from './minimax-h3-input-support'
 
 interface PlaygroundInputProps {
   onSubmit: (message: PromptInputMessage) => void | Promise<void>
@@ -141,6 +148,9 @@ function PlaygroundSubmitButton({
   isLTXStartEnd,
   timelineData,
   videoDuration,
+  videoResolution,
+  videoRatio,
+  model,
   text,
 }: {
   disabled?: boolean
@@ -149,6 +159,9 @@ function PlaygroundSubmitButton({
   isLTXStartEnd: boolean
   timelineData: string
   videoDuration: number
+  videoResolution: string
+  videoRatio: string
+  model: string
   text: string
 }) {
   const { t } = useTranslation()
@@ -161,11 +174,28 @@ function PlaygroundSubmitButton({
     videoDuration,
     timelineData
   )
-  const canSubmit = isLTXStartEnd
-    ? hasText && ltxAttachmentState.isValid && !timelineResolution.error
-    : isVideoMode || isImageMode
-      ? hasText || hasReferences
-      : hasText
+  const minimaxH3Spec = isVideoMode ? getMinimaxH3ModelSpec(model) : undefined
+  const minimaxH3Issue = minimaxH3Spec
+    ? getMinimaxH3PromptInputIssue(
+        {
+          model,
+          prompt: text,
+          duration: videoDuration,
+          resolution: videoResolution,
+          ratio: videoRatio,
+        },
+        attachments.files
+      )
+    : null
+  let canSubmit = hasText
+  if (minimaxH3Spec) {
+    canSubmit = !minimaxH3Issue
+  } else if (isLTXStartEnd) {
+    canSubmit =
+      hasText && ltxAttachmentState.isValid && !timelineResolution.error
+  } else if (isVideoMode || isImageMode) {
+    canSubmit = hasText || hasReferences
+  }
 
   return (
     <PromptInputButton
@@ -265,9 +295,19 @@ export function PlaygroundInput({
   const isLTXVideo = isVideoMode && isLTXVideoModel(modelValue)
   const isLTX23StartEnd = isVideoMode && isLTX23StartEndModel(modelValue)
   const isLTX23Policy = isVideoMode && isLTX23PolicyModel(modelValue)
+  const minimaxH3Spec = isVideoMode
+    ? getMinimaxH3ModelSpec(modelValue)
+    : undefined
+  const isMinimaxH3FirstLast =
+    minimaxH3Spec?.kind === 'first-last-frame-to-video'
+  const isMinimaxH3TextToVideo = minimaxH3Spec?.kind === 'text-to-video'
+  const isMinimaxH3Lipsync = minimaxH3Spec?.kind === 'image-audio-lipsync'
   const controlsDisabled = disabled || isPreparingReferences
   const imageSizeOptions = getImageSizeOptionsForModel(modelValue)
-  const videoDurationRange = getVideoDurationRangeForModel(modelValue)
+  const videoDurationRange = getVideoDurationRangeForModel(
+    modelValue,
+    videoResolution
+  )
   const videoSizeOptions = getLTXVideoSizeOptionsForModel(modelValue)
   const effectiveVideoResolutions = models.find(
     (model) => model.value === modelValue
@@ -279,7 +319,8 @@ export function PlaygroundInput({
   const usesVideoSizeOptions = videoSizeOptions.length > 0
   const normalizedVideoDuration = normalizeVideoDurationForModel(
     modelValue,
-    videoDuration
+    videoDuration,
+    videoResolution
   )
   const ModeIcon = isVideoMode
     ? VideoIcon
@@ -292,6 +333,73 @@ export function PlaygroundInput({
   const isGroupSelectDisabled = controlsDisabled || groups.length === 0
   const isSubmitDisabled =
     controlsDisabled || isGenerating || isModelLoading || !modelValue
+
+  let videoReferenceAccept: string = SEEDANCE_REFERENCE_ACCEPT
+  let videoReferenceMaxFiles: number = SEEDANCE_REFERENCE_LIMITS.total
+  let videoReferenceMultiple = true
+  if (isLTXVideo) {
+    videoReferenceAccept = IMAGE_REFERENCE_ACCEPT
+    videoReferenceMaxFiles = 1
+    videoReferenceMultiple = false
+  } else if (minimaxH3Spec) {
+    if (minimaxH3Spec.kind === 'text-to-video') {
+      videoReferenceAccept = 'application/x-no-minimax-h3-reference'
+    } else if (
+      minimaxH3Spec.kind === 'multimodal-to-video' ||
+      minimaxH3Spec.kind === 'image-audio-lipsync'
+    ) {
+      videoReferenceAccept = 'image/*,audio/*'
+    } else {
+      videoReferenceAccept = IMAGE_REFERENCE_ACCEPT
+    }
+    videoReferenceMaxFiles =
+      minimaxH3Spec.imageRange[1] + minimaxH3Spec.audioRange[1]
+    videoReferenceMultiple = videoReferenceMaxFiles > 1
+  }
+
+  const showGenericReferenceAttachments =
+    (isVideoMode || isImageMode) &&
+    !isLTX23StartEnd &&
+    !isMinimaxH3FirstLast &&
+    !isMinimaxH3TextToVideo
+  const showDirectAttachmentButton =
+    (isVideoMode || isImageMode) &&
+    !isLTX23StartEnd &&
+    !isMinimaxH3FirstLast &&
+    !isMinimaxH3TextToVideo
+  const showMaterialButton =
+    isImageMode ||
+    (isVideoMode &&
+      !isLTX23StartEnd &&
+      !isMinimaxH3FirstLast &&
+      !isMinimaxH3TextToVideo)
+  const minimaxH3MaterialTypes =
+    minimaxH3Spec?.kind === 'multimodal-to-video' ||
+    minimaxH3Spec?.kind === 'image-audio-lipsync'
+      ? (['image', 'audio'] as Array<'image' | 'audio'>)
+      : undefined
+  const minimaxH3FixedMaterialType =
+    minimaxH3Spec?.kind === 'reference-to-video' ? 'image' : undefined
+
+  let promptPlaceholder = t('Ask anything')
+  if (isImageMode) {
+    promptPlaceholder = t('Describe the image to generate')
+  } else if (isVideoMode) {
+    promptPlaceholder = t('Upload references or describe the video')
+    if (isMinimaxH3Lipsync) {
+      promptPlaceholder = t('This MiniMax H3 model does not use a prompt')
+    } else if (isLTX23StartEnd) {
+      promptPlaceholder = t('Describe how the first frame should move')
+    } else if (isLTXVideo) {
+      promptPlaceholder = t('Upload a reference image or describe the video')
+    } else if (isMinimaxH3FirstLast) {
+      promptPlaceholder = t(
+        'Describe the transition from the first frame to the last frame'
+      )
+    } else if (isMinimaxH3TextToVideo) {
+      promptPlaceholder = t('Describe the video to generate')
+    }
+  }
 
   const prepareReferenceFiles = useCallback(
     async (files: File[]): Promise<PromptInputPreparedFile[]> => {
@@ -343,8 +451,27 @@ export function PlaygroundInput({
     setIsMaterialSelectorOpen(true)
   }
 
+  const handleModelChange = (value: string) => {
+    if (getMinimaxH3ModelSpec(value)?.kind === 'image-audio-lipsync') {
+      setText('')
+    }
+    onModelChange(value)
+  }
+
   const handleVideoDurationChange = (value: number) => {
-    onVideoDurationChange(normalizeVideoDurationForModel(modelValue, value))
+    onVideoDurationChange(
+      normalizeVideoDurationForModel(modelValue, value, videoResolution)
+    )
+  }
+
+  const handleVideoResolutionChange = (value: string) => {
+    onVideoResolutionChange(value)
+    const nextDuration = normalizeVideoDurationForModel(
+      modelValue,
+      videoDuration,
+      value
+    )
+    if (nextDuration !== videoDuration) onVideoDurationChange(nextDuration)
   }
 
   return (
@@ -352,9 +479,7 @@ export function PlaygroundInput({
       <PromptInput
         accept={
           isVideoMode
-            ? isLTXVideo
-              ? IMAGE_REFERENCE_ACCEPT
-              : SEEDANCE_REFERENCE_ACCEPT
+            ? videoReferenceAccept
             : isImageMode
               ? IMAGE_REFERENCE_ACCEPT
               : undefined
@@ -369,14 +494,12 @@ export function PlaygroundInput({
         }
         maxFiles={
           isVideoMode
-            ? isLTXVideo
-              ? 1
-              : SEEDANCE_REFERENCE_LIMITS.total
+            ? videoReferenceMaxFiles
             : isImageMode
               ? IMAGE_REFERENCE_LIMITS.maxFiles
               : undefined
         }
-        multiple={(isVideoMode && !isLTXVideo) || isImageMode}
+        multiple={(isVideoMode && videoReferenceMultiple) || isImageMode}
         onError={(error) => toast.error(error.message)}
         onFilesPreparingChange={setIsPreparingReferences}
         prepareFiles={
@@ -384,9 +507,9 @@ export function PlaygroundInput({
         }
         onSubmit={handleSubmit}
       >
-        {(isVideoMode || isImageMode) && !isLTX23StartEnd && (
-          <ReferenceAttachments />
-        )}
+        <MinimaxH3AttachmentPolicy model={isVideoMode ? modelValue : ''} />
+
+        {showGenericReferenceAttachments && <ReferenceAttachments />}
 
         {isLTX23StartEnd && (
           <LTXStartEndPanel
@@ -401,27 +524,36 @@ export function PlaygroundInput({
           />
         )}
 
+        {isMinimaxH3FirstLast && (
+          <MinimaxH3FirstLastFramePanel
+            disabled={controlsDisabled}
+            maxFileSize={SEEDANCE_REFERENCE_LIMITS.maxFileSize}
+            onPreparingChange={setIsPreparingReferences}
+            prepareFiles={prepareReferenceFiles}
+          />
+        )}
+
         <PromptInputTextarea
           autoComplete='off'
           autoCorrect='off'
           autoCapitalize='off'
           spellCheck={false}
           className='px-5 md:text-base'
-          disabled={controlsDisabled}
+          disabled={controlsDisabled || isMinimaxH3Lipsync}
           onChange={(event) => setText(event.target.value)}
-          placeholder={
-            isVideoMode
-              ? isLTXVideo
-                ? isLTX23StartEnd
-                  ? t('Describe how the first frame should move')
-                  : t('Upload a reference image or describe the video')
-                : t('Upload references or describe the video')
-              : isImageMode
-                ? t('Describe the image to generate')
-                : t('Ask anything')
-          }
+          placeholder={promptPlaceholder}
           value={text}
         />
+
+        {minimaxH3Spec && (
+          <MinimaxH3ValidationMessage
+            duration={normalizedVideoDuration}
+            model={modelValue}
+            prompt={text}
+            ratio={videoRatio}
+            resolution={videoResolution}
+          />
+        )}
 
         <PromptInputFooter className='p-2.5'>
           <PromptInputTools>
@@ -469,7 +601,7 @@ export function PlaygroundInput({
               </DropdownMenuContent>
             </DropdownMenu>
 
-            {(isVideoMode || isImageMode) && !isLTX23StartEnd ? (
+            {showDirectAttachmentButton ? (
               <DirectAttachmentButton disabled={controlsDisabled} />
             ) : !isVideoMode && !isImageMode ? (
               <DropdownMenu>
@@ -733,7 +865,7 @@ export function PlaygroundInput({
                           </DropdownMenuLabel>
                           <DropdownMenuRadioGroup
                             value={videoResolution}
-                            onValueChange={onVideoResolutionChange}
+                            onValueChange={handleVideoResolutionChange}
                           >
                             {videoResolutionOptions.map((resolution) => (
                               <DropdownMenuRadioItem
@@ -799,7 +931,7 @@ export function PlaygroundInput({
               </>
             )}
 
-            {(isImageMode || (isVideoMode && !isLTX23StartEnd)) && (
+            {showMaterialButton && (
               <PromptInputButton
                 className='border font-medium'
                 disabled={controlsDisabled}
@@ -819,7 +951,7 @@ export function PlaygroundInput({
             <ModelGroupSelector
               selectedModel={modelValue}
               models={models}
-              onModelChange={onModelChange}
+              onModelChange={handleModelChange}
               selectedGroup={groupValue}
               groups={groups}
               onGroupChange={onGroupChange}
@@ -842,21 +974,29 @@ export function PlaygroundInput({
                 isVideoMode={isVideoMode}
                 isImageMode={isImageMode}
                 isLTXStartEnd={isLTX23StartEnd}
+                model={modelValue}
                 timelineData={ltxTimelineData}
                 videoDuration={normalizedVideoDuration}
+                videoRatio={videoRatio}
+                videoResolution={videoResolution}
                 text={text}
               />
             )}
           </div>
         </PromptInputFooter>
 
-        {mode !== 'chat' && !isLTX23StartEnd && (
-          <MaterialSelectorDialog
-            open={isMaterialSelectorOpen}
-            onOpenChange={setIsMaterialSelectorOpen}
-            mode={mode as 'image' | 'video'}
-          />
-        )}
+        {mode !== 'chat' &&
+          !isLTX23StartEnd &&
+          !isMinimaxH3FirstLast &&
+          !isMinimaxH3TextToVideo && (
+            <MaterialSelectorDialog
+              allowedTypes={minimaxH3MaterialTypes}
+              fixedType={minimaxH3FixedMaterialType}
+              open={isMaterialSelectorOpen}
+              onOpenChange={setIsMaterialSelectorOpen}
+              mode={mode as 'image' | 'video'}
+            />
+          )}
       </PromptInput>
     </div>
   )

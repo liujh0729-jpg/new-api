@@ -16,6 +16,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import {
+  getMinimaxH3DurationRange,
+  getMinimaxH3ModelSpec,
+} from './lib/minimax-h3'
 import type { PlaygroundConfig, ParameterEnabled } from './types'
 
 // Message constants
@@ -387,6 +391,8 @@ export function getImageSizeOptionsForModel(model: string): readonly string[] {
 }
 
 export function getVideoRatioOptionsForModel(model: string): readonly string[] {
+  const minimaxH3Spec = getMinimaxH3ModelSpec(model)
+  if (minimaxH3Spec) return minimaxH3Spec.ratios
   if (isSeedanceModel(model)) return SEEDANCE_VIDEO_RATIO_OPTIONS
   return VIDEO_RATIO_OPTIONS
 }
@@ -399,6 +405,15 @@ export function getVideoResolutionOptionsForModel(
   model: string,
   effectiveResolutions?: readonly string[]
 ): readonly string[] {
+  const minimaxH3Spec = getMinimaxH3ModelSpec(model)
+  if (minimaxH3Spec) {
+    const effectiveOptions = effectiveResolutions?.filter((resolution) =>
+      minimaxH3Spec.resolutions.includes(resolution)
+    )
+    return effectiveOptions?.length
+      ? effectiveOptions
+      : minimaxH3Spec.resolutions
+  }
   if (effectiveResolutions?.length) return effectiveResolutions
   const normalized = normalizeModelName(model)
   const aipddOptions =
@@ -431,7 +446,12 @@ export function getLTXVideoSizeOptionsForModel(
   )
 }
 
-export function getVideoDurationRangeForModel(model: string) {
+export function getVideoDurationRangeForModel(
+  model: string,
+  resolution = DEFAULT_VIDEO_RESOLUTION
+): VideoDurationRange {
+  const minimaxH3Range = getMinimaxH3DurationRange(model, resolution)
+  if (minimaxH3Range) return minimaxH3Range
   if (isLTX23PolicyModel(model) || isLTX23StartEndModel(model)) {
     return LTX_23_VIDEO_DURATION_RANGE
   }
@@ -464,7 +484,7 @@ export function normalizeVideoRatioForModel(
   model: string,
   ratio: string
 ): string {
-  if (!isSeedanceModel(model)) return ratio
+  if (!isSeedanceModel(model) && !getMinimaxH3ModelSpec(model)) return ratio
 
   const options = getVideoRatioOptionsForModel(model)
   if (options.includes(ratio)) return ratio
@@ -517,9 +537,10 @@ export function getLTXVideoDimensions(size: string):
 
 export function normalizeVideoDurationForModel(
   model: string,
-  duration: number
+  duration: number,
+  resolution = DEFAULT_VIDEO_RESOLUTION
 ): number {
-  const range = getVideoDurationRangeForModel(model)
+  const range = getVideoDurationRangeForModel(model, resolution)
   const numericDuration = Number(duration)
   if (!Number.isFinite(numericDuration)) return DEFAULT_VIDEO_DURATION
 

@@ -51,12 +51,19 @@ import { formatFileSize, getMaterialPreviewUrl } from '@/features/materials/lib'
 import type { Material } from '@/features/materials/types'
 
 const PAGE_SIZE_OPTIONS = [12, 24, 48]
+type MaterialType = 'image' | 'video' | 'audio'
+const MATERIAL_TYPE_LABELS: Record<MaterialType, string> = {
+  image: 'Image',
+  video: 'Video',
+  audio: 'Audio',
+}
 
 interface MaterialSelectorDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   mode: 'image' | 'video'
-  fixedType?: 'image' | 'video' | 'audio'
+  fixedType?: MaterialType
+  allowedTypes?: MaterialType[]
   onSelect?: (material: Material) => void
 }
 
@@ -65,6 +72,7 @@ export function MaterialSelectorDialog({
   onOpenChange,
   mode,
   fixedType,
+  allowedTypes,
   onSelect,
 }: MaterialSelectorDialogProps) {
   const { t } = useTranslation()
@@ -73,8 +81,13 @@ export function MaterialSelectorDialog({
   const [typeFilter, setTypeFilter] = useState<string>('')
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(24)
-  const activeTypeFilter =
-    fixedType || (mode === 'image' ? 'image' : typeFilter)
+  const allowedTypeFilter = allowedTypes?.includes(typeFilter as MaterialType)
+    ? typeFilter
+    : allowedTypes?.[0] || ''
+  let activeTypeFilter = typeFilter
+  if (mode === 'image') activeTypeFilter = 'image'
+  if (allowedTypes) activeTypeFilter = allowedTypeFilter
+  if (fixedType) activeTypeFilter = fixedType
 
   const handleDialogOpenChange = useCallback(
     (nextOpen: boolean) => {
@@ -224,16 +237,26 @@ export function MaterialSelectorDialog({
     )
   }
 
-  const filterTypes = fixedType
-    ? [{ value: fixedType, label: fixedType }]
-    : mode === 'video'
-      ? [
-          { value: '', label: t('All') },
-          { value: 'image', label: t('Image') },
-          { value: 'video', label: t('Video') },
-          { value: 'audio', label: t('Audio') },
-        ]
-      : [{ value: 'image', label: t('Image') }]
+  let filterTypes: Array<{ value: string; label: string }>
+  if (fixedType) {
+    filterTypes = [
+      { value: fixedType, label: t(MATERIAL_TYPE_LABELS[fixedType]) },
+    ]
+  } else if (allowedTypes) {
+    filterTypes = allowedTypes.map((type) => ({
+      value: type,
+      label: t(MATERIAL_TYPE_LABELS[type]),
+    }))
+  } else if (mode === 'video') {
+    filterTypes = [
+      { value: '', label: t('All') },
+      { value: 'image', label: t('Image') },
+      { value: 'video', label: t('Video') },
+      { value: 'audio', label: t('Audio') },
+    ]
+  } else {
+    filterTypes = [{ value: 'image', label: t('Image') }]
+  }
 
   return (
     <Dialog open={open} onOpenChange={handleDialogOpenChange}>
