@@ -3,9 +3,9 @@
 
 The CSV's "对比原生价" is treated directly as RMB/second and converted only
 to NewAPI's USD/second task-pricing base. The "计费单位" column is retained for
-template compatibility but does not scale the price. VIP1..VIP5 use fixed
+template compatibility but does not scale the price. VIP-T1 and VIP1..VIP5 use fixed
 ratios that NewAPI applies only to Seedance models; other models remain at
-their undiscounted price. A resolution whose five tier cells are all 1 is
+their undiscounted price. A resolution whose six tier cells are all 1 is
 marked to keep its native price for every group.
 
 The command is a dry run unless --apply is supplied. Authentication uses an
@@ -43,6 +43,7 @@ if os.name == "nt":
 
 GROUPS = OrderedDict(
     (
+        ("VIP-T1", Decimal("0.73")),
         ("VIP1", Decimal("0.78")),
         ("VIP2", Decimal("0.80")),
         ("VIP3", Decimal("0.85")),
@@ -462,7 +463,7 @@ def print_summary(summary: dict[str, Any], rmb_per_usd: Decimal) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="从 Seedance 零售价 CSV 一键导入任务价格矩阵和 Seedance 专用 VIP1-VIP5 折扣分组"
+        description="从 Seedance 零售价 CSV 一键导入任务价格矩阵和 Seedance 专用 VIP-T1、VIP1-VIP5 折扣分组"
     )
     parser.add_argument("csv_file", type=Path, help="零售价 CSV 文件")
     parser.add_argument("--base-url", required=True, help="NewAPI 地址，例如 https://api.example.com")
@@ -513,7 +514,7 @@ def main() -> int:
 
     backup_path = apply_plan(client, plan, args.backup_dir)
     print(f"导入成功，回滚备份：{backup_path.resolve()}")
-    print("请确认 AIPDD 渠道已启用 VIP1、VIP2、VIP3、VIP4、VIP5 分组；这些折扣只作用于 Seedance。")
+    print("请确认 AIPDD 渠道已启用 VIP-T1、VIP1、VIP2、VIP3、VIP4、VIP5 分组；这些折扣只作用于 Seedance。")
     return 0
 
 

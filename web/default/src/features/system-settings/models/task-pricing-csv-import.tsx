@@ -120,7 +120,7 @@ export function TaskPricingCsvImport(props: TaskPricingCsvImportProps) {
         </h3>
         <p className='text-muted-foreground text-sm'>
           {t(
-            'Download a retail-price template or current config, then import a CSV to update per-second task pricing and VIP1–VIP5 groups.'
+            'Download a retail-price template or current config, then import a CSV to update per-second task pricing and fixed Seedance discount groups.'
           )}
         </p>
       </div>
@@ -212,7 +212,7 @@ export function TaskPricingCsvImport(props: TaskPricingCsvImportProps) {
         onOpenChange={setConfirmOpen}
         title={t('Apply task pricing CSV import?')}
         desc={t(
-          'This will overwrite task pricing and billing mode for models in the CSV, and sync VIP1–VIP5 group ratios.'
+          'This will overwrite task pricing and billing mode for models in the CSV, and sync fixed Seedance group ratios.'
         )}
         confirmText={t('Import')}
         isLoading={importMutation.isPending}

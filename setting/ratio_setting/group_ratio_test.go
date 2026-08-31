@@ -17,8 +17,8 @@ func TestResolveModelGroupRatioLimitsFixedVIPDiscountsToSeedance(t *testing.T) {
 		constant.SetAIPDDCapabilities(capabilitiesSnapshot)
 	})
 
-	require.NoError(t, UpdateGroupRatioByJSONString(`{"default":1,"VIP1":0.78,"custom-sale":0.8}`))
-	require.NoError(t, UpdateGroupGroupRatioByJSONString(`{"member":{"VIP1":0.7,"custom-sale":0.6}}`))
+	require.NoError(t, UpdateGroupRatioByJSONString(`{"default":1,"VIP-T1":0.73,"VIP1":0.78,"custom-sale":0.8}`))
+	require.NoError(t, UpdateGroupGroupRatioByJSONString(`{"member":{"VIP-T1":0.69,"VIP1":0.7,"custom-sale":0.6}}`))
 	constant.SetAIPDDCapabilities([]constant.AIPDDCapability{
 		{ModelName: "seedance-vip-model", AdapterCode: "seedance"},
 	})
@@ -29,6 +29,14 @@ func TestResolveModelGroupRatioLimitsFixedVIPDiscountsToSeedance(t *testing.T) {
 
 	ratio, special = ResolveModelGroupRatio("seedance-vip-model", "member", "VIP1")
 	require.Equal(t, 0.7, ratio)
+	require.True(t, special)
+
+	ratio, special = ResolveModelGroupRatio("regular-llm", "member", "VIP-T1")
+	require.Equal(t, 1.0, ratio)
+	require.False(t, special)
+
+	ratio, special = ResolveModelGroupRatio("seedance-vip-model", "member", "VIP-T1")
+	require.Equal(t, 0.69, ratio)
 	require.True(t, special)
 
 	ratio, special = ResolveModelGroupRatio("regular-llm", "member", "custom-sale")

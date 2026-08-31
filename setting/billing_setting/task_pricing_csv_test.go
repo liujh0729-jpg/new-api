@@ -11,25 +11,26 @@ import (
 
 func csvRow(model, resolution, kind, native string, ratios []string) taskPricingCSVRow {
 	return taskPricingCSVRow{
-		"平台模型":  model,
-		"输出规格":  resolution,
-		"能力类型":  kind,
-		"计费单位":  "条/5秒",
-		"对比原生价": native,
-		"VIP1":  ratios[0],
-		"VIP2":  ratios[1],
-		"VIP3":  ratios[2],
-		"VIP4":  ratios[3],
-		"VIP5":  ratios[4],
+		"平台模型":   model,
+		"输出规格":   resolution,
+		"能力类型":   kind,
+		"计费单位":   "条/5秒",
+		"对比原生价":  native,
+		"VIP-T1": ratios[0],
+		"VIP1":   ratios[1],
+		"VIP2":   ratios[2],
+		"VIP3":   ratios[3],
+		"VIP4":   ratios[4],
+		"VIP5":   ratios[5],
 	}
 }
 
 func TestBuildTaskPricingFromRowsTreatsNativeAsRMBPerSecond(t *testing.T) {
 	rows := []taskPricingCSVRow{
-		csvRow("AP Seedance", "480P", "输入含视频+平超", "4", []string{"1", "1", "1", "1", "1"}),
-		csvRow("AP Seedance", "480P", "不含视频+平超", "3", []string{"1", "1", "1", "1", "1"}),
-		csvRow("AP Seedance", "720p", "输入含视频 超一档", "6.7", []string{".78", ".8", ".85", ".9", ".95"}),
-		csvRow("AP Seedance", "720p", "不含视频 超一档", "4.97", []string{".78", ".8", ".85", ".9", ".95"}),
+		csvRow("AP Seedance", "480P", "输入含视频+平超", "4", []string{"1", "1", "1", "1", "1", "1"}),
+		csvRow("AP Seedance", "480P", "不含视频+平超", "3", []string{"1", "1", "1", "1", "1", "1"}),
+		csvRow("AP Seedance", "720p", "输入含视频 超一档", "6.7", []string{".73", ".78", ".8", ".85", ".9", ".95"}),
+		csvRow("AP Seedance", "720p", "不含视频 超一档", "4.97", []string{".73", ".78", ".8", ".85", ".9", ".95"}),
 	}
 
 	pricing, summary, err := BuildTaskPricingFromRows(rows, decimal.RequireFromString("7.3"))
@@ -58,12 +59,12 @@ func TestBuildTaskPricingFromRowsTreatsNativeAsRMBPerSecond(t *testing.T) {
 
 func TestBuildTaskPricingBillingUnitDoesNotScale(t *testing.T) {
 	oneSecond := []taskPricingCSVRow{
-		csvRow("AP Seedance", "720p", "输入含视频", "6", []string{".78", ".8", ".85", ".9", ".95"}),
-		csvRow("AP Seedance", "720p", "不含视频", "4", []string{".78", ".8", ".85", ".9", ".95"}),
+		csvRow("AP Seedance", "720p", "输入含视频", "6", []string{".73", ".78", ".8", ".85", ".9", ".95"}),
+		csvRow("AP Seedance", "720p", "不含视频", "4", []string{".73", ".78", ".8", ".85", ".9", ".95"}),
 	}
 	fiveSecond := []taskPricingCSVRow{
-		csvRow("AP Seedance", "720p", "输入含视频", "6", []string{".78", ".8", ".85", ".9", ".95"}),
-		csvRow("AP Seedance", "720p", "不含视频", "4", []string{".78", ".8", ".85", ".9", ".95"}),
+		csvRow("AP Seedance", "720p", "输入含视频", "6", []string{".73", ".78", ".8", ".85", ".9", ".95"}),
+		csvRow("AP Seedance", "720p", "不含视频", "4", []string{".73", ".78", ".8", ".85", ".9", ".95"}),
 	}
 	oneSecond[0]["计费单位"] = "条/1秒"
 	oneSecond[1]["计费单位"] = "条/1秒"
@@ -90,11 +91,11 @@ func TestBuildTaskPricingBillingUnitDoesNotScale(t *testing.T) {
 
 func TestBuildTaskPricingRejectsNonstandardGroupRatios(t *testing.T) {
 	rows := []taskPricingCSVRow{
-		csvRow("AP Seedance", "1080p", "输入含视频", "10.5", []string{".75", ".75", ".8", ".8", ".85"}),
-		csvRow("AP Seedance", "1080p", "不含视频", "8", []string{".75", ".75", ".8", ".8", ".85"}),
+		csvRow("AP Seedance", "1080p", "输入含视频", "10.5", []string{".70", ".75", ".75", ".8", ".8", ".85"}),
+		csvRow("AP Seedance", "1080p", "不含视频", "8", []string{".70", ".75", ".75", ".8", ".8", ".85"}),
 	}
 	_, _, err := BuildTaskPricingFromRows(rows, decimal.RequireFromString("7.3"))
-	if err == nil || !strings.Contains(err.Error(), "第 2 行") || !strings.Contains(err.Error(), "VIP1=0.78") {
+	if err == nil || !strings.Contains(err.Error(), "第 2 行") || !strings.Contains(err.Error(), "VIP-T1=0.73") {
 		t.Fatalf("expected VIP rejection, got %v", err)
 	}
 }
@@ -146,6 +147,10 @@ func TestBuildTaskPricingImportPlanPreservesUnrelatedEntries(t *testing.T) {
 		!strings.Contains(updates["GroupRatio"], `"VIP1": 0.78`) {
 		t.Fatalf("group ratio missing VIP1: %s", updates["GroupRatio"])
 	}
+	if !strings.Contains(updates["GroupRatio"], `"VIP-T1":0.73`) &&
+		!strings.Contains(updates["GroupRatio"], `"VIP-T1": 0.73`) {
+		t.Fatalf("group ratio missing VIP-T1: %s", updates["GroupRatio"])
+	}
 	if !strings.Contains(updates["UserUsableGroups"], `"default":"默认分组"`) &&
 		!strings.Contains(updates["UserUsableGroups"], `"default": "默认分组"`) {
 		t.Fatalf("usable groups lost default: %s", updates["UserUsableGroups"])
@@ -154,12 +159,16 @@ func TestBuildTaskPricingImportPlanPreservesUnrelatedEntries(t *testing.T) {
 		!strings.Contains(updates["UserUsableGroups"], `"VIP1": "VIP1（Seedance 78档）"`) {
 		t.Fatalf("usable groups must describe VIP1 as Seedance-only: %s", updates["UserUsableGroups"])
 	}
+	if !strings.Contains(updates["UserUsableGroups"], `"VIP-T1":"VIP-T1（Seedance 73档）"`) &&
+		!strings.Contains(updates["UserUsableGroups"], `"VIP-T1": "VIP-T1（Seedance 73档）"`) {
+		t.Fatalf("usable groups must describe VIP-T1 as Seedance-only: %s", updates["UserUsableGroups"])
+	}
 }
 
 func TestBuildTaskPricingRejectsMismatchedExemption(t *testing.T) {
 	rows := []taskPricingCSVRow{
-		csvRow("AP Seedance", "480p", "输入含视频", "4", []string{"1", "1", "1", "1", "1"}),
-		csvRow("AP Seedance", "480p", "不含视频", "3", []string{".78", ".8", ".85", ".9", ".95"}),
+		csvRow("AP Seedance", "480p", "输入含视频", "4", []string{"1", "1", "1", "1", "1", "1"}),
+		csvRow("AP Seedance", "480p", "不含视频", "3", []string{".73", ".78", ".8", ".85", ".9", ".95"}),
 	}
 	_, _, err := BuildTaskPricingFromRows(rows, decimal.RequireFromString("7.3"))
 	if err == nil || !strings.Contains(err.Error(), "分组豁免定义不一致") {
@@ -170,7 +179,7 @@ func TestBuildTaskPricingRejectsMismatchedExemption(t *testing.T) {
 func TestParseRetailPricingCSVUTF8BOMAndGBK(t *testing.T) {
 	header := strings.Join(taskPricingCSVRequiredColumns, ",")
 	body := header + "\n" + strings.Join([]string{
-		"AP Seedance", "480p", "不含视频", "条/5秒", "3", "1", "1", "1", "1", "1",
+		"AP Seedance", "480p", "不含视频", "条/5秒", "3", "1", "1", "1", "1", "1", "1",
 	}, ",")
 
 	rows, err := ParseRetailPricingCSV([]byte("\ufeff" + body))
@@ -194,21 +203,21 @@ func TestParseRetailPricingCSVUTF8BOMAndGBK(t *testing.T) {
 	}
 }
 
-func TestParseRetailPricingCSVRejectsLegacyHeaders(t *testing.T) {
-	legacy := []string{"平台模型", "输出规格", "能力类型", "计费单位", "对比原生价", "78档", "80档", "85档", "90档", "95档"}
+func TestParseRetailPricingCSVRejectsOldFiveTierHeaders(t *testing.T) {
+	legacy := []string{"平台模型", "输出规格", "能力类型", "计费单位", "对比原生价", "VIP1", "VIP2", "VIP3", "VIP4", "VIP5"}
 	content := strings.Join(legacy, ",") + "\n" + strings.Join([]string{
 		"AP Seedance", "480p", "不含视频", "条/5秒", "3", "1", "1", "1", "1", "1",
 	}, ",")
 	_, err := ParseRetailPricingCSV([]byte(content))
-	if err == nil || !strings.Contains(err.Error(), "VIP1") {
-		t.Fatalf("expected missing VIP1, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "VIP-T1") {
+		t.Fatalf("expected missing VIP-T1, got %v", err)
 	}
 }
 
 func TestBuildTaskPricingFlatAndDisabled(t *testing.T) {
 	rows := []taskPricingCSVRow{
-		csvRow("Flat Model", "-", "不含视频", "4", []string{".78", ".8", ".85", ".9", ".95"}),
-		csvRow("Flat Model", "-", "禁用参考视频", "0", []string{".78", ".8", ".85", ".9", ".95"}),
+		csvRow("Flat Model", "-", "不含视频", "4", []string{".73", ".78", ".8", ".85", ".9", ".95"}),
+		csvRow("Flat Model", "-", "禁用参考视频", "0", []string{".73", ".78", ".8", ".85", ".9", ".95"}),
 	}
 	pricing, _, err := BuildTaskPricingFromRows(rows, decimal.NewFromInt(2))
 	if err != nil {

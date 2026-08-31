@@ -51,7 +51,7 @@ func HandleGroupRatio(ctx *gin.Context, relayInfo *relaycommon.RelayInfo) types.
 		relayInfo.UsingGroup = autoGroup.(string)
 	}
 
-	// Resolve model-aware group pricing. Fixed VIP1-VIP5 discounts apply only
+	// Resolve model-aware group pricing. Fixed VIP-T1 and VIP1-VIP5 discounts apply only
 	// to Seedance; other custom group policies retain their existing behavior.
 	groupRatio, hasSpecialRatio := ratio_setting.ResolveModelGroupRatio(
 		relayInfo.OriginModelName,

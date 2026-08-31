@@ -21,6 +21,7 @@ HEADERS = [
     "能力类型",
     "计费单位",
     "对比原生价",
+    "VIP-T1",
     "VIP1",
     "VIP2",
     "VIP3",
@@ -37,10 +38,10 @@ def row(resolution: str, kind: str, native: str, ratios: list[str]) -> dict[str,
 class ImportSeedancePricingCSVTest(unittest.TestCase):
     def test_treats_native_prices_as_rmb_per_second_and_exempts_all_one_resolution(self) -> None:
         rows = [
-            row("480P", "输入含视频+平超", "4", ["1", "1", "1", "1", "1"]),
-            row("480P", "不含视频+平超", "3", ["1", "1", "1", "1", "1"]),
-            row("720p", "输入含视频 超一档", "6.7", [".78", ".8", ".85", ".9", ".95"]),
-            row("720p", "不含视频 超一档", "4.97", [".78", ".8", ".85", ".9", ".95"]),
+            row("480P", "输入含视频+平超", "4", ["1", "1", "1", "1", "1", "1"]),
+            row("480P", "不含视频+平超", "3", ["1", "1", "1", "1", "1", "1"]),
+            row("720p", "输入含视频 超一档", "6.7", [".73", ".78", ".8", ".85", ".9", ".95"]),
+            row("720p", "不含视频 超一档", "4.97", [".73", ".78", ".8", ".85", ".9", ".95"]),
         ]
 
         pricing, summary = MODULE.build_task_pricing(rows, Decimal("7.3"))
@@ -54,8 +55,8 @@ class ImportSeedancePricingCSVTest(unittest.TestCase):
 
     def test_billing_unit_does_not_scale_per_second_prices(self) -> None:
         one_second_rows = [
-            row("720p", "输入含视频", "6", [".78", ".8", ".85", ".9", ".95"]),
-            row("720p", "不含视频", "4", [".78", ".8", ".85", ".9", ".95"]),
+            row("720p", "输入含视频", "6", [".73", ".78", ".8", ".85", ".9", ".95"]),
+            row("720p", "不含视频", "4", [".73", ".78", ".8", ".85", ".9", ".95"]),
         ]
         five_second_rows = [dict(item) for item in one_second_rows]
         for item in one_second_rows:
@@ -73,11 +74,11 @@ class ImportSeedancePricingCSVTest(unittest.TestCase):
 
     def test_rejects_nonstandard_group_ratios(self) -> None:
         rows = [
-            row("1080p", "输入含视频", "10.5", [".75", ".75", ".8", ".8", ".85"]),
-            row("1080p", "不含视频", "8", [".75", ".75", ".8", ".8", ".85"]),
+            row("1080p", "输入含视频", "10.5", [".70", ".75", ".75", ".8", ".8", ".85"]),
+            row("1080p", "不含视频", "8", [".70", ".75", ".75", ".8", ".8", ".85"]),
         ]
 
-        with self.assertRaisesRegex(MODULE.ImportFailure, "第 2 行.*严格为 VIP1=0.78"):
+        with self.assertRaisesRegex(MODULE.ImportFailure, "第 2 行.*严格为 VIP-T1=0.73"):
             MODULE.build_task_pricing(rows, Decimal("7.3"))
 
     def test_plan_creates_fixed_groups_and_preserves_unrelated_entries(self) -> None:
@@ -115,16 +116,17 @@ class ImportSeedancePricingCSVTest(unittest.TestCase):
         self.assertTrue(updates["billing_setting.task_pricing"]["other"]["keep"])
         self.assertEqual("task_pricing", updates["billing_setting.billing_mode"]["AP Seedance"])
         self.assertEqual(
-            {"VIP1": 0.78, "VIP2": 0.8, "VIP3": 0.85, "VIP4": 0.9, "VIP5": 0.95},
+            {"VIP-T1": 0.73, "VIP1": 0.78, "VIP2": 0.8, "VIP3": 0.85, "VIP4": 0.9, "VIP5": 0.95},
             {key: updates["GroupRatio"][key] for key in MODULE.GROUPS},
         )
         self.assertEqual("默认分组", updates["UserUsableGroups"]["default"])
+        self.assertEqual("VIP-T1（Seedance 73档）", updates["UserUsableGroups"]["VIP-T1"])
         self.assertEqual("VIP1（Seedance 78档）", updates["UserUsableGroups"]["VIP1"])
 
     def test_rejects_mismatched_exemption_between_video_variants(self) -> None:
         rows = [
-            row("480p", "输入含视频", "4", ["1", "1", "1", "1", "1"]),
-            row("480p", "不含视频", "3", [".78", ".8", ".85", ".9", ".95"]),
+            row("480p", "输入含视频", "4", ["1", "1", "1", "1", "1", "1"]),
+            row("480p", "不含视频", "3", [".73", ".78", ".8", ".85", ".9", ".95"]),
         ]
 
         with self.assertRaisesRegex(MODULE.ImportFailure, "分组豁免定义不一致"):
@@ -132,7 +134,7 @@ class ImportSeedancePricingCSVTest(unittest.TestCase):
 
     def test_reads_utf8_bom_csv(self) -> None:
         content = ",".join(HEADERS) + "\n" + ",".join(
-            ["AP Seedance", "480p", "不含视频", "条/5秒", "3", "1", "1", "1", "1", "1"]
+            ["AP Seedance", "480p", "不含视频", "条/5秒", "3", "1", "1", "1", "1", "1", "1"]
         )
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "pricing.csv"
@@ -144,7 +146,7 @@ class ImportSeedancePricingCSVTest(unittest.TestCase):
 
     def test_reads_gbk_compatible_csv(self) -> None:
         content = ",".join(HEADERS) + "\n" + ",".join(
-            ["AP Seedance", "480p", "不含视频", "条/5秒", "3", "1", "1", "1", "1", "1"]
+            ["AP Seedance", "480p", "不含视频", "条/5秒", "3", "1", "1", "1", "1", "1", "1"]
         )
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "pricing-gbk.csv"
@@ -153,15 +155,15 @@ class ImportSeedancePricingCSVTest(unittest.TestCase):
 
         self.assertEqual("AP Seedance", rows[0]["平台模型"])
 
-    def test_rejects_legacy_discount_headers(self) -> None:
-        legacy_headers = [*HEADERS[:5], "78档", "80档", "85档", "90档", "95档"]
+    def test_rejects_old_five_tier_headers(self) -> None:
+        legacy_headers = [*HEADERS[:5], "VIP1", "VIP2", "VIP3", "VIP4", "VIP5"]
         content = ",".join(legacy_headers) + "\n" + ",".join(
             ["AP Seedance", "480p", "不含视频", "条/5秒", "3", "1", "1", "1", "1", "1"]
         )
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "pricing-legacy.csv"
             path.write_text(content, encoding="utf-8")
-            with self.assertRaisesRegex(MODULE.ImportFailure, "CSV 缺少列.*VIP1"):
+            with self.assertRaisesRegex(MODULE.ImportFailure, "CSV 缺少列.*VIP-T1"):
                 MODULE.read_csv_rows(path)
 
 if __name__ == "__main__":

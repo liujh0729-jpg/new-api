@@ -27,6 +27,7 @@ var taskPricingCSVFixedGroups = []struct {
 	Name  string
 	Ratio decimal.Decimal
 }{
+	{Name: "VIP-T1", Ratio: decimal.RequireFromString("0.73")},
 	{Name: "VIP1", Ratio: decimal.RequireFromString("0.78")},
 	{Name: "VIP2", Ratio: decimal.RequireFromString("0.80")},
 	{Name: "VIP3", Ratio: decimal.RequireFromString("0.85")},
@@ -40,6 +41,7 @@ var taskPricingCSVRequiredColumns = []string{
 	"能力类型",
 	"计费单位",
 	"对比原生价",
+	"VIP-T1",
 	"VIP1",
 	"VIP2",
 	"VIP3",
@@ -69,12 +71,12 @@ func csvFail(format string, args ...any) error {
 
 // TaskPricingCSVSummary summarizes a parsed retail pricing CSV.
 type TaskPricingCSVSummary struct {
-	Models             []string          `json:"models"`
-	ResolutionTiers    int               `json:"resolution_tiers"`
-	SourceRows         int               `json:"source_rows"`
-	ExemptResolutions  []string          `json:"exempt_resolutions"`
-	Groups             map[string]any    `json:"groups,omitempty"`
-	RMBPerUSD          string            `json:"rmb_per_usd,omitempty"`
+	Models            []string       `json:"models"`
+	ResolutionTiers   int            `json:"resolution_tiers"`
+	SourceRows        int            `json:"source_rows"`
+	ExemptResolutions []string       `json:"exempt_resolutions"`
+	Groups            map[string]any `json:"groups,omitempty"`
+	RMBPerUSD         string         `json:"rmb_per_usd,omitempty"`
 }
 
 // TaskPricingCSVOptionUpdate is one option write/rollback entry.
@@ -85,8 +87,8 @@ type TaskPricingCSVOptionUpdate struct {
 
 // TaskPricingCSVPlan is the preview/apply payload for a retail CSV import.
 type TaskPricingCSVPlan struct {
-	GeneratedAt string                      `json:"generated_at"`
-	Summary     TaskPricingCSVSummary       `json:"summary"`
+	GeneratedAt string                       `json:"generated_at"`
+	Summary     TaskPricingCSVSummary        `json:"summary"`
 	Updates     []TaskPricingCSVOptionUpdate `json:"updates"`
 	Rollback    []TaskPricingCSVOptionUpdate `json:"rollback"`
 }
@@ -120,7 +122,7 @@ func EmptyTaskPricingCSVTemplate() []byte {
 		"不含视频",
 		taskPricingCSVBillingUnit,
 		"3",
-		"1", "1", "1", "1", "1",
+		"1", "1", "1", "1", "1", "1",
 	})
 	_ = writer.Write([]string{
 		"Example Model",
@@ -128,7 +130,7 @@ func EmptyTaskPricingCSVTemplate() []byte {
 		"输入含视频",
 		taskPricingCSVBillingUnit,
 		"4",
-		"1", "1", "1", "1", "1",
+		"1", "1", "1", "1", "1", "1",
 	})
 	_ = writer.Write([]string{
 		"Example Flat Model",
@@ -136,7 +138,7 @@ func EmptyTaskPricingCSVTemplate() []byte {
 		"不含视频",
 		taskPricingCSVBillingUnit,
 		"2",
-		"0.78", "0.80", "0.85", "0.90", "0.95",
+		"0.73", "0.78", "0.80", "0.85", "0.90", "0.95",
 	})
 	_ = writer.Write([]string{
 		"Example Flat Model",
@@ -144,7 +146,7 @@ func EmptyTaskPricingCSVTemplate() []byte {
 		"输入含视频",
 		taskPricingCSVBillingUnit,
 		"2",
-		"0.78", "0.80", "0.85", "0.90", "0.95",
+		"0.73", "0.78", "0.80", "0.85", "0.90", "0.95",
 	})
 	writer.Flush()
 	return buf.Bytes()
@@ -643,7 +645,11 @@ func writeExportedTierRows(writer *csv.Writer, model, resolution string, tier Ta
 
 func fixedVIPCSVValues(exempt bool) []string {
 	if exempt {
-		return []string{"1", "1", "1", "1", "1"}
+		values := make([]string, len(taskPricingCSVFixedGroups))
+		for i := range values {
+			values[i] = "1"
+		}
+		return values
 	}
 	values := make([]string, 0, len(taskPricingCSVFixedGroups))
 	for _, group := range taskPricingCSVFixedGroups {

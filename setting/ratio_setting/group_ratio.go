@@ -105,7 +105,7 @@ func GetGroupGroupRatio(userGroup, usingGroup string) (float64, bool) {
 }
 
 // ResolveModelGroupRatio returns the effective ratio for model billing.
-// VIP1-VIP5 are Seedance-only retail discounts: other models remain available
+// VIP-T1 and VIP1-VIP5 are Seedance-only retail discounts: other models remain available
 // in those groups but are charged at their undiscounted price. Custom groups
 // keep their existing global or user-group-specific ratio semantics.
 func ResolveModelGroupRatio(modelName, userGroup, usingGroup string) (float64, bool) {
@@ -121,7 +121,7 @@ func ResolveModelGroupRatio(modelName, userGroup, usingGroup string) (float64, b
 
 func isSeedanceVIPDiscountGroup(group string) bool {
 	switch strings.ToUpper(strings.TrimSpace(group)) {
-	case "VIP1", "VIP2", "VIP3", "VIP4", "VIP5":
+	case "VIP-T1", "VIP1", "VIP2", "VIP3", "VIP4", "VIP5":
 		return true
 	default:
 		return false
