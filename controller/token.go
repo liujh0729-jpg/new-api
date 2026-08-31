@@ -141,6 +141,45 @@ func GetTokenStatus(c *gin.Context) {
 	})
 }
 
+type publicTokenUsageData struct {
+	Object              string          `json:"object"`
+	Name                string          `json:"name"`
+	Currency            string          `json:"currency"`
+	TotalGranted        float64         `json:"total_granted"`
+	TotalUsed           float64         `json:"total_used"`
+	TotalAvailable      float64         `json:"total_available"`
+	QuotaTotalGranted   int             `json:"quota_total_granted"`
+	QuotaTotalUsed      int             `json:"quota_total_used"`
+	QuotaTotalAvailable int             `json:"quota_total_available"`
+	QuotaPerUnit        float64         `json:"quota_per_unit"`
+	USDExchangeRate     float64         `json:"usd_exchange_rate"`
+	UnlimitedQuota      bool            `json:"unlimited_quota"`
+	ModelLimits         map[string]bool `json:"model_limits"`
+	ModelLimitsEnabled  bool            `json:"model_limits_enabled"`
+	ExpiresAt           int64           `json:"expires_at"`
+}
+
+func buildPublicTokenUsageData(token *model.Token, expiresAt int64, quotaPerUnit, exchangeRate float64) publicTokenUsageData {
+	totalGrantedQuota := token.RemainQuota + token.UsedQuota
+	return publicTokenUsageData{
+		Object:              "token_usage",
+		Name:                token.Name,
+		Currency:            pricingResponseCurrency,
+		TotalGranted:        common.QuotaToCNY(totalGrantedQuota, quotaPerUnit, exchangeRate),
+		TotalUsed:           common.QuotaToCNY(token.UsedQuota, quotaPerUnit, exchangeRate),
+		TotalAvailable:      common.QuotaToCNY(token.RemainQuota, quotaPerUnit, exchangeRate),
+		QuotaTotalGranted:   totalGrantedQuota,
+		QuotaTotalUsed:      token.UsedQuota,
+		QuotaTotalAvailable: token.RemainQuota,
+		QuotaPerUnit:        quotaPerUnit,
+		USDExchangeRate:     exchangeRate,
+		UnlimitedQuota:      token.UnlimitedQuota,
+		ModelLimits:         token.GetModelLimitsMap(),
+		ModelLimitsEnabled:  token.ModelLimitsEnabled,
+		ExpiresAt:           expiresAt,
+	}
+}
+
 func GetTokenUsage(c *gin.Context) {
 	authHeader := c.GetHeader("Authorization")
 	if authHeader == "" {
@@ -176,17 +215,12 @@ func GetTokenUsage(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"code":    true,
 		"message": "ok",
-		"data": gin.H{
-			"object":               "token_usage",
-			"name":                 token.Name,
-			"total_granted":        token.RemainQuota + token.UsedQuota,
-			"total_used":           token.UsedQuota,
-			"total_available":      token.RemainQuota,
-			"unlimited_quota":      token.UnlimitedQuota,
-			"model_limits":         token.GetModelLimitsMap(),
-			"model_limits_enabled": token.ModelLimitsEnabled,
-			"expires_at":           expiredAt,
-		},
+		"data": buildPublicTokenUsageData(
+			token,
+			expiredAt,
+			common.QuotaPerUnit,
+			pricingResponseExchangeRate(),
+		),
 	})
 }
 

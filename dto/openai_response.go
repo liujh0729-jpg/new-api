@@ -239,7 +239,9 @@ type Usage struct {
 	ClaudeCacheCreation1hTokens int `json:"claude_cache_creation_1_h_tokens"`
 
 	// OpenRouter Params
-	Cost any `json:"cost,omitempty"`
+	Cost            any     `json:"cost,omitempty"`
+	Currency        string  `json:"currency,omitempty"`
+	USDExchangeRate float64 `json:"usd_exchange_rate,omitempty"`
 }
 
 type OpenAIVideoResponse struct {

@@ -3,6 +3,7 @@ package relay
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -1305,6 +1306,7 @@ func TaskModel2Dto(task *model.Task) *dto.TaskDto {
 			}
 		}
 	}
+	taskData = sanitizePublicTaskData(taskData)
 	resultURL := ""
 	if task.Status == model.TaskStatusSuccess {
 		resultURL = task.GetResultURL()
@@ -1316,6 +1318,7 @@ func TaskModel2Dto(task *model.Task) *dto.TaskDto {
 			"urls": output,
 		}
 	}
+	quotaCNY := task.GetQuotaCNY()
 	return &dto.TaskDto{
 		ID:               task.ID,
 		CreatedAt:        task.CreatedAt,
@@ -1326,7 +1329,9 @@ func TaskModel2Dto(task *model.Task) *dto.TaskDto {
 		Group:            task.Group,
 		ChannelId:        task.ChannelId,
 		Quota:            task.Quota,
-		QuotaCNY:         task.GetQuotaCNY(),
+		QuotaCNY:         quotaCNY,
+		CostCNY:          quotaCNY,
+		Currency:         "CNY",
 		Action:           task.Action,
 		Status:           string(task.Status),
 		FailReason:       failReason,
@@ -1345,6 +1350,56 @@ func TaskModel2Dto(task *model.Task) *dto.TaskDto {
 		OutputModalities: mediaInfo.OutputModalities,
 		Data:             taskData,
 	}
+}
+
+var publicTaskPrivateMoneyFields = map[string]struct{}{
+	"cost":                   {},
+	"task_cost":              {},
+	"draw_user_reward":       {},
+	"unit_price_usd":         {},
+	"sale_usd":               {},
+	"base_usd":               {},
+	"usd_per_awcoin":         {},
+	"estimated_awcoin":       {},
+	"cost_awcoin_per_second": {},
+	"costawcoinpersecond":    {},
+}
+
+func removePrivateTaskMoneyFields(value any) {
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, child := range typed {
+			normalizedKey := strings.ToLower(strings.TrimSpace(key))
+			if _, private := publicTaskPrivateMoneyFields[normalizedKey]; private ||
+				strings.HasSuffix(normalizedKey, "_usd") ||
+				strings.HasPrefix(normalizedKey, "finance_") ||
+				strings.HasPrefix(normalizedKey, "billing_") {
+				delete(typed, key)
+				continue
+			}
+			removePrivateTaskMoneyFields(child)
+		}
+	case []any:
+		for _, child := range typed {
+			removePrivateTaskMoneyFields(child)
+		}
+	}
+}
+
+func sanitizePublicTaskData(data json.RawMessage) json.RawMessage {
+	if len(data) == 0 {
+		return data
+	}
+	var payload any
+	if err := common.Unmarshal(data, &payload); err != nil {
+		return data
+	}
+	removePrivateTaskMoneyFields(payload)
+	sanitized, err := common.Marshal(payload)
+	if err != nil {
+		return data
+	}
+	return sanitized
 }
 
 func extractTaskOutputURLs(task *model.Task) []string {

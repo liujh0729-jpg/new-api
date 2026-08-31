@@ -40,6 +40,8 @@ type TaskDto struct {
 	ChannelId        int             `json:"channel_id"`
 	Quota            int             `json:"quota"`
 	QuotaCNY         float64         `json:"quota_cny"`
+	CostCNY          float64         `json:"cost_cny"`
+	Currency         string          `json:"currency"`
 	Action           string          `json:"action"`
 	Status           string          `json:"status"`
 	FailReason       string          `json:"fail_reason"`

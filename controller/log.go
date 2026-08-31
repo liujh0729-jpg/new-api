@@ -85,7 +85,7 @@ func GetLogByKey(c *gin.Context) {
 		return
 	}
 	pageInfo.SetTotal(int(total))
-	pageInfo.SetItems(logs)
+	pageInfo.SetItems(buildPublicTokenLogItems(logs))
 	common.ApiSuccess(c, pageInfo)
 }
 

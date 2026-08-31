@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -197,4 +198,33 @@ func TestTaskModel2DtoExposesQuotaCNYFromBillingSnapshot(t *testing.T) {
 
 	require.Equal(t, 5000, taskDTO.Quota)
 	require.Equal(t, 0.073, taskDTO.QuotaCNY)
+	require.Equal(t, 0.073, taskDTO.CostCNY)
+	require.Equal(t, "CNY", taskDTO.Currency)
+}
+
+func TestTaskModel2DtoRemovesUpstreamMoneyFields(t *testing.T) {
+	taskDTO := TaskModel2Dto(&model.Task{
+		TaskID: "task_private_money",
+		Data: common.StringToByteSlice(`{
+			"data": {
+				"status": "SUCCESS",
+				"task_cost": 144382,
+				"draw_user_reward": 12,
+				"billing_scope": "provider",
+				"nested": {"unit_price_usd": 0.08, "url": "https://example.com/video.mp4"}
+			}
+		}`),
+	})
+
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(taskDTO.Data, &payload))
+	data, ok := payload["data"].(map[string]any)
+	require.True(t, ok)
+	require.NotContains(t, data, "task_cost")
+	require.NotContains(t, data, "draw_user_reward")
+	require.NotContains(t, data, "billing_scope")
+	nested, ok := data["nested"].(map[string]any)
+	require.True(t, ok)
+	require.NotContains(t, nested, "unit_price_usd")
+	require.Equal(t, "https://example.com/video.mp4", nested["url"])
 }

@@ -26,6 +26,7 @@ func sendStreamData(c *gin.Context, info *relaycommon.RelayInfo, data string, fo
 	if data == "" {
 		return nil
 	}
+	data = string(convertPublicUsageCostsToCNY(common.StringToByteSlice(data)))
 
 	if !forceFormat && !thinkToContent {
 		return helper.StringData(c, data)
@@ -294,7 +295,7 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 		responseBody = geminiRespStr
 	}
 
-	service.IOCopyBytesGracefully(c, resp, responseBody)
+	service.IOCopyBytesGracefully(c, resp, convertPublicUsageCostsToCNY(responseBody))
 
 	return &simpleResponse.Usage, nil
 }
@@ -572,7 +573,7 @@ func OpenaiHandlerWithUsage(c *gin.Context, info *relaycommon.RelayInfo, resp *h
 	}
 
 	// 写入新的 response body
-	service.IOCopyBytesGracefully(c, resp, responseBody)
+	service.IOCopyBytesGracefully(c, resp, convertPublicUsageCostsToCNY(responseBody))
 
 	// Once we've written to the client, we should not return errors anymore
 	// because the upstream has already consumed resources and returned content
