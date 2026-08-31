@@ -60,11 +60,39 @@
         "tags": ["基础接口"],
         "summary": "获取价格目录",
         "operationId": "getPricing",
-        "description": "动态价格与可用分辨率。同一模型可能因分辨率、是否含参考视频、PLATFORM/BYOK 而不同。",
+        "description": "动态价格与可用分辨率。同一模型可能因分辨率、是否含参考视频、PLATFORM/BYOK 而不同。响应固定声明 `currency=CNY`；`model_price` 以及 `task_pricing` 下所有 `*_unit_price` 均为人民币金额，任务价格当前按秒计价。`model_ratio`、倍率字段和 `billing_expr` 是计算元数据，不是金额。",
         "security": [{ "BearerAuth": [] }],
         "responses": {
           "200": {
-            "description": "价格目录"
+            "description": "人民币价格目录",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/PricingResponse" },
+                "example": {
+                  "success": true,
+                  "currency": "CNY",
+                  "usd_exchange_rate": 7.3,
+                  "data": [
+                    {
+                      "model_name": "AP Seedance-2.0 轻量版",
+                      "quota_type": 1,
+                      "model_price": 0.32,
+                      "billing_mode": "task_pricing",
+                      "task_pricing": {
+                        "unit": "second",
+                        "by_resolution": {
+                          "720p": {
+                            "no_reference_video_unit_price": 0.496,
+                            "reference_video_policy": "custom",
+                            "reference_video_unit_price": 0.7
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
           }
         }
       }
@@ -855,6 +883,78 @@
               }
             }
           }
+        }
+      },
+      "PricingResponse": {
+        "type": "object",
+        "required": ["success", "currency", "usd_exchange_rate", "data"],
+        "properties": {
+          "success": { "type": "boolean", "example": true },
+          "currency": {
+            "type": "string",
+            "enum": ["CNY"],
+            "description": "显式金额字段统一使用人民币。"
+          },
+          "usd_exchange_rate": {
+            "type": "number",
+            "format": "double",
+            "description": "生成当前人民币价格时使用的 USD→CNY 汇率。"
+          },
+          "pricing_version": { "type": "string" },
+          "data": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/PricingItem" }
+          },
+          "vendors": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
+          "group_ratio": { "type": "object", "additionalProperties": { "type": "number" } },
+          "usable_group": { "type": "object", "additionalProperties": true },
+          "supported_endpoint": { "type": "object", "additionalProperties": true },
+          "auto_groups": { "type": "array", "items": { "type": "string" } }
+        }
+      },
+      "PricingItem": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["model_name", "quota_type"],
+        "properties": {
+          "model_name": { "type": "string" },
+          "quota_type": { "type": "integer", "enum": [0, 1] },
+          "model_price": {
+            "type": "number",
+            "format": "double",
+            "description": "人民币金额；按请求模型为元/次，task_pricing 模型为最低有效元/秒。"
+          },
+          "model_ratio": { "type": "number", "description": "倍率元数据，不是金额。" },
+          "completion_ratio": { "type": "number", "description": "倍率元数据，不是金额。" },
+          "billing_mode": { "type": "string" },
+          "billing_expr": { "type": "string", "description": "动态计费表达式元数据，不是人民币金额字段。" },
+          "task_pricing": { "$ref": "#/components/schemas/TaskPricing" },
+          "task_pricing_resolutions": { "type": "array", "items": { "type": "string" } }
+        }
+      },
+      "TaskPricing": {
+        "type": "object",
+        "required": ["unit"],
+        "properties": {
+          "unit": { "type": "string", "enum": ["second"] },
+          "no_reference_video_unit_price": { "type": "number", "description": "人民币元/秒。" },
+          "reference_video_policy": { "type": "string", "enum": ["same", "custom", "disabled"] },
+          "reference_video_unit_price": { "type": "number", "description": "人民币元/秒。" },
+          "group_ratio_policy": { "type": "string", "enum": ["global", "none"] },
+          "by_resolution": {
+            "type": "object",
+            "additionalProperties": { "$ref": "#/components/schemas/TaskPricingTier" }
+          }
+        }
+      },
+      "TaskPricingTier": {
+        "type": "object",
+        "required": ["no_reference_video_unit_price", "reference_video_policy"],
+        "properties": {
+          "no_reference_video_unit_price": { "type": "number", "description": "人民币元/秒。" },
+          "reference_video_policy": { "type": "string", "enum": ["same", "custom", "disabled"] },
+          "reference_video_unit_price": { "type": "number", "description": "人民币元/秒。" },
+          "group_ratio_policy": { "type": "string", "enum": ["global", "none"] }
         }
       },
       "TokenUsageResponse": {

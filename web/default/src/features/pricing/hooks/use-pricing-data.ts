@@ -19,7 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useStatus } from '@/hooks/use-status'
-import { getPricing } from '../api'
+import { getPricing, normalizePricingModelsToUSD } from '../api'
 import { isValidTaskPricing } from '../lib/model-helpers'
 
 export function usePricingData() {
@@ -46,7 +46,11 @@ export function usePricingData() {
 
     const vendorMap = new Map(data.vendors.map((v) => [v.id, v]))
 
-    return data.data
+    return normalizePricingModelsToUSD(
+      data.data,
+      data.currency,
+      data.usd_exchange_rate
+    )
       .filter(
         (model) =>
           model.billing_mode !== 'task_pricing' ||

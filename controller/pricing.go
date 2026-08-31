@@ -1,13 +1,91 @@
 package controller
 
 import (
+	"fmt"
+	"math"
+	"strings"
+
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/billing_setting"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
 	"github.com/gin-gonic/gin"
 )
+
+const pricingResponseCurrency = "CNY"
+
+func pricingResponseExchangeRate() float64 {
+	rate := operation_setting.USDExchangeRate
+	if rate <= 0 || math.IsNaN(rate) || math.IsInf(rate, 0) {
+		return 1
+	}
+	return rate
+}
+
+func convertUSDPriceToCNY(amount, exchangeRate float64) float64 {
+	if amount <= 0 || math.IsNaN(amount) || math.IsInf(amount, 0) {
+		return amount
+	}
+	return amount * exchangeRate
+}
+
+// convertPricingMonetaryFieldsToCNY converts only explicit monetary fields in
+// the public pricing response. Ratios and billing expressions remain calculation
+// metadata, while New API's internal billing and quota settlement stay in USD.
+func convertPricingMonetaryFieldsToCNY(pricing []model.Pricing, exchangeRate float64) []model.Pricing {
+	converted := make([]model.Pricing, len(pricing))
+	copy(converted, pricing)
+	for index := range converted {
+		converted[index].ModelPrice = convertUSDPriceToCNY(converted[index].ModelPrice, exchangeRate)
+		if converted[index].TaskPricing == nil {
+			continue
+		}
+
+		taskPricing := *converted[index].TaskPricing
+		taskPricing.NoReferenceVideoUnitPrice = convertUSDPriceToCNY(
+			taskPricing.NoReferenceVideoUnitPrice,
+			exchangeRate,
+		)
+		taskPricing.ReferenceVideoUnitPrice = convertUSDPriceToCNY(
+			taskPricing.ReferenceVideoUnitPrice,
+			exchangeRate,
+		)
+		if taskPricing.ByResolution != nil {
+			byResolution := make(map[string]billing_setting.TaskPricingTier, len(taskPricing.ByResolution))
+			for resolution, tier := range taskPricing.ByResolution {
+				tier.NoReferenceVideoUnitPrice = convertUSDPriceToCNY(
+					tier.NoReferenceVideoUnitPrice,
+					exchangeRate,
+				)
+				tier.ReferenceVideoUnitPrice = convertUSDPriceToCNY(
+					tier.ReferenceVideoUnitPrice,
+					exchangeRate,
+				)
+				byResolution[resolution] = tier
+			}
+			taskPricing.ByResolution = byResolution
+		}
+		converted[index].TaskPricing = &taskPricing
+	}
+	return converted
+}
+
+func pricingResponseAmountToUSD(amount float64, currency string, exchangeRate float64) (float64, error) {
+	switch strings.ToUpper(strings.TrimSpace(currency)) {
+	case "", "USD":
+		return amount, nil
+	case pricingResponseCurrency:
+		if exchangeRate <= 0 || math.IsNaN(exchangeRate) || math.IsInf(exchangeRate, 0) {
+			return 0, fmt.Errorf("invalid USD exchange rate for CNY pricing response")
+		}
+		return amount / exchangeRate, nil
+	default:
+		return 0, fmt.Errorf("unsupported pricing response currency %q", currency)
+	}
+}
 
 func filterPricingByUsableGroups(pricing []model.Pricing, usableGroup map[string]string) []model.Pricing {
 	if len(pricing) == 0 {
@@ -74,16 +152,20 @@ func GetPricing(c *gin.Context) {
 		}
 	}
 	attachModelGroupRatios(pricing, group, groupRatio)
+	exchangeRate := pricingResponseExchangeRate()
+	pricing = convertPricingMonetaryFieldsToCNY(pricing, exchangeRate)
 
 	c.JSON(200, gin.H{
 		"success":            true,
 		"data":               pricing,
+		"currency":           pricingResponseCurrency,
+		"usd_exchange_rate":  exchangeRate,
 		"vendors":            model.GetVendors(),
 		"group_ratio":        groupRatio,
 		"usable_group":       usableGroup,
 		"supported_endpoint": model.GetSupportedEndpointMap(),
 		"auto_groups":        service.GetUserAutoGroup(group),
-		"pricing_version":    "a42d372ccf0b5dd13ecf71203521f9d2",
+		"pricing_version":    "cny-v1-a42d372ccf0b5dd13ecf71203521f9d2",
 	})
 }
 

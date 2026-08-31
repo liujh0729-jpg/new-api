@@ -459,9 +459,11 @@ func FetchUpstreamRatios(c *gin.Context) {
 			//  type1: /api/ratio_config -> data 为 map[string]any，包含 model_ratio/completion_ratio/cache_ratio/model_price
 			//  type2: /api/pricing      -> data 为 []Pricing 列表，需要转换为与 type1 相同的 map 格式
 			var body struct {
-				Success bool            `json:"success"`
-				Data    json.RawMessage `json:"data"`
-				Message string          `json:"message"`
+				Success         bool            `json:"success"`
+				Data            json.RawMessage `json:"data"`
+				Message         string          `json:"message"`
+				Currency        string          `json:"currency"`
+				USDExchangeRate float64         `json:"usd_exchange_rate"`
 			}
 
 			if err := common.DecodeJson(bytes.NewReader(bodyBytes), &body); err != nil {
@@ -539,7 +541,17 @@ func FetchUpstreamRatios(c *gin.Context) {
 					billingExprMap[item.ModelName] = item.BillingExpr
 				}
 				if item.QuotaType == 1 {
-					modelPriceMap[item.ModelName] = item.ModelPrice
+					modelPriceUSD, convertErr := pricingResponseAmountToUSD(
+						item.ModelPrice,
+						body.Currency,
+						body.USDExchangeRate,
+					)
+					if convertErr != nil {
+						logger.LogWarn(c.Request.Context(), "pricing currency conversion failed from "+chItem.Name+": "+convertErr.Error())
+						ch <- upstreamResult{Name: uniqueName, Err: convertErr.Error()}
+						return
+					}
+					modelPriceMap[item.ModelName] = modelPriceUSD
 				} else {
 					modelRatioMap[item.ModelName] = item.ModelRatio
 					// completionRatio 可能为 0，此时也直接赋值，保持与上游一致

@@ -123,6 +123,10 @@ export type ModelCapability =
 export type PricingData = {
   success: boolean
   message?: string
+  /** Currency used by explicit monetary response fields such as model_price. */
+  currency?: 'CNY' | 'USD'
+  /** RMB paid for one USD; required when currency is CNY. */
+  usd_exchange_rate?: number
   data: PricingModel[]
   vendors: PricingVendor[]
   group_ratio: Record<string, number>
