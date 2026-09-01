@@ -84,6 +84,35 @@ def duration_capability(name: str = "aipdd_ltx_2.3", *, unit: str = "second", am
     }
 
 
+def token_market_duration_capability(
+    name: str = "ap-minimax-h3-text-to-video",
+    *,
+    available: bool | None = True,
+) -> dict:
+    capability = {
+        "id": name,
+        "adapterCode": "token_market_media",
+        "pricing": {
+            "pricingModel": "per_second",
+            "currency": "awcoin",
+            "pricingBasis": "display",
+            "enabled": True,
+            "byResolution": {
+                "768p": {
+                    "targetResolution": "768p",
+                    "displayAmountAwcoinPerSecond": 12,
+                    "displayVideoInputAwcoinPerSecond": 15,
+                    "defaultDurationSeconds": 1,
+                    "defaultFramesPerSecond": 24,
+                },
+            },
+        },
+    }
+    if available is not None:
+        capability["available"] = available
+    return capability
+
+
 class BuildAIPDDPricingOptionsTest(unittest.TestCase):
     def test_seedance_25_model_name_variants_accept_auto_duration(self) -> None:
         for model_name in (
@@ -346,6 +375,137 @@ class BuildAIPDDPricingOptionsTest(unittest.TestCase):
         self.assertIn("rmbPerAwcoin", result["summary"]["task_pricing_contract"])
         self.assertEqual("rmb_anchored", result["summary"]["price_conversion"])
         self.assertIn("RMB-anchored", result["summary"]["task_pricing_policy"])
+
+    def test_token_market_per_second_preserves_builtin_display_pricing_without_suggested_retail(self) -> None:
+        catalog = {
+            "revision": "revision-token-market",
+            "awcoinRate": awcoin_rate(),
+            "capabilities": [token_market_duration_capability()],
+            "models": [],
+        }
+        builtin_pricing = {
+            "unit": "second",
+            "by_resolution": {
+                "768p": {
+                    "no_reference_video_unit_price": 0.12,
+                    "reference_video_policy": "custom",
+                    "reference_video_unit_price": 0.15,
+                },
+            },
+        }
+        result = MODULE.build_updates(
+            catalog,
+            site_options(
+                ModelPrice={"ap-minimax-h3-text-to-video": 99},
+                **{
+                    "billing_setting.task_pricing": {
+                        "ap-minimax-h3-text-to-video": builtin_pricing,
+                    },
+                    "billing_setting.billing_mode": {
+                        "ap-minimax-h3-text-to-video": "task_pricing",
+                    },
+                },
+            ),
+            {"ap-minimax-h3-text-to-video"},
+        )
+        updates = {item["key"]: json.loads(item["value"]) for item in result["updates"]}
+
+        self.assertNotIn("ap-minimax-h3-text-to-video", updates["ModelPrice"])
+        self.assertEqual(
+            builtin_pricing,
+            updates["billing_setting.task_pricing"]["ap-minimax-h3-text-to-video"],
+        )
+        self.assertEqual(
+            "task_pricing",
+            updates["billing_setting.billing_mode"]["ap-minimax-h3-text-to-video"],
+        )
+        self.assertEqual(
+            ["ap-minimax-h3-text-to-video"],
+            result["summary"]["builtin_synced_task_pricing_models"],
+        )
+
+    def test_token_market_per_second_requires_post_sync_options(self) -> None:
+        catalog = {
+            "revision": "revision-token-market-missing-options",
+            "awcoinRate": awcoin_rate(),
+            "capabilities": [token_market_duration_capability("ap-agnes-video")],
+            "models": [],
+        }
+
+        with self.assertRaisesRegex(ValueError, "built-in catalog sync"):
+            MODULE.build_updates(catalog, site_options(), set())
+
+    def test_missing_seedance_suggested_retail_aborts_mixed_plan(self) -> None:
+        seedance = seedance_capability({
+            "720p": {
+                "targetResolution": "720p",
+                "displayAmountAwcoinPerSecond": 10,
+                "displayVideoInputAwcoinPerSecond": 15,
+                "defaultDurationSeconds": 5,
+                "defaultFramesPerSecond": 24,
+            },
+        })
+        token_market = token_market_duration_capability()
+        catalog = {
+            "revision": "revision-mixed-missing-seedance-retail",
+            "awcoinRate": awcoin_rate(),
+            "capabilities": [token_market, seedance],
+            "models": [],
+        }
+        current = site_options(
+            **{
+                "billing_setting.task_pricing": {
+                    token_market["id"]: {
+                        "unit": "second",
+                        "by_resolution": {
+                            "768p": {
+                                "no_reference_video_unit_price": 0.12,
+                                "reference_video_policy": "custom",
+                                "reference_video_unit_price": 0.15,
+                            },
+                        },
+                    },
+                },
+                "billing_setting.billing_mode": {token_market["id"]: "task_pricing"},
+            },
+        )
+
+        with self.assertRaisesRegex(ValueError, "suggestedRetailAwcoinPerSecond"):
+            MODULE.build_updates(catalog, current, set())
+
+    def test_unavailable_token_market_per_second_removes_stale_builtin_options(self) -> None:
+        model_name = "ap-minimax-h3-text-to-video"
+        catalog = {
+            "revision": "revision-token-market-unavailable",
+            "awcoinRate": awcoin_rate(),
+            "capabilities": [token_market_duration_capability(model_name, available=False)],
+            "models": [],
+        }
+        result = MODULE.build_updates(
+            catalog,
+            site_options(
+                **{
+                    "billing_setting.task_pricing": {
+                        model_name: {
+                            "unit": "second",
+                            "by_resolution": {
+                                "768p": {
+                                    "no_reference_video_unit_price": 0.12,
+                                    "reference_video_policy": "same",
+                                },
+                            },
+                        },
+                    },
+                    "billing_setting.billing_mode": {model_name: "task_pricing"},
+                },
+            ),
+            {model_name},
+        )
+        updates = {item["key"]: json.loads(item["value"]) for item in result["updates"]}
+
+        self.assertNotIn(model_name, updates["billing_setting.task_pricing"])
+        self.assertNotIn(model_name, updates["billing_setting.billing_mode"])
+        self.assertEqual([model_name], result["summary"]["builtin_sync_removed_models"])
 
     def test_rmb_anchored_conversion_uses_rmb_per_awcoin_over_catalog_usd(self) -> None:
         # Catalog usdPerAwcoin would yield 10 * 0.02 = 0.2; RMB-anchored must

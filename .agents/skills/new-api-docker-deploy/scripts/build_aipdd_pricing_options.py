@@ -280,6 +280,83 @@ def duration_task_pricing(
     }
 
 
+def is_token_market_duration_capability(capability: dict[str, Any]) -> bool:
+    pricing = capability.get("pricing")
+    return (
+        isinstance(pricing, dict)
+        and str(capability.get("adapterCode", "")).strip().lower() == "token_market_media"
+        and str(pricing.get("pricingModel", "")).strip().lower() == "per_second"
+    )
+
+
+def validate_builtin_token_market_task_pricing(
+    capability: dict[str, Any],
+    task_pricing: Any,
+    billing_mode: Any,
+) -> None:
+    """Validate the post-sync option shape without rebuilding its display prices."""
+    model_name = str(capability.get("id", "")).strip()
+    pricing = capability.get("pricing")
+    if not isinstance(pricing, dict) or not isinstance(pricing.get("byResolution"), dict):
+        raise ValueError(f"{model_name}: Token Market per-second pricing matrix is missing")
+    if (
+        str(pricing.get("currency", "")).strip().lower() != "awcoin"
+        or str(pricing.get("pricingBasis", "")).strip().lower() != "display"
+        or pricing.get("enabled") is not True
+    ):
+        raise ValueError(f"{model_name}: invalid Token Market display pricing metadata")
+    if capability.get("available") is False:
+        return
+    if str(billing_mode).strip().lower() != "task_pricing":
+        raise ValueError(
+            f"{model_name}: built-in catalog sync did not set billing_mode=task_pricing"
+        )
+    if not isinstance(task_pricing, dict):
+        raise ValueError(f"{model_name}: built-in catalog sync task pricing is missing")
+    if str(task_pricing.get("unit", "")).strip().lower() != "second":
+        raise ValueError(f"{model_name}: built-in catalog sync task pricing must use seconds")
+    by_resolution = task_pricing.get("by_resolution")
+    if not isinstance(by_resolution, dict) or not by_resolution:
+        raise ValueError(
+            f"{model_name}: built-in catalog sync task pricing has no resolution matrix"
+        )
+
+    catalog_resolutions = {
+        normalize_resolution(raw_resolution, model_name)
+        for raw_resolution in pricing["byResolution"]
+    }
+    option_resolutions = {
+        normalize_resolution(raw_resolution, model_name)
+        for raw_resolution in by_resolution
+    }
+    if option_resolutions != catalog_resolutions:
+        raise ValueError(
+            f"{model_name}: built-in catalog sync resolution matrix does not match the catalog"
+        )
+    for resolution, tier in by_resolution.items():
+        normalized = normalize_resolution(resolution, model_name)
+        if not isinstance(tier, dict):
+            raise ValueError(
+                f"{model_name}/{normalized}: built-in task pricing tier must be an object"
+            )
+        decimal_value(
+            tier.get("no_reference_video_unit_price"),
+            f"{model_name}/{normalized}.no_reference_video_unit_price",
+            positive=True,
+        )
+        policy = str(tier.get("reference_video_policy", "")).strip().lower()
+        if policy not in {"same", "custom"}:
+            raise ValueError(
+                f"{model_name}/{normalized}: invalid built-in reference video policy"
+            )
+        if policy == "custom":
+            decimal_value(
+                tier.get("reference_video_unit_price"),
+                f"{model_name}/{normalized}.reference_video_unit_price",
+                positive=True,
+            )
+
+
 def rmb_anchored_usd_per_awcoin(catalog: dict[str, Any], current: dict[str, Any]) -> Decimal:
     """Return the USD/AWCoin factor that makes site display RMB equal AIPDD RMB.
 
@@ -317,12 +394,26 @@ def build_updates(
     managed = previous_models | current_ids
 
     maps = {key: parse_map(current.get(key), key) for key in OPTION_KEYS}
-    for values in maps.values():
-        for name in managed:
+    builtin_sync_models = {
+        str(capability.get("id", "")).strip()
+        for capability in capabilities
+        if isinstance(capability, dict)
+        and is_token_market_duration_capability(capability)
+        and capability.get("available") is not False
+    }
+    for key, values in maps.items():
+        removable = managed
+        if key in {"billing_setting.task_pricing", "billing_setting.billing_mode"}:
+            # These entries were just written atomically by New API's built-in
+            # token_market_media display-price sync. Preserve their values.
+            removable = managed - builtin_sync_models
+        for name in removable:
             values.pop(name, None)
 
     per_call_models: list[str] = []
     task_models: list[str] = []
+    builtin_task_models: list[str] = []
+    builtin_removed_models: list[str] = []
     llm_names: list[str] = []
 
     for capability in capabilities:
@@ -333,16 +424,29 @@ def build_updates(
         if not isinstance(pricing, dict):
             raise ValueError(f"{model_name}: pricing is missing")
         pricing_model = str(pricing.get("pricingModel", "")).strip().lower()
-        is_resolution_task_pricing = (
-            str(capability.get("adapterCode", "")).strip().lower() == "seedance"
-            or pricing_model == "per_second"
-        )
-        if is_resolution_task_pricing:
+        adapter_code = str(capability.get("adapterCode", "")).strip().lower()
+        if adapter_code == "seedance":
             task_pricing = resolution_task_pricing(capability, usd_per_awcoin)
             maps["billing_setting.task_pricing"][model_name] = task_pricing
             maps["billing_setting.billing_mode"][model_name] = "task_pricing"
             task_models.append(model_name)
             continue
+        if is_token_market_duration_capability(capability):
+            if capability.get("available") is False:
+                builtin_removed_models.append(model_name)
+                continue
+            validate_builtin_token_market_task_pricing(
+                capability,
+                maps["billing_setting.task_pricing"].get(model_name),
+                maps["billing_setting.billing_mode"].get(model_name),
+            )
+            builtin_task_models.append(model_name)
+            continue
+        if pricing_model == "per_second":
+            raise ValueError(
+                f"{model_name}: per-second pricing is supported only for Seedance "
+                "or token_market_media"
+            )
         if pricing_model == "per_unit":
             task_pricing = duration_task_pricing(capability, usd_per_awcoin)
             maps["billing_setting.task_pricing"][model_name] = task_pricing
@@ -409,10 +513,13 @@ def build_updates(
         "summary": {
             "managed_models": len(current_ids),
             "per_call_models": sorted(per_call_models),
-            "task_pricing_models": sorted(task_models),
+            "task_pricing_models": sorted(task_models + builtin_task_models),
+            "manual_task_pricing_models": sorted(task_models),
+            "builtin_synced_task_pricing_models": sorted(builtin_task_models),
+            "builtin_sync_removed_models": sorted(builtin_removed_models),
             "tiered_expr_models": sorted(llm_names),
-            "task_pricing_contract": "Seedance by_resolution matrix requires suggested retail prices for New API sale, still requires AIPDD display settlement fields, accepts only the -1 auto-duration sentinel for Seedance 2.5 model names, fixes 480p group ratio at 1, and rejects legacy catalog pricing; per_unit/second tasks use flat USD/second task pricing; all AIPDD prices convert as AWCoin × rmbPerAwcoin ÷ site USDExchangeRate so display RMB equals AIPDD suggested retail; no legacy ModelPrice fallback",
-            "task_pricing_policy": "RMB-anchored: stored USD = AWCoin × rmbPerAwcoin ÷ site USDExchangeRate (catalog usdPerAwcoin unused); per-resolution Seedance suggested-retail with group_ratio_policy=none for 480p, plus catalog per-unit duration; display/BYOK prices are informational only",
+            "task_pricing_contract": "Only Seedance by_resolution matrix pricing requires suggested retail prices for New API sale; Seedance still requires AIPDD display settlement fields, accepts only the -1 auto-duration sentinel for Seedance 2.5 model names, fixes 480p group ratio at 1, and rejects legacy catalog pricing. Eligible token_market_media/per_second models do not require suggestedRetail fields: their display-price task_pricing and billing_mode must already exist from New API built-in catalog sync and are preserved without changing their values. per_unit/second tasks use flat USD/second task pricing; manually rebuilt AIPDD prices convert as AWCoin × rmbPerAwcoin ÷ site USDExchangeRate; no legacy ModelPrice fallback",
+            "task_pricing_policy": "RMB-anchored manual pricing: Seedance uses per-resolution suggested retail with group_ratio_policy=none for 480p, per-unit duration uses chargeConfig, and catalog usdPerAwcoin is unused. Token Market per-second models remain owned by built-in display-price sync and are validated/preserved instead of rebuilt",
             "price_conversion": "rmb_anchored",
         },
     }
