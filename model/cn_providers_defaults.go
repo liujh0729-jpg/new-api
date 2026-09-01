@@ -340,6 +340,14 @@ var cnProviders = []cnProviderInfo{
 				},
 			},
 			{
+				ModelName:   "doubao-seedance-2-5-260628",
+				Description: "豆包Seedance 2.5，支持文生视频、图生视频与参考视频输入的高质量视频生成模型。",
+				Tags:        "豆包,Seedance 2.5,视频生成,文生视频,图生视频",
+				EndpointTypes: []constant.EndpointType{
+					constant.EndpointTypeOpenAIVideo,
+				},
+			},
+			{
 				ModelName:   "doubao-embedding-vision-251215",
 				Description: "豆包Embedding Vision，多模态向量化模型，支持视频、文本、图片输入和语义检索。",
 				Tags:        "豆包,Embedding,多模态,向量化,检索",

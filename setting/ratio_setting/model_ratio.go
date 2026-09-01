@@ -362,6 +362,7 @@ var defaultModelPrice = map[string]float64{
 	"doubao-seedream-5-0-lite-260128": 0.03,
 	"doubao-seedance-2-0-260128":      0.5,
 	"doubao-seedance-2-0-fast-260128": 0.4,
+	"doubao-seedance-2-5-260628":      0.7,
 	"doubao-embedding-vision-251215":  0.001,
 	"Doubao-pro-32k":                0.003,
 	"Doubao-lite-32k":               0.001,

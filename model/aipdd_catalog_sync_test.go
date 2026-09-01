@@ -86,7 +86,7 @@ func TestPreviousAIPDDCatalogModelsUsesManagedChannelForLegacySnapshot(t *testin
 	require.ElementsMatch(t, []string{"legacy-task", "legacy-llm"}, models)
 }
 
-func TestApplyAIPDDCatalogReplacesModelsAndCleansOnlySeededCNChannels(t *testing.T) {
+func TestApplyAIPDDCatalogReplacesOnlyManagedAIPDDData(t *testing.T) {
 	truncateTables(t)
 	t.Cleanup(func() {
 		constant.ResetAIPDDCapabilities()
@@ -96,6 +96,13 @@ func TestApplyAIPDDCatalogReplacesModelsAndCleansOnlySeededCNChannels(t *testing
 	require.NoError(t, EnsureCNProviderDefaults())
 	custom := Channel{Type: constant.ChannelTypeAli, Name: "用户自建阿里渠道", Key: "custom", Group: "default", Models: "custom-model", Status: 1}
 	require.NoError(t, DB.Create(&custom).Error)
+	const customSeedanceModel = "doubao-seedance-2-0-260128"
+	customSeedance := Channel{
+		Type: constant.ChannelTypeVolcEngine, Name: "Seedance-DO", Key: "custom-seedance",
+		Group: "default", Models: customSeedanceModel, Status: 1,
+	}
+	require.NoError(t, DB.Create(&customSeedance).Error)
+	require.NoError(t, customSeedance.AddAbilities(DB))
 
 	first := aipddTestCatalog("revision-1", "task-old", "llm-old")
 	firstResult, err := applyAIPDDCatalog(first, "https://aipdd.example", "sk-test")
@@ -121,11 +128,16 @@ func TestApplyAIPDDCatalogReplacesModelsAndCleansOnlySeededCNChannels(t *testing
 	for _, provider := range cnProviders {
 		var count int64
 		require.NoError(t, DB.Model(&Channel{}).Where("type = ? AND name = ?", provider.ChannelType, provider.Name).Count(&count).Error)
-		require.Zero(t, count)
+		require.EqualValues(t, 1, count)
 	}
 	var customCount int64
 	require.NoError(t, DB.Model(&Channel{}).Where("id = ?", custom.Id).Count(&customCount).Error)
 	require.EqualValues(t, 1, customCount)
+	var customSeedanceModelCount, customSeedanceAbilityCount int64
+	require.NoError(t, DB.Model(&Model{}).Where("model_name = ?", customSeedanceModel).Count(&customSeedanceModelCount).Error)
+	require.NoError(t, DB.Model(&Ability{}).Where("channel_id = ? AND model = ?", customSeedance.Id, customSeedanceModel).Count(&customSeedanceAbilityCount).Error)
+	require.EqualValues(t, 1, customSeedanceModelCount)
+	require.EqualValues(t, 1, customSeedanceAbilityCount)
 
 	second := aipddTestCatalog("revision-2", "task-new", "llm-new")
 	result, err := applyAIPDDCatalog(second, "https://aipdd.example", "sk-test")

@@ -168,11 +168,11 @@ func applyAIPDDCatalog(catalog aipddcatalog.AtomicCatalog, baseURL, apiKey strin
 	if err == nil {
 		err = cleanupExcludedAIPDDDataTx(tx, vendorID)
 	}
+	// This periodic task owns only the managed AIPDD catalog. Channels and
+	// metadata for other providers are administrator-managed and must remain
+	// untouched, even when their model IDs are absent from the AIPDD catalog.
 	if err == nil {
 		err = removeStaleAIPDDModelsTx(tx, previousSet, currentSet, vendorID)
-	}
-	if err == nil {
-		err = cleanupCNProviderDefaultsTx(tx, currentSet)
 	}
 	if err == nil {
 		result.UpdatedPrices, pricingOptionUpdates, err = syncAIPDDTokenMarketTaskPricingTx(tx, catalog)
@@ -452,49 +452,6 @@ func removeStaleAIPDDModelsTx(tx *gorm.DB, previous, current map[string]bool, ve
 		}
 	}
 	return tx.Unscoped().Where("vendor_id = ? AND model_name IN ?", vendorID, stale).Delete(&Model{}).Error
-}
-
-func cleanupCNProviderDefaultsTx(tx *gorm.DB, keepModels map[string]bool) error {
-	for _, provider := range cnProviders {
-		var channels []Channel
-		if err := tx.Where("type = ? AND name = ?", provider.ChannelType, provider.Name).Find(&channels).Error; err != nil {
-			return err
-		}
-		for _, channel := range channels {
-			if err := tx.Where("channel_id = ?", channel.Id).Delete(&Ability{}).Error; err != nil {
-				return err
-			}
-			if err := tx.Delete(&channel).Error; err != nil {
-				return err
-			}
-		}
-		modelNames := make([]string, 0, len(provider.Models))
-		for _, item := range provider.Models {
-			if !keepModels[item.ModelName] {
-				modelNames = append(modelNames, item.ModelName)
-			}
-		}
-		if len(modelNames) > 0 {
-			if err := tx.Unscoped().Where("model_name IN ?", modelNames).Delete(&Model{}).Error; err != nil {
-				return err
-			}
-		}
-		var vendor Vendor
-		if err := tx.Where("name = ?", provider.Name).First(&vendor).Error; err == nil {
-			var count int64
-			if err := tx.Model(&Model{}).Where("vendor_id = ?", vendor.Id).Count(&count).Error; err != nil {
-				return err
-			}
-			if count == 0 {
-				if err := tx.Unscoped().Delete(&vendor).Error; err != nil {
-					return err
-				}
-			}
-		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-			return err
-		}
-	}
-	return nil
 }
 
 func stringSet(values []string) map[string]bool {
