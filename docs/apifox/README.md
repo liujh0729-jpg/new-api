@@ -29,3 +29,8 @@
 ```
 
 Agent 必须先改 `docs/openapi/public.json`，再跑同步。不再平行维护独立的 Markdown 接口字段表。
+
+同步脚本会把 `public.json` 中的每个 operation 全量写回对应接口，统一鉴权设置，并将首个
+`servers` 地址设为文档站默认正式环境；随后再补充各模型分类下与通用路径重复的专用接口。
+脚本结束前会回读全部公开 operation，校验路径、方法、描述、鉴权及单元素
+`required` / `enum` 数组未被 PowerShell 展开。不要绕过这些断言单独执行云端导入。

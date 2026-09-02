@@ -801,6 +801,7 @@ func (t *TaskSubmitReq) UnmarshalJSON(data []byte) error {
 		Metadata    json.RawMessage `json:"metadata,omitempty"`
 		Content     json.RawMessage `json:"content,omitempty"`
 		Duration    json.RawMessage `json:"duration,omitempty"`
+		Seconds     json.RawMessage `json:"seconds,omitempty"`
 		CharacterID json.RawMessage `json:"character_id,omitempty"`
 		*Alias
 	}{
@@ -845,6 +846,19 @@ func (t *TaskSubmitReq) UnmarshalJSON(data []byte) error {
 					t.Duration = int(durationFloat)
 				}
 			}
+		}
+	}
+
+	if len(aux.Seconds) > 0 && string(aux.Seconds) != "null" {
+		var seconds string
+		if err := common.Unmarshal(aux.Seconds, &seconds); err == nil {
+			t.Seconds = strings.TrimSpace(seconds)
+		} else {
+			var numericSeconds float64
+			if err := common.Unmarshal(aux.Seconds, &numericSeconds); err != nil {
+				return fmt.Errorf("seconds must be a number or numeric string")
+			}
+			t.Seconds = strconv.FormatFloat(numericSeconds, 'f', -1, 64)
 		}
 	}
 

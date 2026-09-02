@@ -5,7 +5,7 @@
   "path": "/v1/videos/{task_id}/content",
   "status": "released",
   "operationId": "getAgnesVideoContent",
-  "description": "代理读取已完成任务的视频内容。该接口返回二进制视频，不是任务状态；状态查询请使用 `GET /v1/videos/{task_id}`。支持可选 `Range` 请求头。",
+  "description": "代理读取已完成任务的视频内容。该接口返回二进制视频，不是任务状态；状态查询请使用 `GET /v1/videos/{task_id}`。支持可选 `Range` 和 `If-Range` 请求头；任务未完成时返回 400。",
   "tags": ["Agnes"],
   "auth": { "type": "bearer", "bearer": { "token": "" } },
   "parameters": {
@@ -13,14 +13,17 @@
       { "id": "task_id#0", "name": "task_id", "required": true, "enable": true, "type": "string", "description": "已完成任务的 id", "schema": { "type": "string" } }
     ],
     "header": [
-      { "id": "Range#1", "name": "Range", "required": false, "enable": true, "type": "string", "description": "可选，例如 bytes=0-1048575", "schema": { "type": "string" } }
+      { "id": "Range#1", "name": "Range", "required": false, "enable": true, "type": "string", "description": "可选，例如 bytes=0-1048575", "schema": { "type": "string" } },
+      { "id": "If-Range#2", "name": "If-Range", "required": false, "enable": true, "type": "string", "description": "可选，值为 ETag 或 HTTP 日期", "schema": { "type": "string" } }
     ]
   },
   "responses": [
     { "name": "完整内容", "code": 200, "contentType": "binary", "description": "完整视频；实际 Content-Type 通常为 video/mp4", "jsonSchema": { "type": "string", "format": "binary" } },
     { "name": "部分内容", "code": 206, "contentType": "binary", "description": "Range 请求返回的部分视频；实际 Content-Type 通常为 video/mp4", "jsonSchema": { "type": "string", "format": "binary" } },
+    { "name": "任务未完成", "code": 400, "contentType": "json", "description": "任务尚未完成或没有可读取结果", "jsonSchema": { "type": "object", "additionalProperties": true } },
     { "name": "未认证", "code": 401, "contentType": "json", "description": "Token 缺失或无效", "jsonSchema": { "type": "object", "additionalProperties": true } },
+    { "name": "禁止访问", "code": 403, "contentType": "json", "description": "目标媒体 URL 被安全策略阻止", "jsonSchema": { "type": "object", "additionalProperties": true } },
     { "name": "不存在", "code": 404, "contentType": "json", "description": "任务不存在或不属于当前用户", "jsonSchema": { "type": "object", "additionalProperties": true } },
-    { "name": "冲突", "code": 409, "contentType": "json", "description": "任务尚未完成或没有可读取结果", "jsonSchema": { "type": "object", "additionalProperties": true } }
+    { "name": "代理失败", "code": 502, "contentType": "json", "description": "上游视频内容读取失败", "jsonSchema": { "type": "object", "additionalProperties": true } }
   ]
 }

@@ -78,7 +78,7 @@ func getAIPDDChannelCatalogKey(channel *model.Channel) string {
 }
 
 // SyncAIPDDChannelCatalog atomically replaces the managed AIPDD channel's
-// upstream model and capability metadata while preserving local pricing.
+// upstream model and capability metadata and imports AIPDD-managed media prices.
 func SyncAIPDDChannelCatalog(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {

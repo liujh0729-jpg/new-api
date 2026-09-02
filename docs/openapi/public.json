@@ -3,8 +3,18 @@
   "info": {
     "title": "NewAPI 公开用户接口",
     "version": "1.0.0",
-    "description": "按调用场景分组：基础接口、通用文本生成、通用图片生成、通用视频生成、Seedance、MiniMax H3、Agnes。\n\n认证统一使用 `Authorization: Bearer <NEWAPI_TOKEN>`。价格和可用档位以 `GET /api/pricing` 为准，不要硬编码。"
+    "description": "按调用场景分组：基础接口、通用文本生成、通用图片生成、通用视频生成、Seedance、MiniMax H3、Agnes。\n\n除公开价格目录 `GET /api/pricing` 外，接口使用 `Authorization: Bearer <NEWAPI_TOKEN>`。价格和可用档位以价格目录为准，不要硬编码。",
+    "license": {
+      "name": "AGPL-3.0",
+      "url": "https://www.gnu.org/licenses/agpl-3.0.html"
+    }
   },
+  "servers": [
+    {
+      "url": "https://susciyuan.com",
+      "description": "正式环境"
+    }
+  ],
   "tags": [
     {
       "name": "基础接口",
@@ -51,7 +61,8 @@
                 "schema": { "$ref": "#/components/schemas/ModelList" }
               }
             }
-          }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
         }
       }
     },
@@ -60,8 +71,8 @@
         "tags": ["基础接口"],
         "summary": "获取价格目录",
         "operationId": "getPricing",
-        "description": "动态价格与可用分辨率。同一模型可能因分辨率、是否含参考视频、PLATFORM/BYOK 而不同。响应固定声明 `currency=CNY`；`model_price` 以及 `task_pricing` 下所有 `*_unit_price` 均为人民币金额，任务价格当前按秒计价。`model_ratio`、倍率字段和 `billing_expr` 是计算元数据，不是金额。",
-        "security": [{ "BearerAuth": [] }],
+        "description": "公开的动态价格与可用分辨率目录，无需 API Token。同一模型可能因分辨率、是否含参考视频、PLATFORM/BYOK 而不同。响应固定声明 `currency=CNY`；`model_price` 以及 `task_pricing` 下所有 `*_unit_price` 均为人民币金额，任务价格当前按秒计价。`model_ratio`、倍率字段和 `billing_expr` 是计算元数据，不是金额。登录站点后的浏览器会按当前账号分组过滤目录；普通 API 客户端获得公开目录。",
+        "security": [],
         "responses": {
           "200": {
             "description": "人民币价格目录",
@@ -93,16 +104,17 @@
                 }
               }
             }
-          }
+          },
+          "429": { "$ref": "#/components/responses/TooManyRequests" }
         }
       }
     },
-    "/api/usage/token/": {
+    "/api/usage/token": {
       "get": {
         "tags": ["基础接口"],
         "summary": "查询当前 API Key 余额",
         "operationId": "getTokenUsage",
-        "description": "查询当前 Key 的总额度、已用和剩余额度，不是账号下所有 Key 的总余额。数值是站点内部额度单位。此接口必须使用 Bearer 前缀。",
+        "description": "查询当前 Key 的总额度、已用和剩余额度，不是账号下所有 Key 的总余额。`total_granted`、`total_used`、`total_available` 均为人民币元；兼容审计用途的 `quota_total_*` 才是站点内部额度单位。此接口必须使用 Bearer 前缀。",
         "security": [{ "BearerAuth": [] }],
         "responses": {
           "200": {
@@ -116,9 +128,15 @@
                   "data": {
                     "object": "token_usage",
                     "name": "default",
-                    "total_granted": 100000,
-                    "total_used": 20000,
-                    "total_available": 80000,
+                    "currency": "CNY",
+                    "total_granted": 1.46,
+                    "total_used": 0.292,
+                    "total_available": 1.168,
+                    "quota_total_granted": 100000,
+                    "quota_total_used": 20000,
+                    "quota_total_available": 80000,
+                    "quota_per_unit": 500000,
+                    "usd_exchange_rate": 7.3,
                     "unlimited_quota": false,
                     "model_limits": {},
                     "model_limits_enabled": false,
@@ -127,7 +145,8 @@
                 }
               }
             }
-          }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
         }
       }
     },
@@ -136,7 +155,7 @@
         "tags": ["基础接口"],
         "summary": "查询当前 API Key 账单",
         "operationId": "listTokenLogs",
-        "description": "分页查询当前 Key 的逐笔日志，按最新在前。仅当前 Key，不支持按时间或模型过滤。",
+        "description": "分页查询当前 Key 的逐笔日志，按最新在前。仅当前 Key，不支持按时间或模型过滤。`quota_cny` 是本次人民币费用；`other` 内的显式价格也统一为人民币，原 `*_usd` 字段会以 `*_cny` 返回，并声明 `currency=CNY`。`quota` 是兼容保留的内部额度单位。",
         "security": [{ "BearerAuth": [] }],
         "parameters": [
           { "name": "p", "in": "query", "schema": { "type": "integer", "default": 1 }, "description": "页码，从 1 开始" },
@@ -144,8 +163,14 @@
         ],
         "responses": {
           "200": {
-            "description": "账单分页"
-          }
+            "description": "人民币账单分页",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/TokenLogListResponse" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
         }
       }
     },
@@ -154,7 +179,7 @@
         "tags": ["基础接口"],
         "summary": "获取任务列表",
         "operationId": "listTokenTasks",
-        "description": "分页查询当前 API Key 所属用户的异步任务。同账号下所有 Key 看到同一列表。",
+        "description": "分页查询当前 API Key 所属用户的异步任务。同账号下所有 Key 看到同一列表。`cost_cny`/`quota_cny` 是人民币任务费用；上游原始 `task_cost`、`*_usd` 和财务字段不会对外返回。`quota` 是兼容保留的内部额度单位。",
         "security": [{ "BearerAuth": [] }],
         "parameters": [
           { "name": "p", "in": "query", "schema": { "type": "integer", "default": 1 } },
@@ -173,7 +198,8 @@
                 "schema": { "$ref": "#/components/schemas/TaskListResponse" }
               }
             }
-          }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
         }
       }
     },
@@ -182,7 +208,7 @@
         "tags": ["通用文本生成"],
         "summary": "创建聊天对话",
         "operationId": "createChatCompletion",
-        "description": "OpenAI Chat Completions。`model` 必须与 `GET /v1/models` 中的名称完全匹配。",
+        "description": "OpenAI Chat Completions。`model` 必须与 `GET /v1/models` 中的名称完全匹配。上游若返回 `usage.cost`，NewAPI 会换算成人民币并同时返回 `usage.currency=CNY` 与 `usage.usd_exchange_rate`；内部计费仍使用原始上游金额。",
         "security": [{ "BearerAuth": [] }],
         "requestBody": {
           "required": true,
@@ -199,8 +225,24 @@
         },
         "responses": {
           "200": {
-            "description": "模型回复"
-          }
+            "description": "模型回复；stream=true 时为 text/event-stream，否则为 JSON",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "properties": {
+                    "usage": { "$ref": "#/components/schemas/PublicUsage" }
+                  }
+                }
+              },
+              "text/event-stream": { "schema": { "type": "string" } }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "429": { "$ref": "#/components/responses/TooManyRequests" },
+          "502": { "$ref": "#/components/responses/UpstreamError" }
         }
       }
     },
@@ -209,7 +251,7 @@
         "tags": ["通用图片生成"],
         "summary": "文生图",
         "operationId": "createImage",
-        "description": "同步图片生成。常见字段为 `model` + `prompt`；部分千问模型使用 `input.messages`。Agnes Image 2.1 Flash 还要求 `size`，可选 `ratio`，且 `n` 只能为 1。",
+        "description": "图片生成入口。常见字段为 `model` + `prompt`；部分千问模型使用 `input.messages`。同步模型直接返回 `data[].url`；AIPDD 异步图片模型返回 `status=queued` 的任务对象，随后使用 `GET /v1/images/generations/{task_id}` 查询。\n\n### AP 图片模型\n\n`ap-image-2.0`（旗舰版）和 `ap-image-fast-2.0`（极速版）都使用本接口同步文生图：`prompt` 必填、`n` 只能为 `1`，`quality` 可选。`response_format` 可传 `url` 或 `b64_json`，但 NewAPI 会转存图片并统一返回 `data[].url`。\n\n- `ap-image-2.0` 尺寸：`auto`、`1024x1024`、`2048x2048`、`1024x1536`、`1536x1024`。\n- `ap-image-fast-2.0` 尺寸：`1024x1024`、`2048x2048`、`1536x1024`、`1024x1536`、`2048x1152`、`1152x2048`。\n- 要输入参考图，请改用 `POST /v1/images/edits`，文生图 JSON 中不要传 `image`。\n\n`ap-image-2.0` 示例：\n\n```bash\ncurl --request POST 'https://susciyuan.com/v1/images/generations' \\\n  --header 'Authorization: Bearer <YOUR_API_KEY>' \\\n  --header 'Content-Type: application/json' \\\n  --data '{\"model\":\"ap-image-2.0\",\"prompt\":\"雨后霓虹街道，电影感\",\"size\":\"2048x2048\",\"quality\":\"high\",\"n\":1}'\n```\n\n`ap-image-fast-2.0` 示例：\n\n```bash\ncurl --request POST 'https://susciyuan.com/v1/images/generations' \\\n  --header 'Authorization: Bearer <YOUR_API_KEY>' \\\n  --header 'Content-Type: application/json' \\\n  --data '{\"model\":\"ap-image-fast-2.0\",\"prompt\":\"雨后霓虹街道，电影感\",\"size\":\"2048x1152\",\"n\":1}'\n```\n\nAgnes Image 2.1 Flash 要求 `size`，可选 `ratio`，且 `n` 只能为 1。",
         "security": [{ "BearerAuth": [] }],
         "requestBody": {
           "required": true,
@@ -222,6 +264,25 @@
                   "value": {
                     "model": "qwen-image-2.0-pro",
                     "prompt": "雨后霓虹街道，电影感"
+                  }
+                },
+                "apImage2": {
+                  "summary": "AP Image 2.0 旗舰版",
+                  "value": {
+                    "model": "ap-image-2.0",
+                    "prompt": "雨后霓虹街道，电影感",
+                    "size": "2048x2048",
+                    "quality": "high",
+                    "n": 1
+                  }
+                },
+                "apImageFast2": {
+                  "summary": "AP Image 2.0 极速版",
+                  "value": {
+                    "model": "ap-image-fast-2.0",
+                    "prompt": "雨后霓虹街道，电影感",
+                    "size": "2048x1152",
+                    "n": 1
                   }
                 },
                 "agnes": {
@@ -240,8 +301,45 @@
         },
         "responses": {
           "200": {
-            "description": "图片结果，常见字段 data[0].url"
-          }
+            "description": "同步图片结果或异步任务；上游若附带 usage.cost，该值以人民币返回并声明 usage.currency=CNY",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    { "$ref": "#/components/schemas/ImageGenerationResponse" },
+                    { "$ref": "#/components/schemas/AsyncMediaTaskCreateResponse" }
+                  ]
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "429": { "$ref": "#/components/responses/TooManyRequests" },
+          "502": { "$ref": "#/components/responses/UpstreamError" }
+        }
+      }
+    },
+    "/v1/images/generations/{task_id}": {
+      "get": {
+        "tags": ["通用图片生成"],
+        "summary": "查询异步图片任务",
+        "operationId": "getImageGenerationTask",
+        "description": "仅用于创建接口返回任务对象的异步图片模型。同步模型的 `data[].url` 无需再查询。任务成功后，结果 URL 位于 `data.result_url`、`data.output` 或 `data.metadata.urls`。",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "task_id", "in": "path", "required": true, "schema": { "type": "string" }, "description": "创建接口返回的 id 或 task_id" }
+        ],
+        "responses": {
+          "200": {
+            "description": "异步图片任务状态",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/AsyncMediaTaskResponse" } }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "502": { "$ref": "#/components/responses/UpstreamError" }
         }
       }
     },
@@ -250,7 +348,7 @@
         "tags": ["通用图片生成"],
         "summary": "图编辑",
         "operationId": "editImage",
-        "description": "同步图片编辑，使用 `multipart/form-data`。Agnes Image 2.1 Flash 接受 1–8 个 `image` 文件，支持 PNG、JPEG、WebP；整个请求最大 64 MB。",
+        "description": "同步图片编辑，使用 `multipart/form-data`。\n\n### AP 图片模型图生图\n\n`ap-image-2.0` 和 `ap-image-fast-2.0` 都通过本接口输入参考图。`model`、`prompt` 和至少一个 `image` 文件必填，`n` 只能为 `1`；不支持 `mask`。图片格式仅限 PNG、JPEG、WebP，单张不超过 10 MB，所有参考图合计不超过 40 MB。\n\n- `ap-image-2.0`：最多 8 张参考图；尺寸为 `auto`、`1024x1024`、`2048x2048`、`1024x1536`、`1536x1024`。\n- `ap-image-fast-2.0`：最多 3 张参考图；尺寸为 `1024x1024`、`2048x2048`、`1536x1024`、`1024x1536`、`2048x1152`、`1152x2048`。\n- 多图时重复提交同名 `image` 字段；NewAPI 也兼容 `image[]`。结果统一位于 `data[].url`。\n\n`ap-image-2.0` 多参考图示例：\n\n```bash\ncurl --request POST 'https://susciyuan.com/v1/images/edits' \\\n  --header 'Authorization: Bearer <YOUR_API_KEY>' \\\n  --form 'model=ap-image-2.0' \\\n  --form 'prompt=保持人物一致，把背景改为雪夜城市' \\\n  --form 'size=1536x1024' \\\n  --form 'quality=high' \\\n  --form 'n=1' \\\n  --form 'image=@subject.png' \\\n  --form 'image=@style.webp'\n```\n\n`ap-image-fast-2.0` 示例：\n\n```bash\ncurl --request POST 'https://susciyuan.com/v1/images/edits' \\\n  --header 'Authorization: Bearer <YOUR_API_KEY>' \\\n  --form 'model=ap-image-fast-2.0' \\\n  --form 'prompt=保留主体，改成复古海报风格' \\\n  --form 'size=2048x1152' \\\n  --form 'n=1' \\\n  --form 'image=@reference.jpg'\n```\n\nAgnes Image 2.1 Flash 接受 1–8 个 `image` 文件，支持 PNG、JPEG、WebP；整个请求最大 64 MB。",
         "security": [{ "BearerAuth": [] }],
         "requestBody": {
           "required": true,
@@ -262,8 +360,15 @@
         },
         "responses": {
           "200": {
-            "description": "编辑后的图片"
-          }
+            "description": "编辑后的图片；上游若附带 usage.cost，该值以人民币返回并声明 usage.currency=CNY",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ImageGenerationResponse" } }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "429": { "$ref": "#/components/responses/TooManyRequests" },
+          "502": { "$ref": "#/components/responses/UpstreamError" }
         }
       }
     },
@@ -331,7 +436,13 @@
                 "schema": { "$ref": "#/components/schemas/OpenAIVideoTask" }
               }
             }
-          }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "429": { "$ref": "#/components/responses/TooManyRequests" },
+          "502": { "$ref": "#/components/responses/UpstreamError" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
         }
       }
     },
@@ -353,7 +464,10 @@
                 "schema": { "$ref": "#/components/schemas/OpenAIVideoTask" }
               }
             }
-          }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "502": { "$ref": "#/components/responses/UpstreamError" }
         }
       }
     },
@@ -362,15 +476,42 @@
         "tags": ["通用视频生成"],
         "summary": "获取视频内容",
         "operationId": "getVideoContent",
-        "description": "视频内容代理，不是任务状态查询接口。",
+        "description": "代理读取已完成任务的视频二进制内容，不是任务状态查询接口。支持 Range 分段读取；任务未完成时返回 400。",
         "security": [{ "BearerAuth": [] }],
         "parameters": [
-          { "name": "task_id", "in": "path", "required": true, "schema": { "type": "string" } }
+          { "name": "task_id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "Range", "in": "header", "required": false, "schema": { "type": "string" }, "description": "可选字节范围，例如 bytes=0-1048575" },
+          { "name": "If-Range", "in": "header", "required": false, "schema": { "type": "string" }, "description": "可选条件范围请求，值为 ETag 或 HTTP 日期" }
         ],
         "responses": {
           "200": {
-            "description": "视频内容"
-          }
+            "description": "完整视频内容",
+            "headers": {
+              "Accept-Ranges": { "schema": { "type": "string" }, "description": "通常为 bytes" },
+              "Content-Length": { "schema": { "type": "integer", "format": "int64" } }
+            },
+            "content": {
+              "video/mp4": { "schema": { "type": "string", "format": "binary" } },
+              "application/octet-stream": { "schema": { "type": "string", "format": "binary" } }
+            }
+          },
+          "206": {
+            "description": "Range 请求返回的部分视频内容",
+            "headers": {
+              "Accept-Ranges": { "schema": { "type": "string" } },
+              "Content-Range": { "schema": { "type": "string" } },
+              "Content-Length": { "schema": { "type": "integer", "format": "int64" } }
+            },
+            "content": {
+              "video/mp4": { "schema": { "type": "string", "format": "binary" } },
+              "application/octet-stream": { "schema": { "type": "string", "format": "binary" } }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "502": { "$ref": "#/components/responses/UpstreamError" }
         }
       }
     },
@@ -831,6 +972,10 @@
         "description": "Token 缺失、无效或无权访问该资源",
         "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ApiErrorResponse" } } }
       },
+      "Forbidden": {
+        "description": "无权访问该资源，或目标媒体 URL 被安全策略阻止",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ApiErrorResponse" } } }
+      },
       "NotFound": {
         "description": "资源或任务不存在",
         "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ApiErrorResponse" } } }
@@ -845,6 +990,10 @@
       },
       "ServiceUnavailable": {
         "description": "上游服务暂不可用或未配置",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ApiErrorResponse" } } }
+      },
+      "TooManyRequests": {
+        "description": "请求过于频繁或额度速率受限",
         "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ApiErrorResponse" } } }
       }
     },
@@ -967,10 +1116,22 @@
             "properties": {
               "object": { "type": "string" },
               "name": { "type": "string" },
-              "total_granted": { "type": "integer" },
-              "total_used": { "type": "integer" },
-              "total_available": { "type": "integer" },
+              "currency": { "type": "string", "enum": ["CNY"] },
+              "total_granted": { "type": "number", "description": "人民币总额度" },
+              "total_used": { "type": "number", "description": "人民币已用额度" },
+              "total_available": { "type": "number", "description": "人民币剩余额度" },
+              "quota_total_granted": { "type": "integer", "description": "站点内部总额度单位" },
+              "quota_total_used": { "type": "integer", "description": "站点内部已用额度单位" },
+              "quota_total_available": { "type": "integer", "description": "站点内部剩余额度单位" },
+              "quota_per_unit": { "type": "number", "description": "每美元对应的站点额度单位" },
+              "usd_exchange_rate": { "type": "number", "description": "USD→CNY 汇率快照" },
               "unlimited_quota": { "type": "boolean" },
+              "model_limits": {
+                "type": "object",
+                "additionalProperties": { "type": "boolean" },
+                "description": "允许使用的模型名映射；仅 model_limits_enabled=true 时生效"
+              },
+              "model_limits_enabled": { "type": "boolean" },
               "expires_at": { "type": "integer", "format": "int64" }
             }
           }
@@ -978,10 +1139,13 @@
       },
       "TaskListResponse": {
         "type": "object",
+        "required": ["success", "data"],
         "properties": {
           "success": { "type": "boolean" },
+          "message": { "type": "string" },
           "data": {
             "type": "object",
+            "required": ["page", "page_size", "total", "items"],
             "properties": {
               "page": { "type": "integer" },
               "page_size": { "type": "integer" },
@@ -990,11 +1154,61 @@
                 "type": "array",
                 "items": {
                   "type": "object",
+                  "additionalProperties": true,
                   "properties": {
                     "task_id": { "type": "string" },
                     "status": { "type": "string" },
                     "result_url": { "type": "string" },
-                    "progress": { "type": "string" }
+                    "progress": { "type": "string" },
+                    "quota": { "type": "integer", "description": "兼容保留的站点内部额度单位" },
+                    "quota_cny": { "type": "number", "description": "人民币任务费用" },
+                    "cost_cny": { "type": "number", "description": "quota_cny 的人民币语义别名" },
+                    "currency": { "type": "string", "enum": ["CNY"] },
+                    "output": { "type": "array", "items": { "type": "string", "format": "uri" } },
+                    "metadata": { "type": "object", "additionalProperties": true },
+                    "data": { "type": "object", "additionalProperties": true }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "TokenLogListResponse": {
+        "type": "object",
+        "required": ["success", "data"],
+        "properties": {
+          "success": { "type": "boolean" },
+          "message": { "type": "string" },
+          "data": {
+            "type": "object",
+            "required": ["page", "page_size", "total", "items"],
+            "properties": {
+              "page": { "type": "integer" },
+              "page_size": { "type": "integer" },
+              "total": { "type": "integer" },
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "properties": {
+                    "id": { "type": "integer", "format": "int64" },
+                    "created_at": { "type": "integer", "format": "int64" },
+                    "type": { "type": "integer" },
+                    "content": { "type": "string" },
+                    "token_name": { "type": "string" },
+                    "model_name": { "type": "string" },
+                    "quota": { "type": "integer", "description": "兼容保留的站点内部额度单位" },
+                    "quota_cny": { "type": "number", "description": "人民币费用" },
+                    "currency": { "type": "string", "enum": ["CNY"] },
+                    "prompt_tokens": { "type": "integer" },
+                    "completion_tokens": { "type": "integer" },
+                    "use_time": { "type": "integer" },
+                    "is_stream": { "type": "boolean" },
+                    "group": { "type": "string" },
+                    "request_id": { "type": "string" },
+                    "other": { "type": "string", "description": "JSON 字符串；显式价格为人民币，原 *_usd 字段改名为 *_cny" }
                   }
                 }
               }
@@ -1005,21 +1219,61 @@
       "ChatCompletionRequest": {
         "type": "object",
         "required": ["model", "messages"],
+        "additionalProperties": true,
         "properties": {
           "model": { "type": "string" },
           "messages": {
             "type": "array",
+            "minItems": 1,
             "items": {
               "type": "object",
-              "required": ["role", "content"],
+              "required": ["role"],
+              "additionalProperties": true,
               "properties": {
-                "role": { "type": "string", "enum": ["system", "user", "assistant"] },
-                "content": { "type": "string" }
+                "role": { "type": "string", "enum": ["developer", "system", "user", "assistant", "tool", "function"] },
+                "content": {
+                  "oneOf": [
+                    { "type": "string", "nullable": true },
+                    {
+                      "type": "array",
+                      "items": { "type": "object", "additionalProperties": true },
+                      "description": "多模态内容块，例如 text、image_url、input_audio"
+                    }
+                  ]
+                },
+                "name": { "type": "string" },
+                "tool_call_id": { "type": "string" },
+                "tool_calls": { "type": "array", "items": { "type": "object", "additionalProperties": true } }
               }
             }
           },
-          "temperature": { "type": "number" },
-          "stream": { "type": "boolean", "default": false }
+          "temperature": { "type": "number", "minimum": 0, "maximum": 2 },
+          "top_p": { "type": "number", "minimum": 0, "maximum": 1 },
+          "n": { "type": "integer", "minimum": 1 },
+          "stream": { "type": "boolean", "default": false },
+          "stream_options": { "type": "object", "additionalProperties": true },
+          "stop": {
+            "oneOf": [
+              { "type": "string" },
+              { "type": "array", "items": { "type": "string" }, "maxItems": 4 }
+            ]
+          },
+          "max_tokens": { "type": "integer", "minimum": 1, "deprecated": true },
+          "max_completion_tokens": { "type": "integer", "minimum": 1 },
+          "presence_penalty": { "type": "number", "minimum": -2, "maximum": 2 },
+          "frequency_penalty": { "type": "number", "minimum": -2, "maximum": 2 },
+          "seed": { "type": "integer" },
+          "user": { "type": "string" },
+          "tools": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
+          "tool_choice": {
+            "oneOf": [
+              { "type": "string", "enum": ["none", "auto", "required"] },
+              { "type": "object", "additionalProperties": true }
+            ]
+          },
+          "parallel_tool_calls": { "type": "boolean" },
+          "response_format": { "type": "object", "additionalProperties": true },
+          "reasoning_effort": { "type": "string", "enum": ["low", "medium", "high"] }
         }
       },
       "ImageGenerateRequest": {
@@ -1027,10 +1281,11 @@
         "required": ["model"],
         "additionalProperties": true,
         "properties": {
-          "model": { "type": "string" },
-          "prompt": { "type": "string" },
-          "n": { "type": "integer", "minimum": 1 },
-          "size": { "type": "string", "description": "Agnes 必填：1K / 2K / 3K / 4K" },
+          "model": { "type": "string", "description": "AP 图片模型可选 ap-image-2.0（旗舰版）或 ap-image-fast-2.0（极速版）" },
+          "prompt": { "type": "string", "description": "图片生成提示词；AP 图片模型必填" },
+          "n": { "type": "integer", "minimum": 1, "description": "AP 图片模型和 Agnes 只能为 1" },
+          "size": { "type": "string", "description": "ap-image-2.0：auto / 1024x1024 / 2048x2048 / 1024x1536 / 1536x1024；ap-image-fast-2.0：1024x1024 / 2048x2048 / 1536x1024 / 1024x1536 / 2048x1152 / 1152x2048；Agnes 必填：1K / 2K / 3K / 4K" },
+          "quality": { "type": "string", "maxLength": 32, "description": "AP 图片模型可选，原样传递给上游质量策略" },
           "ratio": { "type": "string", "description": "Agnes：1:1 / 3:4 / 4:3 / 16:9 / 9:16 / 2:3 / 3:2 / 21:9" },
           "image": {
             "oneOf": [
@@ -1039,23 +1294,101 @@
             ]
           },
           "images": { "type": "array", "items": { "type": "string" }, "description": "参考图 URL 或 Data URI 数组" },
-          "response_format": { "type": "string", "enum": ["url", "b64_json"], "description": "Agnes 上游返回方式；NewAPI 会转存结果并统一返回 data[].url" }
+          "response_format": { "type": "string", "enum": ["url", "b64_json"], "description": "AP 图片模型和 Agnes 均接受；NewAPI 会转存结果并统一返回 data[].url" }
+        }
+      },
+      "ImageGenerationResponse": {
+        "type": "object",
+        "required": ["data"],
+        "additionalProperties": true,
+        "properties": {
+          "created": { "type": "integer", "format": "int64" },
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": true,
+              "properties": {
+                "url": { "type": "string", "format": "uri" },
+                "b64_json": { "type": "string", "format": "byte" },
+                "revised_prompt": { "type": "string" }
+              }
+            }
+          },
+          "usage": { "$ref": "#/components/schemas/PublicUsage" }
+        }
+      },
+      "PublicUsage": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "prompt_tokens": { "type": "integer" },
+          "completion_tokens": { "type": "integer" },
+          "total_tokens": { "type": "integer" },
+          "cost": { "type": "number", "format": "double", "description": "上游返回费用换算后的人民币金额。" },
+          "currency": { "type": "string", "enum": ["CNY"] },
+          "usd_exchange_rate": { "type": "number", "format": "double", "description": "此次费用换算使用的 USD→CNY 汇率。" }
+        }
+      },
+      "AsyncMediaTaskCreateResponse": {
+        "type": "object",
+        "required": ["id", "object", "model", "status", "created"],
+        "additionalProperties": true,
+        "properties": {
+          "id": { "type": "string" },
+          "task_id": { "type": "string", "deprecated": true },
+          "object": { "type": "string", "example": "image.generation.task" },
+          "model": { "type": "string" },
+          "status": { "type": "string", "enum": ["queued"] },
+          "created": { "type": "integer", "format": "int64" },
+          "metadata": { "type": "object", "additionalProperties": true }
+        }
+      },
+      "AsyncMediaTaskResponse": {
+        "type": "object",
+        "required": ["code", "data"],
+        "additionalProperties": true,
+        "properties": {
+          "code": { "type": "string", "example": "success" },
+          "message": { "type": "string" },
+          "data": {
+            "type": "object",
+            "required": ["task_id", "status"],
+            "additionalProperties": true,
+            "properties": {
+              "task_id": { "type": "string" },
+              "status": { "type": "string" },
+              "progress": { "type": "string" },
+              "result_url": { "type": "string", "format": "uri" },
+              "output": { "type": "array", "items": { "type": "string", "format": "uri" } },
+              "metadata": { "type": "object", "additionalProperties": true },
+              "fail_reason": { "type": "string" },
+              "quota": { "type": "integer", "description": "兼容保留的站点内部额度单位" },
+              "quota_cny": { "type": "number", "description": "人民币任务费用" },
+              "cost_cny": { "type": "number", "description": "quota_cny 的人民币语义别名" },
+              "currency": { "type": "string", "enum": ["CNY"] },
+              "endpoint_type": { "type": "string", "example": "image_generation" },
+              "media_type": { "type": "string", "example": "image" },
+              "data": { "type": "object", "additionalProperties": true }
+            }
+          }
         }
       },
       "ImageEditRequest": {
         "type": "object",
         "required": ["model"],
         "properties": {
-          "model": { "type": "string" },
-          "prompt": { "type": "string" },
-          "size": { "type": "string", "description": "Agnes：1K / 2K / 3K / 4K" },
+          "model": { "type": "string", "description": "AP 图片模型可选 ap-image-2.0（旗舰版）或 ap-image-fast-2.0（极速版）" },
+          "prompt": { "type": "string", "description": "编辑指令；AP 图片模型必填" },
+          "size": { "type": "string", "description": "ap-image-2.0：auto / 1024x1024 / 2048x2048 / 1024x1536 / 1536x1024；ap-image-fast-2.0：1024x1024 / 2048x2048 / 1536x1024 / 1024x1536 / 2048x1152 / 1152x2048；Agnes：1K / 2K / 3K / 4K" },
+          "quality": { "type": "string", "maxLength": 32, "description": "AP 图片模型可选，原样传递给上游质量策略" },
           "ratio": { "type": "string", "description": "Agnes 支持 1:1 / 3:4 / 4:3 / 16:9 / 9:16 / 2:3 / 3:2 / 21:9" },
           "n": { "type": "integer", "enum": [1], "default": 1 },
-          "response_format": { "type": "string", "enum": ["url", "b64_json"], "description": "Agnes 上游返回方式；NewAPI 会转存结果并统一返回 data[].url" },
+          "response_format": { "type": "string", "enum": ["url", "b64_json"], "description": "AP 图片模型和 Agnes 均接受；NewAPI 会转存结果并统一返回 data[].url" },
           "image": {
             "type": "string",
             "format": "binary",
-            "description": "原图文件；Agnes 可重复上传 1–8 个 image 文件并支持 PNG、JPEG、WebP"
+            "description": "参考图文件，可重复提交：ap-image-2.0 为 1–8 张，ap-image-fast-2.0 为 1–3 张；PNG/JPEG/WebP，单张不超过 10 MB、合计不超过 40 MB。Agnes 为 1–8 张。"
           }
         }
       },
@@ -1068,7 +1401,13 @@
           "prompt": { "type": "string" },
           "mode": { "type": "string", "description": "Agnes：text / text_to_video / keyframe / first_last_frame_to_video / reference / reference_to_video" },
           "duration": { "type": "number" },
-          "seconds": { "type": "number" },
+          "seconds": {
+            "oneOf": [
+              { "type": "string", "pattern": "^-?(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?$" },
+              { "type": "number" }
+            ],
+            "description": "duration 的兼容别名；数字和数字字符串均可"
+          },
           "resolution": { "type": "string" },
           "ratio": { "type": "string" },
           "aspect_ratio": { "type": "string", "description": "Agnes 的 ratio 别名，优先于 ratio" },
@@ -1100,32 +1439,6 @@
             }
           }
         ]
-      },
-      "MinimaxH3Request": {
-        "type": "object",
-        "required": ["model", "duration_seconds", "video_resolution"],
-        "description": "prompt 除 image-audio-lipsync 外必填。模型会进一步限制素材数量、分辨率、比例和时长组合。",
-        "properties": {
-          "model": {
-            "type": "string",
-            "enum": [
-              "ap-minimax-h3-text-to-video",
-              "ap-minimax-h3-reference-to-video",
-              "ap-minimax-h3-multimodal-to-video",
-              "ap-minimax-h3-image-audio-lipsync",
-              "ap-minimax-h3-first-last-frame-to-video"
-            ]
-          },
-          "prompt": { "type": "string", "minLength": 1, "description": "text/reference/multimodal/first-last 模型必填；lipsync 不使用" },
-          "duration_seconds": { "type": "integer", "minimum": 1, "maximum": 15, "description": "必填。reference 和 multimodal 在 1080p 时最大 10，其他可用组合最大 15" },
-          "video_resolution": { "type": "string", "enum": ["480p", "768p", "1080p"], "description": "必填。text 和 first-last 不支持 1080p" },
-          "ratio": { "type": "string", "enum": ["16:9", "9:16", "1:1"], "default": "16:9", "description": "multimodal、lipsync 和 first-last 不支持 1:1" },
-          "image_urls": { "type": "array", "minItems": 1, "maxItems": 9, "items": { "type": "string", "format": "uri" }, "description": "reference/multimodal 需 1–9 个；lipsync 恰好 1 个" },
-          "audio_urls": { "type": "array", "minItems": 1, "maxItems": 3, "items": { "type": "string", "format": "uri" }, "description": "multimodal 需 1–3 个；lipsync 恰好 1 个" },
-          "first_frame": { "type": "string", "format": "uri", "description": "仅 first-last 模型，必须与 last_frame 同传" },
-          "last_frame": { "type": "string", "format": "uri", "description": "仅 first-last 模型，必须与 first_frame 同传" },
-          "seed": { "type": "integer", "description": "仅 reference 和 multimodal 模型生效" }
-        }
       },
       "OpenAIVideoTask": {
         "type": "object",
@@ -1198,7 +1511,13 @@
           "resolution": { "type": "string", "description": "2.0：480p/720p/1080p/4k（受模型限制）；2.5：480p/720p/1080p，默认 720p" },
           "ratio": { "type": "string", "description": "2.0：16:9/9:16/1:1/4:3/3:4。2.5 另支持 21:9、adaptive，默认 adaptive；首尾帧、edit、extend 必须 adaptive" },
           "duration": { "type": "number", "description": "2.0：正数秒，默认 5。2.5：-1（自动）或 4–30，默认 -1；edit 必须 -1" },
-          "seconds": { "type": "number", "description": "duration 的兼容别名" },
+          "seconds": {
+            "oneOf": [
+              { "type": "string", "pattern": "^-?(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?$" },
+              { "type": "number" }
+            ],
+            "description": "duration 的兼容别名；顶层 duration 优先，数字和数字字符串均可"
+          },
           "width": { "type": "integer", "minimum": 1, "description": "兼容字段；通常优先使用 resolution + ratio" },
           "height": { "type": "integer", "minimum": 1, "description": "兼容字段；通常优先使用 resolution + ratio" },
           "image": { "type": "string", "description": "单图兼容字段，可传公网 URL、Base64 或 asset://{asset_id}" },

@@ -321,6 +321,80 @@ func TestApplyAIPDDCatalogImportsTokenMarketDisplayPrices(t *testing.T) {
 	require.True(t, ok)
 }
 
+func TestApplyAIPDDCatalogImportsTokenMarketPerCallDisplayPrices(t *testing.T) {
+	truncateTables(t)
+	t.Cleanup(func() {
+		constant.ResetAIPDDCapabilities()
+		constant.ResetAIPDDOpenAIModels()
+		aipddcatalog.ResetV1ModelsListHidden()
+	})
+	preserveAIPDDPricingRuntime(t)
+	previousExchangeRate := operation_setting.USDExchangeRate
+	operation_setting.USDExchangeRate = 8
+	t.Cleanup(func() { operation_setting.USDExchangeRate = previousExchangeRate })
+
+	require.NoError(t, UpdateOption(
+		aipddModelPriceOptionKey,
+		`{"disabled-image":0.5,"unrelated-model":3.75}`,
+	))
+	require.NoError(t, UpdateOption(
+		aipddBillingModeOptionKey,
+		`{"fixed-image":"task_pricing","unrelated-model":"ratio"}`,
+	))
+	require.NoError(t, UpdateOption(
+		aipddTaskPricingOptionKey,
+		`{"fixed-image":{"unit":"second","no_reference_video_unit_price":9,"reference_video_policy":"same"}}`,
+	))
+
+	catalog := aipddTestCatalog("token-market-fixed-price-revision", "unmanaged-task", "llm-model")
+	catalog.Capabilities = append(catalog.Capabilities,
+		aipddcatalog.AtomicCapability{
+			ID: "fixed-image", Code: "fixed-image", Name: "Fixed Image", AdapterCode: "token_market_media",
+			EndpointType: "image-generation", TaskKind: "image_generation", Available: aipddcatalog.BoolPtr(true),
+			Execution: aipddcatalog.AtomicExecution{Protocol: "token_market_image", Path: "/v1/images/generations"},
+			Pricing: aipddcatalog.AtomicPricing{
+				PricingModel: "per_call", Currency: "awcoin", Enabled: true,
+				ChargeConfig: map[string]any{"amountAwcoin": float64(100)},
+			},
+		},
+		aipddcatalog.AtomicCapability{
+			ID: "disabled-image", Code: "disabled-image", Name: "Disabled Image", AdapterCode: "token_market_media",
+			EndpointType: "image-generation", TaskKind: "image_generation", Available: aipddcatalog.BoolPtr(false),
+			Execution: aipddcatalog.AtomicExecution{Protocol: "token_market_image", Path: "/v1/images/generations"},
+			Pricing: aipddcatalog.AtomicPricing{
+				PricingModel: "per_call", Currency: "awcoin", Enabled: true,
+				ChargeConfig: map[string]any{"amountAwcoin": float64(200)},
+			},
+		},
+	)
+
+	result, err := applyAIPDDCatalog(catalog, "https://aipdd.example", "sk-test")
+	require.NoError(t, err)
+	require.Equal(t, 2, result.UpdatedPrices)
+
+	price, ok := ratio_setting.GetModelPrice("fixed-image", false)
+	require.True(t, ok)
+	require.InDelta(t, 0.125, price, 1e-12)
+	_, ok = ratio_setting.GetModelPrice("disabled-image", false)
+	require.False(t, ok)
+	unrelatedPrice, ok := ratio_setting.GetModelPrice("unrelated-model", false)
+	require.True(t, ok)
+	require.Equal(t, 3.75, unrelatedPrice)
+	require.NotEqual(t, billing_setting.BillingModeTaskPricing, billing_setting.GetBillingMode("fixed-image"))
+	_, ok = billing_setting.GetTaskPricing("fixed-image")
+	require.False(t, ok)
+	require.Equal(t, "ratio", billing_setting.GetBillingMode("unrelated-model"))
+
+	pricing, ok := findPricingForTest(GetPricing(), "fixed-image")
+	require.True(t, ok)
+	require.Equal(t, 1, pricing.QuotaType)
+	require.InDelta(t, 0.125, pricing.ModelPrice, 1e-12)
+
+	second, err := applyAIPDDCatalog(catalog, "https://aipdd.example", "sk-test")
+	require.NoError(t, err)
+	require.Zero(t, second.UpdatedPrices)
+}
+
 func TestApplyAIPDDCatalogKeepsDisabledModelsInDBAndChannel(t *testing.T) {
 	truncateTables(t)
 	t.Cleanup(func() {

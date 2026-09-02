@@ -1503,8 +1503,10 @@ func normalizeAndValidateSeedanceOfficialPayload(raw map[string]any, cfg modelCo
 	}
 	payload := cloneAnyMap(raw)
 	metadata, _ := payload["metadata"].(map[string]any)
+	topLevelDurationPresent := seedanceRequestValuePresent(payload["duration"])
+	topLevelSecondsPresent := seedanceRequestValuePresent(payload["seconds"])
 	for _, key := range []string{
-		"content", "resolution", "ratio", "duration", "frames", "fps", "framespersecond",
+		"content", "resolution", "ratio", "duration", "seconds", "frames", "fps", "framespersecond",
 		"frames_per_second", "seed", "callback_url", "return_last_frame", "service_tier",
 		"generate_audio", "watermark", "output_format", "omni_reference_task_type", "priority",
 		"execution_expires_after", "safety_identifier", "tools", "camera_fixed", "draft", "media_mode",
@@ -1516,6 +1518,12 @@ func normalizeAndValidateSeedanceOfficialPayload(raw map[string]any, cfg modelCo
 			payload[key] = value
 		}
 	}
+	if !topLevelDurationPresent && topLevelSecondsPresent {
+		payload["duration"] = payload["seconds"]
+	} else if !seedanceRequestValuePresent(payload["duration"]) && seedanceRequestValuePresent(payload["seconds"]) {
+		payload["duration"] = payload["seconds"]
+	}
+	delete(payload, "seconds")
 
 	content, contentPresent := payload["content"].([]any)
 	if !contentPresent || len(content) == 0 {

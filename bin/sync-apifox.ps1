@@ -171,7 +171,9 @@ function Resolve-OpenApiValue {
         return $Value
     }
     if ($Value -is [System.Collections.IEnumerable] -and $Value -isnot [System.Management.Automation.PSCustomObject]) {
-        return @($Value | ForEach-Object { Resolve-OpenApiValue $_ })
+        # PowerShell enumerates arrays returned from functions. The unary comma is
+        # required so single-item OpenAPI arrays such as required/enum stay arrays.
+        return ,@($Value | ForEach-Object { Resolve-OpenApiValue $_ })
     }
     $reference = Get-JsonProperty $Value '$ref'
     if ($reference) {
@@ -182,6 +184,11 @@ function Resolve-OpenApiValue {
         $copy[$property.Name] = Resolve-OpenApiValue $property.Value
     }
     return [pscustomobject]$copy
+}
+
+$arrayProbe = Resolve-OpenApiValue @("probe")
+if ($arrayProbe -isnot [System.Array] -or $arrayProbe.Count -ne 1 -or $arrayProbe[0] -ne "probe") {
+    throw "Resolve-OpenApiValue must preserve single-item arrays"
 }
 
 function Convert-OpenApiParameters {
@@ -267,32 +274,76 @@ function Convert-OpenApiResponses {
             $resolvedSchema = Resolve-OpenApiValue $mediaProperties[0].Value.schema
             if ($resolvedSchema) { $schema = $resolvedSchema }
         }
+        $headers = @()
+        $responseHeaders = Get-JsonProperty $response 'headers'
+        if ($responseHeaders) {
+            $headerIndex = 0
+            foreach ($headerProperty in @($responseHeaders.PSObject.Properties)) {
+                $header = Resolve-OpenApiValue $headerProperty.Value
+                $headerSchema = Resolve-OpenApiValue (Get-JsonProperty $header 'schema')
+                $headerType = [string](Get-JsonProperty $headerSchema 'type')
+                if (-not $headerType) { $headerType = "string" }
+                $headers += [ordered]@{
+                    id = "$($headerProperty.Name)#$headerIndex"
+                    name = [string]$headerProperty.Name
+                    required = $false
+                    enable = $true
+                    description = [string](Get-JsonProperty $header 'description')
+                    type = $headerType
+                    schema = $headerSchema
+                }
+                $headerIndex++
+            }
+        }
         $code = 0
         if (-not [int]::TryParse($property.Name, [ref]$code)) { continue }
+        $schemaFormat = [string](Get-JsonProperty $schema 'format')
+        $contentType = if ($schemaFormat -eq "binary") {
+            "binary"
+        } elseif ($mediaType -eq "application/json") {
+            "json"
+        } else {
+            $mediaType
+        }
         $responses += [ordered]@{
             name = if ($code -ge 200 -and $code -lt 300) { "成功" } else { "错误 $code" }
             code = $code
-            contentType = if ($mediaType -eq "application/json") { "json" } else { $mediaType }
+            contentType = $contentType
             description = [string](Get-JsonProperty $response 'description')
+            headers = $headers
             jsonSchema = $schema
         }
     }
     return $responses
 }
 
-function Sync-SeedanceOpenApiEndpoints {
-    param($EndpointList, [int]$FolderId, [string]$TempPath)
+function Get-ApifoxOperationAuth {
+    param($Operation)
+    $securityProperty = $Operation.PSObject.Properties | Where-Object Name -EQ 'security' | Select-Object -First 1
+    $security = if ($securityProperty) { $securityProperty.Value } else { $openApi.security }
+    $requiresBearer = @($security) | Where-Object {
+        $_.PSObject.Properties.Name -contains 'BearerAuth'
+    } | Select-Object -First 1
+    if ($requiresBearer) {
+        return [ordered]@{ type = "bearer"; bearer = [ordered]@{ token = "" } }
+    }
+    return [ordered]@{ type = "noauth" }
+}
+
+function Sync-OpenApiEndpoints {
+    param($EndpointList, $FolderIdsByTag, [string]$TempPath)
     foreach ($pathProperty in @($openApi.paths.PSObject.Properties)) {
         foreach ($method in @("get", "post", "put", "patch", "delete")) {
             $operation = Get-JsonProperty $pathProperty.Value $method
-            if (-not $operation -or @($operation.tags) -notcontains "Seedance") { continue }
+            if (-not $operation) { continue }
+            $tag = [string]@($operation.tags)[0]
+            if (-not $tag -or -not $FolderIdsByTag.ContainsKey($tag)) {
+                throw "No Apifox endpoint folder found for OpenAPI tag '$tag' ($method $($pathProperty.Name))"
+            }
+            $folderId = [int]$FolderIdsByTag[$tag]
             $endpoint = @($EndpointList) | Where-Object {
                 [int]$_.folderId -eq $FolderId -and [string]$_.method -eq $method -and [string]$_.path -eq $pathProperty.Name
             } | Select-Object -First 1
-            if (-not $endpoint) {
-                Write-Warning "Seedance endpoint missing after import: $method $($pathProperty.Name)"
-                continue
-            }
             $payload = [ordered]@{
                 name = [string]$operation.summary
                 type = "http"
@@ -302,21 +353,138 @@ function Sync-SeedanceOpenApiEndpoints {
                 operationId = [string]$operation.operationId
                 description = [string]$operation.description
                 tags = @($operation.tags)
-                auth = [ordered]@{ type = "bearer"; bearer = [ordered]@{ token = "" } }
+                auth = Get-ApifoxOperationAuth $operation
                 requestBody = Convert-OpenApiRequestBody $operation
                 parameters = Convert-OpenApiParameters $operation
                 responses = Convert-OpenApiResponses $operation
             }
-            $operationId = if ($operation.operationId) { [string]$operation.operationId } else { "endpoint-$($endpoint.id)" }
+            $operationId = if ($operation.operationId) { [string]$operation.operationId } else { "$method-$($pathProperty.Name)" }
+            $operationId = $operationId -replace '[^A-Za-z0-9._-]', '-'
             $endpointFile = Join-Path $TempPath "$operationId.endpoint.json"
             Write-Utf8Json $payload $endpointFile
-            & apifox cli-schema validate endpoint-update --file $endpointFile | Out-Null
-            if ($LASTEXITCODE -ne 0) { throw "Seedance endpoint failed validation: $method $($pathProperty.Name)" }
-            Write-Host "Updating Seedance endpoint $method $($pathProperty.Name) (#$($endpoint.id))"
-            & apifox endpoint update $endpoint.id --project $ProjectId --file $endpointFile
-            if ($LASTEXITCODE -ne 0) { throw "failed to update Seedance endpoint $($endpoint.id)" }
+            $schemaKind = if ($endpoint) { "endpoint-update" } else { "endpoint-create" }
+            & apifox cli-schema validate $schemaKind --file $endpointFile | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "OpenAPI endpoint failed validation: $method $($pathProperty.Name)" }
+            if ($endpoint) {
+                Write-Host "Updating OpenAPI endpoint $method $($pathProperty.Name) (#$($endpoint.id))"
+                & apifox endpoint update $endpoint.id --project $ProjectId --file $endpointFile
+                if ($LASTEXITCODE -ne 0) { throw "failed to update OpenAPI endpoint $($endpoint.id)" }
+            } else {
+                Write-Host "Creating OpenAPI endpoint $method $($pathProperty.Name)"
+                & apifox endpoint create --project $ProjectId --folder-id $folderId --file $endpointFile
+                if ($LASTEXITCODE -ne 0) { throw "failed to create OpenAPI endpoint $method $($pathProperty.Name)" }
+            }
         }
     }
+}
+
+function Sync-ApifoxProductionEnvironment {
+    param([string]$TempPath)
+    $server = @($openApi.servers) | Select-Object -First 1
+    $serverUrl = [string](Get-JsonProperty $server 'url')
+    if (-not $serverUrl) {
+        throw "The public OpenAPI document must define a production server URL"
+    }
+
+    $environments = Invoke-ApifoxJson @("environment", "list", "--project", $ProjectId)
+    $production = @($environments.data) | Where-Object { $_.name -eq "正式环境" } | Select-Object -First 1
+    if (-not $production) {
+        throw "Apifox production environment is missing"
+    }
+    $environment = Invoke-ApifoxJson @("environment", "get", [string]$production.id, "--project", $ProjectId)
+    $baseUrls = [ordered]@{}
+    foreach ($property in @($environment.data.baseUrls.PSObject.Properties)) {
+        $baseUrls[$property.Name] = [string]$property.Value
+    }
+    $baseUrls["default"] = $serverUrl
+    $environmentFile = Join-Path $TempPath "production-environment.json"
+    Write-Utf8Json ([ordered]@{
+        name = [string]$environment.data.name
+        baseUrls = $baseUrls
+        parameters = if ($environment.data.parameters) { $environment.data.parameters } else { [ordered]@{} }
+    }) $environmentFile
+    & apifox cli-schema validate environment-update --file $environmentFile | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Production environment failed validation" }
+    Write-Host "Updating Apifox production environment to $serverUrl"
+    & apifox environment update $production.id --project $ProjectId --file $environmentFile
+    if ($LASTEXITCODE -ne 0) { throw "failed to update production environment" }
+
+    $staleProductionEnvironments = @($environments.data) | Where-Object {
+        [int]$_.id -ne [int]$production.id -and
+        [string]$_.name -eq "正式环境" -and
+        [string]$_.baseUrls.default -match 'your-api-server\.com'
+    }
+    foreach ($staleEnvironment in $staleProductionEnvironments) {
+        Write-Host "Deleting stale placeholder production environment #$($staleEnvironment.id)"
+        & apifox environment delete $staleEnvironment.id --project $ProjectId
+        if ($LASTEXITCODE -ne 0) { throw "failed to delete stale production environment $($staleEnvironment.id)" }
+    }
+
+    $sites = Invoke-ApifoxJson @("docs-site", "list", "--project", $ProjectId)
+    foreach ($site in @($sites.data)) {
+        $siteDetails = Invoke-ApifoxJson @("docs-site", "get", [string]$site.id, "--project", $ProjectId)
+        $siteData = $siteDetails.data
+        $environmentSelection = [ordered]@{
+            environmentIds = @([int]$production.id)
+            defaultEnvironmentId = [int]$production.id
+        }
+        $versions = @($siteData.versionSettings)
+        foreach ($version in $versions) {
+            $version.environments = $environmentSelection
+        }
+        $options = $siteData.options
+        $options.isShowPrefixUrl = $true
+        $siteFile = Join-Path $TempPath "docs-site-$($site.id).json"
+        Write-Utf8Json ([ordered]@{
+            environments = $environmentSelection
+            options = $options
+            versionSettings = $versions
+        }) $siteFile
+        & apifox cli-schema validate docs-site-update --file $siteFile | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "Docs site $($site.id) failed validation" }
+        Write-Host "Selecting the production environment for docs site #$($site.id)"
+        & apifox docs-site update $site.id --project $ProjectId --file $siteFile
+        if ($LASTEXITCODE -ne 0) { throw "failed to update docs site $($site.id)" }
+    }
+}
+
+function Assert-SynchronizedOpenApiEndpoints {
+    param($FolderIdsByTag)
+    $endpointResponse = Invoke-ApifoxJson @("endpoint", "list", "--project", $ProjectId, "--page", "1", "--page-size", "500")
+    foreach ($pathProperty in @($openApi.paths.PSObject.Properties)) {
+        foreach ($method in @("get", "post", "put", "patch", "delete")) {
+            $operation = Get-JsonProperty $pathProperty.Value $method
+            if (-not $operation) { continue }
+            $tag = [string]@($operation.tags)[0]
+            $folderId = [int]$FolderIdsByTag[$tag]
+            $endpoint = @($endpointResponse.data) | Where-Object {
+                [int]$_.folderId -eq $folderId -and [string]$_.method -eq $method -and [string]$_.path -eq $pathProperty.Name
+            } | Select-Object -First 1
+            if (-not $endpoint) {
+                throw "OpenAPI endpoint missing after synchronization: $method $($pathProperty.Name)"
+            }
+            $details = Invoke-ApifoxJson @("endpoint", "get", [string]$endpoint.id, "--project", $ProjectId)
+            $expectedAuth = [string](Get-ApifoxOperationAuth $operation).type
+            $actualAuth = [string]$details.data.auth.type
+            if ($actualAuth -ne $expectedAuth) {
+                throw "Auth mismatch after synchronization for $method $($pathProperty.Name): expected $expectedAuth, got $actualAuth"
+            }
+            if ([string]$details.data.description -ne [string]$operation.description) {
+                throw "Description mismatch after synchronization for $method $($pathProperty.Name)"
+            }
+            if ([string]$operation.operationId -eq "createSeedanceTask") {
+                $required = $details.data.requestBody.jsonSchema.required
+                $toolEnum = $details.data.requestBody.jsonSchema.properties.tools.items.properties.type.enum
+                if ($required -isnot [System.Array] -or $required.Count -ne 1 -or $required[0] -ne "model") {
+                    throw "Seedance required fields were not preserved as an array"
+                }
+                if ($toolEnum -isnot [System.Array] -or $toolEnum.Count -ne 1 -or $toolEnum[0] -ne "web_search") {
+                    throw "Seedance tool enum was not preserved as an array"
+                }
+            }
+        }
+    }
+    Write-Host "Verified every OpenAPI endpoint after synchronization"
 }
 
 $minimaxDir = Join-Path $repoRoot "docs\apifox\minimax"
@@ -349,12 +517,22 @@ if (-not $seedanceFolder) {
     throw "Seedance folder missing after OpenAPI import"
 }
 $seedanceFolderId = [int]$seedanceFolder.id
+$folderIdsByTag = @{}
+foreach ($folder in @($folders.data)) {
+    $folderIdsByTag[[string]$folder.name] = [int]$folder.id
+}
+$folderIdsByTag["MiniMax H3"] = $minimaxFolderId
+$folderIdsByTag["Agnes"] = $agnesFolderId
+$folderIdsByTag["Seedance"] = $seedanceFolderId
 
 $endpoints = Invoke-ApifoxJson @("endpoint", "list", "--project", $ProjectId, "--page", "1", "--page-size", "500")
 $legacyEndpoints = @($endpoints.data) | Where-Object {
     $path = [string]$_.path
     $name = [string]$_.name
-    $path -eq "/v1/video/generations" -or $path.StartsWith("/v1/video/generations/") -or $name -match "旧版兼容"
+    $path -eq "/api/usage/token/" -or
+    $path -eq "/v1/video/generations" -or
+    $path.StartsWith("/v1/video/generations/") -or
+    $name -match "旧版兼容"
 }
 foreach ($legacy in $legacyEndpoints) {
     Write-Host "Deleting leftover $($legacy.method) $($legacy.path) ($($legacy.name) #$($legacy.id))"
@@ -439,9 +617,10 @@ if (-not $seedanceOpenAIGet) {
 }
 
 # OpenAPI imports use the project's conflict policy and may leave existing endpoints
-# untouched. Explicitly update every Seedance-tagged OpenAPI operation so parameter,
-# response, status-code, and description changes are always synchronized.
-Sync-SeedanceOpenApiEndpoints @($endpoints.data) $seedanceFolderId $tempDir
+# untouched. Explicitly update every operation so auth, parameters, responses,
+# status codes, descriptions, and examples are always synchronized.
+Sync-OpenApiEndpoints @($endpoints.data) $folderIdsByTag $tempDir
+Sync-ApifoxProductionEnvironment $tempDir
 
 $seedanceOfficialCreate = @($endpoints.data) | Where-Object {
     [int]$_.folderId -eq $seedanceFolderId -and [string]$_.method -eq "post" -and [string]$_.path -eq "/api/v3/contents/generations/tasks"
@@ -578,6 +757,8 @@ if ($settings -and $settings.publicDocsUrl) {
 if (-not $publicDocsUrl -and $project -and $project.publicDocsUrl) {
     $publicDocsUrl = [string]$project.publicDocsUrl
 }
+
+Assert-SynchronizedOpenApiEndpoints $folderIdsByTag
 
 if ($publicDocsUrl) {
     Write-Host "Public docs: $publicDocsUrl"

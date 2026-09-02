@@ -260,9 +260,8 @@ func acceptsUnsetRatio(info *relaycommon.RelayInfo) bool {
 	if info == nil || !info.UserSetting.AcceptUnsetRatioModel {
 		return false
 	}
-	// AIPDD catalog discovery no longer provisions retail prices. Newly
-	// discovered models must therefore be explicitly priced by an administrator
-	// instead of inheriting the global "accept unset ratio" escape hatch.
+	// AIPDD models must have an explicit catalog-synced or administrator-managed
+	// price instead of inheriting the global "accept unset ratio" escape hatch.
 	return info.ChannelMeta == nil || info.ChannelMeta.ChannelType != constant.ChannelTypeAIPDD
 }
 

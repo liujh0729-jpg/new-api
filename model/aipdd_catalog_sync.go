@@ -131,7 +131,7 @@ func applyAIPDDCatalog(catalog aipddcatalog.AtomicCatalog, baseURL, apiKey strin
 		USDPerAWCoin: catalog.AWCoinRate.USDPerAWCoin,
 		RMBPerAWCoin: catalog.AWCoinRate.RMBPerAWCoin,
 	}
-	var pricingOptionUpdates map[string]string
+	pricingOptionUpdates := make(map[string]string)
 	for modelName := range currentSet {
 		if !previousSet[modelName] {
 			result.AddedModels++
@@ -175,7 +175,22 @@ func applyAIPDDCatalog(catalog aipddcatalog.AtomicCatalog, baseURL, apiKey strin
 		err = removeStaleAIPDDModelsTx(tx, previousSet, currentSet, vendorID)
 	}
 	if err == nil {
-		result.UpdatedPrices, pricingOptionUpdates, err = syncAIPDDTokenMarketTaskPricingTx(tx, catalog)
+		var updated int
+		var updates map[string]string
+		updated, updates, err = syncAIPDDTokenMarketTaskPricingTx(tx, catalog)
+		result.UpdatedPrices += updated
+		for key, value := range updates {
+			pricingOptionUpdates[key] = value
+		}
+	}
+	if err == nil {
+		var updated int
+		var updates map[string]string
+		updated, updates, err = syncAIPDDTokenMarketFixedPricingTx(tx, catalog)
+		result.UpdatedPrices += updated
+		for key, value := range updates {
+			pricingOptionUpdates[key] = value
+		}
 	}
 	if err == nil {
 		snapshot := AIPDDCatalogSnapshot{
@@ -197,7 +212,7 @@ func applyAIPDDCatalog(catalog aipddcatalog.AtomicCatalog, baseURL, apiKey strin
 	}
 
 	activateAIPDDCatalog(catalog)
-	for _, key := range []string{aipddBillingModeOptionKey, aipddTaskPricingOptionKey} {
+	for _, key := range []string{aipddModelPriceOptionKey, aipddBillingModeOptionKey, aipddTaskPricingOptionKey} {
 		value, ok := pricingOptionUpdates[key]
 		if !ok {
 			continue

@@ -24,6 +24,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/aipddcatalog"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/samber/lo"
 
@@ -153,8 +154,8 @@ func aipddCatalogRatioData(catalog aipddcatalog.AtomicCatalog) map[string]any {
 			strings.EqualFold(strings.TrimSpace(capability.Pricing.PricingModel), "per_second") {
 			continue
 		}
-		if awcoin := aipddcatalog.TaskAWCoinPrice(capability.Pricing); awcoin > 0 {
-			prices[capability.ID] = awcoin * catalog.AWCoinRate.USDPerAWCoin
+		if priceUSD := aipddCatalogTaskPriceUSD(catalog, capability); priceUSD > 0 {
+			prices[capability.ID] = priceUSD
 		}
 	}
 	for _, modelItem := range catalog.Models {
@@ -195,6 +196,23 @@ func aipddCatalogRatioData(catalog aipddcatalog.AtomicCatalog) map[string]any {
 		data[billing_setting.BillingExprField] = exprs
 	}
 	return data
+}
+
+func aipddCatalogTaskPriceUSD(catalog aipddcatalog.AtomicCatalog, capability aipddcatalog.AtomicCapability) float64 {
+	pricing := capability.Pricing
+	awcoin := aipddcatalog.TaskAWCoinPrice(pricing)
+	if awcoin <= 0 {
+		return 0
+	}
+	basis := strings.TrimSpace(pricing.PricingBasis)
+	displayPrice := strings.EqualFold(basis, "display") ||
+		(basis == "" && strings.EqualFold(strings.TrimSpace(capability.AdapterCode), "token_market_media") &&
+			strings.EqualFold(strings.TrimSpace(pricing.PricingModel), "per_call"))
+	if displayPrice &&
+		catalog.AWCoinRate.RMBPerAWCoin > 0 && operation_setting.USDExchangeRate > 0 {
+		return awcoin * catalog.AWCoinRate.RMBPerAWCoin / operation_setting.USDExchangeRate
+	}
+	return awcoin * catalog.AWCoinRate.USDPerAWCoin
 }
 
 func asFloat64(value any) (float64, bool) {

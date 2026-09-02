@@ -16,6 +16,7 @@ import (
 )
 
 const (
+	aipddModelPriceOptionKey  = "ModelPrice"
 	aipddBillingModeOptionKey = "billing_setting.billing_mode"
 	aipddTaskPricingOptionKey = "billing_setting.task_pricing"
 )
@@ -116,6 +117,140 @@ func syncAIPDDTokenMarketTaskPricingTx(
 	return updated, updates, nil
 }
 
+// syncAIPDDTokenMarketFixedPricingTx imports display-basis per-call prices for
+// Token Market media models. The catalog price is denominated in AWCoin but is
+// a RMB retail price, so persist the USD-equivalent value using this NewAPI
+// instance's exchange rate. This keeps the public CNY price exactly aligned
+// with AIPDD instead of drifting with the catalog's reference USD rate.
+func syncAIPDDTokenMarketFixedPricingTx(
+	tx *gorm.DB,
+	catalog aipddcatalog.AtomicCatalog,
+) (int, map[string]string, error) {
+	modelPrices, err := loadAIPDDModelPricesTx(tx)
+	if err != nil {
+		return 0, nil, err
+	}
+	billingModes, err := loadAIPDDBillingModesTx(tx)
+	if err != nil {
+		return 0, nil, err
+	}
+	taskPricing, err := loadAIPDDTaskPricingTx(tx)
+	if err != nil {
+		return 0, nil, err
+	}
+
+	rmbPerAWCoin := catalog.AWCoinRate.RMBPerAWCoin
+	rmbPerUSD := operation_setting.USDExchangeRate
+	updated := 0
+	modelPricesChanged := false
+	billingModesChanged := false
+	taskPricingChanged := false
+	for _, capability := range catalog.Capabilities {
+		if !isTokenMarketPerCallCapability(capability) {
+			continue
+		}
+		modelName := strings.TrimSpace(capability.ID)
+		if modelName == "" {
+			continue
+		}
+
+		modelChanged := false
+		if tokenMarketFixedCapabilityAvailable(capability) {
+			if !finitePositive(rmbPerAWCoin) {
+				return 0, nil, fmt.Errorf("AIPDD catalog rmbPerAwcoin must be finite and greater than 0")
+			}
+			if !finitePositive(rmbPerUSD) {
+				return 0, nil, fmt.Errorf("New API USDExchangeRate must be finite and greater than 0")
+			}
+			awcoin := aipddcatalog.TaskAWCoinPrice(capability.Pricing)
+			priceUSD, err := displayAWCoinToUSD(&awcoin, rmbPerAWCoin, rmbPerUSD)
+			if err != nil {
+				return 0, nil, fmt.Errorf("build Token Market fixed price for %q: %w", modelName, err)
+			}
+			if current, ok := modelPrices[modelName]; !ok || !nearlySamePrice(current, priceUSD) {
+				modelPrices[modelName] = priceUSD
+				modelPricesChanged = true
+				modelChanged = true
+			}
+		} else if _, ok := modelPrices[modelName]; ok {
+			delete(modelPrices, modelName)
+			modelPricesChanged = true
+			modelChanged = true
+		}
+
+		// A model may move from duration billing to a fixed per-call price. Clear
+		// only the stale task-pricing mode owned by this catalog; unrelated local
+		// billing modes and prices remain untouched.
+		if billingModes[modelName] == billing_setting.BillingModeTaskPricing {
+			delete(billingModes, modelName)
+			billingModesChanged = true
+			modelChanged = true
+		}
+		if _, ok := taskPricing[modelName]; ok {
+			delete(taskPricing, modelName)
+			taskPricingChanged = true
+			modelChanged = true
+		}
+		if modelChanged {
+			updated++
+		}
+	}
+
+	if updated == 0 {
+		return 0, nil, nil
+	}
+	updates := make(map[string]string, 3)
+	if modelPricesChanged {
+		value, err := common.Marshal(modelPrices)
+		if err != nil {
+			return 0, nil, fmt.Errorf("serialize AIPDD fixed model prices: %w", err)
+		}
+		updates[aipddModelPriceOptionKey] = string(value)
+	}
+	if billingModesChanged {
+		value, err := common.Marshal(billingModes)
+		if err != nil {
+			return 0, nil, fmt.Errorf("serialize AIPDD billing modes: %w", err)
+		}
+		updates[aipddBillingModeOptionKey] = string(value)
+	}
+	if taskPricingChanged {
+		if err := billing_setting.ValidateTaskPricingMap(taskPricing); err != nil {
+			return 0, nil, fmt.Errorf("validate merged AIPDD task pricing: %w", err)
+		}
+		value, err := common.Marshal(taskPricing)
+		if err != nil {
+			return 0, nil, fmt.Errorf("serialize AIPDD task pricing: %w", err)
+		}
+		updates[aipddTaskPricingOptionKey] = string(value)
+	}
+	for key, value := range updates {
+		option := Option{Key: key, Value: value}
+		if err := tx.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "key"}},
+			DoUpdates: clause.AssignmentColumns([]string{"value"}),
+		}).Create(&option).Error; err != nil {
+			return 0, nil, err
+		}
+	}
+	return updated, updates, nil
+}
+
+func loadAIPDDModelPricesTx(tx *gorm.DB) (map[string]float64, error) {
+	raw, err := loadAIPDDOptionValueTx(tx, aipddModelPriceOptionKey)
+	if err != nil {
+		return nil, err
+	}
+	prices := make(map[string]float64)
+	if strings.TrimSpace(raw) == "" {
+		return prices, nil
+	}
+	if err := common.UnmarshalJsonStr(raw, &prices); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", aipddModelPriceOptionKey, err)
+	}
+	return prices, nil
+}
+
 func loadAIPDDBillingModesTx(tx *gorm.DB) (map[string]string, error) {
 	raw, err := loadAIPDDOptionValueTx(tx, aipddBillingModeOptionKey)
 	if err != nil {
@@ -163,11 +298,24 @@ func isTokenMarketDurationCapability(capability aipddcatalog.AtomicCapability) b
 		strings.EqualFold(strings.TrimSpace(capability.Pricing.PricingModel), "per_second")
 }
 
+func isTokenMarketPerCallCapability(capability aipddcatalog.AtomicCapability) bool {
+	return strings.EqualFold(strings.TrimSpace(capability.AdapterCode), "token_market_media") &&
+		strings.EqualFold(strings.TrimSpace(capability.Pricing.PricingModel), "per_call")
+}
+
 func tokenMarketCapabilityAvailable(capability aipddcatalog.AtomicCapability) bool {
 	return capability.Pricing.Enabled &&
 		(capability.Available == nil || *capability.Available) &&
 		strings.EqualFold(strings.TrimSpace(capability.Pricing.Currency), "awcoin") &&
 		strings.EqualFold(strings.TrimSpace(capability.Pricing.PricingBasis), "display")
+}
+
+func tokenMarketFixedCapabilityAvailable(capability aipddcatalog.AtomicCapability) bool {
+	basis := strings.TrimSpace(capability.Pricing.PricingBasis)
+	return capability.Pricing.Enabled &&
+		(capability.Available == nil || *capability.Available) &&
+		strings.EqualFold(strings.TrimSpace(capability.Pricing.Currency), "awcoin") &&
+		(basis == "" || strings.EqualFold(basis, "display"))
 }
 
 func tokenMarketTaskPricingConfig(

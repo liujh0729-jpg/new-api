@@ -6,6 +6,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/pkg/aipddcatalog"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/stretchr/testify/require"
 )
 
@@ -65,6 +66,34 @@ func TestAIPDDCatalogRatioDataSkipsPerSecondTaskPrices(t *testing.T) {
 	exprs, ok := data[billing_setting.BillingExprField].(map[string]string)
 	require.True(t, ok)
 	require.Equal(t, `tier("aipdd", p * 0.1 + c * 0.3 + cr * 0 + cc * 0 + cc1h * 0)`, exprs["aipdd-llm"])
+}
+
+func TestAIPDDCatalogRatioDataAnchorsDisplayPerCallPriceToRMB(t *testing.T) {
+	previousExchangeRate := operation_setting.USDExchangeRate
+	operation_setting.USDExchangeRate = 8
+	t.Cleanup(func() { operation_setting.USDExchangeRate = previousExchangeRate })
+
+	catalog := aipddcatalog.AtomicCatalog{
+		AWCoinRate: aipddcatalog.AtomicAWCoinRate{
+			RMBPerAWCoin: 0.01,
+			USDPerAWCoin: 0.0015,
+		},
+		Capabilities: []aipddcatalog.AtomicCapability{{
+			ID:          "display-per-call-image",
+			AdapterCode: "token_market_media",
+			Pricing: aipddcatalog.AtomicPricing{
+				PricingModel: "per_call",
+				Currency:     "awcoin",
+				Enabled:      true,
+				ChargeConfig: map[string]any{"amountAwcoin": float64(100)},
+			},
+		}},
+	}
+
+	data := aipddCatalogRatioData(catalog)
+	prices, ok := data["model_price"].(map[string]any)
+	require.True(t, ok)
+	require.InDelta(t, 0.125, prices["display-per-call-image"], 1e-12)
 }
 
 func TestAIPDDCatalogRatioDataUsesCacheAwareExpressionWhenPricesArePresent(t *testing.T) {

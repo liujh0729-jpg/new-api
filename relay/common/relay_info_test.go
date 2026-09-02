@@ -18,6 +18,32 @@ func TestTaskSubmitReqAcceptsMultipartStyleCharacterIDAndIgnoresLegacyAssetID(t 
 	require.NotContains(t, string(payload), "character_asset_id")
 }
 
+func TestTaskSubmitReqAcceptsNumericAndStringSeconds(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{name: "number", body: `{"model":"seedance","seconds":6}`, want: "6"},
+		{name: "decimal number", body: `{"model":"seedance","seconds":6.5}`, want: "6.5"},
+		{name: "numeric string", body: `{"model":"seedance","seconds":"8"}`, want: "8"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var req TaskSubmitReq
+			require.NoError(t, rootcommon.Unmarshal([]byte(test.body), &req))
+			require.Equal(t, test.want, req.Seconds)
+		})
+	}
+}
+
+func TestTaskSubmitReqRejectsNonNumericSeconds(t *testing.T) {
+	var req TaskSubmitReq
+	err := rootcommon.Unmarshal([]byte(`{"model":"seedance","seconds":true}`), &req)
+	require.EqualError(t, err, "seconds must be a number or numeric string")
+}
+
 func TestTaskSubmitReqPromotesTopLevelContentOverMetadataContent(t *testing.T) {
 	var req TaskSubmitReq
 	require.NoError(t, rootcommon.Unmarshal([]byte(`{

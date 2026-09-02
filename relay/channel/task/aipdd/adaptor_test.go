@@ -367,6 +367,39 @@ func TestSeedanceOfficialPublicPathRejectsNonOfficialCapability(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
 }
 
+func TestNormalizeSeedanceOfficialPayloadUsesSecondsAlias(t *testing.T) {
+	cfg := modelConfig{ModelName: "AP Seedance-2.5 标准版", AdapterCode: "seedance", ExecutionProtocol: "seedance_official"}
+	payload, code, err := normalizeAndValidateSeedanceOfficialPayload(map[string]any{
+		"model":      cfg.ModelName,
+		"prompt":     "camera push in",
+		"resolution": "720p",
+		"ratio":      "16:9",
+		"seconds":    "6",
+	}, cfg)
+
+	require.NoError(t, err)
+	require.Empty(t, code)
+	require.Equal(t, 6, payload["duration"])
+	require.NotContains(t, payload, "seconds")
+}
+
+func TestNormalizeSeedanceOfficialPayloadPrefersTopLevelSecondsOverMetadataDuration(t *testing.T) {
+	cfg := modelConfig{ModelName: "AP Seedance-2.5 标准版", AdapterCode: "seedance", ExecutionProtocol: "seedance_official"}
+	payload, code, err := normalizeAndValidateSeedanceOfficialPayload(map[string]any{
+		"model":      cfg.ModelName,
+		"prompt":     "camera push in",
+		"resolution": "720p",
+		"ratio":      "16:9",
+		"seconds":    7.0,
+		"metadata":   map[string]any{"duration": 9.0},
+	}, cfg)
+
+	require.NoError(t, err)
+	require.Empty(t, code)
+	require.Equal(t, 7, payload["duration"])
+	require.NotContains(t, payload, "seconds")
+}
+
 func TestConvertToOpenAIVideoNormalizesSeedanceOfficialFailure(t *testing.T) {
 	task := &model.Task{
 		TaskID:   "task_seedance_failure",

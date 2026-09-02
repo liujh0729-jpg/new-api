@@ -123,7 +123,7 @@
     },
     { "name": "请求错误", "code": 400, "contentType": "json", "description": "字段、模式、素材数量、分辨率或时长不符合约束", "jsonSchema": { "type": "object", "additionalProperties": true } },
     { "name": "未认证", "code": 401, "contentType": "json", "description": "Token 缺失或无效", "jsonSchema": { "type": "object", "additionalProperties": true } },
-    { "name": "冲突", "code": 409, "contentType": "json", "description": "Idempotency-Key 已用于不同请求", "jsonSchema": { "type": "object", "additionalProperties": true } },
+    { "name": "冲突", "code": 409, "contentType": "json", "description": "角色或真人素材的授权、核验或可用状态不允许创建任务", "jsonSchema": { "type": "object", "additionalProperties": true } },
     { "name": "上游错误", "code": 502, "contentType": "json", "description": "AIPDD/Agnes 创建任务失败", "jsonSchema": { "type": "object", "additionalProperties": true } },
     { "name": "服务不可用", "code": 503, "contentType": "json", "description": "Agnes 渠道暂不可用", "jsonSchema": { "type": "object", "additionalProperties": true } }
   ]

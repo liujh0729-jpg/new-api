@@ -300,6 +300,7 @@ func SetApiRouter(router *gin.Engine) {
 			tokenUsageRoute := usageRoute.Group("/token")
 			tokenUsageRoute.Use(middleware.TokenAuthReadOnly())
 			{
+				tokenUsageRoute.GET("", controller.GetTokenUsage)
 				tokenUsageRoute.GET("/", controller.GetTokenUsage)
 			}
 		}
@@ -364,7 +365,7 @@ func SetApiRouter(router *gin.Engine) {
 		{
 			taskRoute.GET("/self", middleware.UserAuth(), controller.GetUserTask)
 			taskRoute.GET("/", middleware.AdminAuth(), controller.GetAllTask)
-			taskRoute.GET("/:task_id/content", middleware.AdminAuth(), controller.AdminVideoProxy)
+			taskRoute.GET("/:task_id/content", middleware.AdminAuthWithSessionUserID(), controller.AdminVideoProxy)
 		}
 
 		virtualCharacterAdminRoute := apiRouter.Group("/virtual-characters/admin")

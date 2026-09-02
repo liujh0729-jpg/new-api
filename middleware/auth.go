@@ -198,6 +198,21 @@ func AdminAuth() func(c *gin.Context) {
 	}
 }
 
+// AdminAuthWithSessionUserID authenticates browser-managed media navigations.
+// These requests cannot add the New-Api-User header used by Axios, so derive a
+// missing header from the signed login session before applying normal admin
+// authentication. An explicitly supplied header is never overwritten.
+func AdminAuthWithSessionUserID() func(c *gin.Context) {
+	return func(c *gin.Context) {
+		if c != nil && c.Request != nil && c.Request.Header.Get("New-Api-User") == "" {
+			if id := sessions.Default(c).Get("id"); id != nil {
+				c.Request.Header.Set("New-Api-User", fmt.Sprint(id))
+			}
+		}
+		authHelper(c, common.RoleAdminUser)
+	}
+}
+
 func RootAuth() func(c *gin.Context) {
 	return func(c *gin.Context) {
 		authHelper(c, common.RoleRootUser)
