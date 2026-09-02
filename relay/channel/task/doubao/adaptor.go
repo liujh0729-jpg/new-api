@@ -18,6 +18,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/service"
 
 	"github.com/gin-gonic/gin"
@@ -51,6 +52,10 @@ type requestPayload struct {
 	ExecutionExpiresAfter *dto.IntValue  `json:"execution_expires_after,omitempty"`
 	GenerateAudio         *dto.BoolValue `json:"generate_audio,omitempty"`
 	Draft                 *dto.BoolValue `json:"draft,omitempty"`
+	OutputFormat          string         `json:"output_format,omitempty"`
+	OmniReferenceTaskType string         `json:"omni_reference_task_type,omitempty"`
+	Priority              *dto.IntValue  `json:"priority,omitempty"`
+	SafetyIdentifier      string         `json:"safety_identifier,omitempty"`
 	Tools                 []struct {
 		Type string `json:"type,omitempty"`
 	} `json:"tools,omitempty"`
@@ -127,8 +132,39 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	if err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
 	}
+	if err := mergeSeedanceTopLevelMetadata(c, &req); err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+	}
+	c.Set("task_request", req)
 	if err := validateSeedanceRequest(req); err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+	}
+	return nil
+}
+
+// mergeSeedanceTopLevelMetadata preserves official Seedance parameters that
+// are not first-class fields of the gateway's shared TaskSubmitReq. Top-level
+// values intentionally override metadata values, matching the AIPDD adaptor.
+func mergeSeedanceTopLevelMetadata(c *gin.Context, req *relaycommon.TaskSubmitReq) error {
+	if c == nil || req == nil || !strings.HasPrefix(c.GetHeader("Content-Type"), "application/json") {
+		return nil
+	}
+	var raw map[string]any
+	if err := common.UnmarshalBodyReusable(c, &raw); err != nil {
+		return err
+	}
+	if req.Metadata == nil {
+		req.Metadata = make(map[string]any)
+	}
+	for _, key := range []string{
+		"resolution", "ratio", "duration", "frames", "fps", "framespersecond", "frames_per_second",
+		"seed", "callback_url", "return_last_frame", "service_tier", "execution_expires_after",
+		"generate_audio", "watermark", "output_format", "omni_reference_task_type", "priority",
+		"safety_identifier", "tools", "camera_fixed", "draft",
+	} {
+		if value, ok := raw[key]; ok && value != nil {
+			req.Metadata[key] = value
+		}
 	}
 	return nil
 }
@@ -345,13 +381,16 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 		return
 	}
 
-	ov := dto.NewOpenAIVideo()
-	ov.ID = info.PublicTaskID
-	ov.TaskID = info.PublicTaskID
-	ov.CreatedAt = time.Now().Unix()
-	ov.Model = info.OriginModelName
-
-	c.JSON(http.StatusOK, ov)
+	if relayconstant.IsSeedanceOfficialTasksPath(c.Request.URL.Path) {
+		c.JSON(http.StatusOK, gin.H{"id": info.PublicTaskID})
+	} else {
+		ov := dto.NewOpenAIVideo()
+		ov.ID = info.PublicTaskID
+		ov.TaskID = info.PublicTaskID
+		ov.CreatedAt = time.Now().Unix()
+		ov.Model = info.OriginModelName
+		c.JSON(http.StatusOK, ov)
+	}
 	return dResp.ID, responseBody, nil
 }
 
@@ -578,4 +617,66 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, erro
 	}
 
 	return common.Marshal(openAIVideo)
+}
+
+// ConvertToSeedanceOfficialTask returns the public Seedance task shape while
+// preserving provider fields such as duration, output_format, content and usage.
+// The upstream task ID is always replaced by the gateway's public task ID.
+func (a *TaskAdaptor) ConvertToSeedanceOfficialTask(originTask *model.Task) ([]byte, error) {
+	if originTask == nil {
+		return nil, fmt.Errorf("task is required")
+	}
+
+	response := map[string]any{}
+	if len(originTask.Data) > 0 {
+		if err := common.Unmarshal(originTask.Data, &response); err != nil {
+			return nil, errors.Wrap(err, "unmarshal doubao task data failed")
+		}
+	}
+	delete(response, "task_id")
+	delete(response, "taskId")
+	response["id"] = originTask.TaskID
+
+	modelName := strings.TrimSpace(originTask.Properties.OriginModelName)
+	if modelName == "" {
+		modelName, _ = response["model"].(string)
+	}
+	if modelName != "" {
+		response["model"] = modelName
+	} else {
+		delete(response, "model")
+	}
+	response["status"] = seedanceOfficialStatus(originTask.Status, response["status"])
+
+	if originTask.Status == model.TaskStatusFailure && response["error"] == nil {
+		message := strings.TrimSpace(originTask.FailReason)
+		if message == "" {
+			message = "Seedance task failed"
+		}
+		response["error"] = map[string]any{
+			"code":    "seedance_task_failed",
+			"message": message,
+		}
+	}
+
+	return common.Marshal(response)
+}
+
+func seedanceOfficialStatus(taskStatus model.TaskStatus, upstreamStatus any) string {
+	switch taskStatus {
+	case model.TaskStatusNotStart, model.TaskStatusQueued, model.TaskStatusSubmitted:
+		return "queued"
+	case model.TaskStatusInProgress:
+		return "running"
+	case model.TaskStatusSuccess:
+		return "succeeded"
+	case model.TaskStatusFailure:
+		status, _ := upstreamStatus.(string)
+		if normalized := strings.ToLower(strings.TrimSpace(status)); normalized == "cancelled" || normalized == "canceled" {
+			return "cancelled"
+		}
+		return "failed"
+	default:
+		return "queued"
+	}
 }

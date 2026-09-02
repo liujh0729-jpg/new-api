@@ -1,12 +1,17 @@
 package doubao
 
 import (
+	"io"
+	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	rootcommon "github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/require"
 )
 
 func TestEstimateBillingIncludesDurationSeconds(t *testing.T) {
@@ -290,6 +295,52 @@ func TestTopLevelContentTextWithoutPromptIsAccepted(t *testing.T) {
 	}
 }
 
+func TestOfficialTopLevelParametersAreForwardedToDoubao(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/v3/contents/generations/tasks", strings.NewReader(`{
+		"model":"doubao-seedance-2-5-260628",
+		"content":[{"type":"text","text":"official request"}],
+		"resolution":"1080p",
+		"ratio":"adaptive",
+		"duration":-1,
+		"generate_audio":false,
+		"watermark":false,
+		"return_last_frame":false,
+		"output_format":"mov",
+		"omni_reference_task_type":"auto",
+		"priority":0,
+		"execution_expires_after":172800,
+		"safety_identifier":"tenant-user"
+	}`))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	info := &relaycommon.RelayInfo{
+		ChannelMeta:   &relaycommon.ChannelMeta{},
+		TaskRelayInfo: &relaycommon.TaskRelayInfo{},
+	}
+	adaptor := &TaskAdaptor{}
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(ctx, info))
+
+	body, err := adaptor.BuildRequestBody(ctx, info)
+	require.NoError(t, err)
+	data, err := io.ReadAll(body)
+	require.NoError(t, err)
+	var payload map[string]any
+	require.NoError(t, rootcommon.Unmarshal(data, &payload))
+	require.Equal(t, "doubao-seedance-2-5-260628", payload["model"])
+	require.Equal(t, "1080p", payload["resolution"])
+	require.Equal(t, "adaptive", payload["ratio"])
+	require.Equal(t, float64(-1), payload["duration"])
+	require.Equal(t, false, payload["generate_audio"])
+	require.Equal(t, false, payload["watermark"])
+	require.Equal(t, false, payload["return_last_frame"])
+	require.Equal(t, "mov", payload["output_format"])
+	require.Equal(t, "auto", payload["omni_reference_task_type"])
+	require.Equal(t, float64(0), payload["priority"])
+	require.Equal(t, float64(172800), payload["execution_expires_after"])
+	require.Equal(t, "tenant-user", payload["safety_identifier"])
+}
+
 func TestConvertToRequestPayloadMarksImageListAsReferenceImages(t *testing.T) {
 	adaptor := &TaskAdaptor{}
 	payload, err := adaptor.convertToRequestPayload(&relaycommon.TaskSubmitReq{
@@ -309,4 +360,105 @@ func TestConvertToRequestPayloadMarksImageListAsReferenceImages(t *testing.T) {
 	if payload.Content[0].ImageURL == nil || payload.Content[0].ImageURL.URL != "asset://asset-character" {
 		t.Fatalf("unexpected image reference: %#v", payload.Content[0])
 	}
+}
+
+func TestDoResponseUsesSeedanceOfficialCreateShapeOnOfficialPath(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/v3/contents/generations/tasks", nil)
+	response := &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(strings.NewReader(`{"id":"upstream-task"}`)),
+	}
+
+	taskID, _, taskErr := (&TaskAdaptor{}).DoResponse(ctx, response, &relaycommon.RelayInfo{
+		OriginModelName: "doubao-seedance-2-5-260628",
+		TaskRelayInfo:   &relaycommon.TaskRelayInfo{PublicTaskID: "task-public"},
+	})
+	require.Nil(t, taskErr)
+	require.Equal(t, "upstream-task", taskID)
+
+	var body map[string]any
+	require.NoError(t, rootcommon.Unmarshal(recorder.Body.Bytes(), &body))
+	require.Equal(t, map[string]any{"id": "task-public"}, body)
+}
+
+func TestDoResponseKeepsOpenAIVideoCreateShapeOnV1Path(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", nil)
+	response := &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(strings.NewReader(`{"id":"upstream-task"}`)),
+	}
+
+	_, _, taskErr := (&TaskAdaptor{}).DoResponse(ctx, response, &relaycommon.RelayInfo{
+		OriginModelName: "doubao-seedance-2-5-260628",
+		TaskRelayInfo:   &relaycommon.TaskRelayInfo{PublicTaskID: "task-public"},
+	})
+	require.Nil(t, taskErr)
+
+	var body map[string]any
+	require.NoError(t, rootcommon.Unmarshal(recorder.Body.Bytes(), &body))
+	require.Equal(t, "task-public", body["id"])
+	require.Equal(t, "task-public", body["task_id"])
+	require.Equal(t, "video", body["object"])
+	require.Equal(t, "queued", body["status"])
+}
+
+func TestConvertToSeedanceOfficialTaskPreservesOfficialFields(t *testing.T) {
+	task := &model.Task{
+		TaskID: "task-public",
+		Status: model.TaskStatusSuccess,
+		Properties: model.Properties{
+			OriginModelName: "doubao-seedance-2-5-260628",
+		},
+	}
+	task.SetData(map[string]any{
+		"id":            "upstream-private",
+		"task_id":       "upstream-private",
+		"model":         "upstream-model",
+		"status":        "succeeded",
+		"duration":      5,
+		"resolution":    "480p",
+		"output_format": "mp4",
+		"content":       map[string]any{"video_url": "https://cdn.example.com/result.mp4"},
+		"usage": map[string]any{
+			"completion_tokens": 800000,
+			"total_tokens":      800000,
+		},
+	})
+
+	data, err := (&TaskAdaptor{}).ConvertToSeedanceOfficialTask(task)
+	require.NoError(t, err)
+	var response map[string]any
+	require.NoError(t, rootcommon.Unmarshal(data, &response))
+	require.Equal(t, "task-public", response["id"])
+	require.NotContains(t, response, "task_id")
+	require.Equal(t, "doubao-seedance-2-5-260628", response["model"])
+	require.Equal(t, "succeeded", response["status"])
+	require.Equal(t, float64(5), response["duration"])
+	require.Equal(t, "480p", response["resolution"])
+	require.Equal(t, "mp4", response["output_format"])
+	require.Equal(t, "https://cdn.example.com/result.mp4", response["content"].(map[string]any)["video_url"])
+	require.Equal(t, float64(800000), response["usage"].(map[string]any)["total_tokens"])
+}
+
+func TestConvertToSeedanceOfficialTaskNormalizesFailure(t *testing.T) {
+	task := &model.Task{
+		TaskID:     "task-failed",
+		Status:     model.TaskStatusFailure,
+		FailReason: "provider rejected request",
+	}
+	task.SetData(map[string]any{"id": "upstream-private", "status": "failed"})
+
+	data, err := (&TaskAdaptor{}).ConvertToSeedanceOfficialTask(task)
+	require.NoError(t, err)
+	var response map[string]any
+	require.NoError(t, rootcommon.Unmarshal(data, &response))
+	require.Equal(t, "failed", response["status"])
+	require.Equal(t, "seedance_task_failed", response["error"].(map[string]any)["code"])
+	require.Equal(t, "provider rejected request", response["error"].(map[string]any)["message"])
 }

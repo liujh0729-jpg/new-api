@@ -361,17 +361,18 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	if platform == "" {
 		platform = GetTaskPlatform(c)
 	}
-	if relayconstant.IsSeedanceOfficialTasksPath(c.Request.URL.Path) &&
-		platform != constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeAIPDD)) {
-		return nil, service.TaskErrorWrapperLocal(
-			fmt.Errorf("Seedance official endpoint requires an AIPDD Seedance channel"),
-			"invalid_endpoint",
-			http.StatusBadRequest,
-		)
-	}
 	adaptor := GetTaskAdaptor(platform)
 	if adaptor == nil {
 		return nil, service.TaskErrorWrapperLocal(fmt.Errorf("invalid api platform: %s", platform), "invalid_api_platform", http.StatusBadRequest)
+	}
+	if relayconstant.IsSeedanceOfficialTasksPath(c.Request.URL.Path) {
+		if _, ok := adaptor.(channel.SeedanceOfficialTaskConverter); !ok {
+			return nil, service.TaskErrorWrapperLocal(
+				fmt.Errorf("Seedance official endpoint is not supported by channel platform %s", platform),
+				"invalid_endpoint",
+				http.StatusBadRequest,
+			)
+		}
 	}
 	adaptor.Init(info)
 
@@ -922,8 +923,16 @@ func tryRealtimeFetch(ctx context.Context, task *model.Task, isOpenAIVideoAPI, i
 }
 
 func isSeedanceOfficialTask(task *model.Task) bool {
-	if task == nil || task.Platform != constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeAIPDD)) {
+	if task == nil {
 		return false
+	}
+	if task.Platform != constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeAIPDD)) {
+		adaptor := GetTaskAdaptor(task.Platform)
+		if adaptor == nil {
+			return false
+		}
+		_, ok := adaptor.(channel.SeedanceOfficialTaskConverter)
+		return ok
 	}
 	if snapshot := task.PrivateData.AIPDDExecution; snapshot != nil && strings.TrimSpace(snapshot.Protocol) != "" {
 		return strings.EqualFold(strings.TrimSpace(snapshot.Protocol), "seedance_official")

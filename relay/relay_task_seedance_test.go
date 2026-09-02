@@ -36,6 +36,13 @@ func TestIsSeedanceOfficialTaskRequiresAIPDDOfficialProtocol(t *testing.T) {
 	require.False(t, isSeedanceOfficialTask(&wrongPlatform))
 }
 
+func TestIsSeedanceOfficialTaskSupportsDirectDoubaoPlatforms(t *testing.T) {
+	for _, channelType := range []int{constant.ChannelTypeDoubaoVideo, constant.ChannelTypeVolcEngine} {
+		task := &model.Task{Platform: constant.TaskPlatform(strconv.Itoa(channelType))}
+		require.True(t, isSeedanceOfficialTask(task), "channel type %d should support Seedance official fetch", channelType)
+	}
+}
+
 func TestIsSeedanceOfficialTaskFallsBackToCatalogForOlderTasks(t *testing.T) {
 	const modelName = "seedance-official-catalog-test"
 	constant.SetAIPDDCapabilities([]constant.AIPDDCapability{{
@@ -102,4 +109,39 @@ func TestSeedanceOfficialFetchReturnsTopLevelTaskAndEnforcesOwnership(t *testing
 	_, taskErr = taskFetchByIDRespBodyBuilder(otherUserCtx)
 	require.NotNil(t, taskErr)
 	require.Equal(t, http.StatusNotFound, taskErr.StatusCode)
+
+	directTask := &model.Task{
+		TaskID:   "task_direct_doubao",
+		UserId:   42,
+		Platform: constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeDoubaoVideo)),
+		Status:   model.TaskStatusSuccess,
+		Properties: model.Properties{
+			OriginModelName: "doubao-seedance-2-5-260628",
+		},
+	}
+	directTask.SetData(map[string]any{
+		"id":            "upstream-direct-private",
+		"model":         "doubao-seedance-2-5-260628",
+		"status":        "succeeded",
+		"duration":      5,
+		"resolution":    "480p",
+		"output_format": "mp4",
+		"content":       map[string]any{"video_url": "https://cdn.example.com/direct.mp4"},
+	})
+	require.NoError(t, db.Create(directTask).Error)
+
+	directCtx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	directCtx.Request = httptest.NewRequest(http.MethodGet, "/api/v3/contents/generations/tasks/task_direct_doubao", nil)
+	directCtx.Params = gin.Params{{Key: "task_id", Value: "task_direct_doubao"}}
+	directCtx.Set("id", 42)
+	directBody, directErr := taskFetchByIDRespBodyBuilder(directCtx)
+	require.Nil(t, directErr)
+	var directResponse map[string]any
+	require.NoError(t, common.Unmarshal(directBody, &directResponse))
+	require.Equal(t, "task_direct_doubao", directResponse["id"])
+	require.Equal(t, "succeeded", directResponse["status"])
+	require.Equal(t, "doubao-seedance-2-5-260628", directResponse["model"])
+	require.Equal(t, "https://cdn.example.com/direct.mp4", directResponse["content"].(map[string]any)["video_url"])
+	require.NotContains(t, directResponse, "task_id")
+	require.NotContains(t, directResponse, "object")
 }
