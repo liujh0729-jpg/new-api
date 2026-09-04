@@ -10,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 )
@@ -19,9 +20,13 @@ import (
 func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo) {
 	tokenName := c.GetString("token_name")
 	logContent := fmt.Sprintf("操作 %s", info.Action)
-	// 支持任务仅按次计费
-	if info.TaskPricingQuote != nil {
-		logContent = fmt.Sprintf("%s，按视频时长计费", logContent)
+	// Structured task pricing may be duration-based or per-call.
+	if quote := info.TaskPricingQuote; quote != nil {
+		if quote.Unit == billing_setting.TaskPricingUnitCall {
+			logContent = fmt.Sprintf("%s，按次计费", logContent)
+		} else {
+			logContent = fmt.Sprintf("%s，按视频时长计费", logContent)
+		}
 	} else if common.StringsContains(constant.TaskPricePatches, info.OriginModelName) {
 		logContent = fmt.Sprintf("%s，按次计费", logContent)
 	} else {
@@ -64,7 +69,9 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo) {
 	if info.PriceData.GroupRatioInfo.HasSpecialRatio {
 		other["user_group_ratio"] = info.PriceData.GroupRatioInfo.GroupSpecialRatio
 	}
-	if info.IsModelMapped {
+	// Seedance keeps the real Ark model inside the private order evidence. User
+	// consumption logs must expose only the public offering name.
+	if info.IsModelMapped && info.ChannelType != constant.ChannelTypeSeedance {
 		other["is_model_mapped"] = true
 		other["upstream_model_name"] = info.UpstreamModelName
 	}

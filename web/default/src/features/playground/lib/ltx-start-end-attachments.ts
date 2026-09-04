@@ -25,6 +25,8 @@ type RoleFile = Pick<PromptInputFile, 'url' | 'mediaType' | 'filename' | 'role'>
 
 export interface LTXStartEndAttachmentState<T extends RoleFile> {
   firstFrame?: T
+  lastFrame?: T
+  audio?: T
   extras: T[]
   isValid: boolean
 }
@@ -33,12 +35,23 @@ export function getLTXStartEndAttachmentState<T extends RoleFile>(
   files: T[]
 ): LTXStartEndAttachmentState<T> {
   const images = files.filter((file) => getAttachmentKind(file) === 'image')
+  const audios = files.filter((file) => getAttachmentKind(file) === 'audio')
   const explicitFirst = images.find((file) => file.role === 'first_frame')
   const firstFrame = explicitFirst || images.at(0)
-  const extras = files.filter((file) => file !== firstFrame)
+  const explicitLast = images.find(
+    (file) => file.role === 'last_frame' && file !== firstFrame
+  )
+  const lastFrame = explicitLast || images.find((file) => file !== firstFrame)
+  const explicitAudio = audios.find((file) => file.role === 'audio')
+  const audio = explicitAudio || audios.at(0)
+  const extras = files.filter(
+    (file) => file !== firstFrame && file !== lastFrame && file !== audio
+  )
 
   return {
     firstFrame,
+    lastFrame,
+    audio,
     extras,
     isValid: !!firstFrame && extras.length === 0,
   }
@@ -50,6 +63,8 @@ export function assignLTXStartEndAttachmentRoles(
   const state = getLTXStartEndAttachmentState(files)
   return files.map((file) => {
     if (file === state.firstFrame) return { ...file, role: 'first_frame' }
+    if (file === state.lastFrame) return { ...file, role: 'last_frame' }
+    if (file === state.audio) return { ...file, role: 'audio' }
     return file
   })
 }

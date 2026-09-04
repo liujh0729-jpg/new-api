@@ -372,6 +372,10 @@ func aipddCatalogModelFromCapability(capability constant.AIPDDCapability) defaul
 	switch capability.EndpointType {
 	case constant.EndpointTypeImageGeneration:
 		tags = append(tags, "图片生成")
+	case constant.EndpointTypeImageToImage:
+		tags = append(tags, "图生图")
+	case constant.EndpointTypeImageEdit:
+		tags = append(tags, "图片编辑")
 	case constant.EndpointTypeOpenAIVideo:
 		tags = append(tags, "视频生成")
 	case constant.EndpointTypeAudioSpeech:

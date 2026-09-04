@@ -175,6 +175,18 @@ type RelayInfo struct {
 	// TaskPricingQuote freezes request-metered local pricing across channel retries.
 	TaskPricingQuote *billing_setting.TaskPricingQuote
 	TaskPricingFacts *TaskPricingFacts
+	// SeedanceCallbackURL is captured by the independent Seedance adapter and
+	// removed from the Ark request. The workflow delivers it only after the
+	// private processing pipeline reaches its final public state.
+	SeedanceCallbackURL string
+	// BeforeSeedanceGenerationSubmit is installed by the task controller. The
+	// independent Seedance relay invokes it after validation, pricing and body
+	// conversion but before the first byte can be sent to Ark, making the public
+	// task, private order and generation attempt durable first.
+	BeforeSeedanceGenerationSubmit func() error
+	// SeedanceSubmissionPrepared transfers quota-refund ownership from the
+	// request-scoped BillingSession to the durable workflow refund record.
+	SeedanceSubmissionPrepared bool
 
 	Request dto.Request
 
@@ -943,6 +955,7 @@ type TaskInfo struct {
 	Duration                        float64 `json:"duration,omitempty"`      // 实际生成时长（秒）
 	OutputFormat                    string  `json:"output_format,omitempty"` // 实际输出容器
 	Resolution                      string  `json:"resolution,omitempty"`    // 实际输出分辨率
+	OutputFPS                       int     `json:"output_fps,omitempty"`    // 实际输出帧率
 }
 
 func FailTaskInfo(reason string) *TaskInfo {

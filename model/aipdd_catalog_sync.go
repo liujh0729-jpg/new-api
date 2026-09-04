@@ -99,6 +99,7 @@ func applyAIPDDCatalog(catalog aipddcatalog.AtomicCatalog, baseURL, apiKey strin
 	if err := catalog.Validate(); err != nil {
 		return AIPDDCatalogSyncResult{}, err
 	}
+	catalog.FilterSeedanceForNewAPI()
 	// Validate the upstream contract first, then exclude explicitly free LLMs
 	// from every persisted and runtime NewAPI catalog surface.
 	catalog.FilterFreeModels()
@@ -112,18 +113,14 @@ func applyAIPDDCatalog(catalog aipddcatalog.AtomicCatalog, baseURL, apiKey strin
 	if err != nil {
 		return AIPDDCatalogSyncResult{}, err
 	}
-	// Snapshots written by this version no longer contain free models. Include
-	// legacy free-* entries still present on the managed channel so the normal
-	// stale-model cleanup removes rows created by older releases.
+	// The managed channel is wholly owned by this sync. Include its current
+	// names so entries removed by a boundary filter (including legacy Seedance
+	// and free models) are cleaned even when an older snapshot is reloaded.
 	managedNames, err := managedAIPDDChannelModels()
 	if err != nil {
 		return AIPDDCatalogSyncResult{}, err
 	}
-	for _, modelName := range managedNames {
-		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(modelName)), "free-") {
-			previousNames = append(previousNames, modelName)
-		}
-	}
+	previousNames = append(previousNames, managedNames...)
 	previousSet := stringSet(previousNames)
 
 	result := AIPDDCatalogSyncResult{
@@ -264,6 +261,7 @@ func managedAIPDDChannelModels() ([]string, error) {
 
 func activateAIPDDCatalog(catalog aipddcatalog.AtomicCatalog) {
 	catalog.FilterExcluded()
+	catalog.FilterSeedanceForNewAPI()
 	catalog.FilterFreeModels()
 	constant.SetAIPDDCapabilities(catalog.RuntimeCapabilities())
 	models := make([]string, 0, len(catalog.Models))
@@ -307,12 +305,19 @@ func upsertAIPDDModelsTx(tx *gorm.DB, catalog aipddcatalog.AtomicCatalog, vendor
 			if capability.AdapterCode == "seedance" {
 				tags = "AIPDD,Seedance,视频生成,异步任务"
 			} else if capability.AdapterCode == "token_market_media" {
-				if capability.EndpointType == string(constant.EndpointTypeImageGeneration) {
+				switch capability.EndpointType {
+				case string(constant.EndpointTypeImageGeneration):
 					tags = "AIPDD,Agnes,图片生成"
-				} else if strings.Contains(strings.ToLower(modelName), "minimax") {
-					tags = "AIPDD,MiniMax,视频生成,异步任务"
-				} else {
-					tags = "AIPDD,Agnes,视频生成,异步任务"
+				case string(constant.EndpointTypeImageToImage):
+					tags = "AIPDD,Agnes,图生图"
+				case string(constant.EndpointTypeImageEdit):
+					tags = "AIPDD,Agnes,图片编辑"
+				default:
+					if strings.Contains(strings.ToLower(modelName), "minimax") {
+						tags = "AIPDD,MiniMax,视频生成,异步任务"
+					} else {
+						tags = "AIPDD,Agnes,视频生成,异步任务"
+					}
 				}
 			}
 			if endpoint, ok := aipddCatalogEndpointType(capability.EndpointType); ok {
@@ -482,6 +487,7 @@ func stringSet(values []string) map[string]bool {
 func aipddCatalogEndpointType(value string) (constant.EndpointType, bool) {
 	switch constant.EndpointType(strings.TrimSpace(value)) {
 	case constant.EndpointTypeOpenAI, constant.EndpointTypeImageGeneration,
+		constant.EndpointTypeImageToImage, constant.EndpointTypeImageEdit,
 		constant.EndpointTypeOpenAIVideo, constant.EndpointTypeAudioSpeech:
 		return constant.EndpointType(strings.TrimSpace(value)), true
 	default:

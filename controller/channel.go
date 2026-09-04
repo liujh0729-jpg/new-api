@@ -486,6 +486,14 @@ func validateChannel(channel *model.Channel, isAdd bool) error {
 		}
 	}
 
+	if channel.Type == constant.ChannelTypeSeedance {
+		for _, modelName := range channel.GetModels() {
+			if hasForbiddenSeedancePublicName(modelName) {
+				return fmt.Errorf("Seedance public model name exposes an internal processing detail")
+			}
+		}
+	}
+
 	return nil
 }
 

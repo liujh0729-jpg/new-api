@@ -50,6 +50,8 @@ func TestMain(m *testing.M) {
 		&model.Channel{},
 		&model.TopUp{},
 		&model.UserSubscription{},
+		&model.SubscriptionPreConsumeRecord{},
+		&model.SeedanceCustomerRefund{},
 	); err != nil {
 		panic("failed to migrate: " + err.Error())
 	}
@@ -71,6 +73,8 @@ func truncate(t *testing.T) {
 		model.DB.Exec("DELETE FROM channels")
 		model.DB.Exec("DELETE FROM top_ups")
 		model.DB.Exec("DELETE FROM user_subscriptions")
+		model.DB.Exec("DELETE FROM subscription_pre_consume_records")
+		model.DB.Exec("DELETE FROM seedance_customer_refunds")
 	})
 }
 
@@ -481,6 +485,44 @@ func TestLogTaskConsumption_WritesPreConsumedAndActualQuota(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, float64(preConsumed), other["pre_consumed_quota"])
 	assert.Equal(t, float64(settleQuota), other["actual_quota"])
+}
+
+func TestLogTaskConsumption_SeedanceHidesUpstreamModelAndReportsPerCallBilling(t *testing.T) {
+	truncate(t)
+
+	const userID, tokenID, channelID = 44, 44, 44
+	seedUser(t, userID, 10000)
+	seedToken(t, tokenID, userID, "sk-log-seedance", 5000)
+	seedChannel(t, channelID)
+
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", nil)
+	c.Set("token_name", "test_token")
+	c.Set("username", "test_user")
+
+	info := &relaycommon.RelayInfo{
+		UserId:           userID,
+		TokenId:          tokenID,
+		OriginModelName:  "Public Seedance 2.5",
+		UsingGroup:       "default",
+		ChannelMeta:      &relaycommon.ChannelMeta{ChannelId: channelID, ChannelType: constant.ChannelTypeSeedance, IsModelMapped: true, UpstreamModelName: "doubao-seedance-private"},
+		TaskRelayInfo:    &relaycommon.TaskRelayInfo{Action: "generate", PublicTaskID: "task-public"},
+		TaskPricingQuote: &billing_setting.TaskPricingQuote{Unit: billing_setting.TaskPricingUnitCall, Variant: "v1", UnitPriceUSD: 1, Quantity: 1, GroupRatio: 1, SaleUSD: 1, Quota: 500000},
+		PriceData:        types.PriceData{Quota: 500000, GroupRatioInfo: types.GroupRatioInfo{GroupRatio: 1}},
+	}
+
+	LogTaskConsumption(c, info)
+
+	log := getLastLog(t)
+	require.NotNil(t, log)
+	assert.Equal(t, "操作 generate，按次计费", log.Content)
+	assert.Equal(t, "Public Seedance 2.5", log.ModelName)
+	other, err := common.StrToMap(log.Other)
+	require.NoError(t, err)
+	assert.Equal(t, "call", other["billing_unit"])
+	assert.NotContains(t, other, "is_model_mapped")
+	assert.NotContains(t, other, "upstream_model_name")
 }
 
 func TestSyncTaskEquivalentUsageLog_UpdatesOriginalLogWithoutChangingQuota(t *testing.T) {

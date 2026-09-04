@@ -171,6 +171,8 @@ export const ENDPOINT_TEMPLATES: Record<
   gemini: { path: '/v1beta/models/{model}:generateContent', method: 'POST' },
   'jina-rerank': { path: '/rerank', method: 'POST' },
   'image-generation': { path: '/v1/images/generations', method: 'POST' },
+  'image-to-image': { path: '/v1/images/edits', method: 'POST' },
+  'image-edit': { path: '/v1/images/edits', method: 'POST' },
   embeddings: { path: '/v1/embeddings', method: 'POST' },
   'openai-video': { path: '/v1/videos', method: 'POST' },
   'audio-speech': { path: '/v1/audio/speech', method: 'POST' },

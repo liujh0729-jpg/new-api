@@ -37,9 +37,13 @@ import {
   ERROR_MESSAGES,
   SEEDANCE_REFERENCE_LIMITS,
   isAIPDDFluxImageToImageModel,
-  isLTX23StartEndModel,
+  isImagePlaygroundMode,
+  isReferenceImagePlaygroundMode,
+  isLTX23StartEndVariant,
   isLTX23PolicyModel,
   isLTXVideoModel,
+  isQwenImageEditModel,
+  isUnifiedLTX23Model,
   normalizeLTXVideoSizeForModel,
   normalizeImageSizeForModel,
   normalizeVideoDurationForModel,
@@ -136,7 +140,7 @@ export function Playground() {
   }, [modelsData, config.model, setModels, updateConfig])
 
   useEffect(() => {
-    if (config.mode !== 'image') return
+    if (!isImagePlaygroundMode(config.mode)) return
 
     const normalizedSize = normalizeImageSizeForModel(
       config.model,
@@ -199,12 +203,19 @@ export function Playground() {
 
     const normalizedSize = normalizeLTXVideoSizeForModel(
       config.model,
-      config.video_size
+      config.video_size,
+      config.ltx_variant
     )
     if (normalizedSize !== config.video_size) {
       updateConfig('video_size', normalizedSize)
     }
-  }, [config.mode, config.model, config.video_size, updateConfig])
+  }, [
+    config.mode,
+    config.model,
+    config.video_size,
+    config.ltx_variant,
+    updateConfig,
+  ])
 
   // Update groups when data changes
   useEffect(() => {
@@ -245,7 +256,7 @@ export function Playground() {
   }, [activeConversationId, messages, resumeTaskPolling])
 
   const createGenerationLoadingMessage = useCallback(() => {
-    if (config.mode !== 'image' && config.mode !== 'video') {
+    if (!isImagePlaygroundMode(config.mode) && config.mode !== 'video') {
       return {
         assistantMessage: createLoadingAssistantMessage(),
         clientTaskId: undefined,
@@ -256,9 +267,14 @@ export function Playground() {
     return {
       assistantMessage: createLoadingAssistantMessage({
         taskId: clientTaskId,
-        taskType: config.mode,
-        activity:
-          config.mode === 'image' ? 'image_generation' : 'video_generation',
+        taskType: isReferenceImagePlaygroundMode(config.mode)
+          ? 'image_edit'
+          : config.mode === 'video'
+            ? 'video'
+            : 'image',
+        activity: isImagePlaygroundMode(config.mode)
+          ? 'image_generation'
+          : 'video_generation',
       }),
       clientTaskId,
     }
@@ -268,6 +284,7 @@ export function Playground() {
     const text = message.text?.trim() || ''
     let messageReferences: SeedanceReference[] = []
     let imageReferences: string[] | undefined
+    let imageEditReferences: Array<File | string> | undefined
     let videoReferences: SeedanceReference[] | undefined
 
     if (config.mode === 'video') {
@@ -279,6 +296,7 @@ export function Playground() {
         referenceCandidates,
         message.files?.length || 0,
         config.model,
+        config.ltx_variant,
         config.ltx_timeline_data,
         config.video_duration,
         config.video_resolution,
@@ -323,6 +341,7 @@ export function Playground() {
           resolvedReferences.requestReferences,
           resolvedReferences.requestReferences.length,
           config.model,
+          config.ltx_variant,
           config.ltx_timeline_data,
           config.video_duration,
           config.video_resolution,
@@ -346,13 +365,14 @@ export function Playground() {
       }
     }
 
-    if (config.mode === 'image') {
+    if (isImagePlaygroundMode(config.mode)) {
       try {
         const resolvedReferences = await resolveImageReferences(
           message.files || []
         )
         messageReferences = resolvedReferences.displayReferences
         imageReferences = resolvedReferences.requestUrls
+        imageEditReferences = resolvedReferences.requestSources
         if (imageReferences.length === 0) {
           imageReferences = undefined
         }
@@ -362,12 +382,33 @@ export function Playground() {
         throw new Error(uploadError.message, { cause: error })
       }
 
-      if (isAIPDDFluxImageToImageModel(config.model) && !imageReferences) {
+      if (
+        (config.mode === 'image_to_image' ||
+          isAIPDDFluxImageToImageModel(config.model)) &&
+        !imageReferences
+      ) {
         const validationError = t(
           'An image URL or uploaded image is required. Sending only prompt will fail.'
         )
         toast.error(validationError)
         throw new Error(validationError)
+      }
+      if (config.mode === 'image_edit' && !imageReferences) {
+        const validationError = t(
+          'Image editing requires at least one input image'
+        )
+        toast.error(validationError)
+        throw new Error(validationError)
+      }
+      if (isQwenImageEditModel(config.model)) {
+        const count = imageReferences?.length || 0
+        if (!text || count < 1 || count > 3) {
+          const validationError = t(
+            'Qwen Image Edit requires a prompt and 1 to 3 images'
+          )
+          toast.error(validationError)
+          throw new Error(validationError)
+        }
       }
     }
 
@@ -380,6 +421,7 @@ export function Playground() {
     // Send chat request
     sendChat(newMessages, {
       imageReferences,
+      imageEditReferences,
       videoReferences,
       clientTaskId,
     })
@@ -527,6 +569,8 @@ export function Playground() {
             }
             onVideoSizeChange={(value) => updateConfig('video_size', value)}
             ltxTimelineData={config.ltx_timeline_data}
+            ltxVariant={config.ltx_variant}
+            onLtxVariantChange={(value) => updateConfig('ltx_variant', value)}
             onLtxTimelineDataChange={(value) =>
               updateConfig('ltx_timeline_data', value)
             }
@@ -549,6 +593,7 @@ type ResolvedSeedanceReferences = {
 type ResolvedImageReferences = {
   displayReferences: SeedanceReference[]
   requestUrls: string[]
+  requestSources: Array<File | string>
 }
 
 function buildSeedanceReferenceCandidates(
@@ -789,6 +834,7 @@ function validateVideoInput(
   references: SeedanceReference[],
   rawFileCount: number,
   model: string,
+  ltxVariant: string,
   ltxTimelineData: string,
   videoDuration: number,
   videoResolution: string,
@@ -817,7 +863,7 @@ function validateVideoInput(
     return issue ? t(issue.key, issue.options) : null
   }
 
-  if (isLTX23StartEndModel(model)) {
+  if (isLTX23StartEndVariant(model, ltxVariant)) {
     if (videoCount > 0) {
       return t('LTX start-end supports image and audio references only')
     }
@@ -852,11 +898,23 @@ function validateVideoInput(
     if (videoCount > 0 || audioCount > 0) {
       return t('LTX supports image references only')
     }
-    if (imageCount > 1) {
-      return t('LTX supports one reference image')
-    }
-    if (isLTX23PolicyModel(model) && imageCount === 0) {
-      return t('LTX 2.3 requires a reference image')
+    if (isUnifiedLTX23Model(model)) {
+      const requiredImages =
+        ltxVariant === 'licon_2role' ? 3 : ltxVariant === 'licon_1role' ? 2 : 1
+      if (!text) return t('LTX 2.3 requires a prompt')
+      if (imageCount !== requiredImages) {
+        return t('LTX 2.3 {{variant}} requires {{count}} images', {
+          variant: ltxVariant,
+          count: requiredImages,
+        })
+      }
+    } else {
+      if (imageCount > 1) {
+        return t('LTX supports one reference image')
+      }
+      if (isLTX23PolicyModel(model) && imageCount === 0) {
+        return t('LTX 2.3 requires a reference image')
+      }
     }
     return null
   }
@@ -996,6 +1054,7 @@ async function resolveImageReferences(
       return {
         displayReference: reference,
         requestUrl,
+        requestSource: file.sourceFile || requestUrl,
       }
     })
   )
@@ -1006,6 +1065,7 @@ async function resolveImageReferences(
     ): image is {
       displayReference: SeedanceReference
       requestUrl: string
+      requestSource: File | string
     } => image !== null
   )
 
@@ -1014,6 +1074,7 @@ async function resolveImageReferences(
       (reference) => reference.displayReference
     ),
     requestUrls: references.map((reference) => reference.requestUrl),
+    requestSources: references.map((reference) => reference.requestSource),
   }
 }
 

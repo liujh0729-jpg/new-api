@@ -1,0 +1,17 @@
+{
+  "success": true,
+  "task_id": "mediakit-task-0001",
+  "task_type": "enhance-video",
+  "status": "completed",
+  "result": {
+    "video_url": "https://mediakit-output.example/redacted-signed-object",
+    "duration": 5.12,
+    "resolution": "4k",
+    "fps": 30,
+    "tool_version": "professional"
+  },
+  "expires_at": 1777464650,
+  "created_at": 1777291767,
+  "finished_at": 1777291851,
+  "request_id": "redacted-request-id"
+}

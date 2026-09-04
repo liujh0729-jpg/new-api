@@ -21,7 +21,7 @@ export const LTX_23_FRAME_RATE = 24
 
 export type LTXStartEndImageCountError =
   | 'LTX start-end requires a first frame'
-  | 'LTX supports one reference image'
+  | 'LTX start-end supports at most two images'
 
 const LTX_TIMELINE_COLORS = [
   '#4f8edc',
@@ -58,7 +58,7 @@ export function validateLTXStartEndImageCount(
   imageCount: number
 ): LTXStartEndImageCountError | null {
   if (imageCount === 0) return 'LTX start-end requires a first frame'
-  if (imageCount > 1) return 'LTX supports one reference image'
+  if (imageCount > 2) return 'LTX start-end supports at most two images'
   return null
 }
 

@@ -34,7 +34,7 @@ func validUserInfo(username string, role int) bool {
 	return true
 }
 
-func authHelper(c *gin.Context, minRole int) {
+func authHelper(c *gin.Context, minRole int, insufficientPrivilegeStatus ...int) {
 	session := sessions.Default(c)
 	username := session.Get("username")
 	role := session.Get("role")
@@ -130,7 +130,11 @@ func authHelper(c *gin.Context, minRole int) {
 		return
 	}
 	if role.(int) < minRole {
-		c.JSON(http.StatusOK, gin.H{
+		statusCode := http.StatusOK
+		if len(insufficientPrivilegeStatus) > 0 {
+			statusCode = insufficientPrivilegeStatus[0]
+		}
+		c.JSON(statusCode, gin.H{
 			"success": false,
 			"message": common.TranslateMessage(c, i18n.MsgAuthInsufficientPrivilege),
 		})
@@ -198,6 +202,15 @@ func AdminAuth() func(c *gin.Context) {
 	}
 }
 
+// StrictAdminAuth preserves the normal session/access-token authentication
+// contract while returning an HTTP authorization status for isolated internal
+// control planes that must not look like a successful public API response.
+func StrictAdminAuth() func(c *gin.Context) {
+	return func(c *gin.Context) {
+		authHelper(c, common.RoleAdminUser, http.StatusForbidden)
+	}
+}
+
 // AdminAuthWithSessionUserID authenticates browser-managed media navigations.
 // These requests cannot add the New-Api-User header used by Axios, so derive a
 // missing header from the signed login session before applying normal admin
@@ -216,6 +229,12 @@ func AdminAuthWithSessionUserID() func(c *gin.Context) {
 func RootAuth() func(c *gin.Context) {
 	return func(c *gin.Context) {
 		authHelper(c, common.RoleRootUser)
+	}
+}
+
+func StrictRootAuth() func(c *gin.Context) {
+	return func(c *gin.Context) {
+		authHelper(c, common.RoleRootUser, http.StatusForbidden)
 	}
 }
 

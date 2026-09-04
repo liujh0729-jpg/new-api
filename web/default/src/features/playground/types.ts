@@ -47,7 +47,7 @@ export interface Message {
   status?: MessageStatus
   errorCode?: string | null
   taskId?: string
-  taskType?: 'image' | 'video'
+  taskType?: 'image' | 'image_edit' | 'video'
 }
 
 export interface GeneratedImage {
@@ -201,6 +201,7 @@ export interface VideoGenerationRequest {
   ratio?: string
   resolution?: string
   video_resolution?: string
+  request_kind?: string
   image_urls?: string[]
   audio_urls?: string[]
   generate_audio?: boolean
@@ -208,6 +209,7 @@ export interface VideoGenerationRequest {
   service_tier?: string
   priority?: number
   callback_url?: string
+  variant?: 'standard' | 'start_end' | 'licon_1role' | 'licon_2role'
   metadata?: {
     content?: VideoGenerationContentItem[]
     ratio?: string
@@ -218,6 +220,7 @@ export interface VideoGenerationRequest {
     frameRate?: number
     audio?: string
     timeline_data?: unknown
+    variant?: 'standard' | 'start_end' | 'licon_1role' | 'licon_2role'
   }
 }
 
@@ -241,7 +244,12 @@ export interface TaskFetchResponse {
   error?: unknown
 }
 
-export type PlaygroundMode = 'chat' | 'image' | 'video'
+export type PlaygroundMode =
+  | 'chat'
+  | 'image'
+  | 'image_to_image'
+  | 'image_edit'
+  | 'video'
 export type ThinkingMode = 'auto' | 'enabled' | 'disabled'
 
 // Configuration types
@@ -264,6 +272,7 @@ export interface PlaygroundConfig {
   video_duration: number
   video_resolution: string
   video_size: string
+  ltx_variant: 'standard' | 'start_end' | 'licon_1role' | 'licon_2role'
   ltx_timeline_data: string
 }
 

@@ -126,6 +126,32 @@ func TestCopyVideoProxyRequestHeadersForwardsRange(t *testing.T) {
 	require.Equal(t, "etag-123", req.Header.Get("If-Range"))
 }
 
+func TestCopyVideoProxyResponseHeadersSanitizesPrivateWorkflowMetadata(t *testing.T) {
+	dst := http.Header{}
+	src := http.Header{
+		"Content-Type":       []string{`video/mp4; provider="private-supplier"`},
+		"Content-Range":      []string{"bytes 0-9/10"},
+		"Etag":               []string{`"private-supplier-upscale-v1"`},
+		"X-Provider":         []string{"private-supplier"},
+		"X-Upstream-Request": []string{"secret-request-id"},
+		"Set-Cookie":         []string{"supplier_session=secret"},
+	}
+
+	copyVideoProxyResponseHeaders(dst, src, true)
+
+	require.Equal(t, "video/mp4", dst.Get("Content-Type"))
+	require.Equal(t, "bytes 0-9/10", dst.Get("Content-Range"))
+	require.Empty(t, dst.Get("Etag"))
+	require.Empty(t, dst.Get("X-Provider"))
+	require.Empty(t, dst.Get("X-Upstream-Request"))
+	require.Empty(t, dst.Get("Set-Cookie"))
+}
+
+func TestSanitizeVideoContentTypeDropsPrivateParameters(t *testing.T) {
+	require.Equal(t, "video/mp4", sanitizeVideoContentType(`video/mp4; provider="private-supplier"`))
+	require.Empty(t, sanitizeVideoContentType("not a media type"))
+}
+
 func TestParseSameOriginVideoProxyTaskIDRelativeURL(t *testing.T) {
 	taskID, ok := parseSameOriginVideoProxyTaskID("/v1/videos/task_123/content")
 

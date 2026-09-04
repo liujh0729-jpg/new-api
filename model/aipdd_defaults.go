@@ -20,6 +20,13 @@ func EnsureAIPDDDefaults() error {
 	if err := validateAIPDDBootstrapKey(key); err != nil {
 		return err
 	}
+	cleaned, err := cleanupManagedAIPDDSeedanceCatalog()
+	if err != nil {
+		return fmt.Errorf("remove legacy AIPDD Seedance catalog data: %w", err)
+	}
+	if cleaned {
+		common.SysLog("removed legacy Seedance entries from the managed AIPDD catalog")
+	}
 	if strings.TrimSpace(key) == "" || !isAIPDDCatalogSyncOnBootEnabled(key) {
 		revision, activated, err := activateAIPDDCatalogSnapshot(getAIPDDBaseURLFromEnv())
 		if err != nil {
@@ -42,6 +49,78 @@ func EnsureAIPDDDefaults() error {
 	}
 	common.SysLog(fmt.Sprintf("AIPDD atomic catalog ready: revision=%s, added=%d, removed=%d, snapshot=%t", result.Revision, result.AddedModels, result.RemovedModels, result.UsedSnapshot))
 	return nil
+}
+
+func cleanupManagedAIPDDSeedanceCatalog() (bool, error) {
+	var channels []Channel
+	if err := DB.Where("type = ? AND name = ?", constant.ChannelTypeAIPDD, aipddEnvChannelName).
+		Find(&channels).Error; err != nil {
+		return false, err
+	}
+	changed := false
+	for _, channel := range channels {
+		kept := make([]string, 0)
+		removed := make([]string, 0)
+		for _, modelName := range channel.GetModels() {
+			if strings.Contains(strings.ToLower(strings.TrimSpace(modelName)), "seedance") {
+				removed = append(removed, modelName)
+			} else {
+				kept = append(kept, modelName)
+			}
+		}
+		if len(removed) == 0 {
+			continue
+		}
+		if err := DB.Transaction(func(tx *gorm.DB) error {
+			if err := tx.Model(&Channel{}).Where("id = ?", channel.Id).
+				Update("models", strings.Join(kept, ",")).Error; err != nil {
+				return err
+			}
+			if err := tx.Where("channel_id = ? AND model IN ?", channel.Id, removed).
+				Delete(&Ability{}).Error; err != nil {
+				return err
+			}
+			var vendor Vendor
+			if err := tx.Where("name = ?", "AIPDD").First(&vendor).Error; err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return nil
+				}
+				return err
+			}
+			for _, modelName := range removed {
+				var abilityCount int64
+				if err := tx.Model(&Ability{}).Where("model = ?", modelName).Count(&abilityCount).Error; err != nil {
+					return err
+				}
+				var independentSeedanceAbilityCount int64
+				if err := tx.Table("abilities").
+					Joins("JOIN channels ON channels.id = abilities.channel_id").
+					Where("abilities.model = ? AND abilities.enabled = ? AND channels.type = ?", modelName, true, constant.ChannelTypeSeedance).
+					Count(&independentSeedanceAbilityCount).Error; err != nil {
+					return err
+				}
+				if independentSeedanceAbilityCount > 0 {
+					if err := ensureSeedancePublicModelMetadataTx(tx, modelName); err != nil {
+						return err
+					}
+				} else if abilityCount == 0 {
+					if err := tx.Unscoped().Where("vendor_id = ? AND model_name = ?", vendor.Id, modelName).
+						Delete(&Model{}).Error; err != nil {
+						return err
+					}
+				}
+			}
+			return nil
+		}); err != nil {
+			return false, err
+		}
+		changed = true
+	}
+	if changed {
+		InitChannelCache()
+		InvalidatePricingCache()
+	}
+	return changed, nil
 }
 
 // IsAIPDDCatalogEnvironmentConfigured reports whether background catalog sync

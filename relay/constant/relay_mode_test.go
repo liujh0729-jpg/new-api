@@ -9,6 +9,8 @@ import (
 func TestPath2RelayModeUsesGenericFetchForNonVideoTasks(t *testing.T) {
 	require.Equal(t, RelayModeTaskFetchByID, Path2RelayMode("/v1/images/generations/task_image"))
 	require.Equal(t, RelayModeTaskFetchByID, Path2RelayMode("/pg/images/generations/task_image"))
+	require.Equal(t, RelayModeImagesEdits, Path2RelayMode("/v1/images/edits"))
+	require.Equal(t, RelayModeTaskFetchByID, Path2RelayMode("/v1/images/edits/task_edit"))
 	require.Equal(t, RelayModeTaskFetchByID, Path2RelayMode("/v1/audio/speech/task_audio"))
 	require.Equal(t, RelayModeVideoFetchByID, Path2RelayMode("/v1/videos/task_video"))
 	require.Equal(t, RelayModeVideoSubmit, Path2RelayMode("/v1/videos"))

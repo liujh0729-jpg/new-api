@@ -7,7 +7,11 @@
 | 官方兼容 | `POST /api/v3/contents/generations/tasks` | `GET /api/v3/contents/generations/tasks/{task_id}` | `succeeded` | `content.video_url` |
 | OpenAI Video | `POST /v1/videos` | `GET /v1/videos/{task_id}` | `completed` | `metadata.url` |
 
+Seedance 的 OpenAI Video 创建成功码为 `202`；官方兼容创建成功码为 `200`。两条协议都在服务器接受任务后返回公开任务 ID。
+
 新接入用官方兼容或 OpenAI Video。单角色 `character_id` 两条入口都支持，`resolution` / `ratio` 放在请求体顶层。
+
+Seedance 售卖模型会固定输出 FPS，默认 24。调用方可省略 `framespersecond`；若显式传入，必须与售卖模型配置一致，否则返回 400。这里的 FPS 指最终输出视频 FPS，不是输入素材 FPS。普通 2.5 模型仍不接受 FPS 变体。
 
 ## 版本差异
 
@@ -19,7 +23,7 @@
 | 时长 | 正数秒，默认 5 | `-1` 或 4–30，默认 `-1` |
 | `seed` / `service_tier` | 支持 | 不支持 |
 
-价格以 `GET /api/pricing` 为准。不提供列表、删除、重试；官方兼容也没有 `/result`。
+价格以 `GET /api/pricing` 为准。官方兼容支持 `GET /api/v3/contents/generations/tasks` 列表与任务删除/取消；OpenAI Video 支持 `DELETE /v1/videos/{task_id}`。两条协议都没有 `/result`，成品统一通过 `GET /v1/videos/{task_id}/content` 获取并支持 Range。
 
 ## 素材库
 

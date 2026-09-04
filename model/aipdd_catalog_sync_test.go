@@ -172,7 +172,7 @@ func TestApplyAIPDDCatalogReplacesOnlyManagedAIPDDData(t *testing.T) {
 	require.Equal(t, "tier(\"local\", p * 1 + c * 2)", mustAIPDDBillingExpr(t, "llm-old"))
 }
 
-func TestApplyAIPDDCatalogDoesNotCreateSeedancePricingOptions(t *testing.T) {
+func TestApplyAIPDDCatalogExcludesLegacySeedanceProxyCapabilities(t *testing.T) {
 	truncateTables(t)
 	t.Cleanup(func() {
 		constant.ResetAIPDDCapabilities()
@@ -217,10 +217,21 @@ func TestApplyAIPDDCatalogDoesNotCreateSeedancePricingOptions(t *testing.T) {
 		require.Zero(t, count, key)
 	}
 
-	capability, ok := constant.GetAIPDDCapability("AP Seedance")
-	require.True(t, ok)
-	require.NotNil(t, capability.SeedancePricing)
-	require.Contains(t, capability.SeedancePricing.ByResolution, "1080p")
+	_, ok := constant.GetAIPDDCapability("AP Seedance")
+	require.False(t, ok)
+	var managed Channel
+	require.NoError(t, DB.Where("type = ? AND name = ?", constant.ChannelTypeAIPDD, aipddEnvChannelName).First(&managed).Error)
+	require.NotContains(t, managed.GetModels(), "AP Seedance")
+	var modelCount, abilityCount int64
+	require.NoError(t, DB.Unscoped().Model(&Model{}).Where("model_name = ?", "AP Seedance").Count(&modelCount).Error)
+	require.NoError(t, DB.Model(&Ability{}).Where("model = ?", "AP Seedance").Count(&abilityCount).Error)
+	require.Zero(t, modelCount)
+	require.Zero(t, abilityCount)
+	var snapshot AIPDDCatalogSnapshot
+	require.NoError(t, DB.First(&snapshot, aipddCatalogSnapshotID).Error)
+	var storedCatalog aipddcatalog.AtomicCatalog
+	require.NoError(t, common.UnmarshalJsonStr(snapshot.Payload, &storedCatalog))
+	require.Empty(t, storedCatalog.Capabilities)
 }
 
 func TestApplyAIPDDCatalogImportsTokenMarketDisplayPrices(t *testing.T) {
@@ -438,15 +449,11 @@ func TestApplyAIPDDCatalogKeepsDisabledModelsInDBAndChannel(t *testing.T) {
 	_, err := applyAIPDDCatalog(catalog, "https://aipdd.example", "sk-test")
 	require.NoError(t, err)
 
-	require.ElementsMatch(t, []string{
-		"pricing-disabled-task",
-		"unavailable-llm",
-		"unavailable-task",
-	}, catalog.V1ModelsListHiddenNames())
+	require.ElementsMatch(t, []string{"pricing-disabled-task"}, catalog.V1ModelsListHiddenNames())
 	require.True(t, aipddcatalog.HasV1ModelsListHiddenState())
-	require.True(t, aipddcatalog.IsHiddenFromV1ModelsList("unavailable-task"))
+	require.False(t, aipddcatalog.IsHiddenFromV1ModelsList("unavailable-task"))
 	require.True(t, aipddcatalog.IsHiddenFromV1ModelsList("pricing-disabled-task"))
-	require.True(t, aipddcatalog.IsHiddenFromV1ModelsList("unavailable-llm"))
+	require.False(t, aipddcatalog.IsHiddenFromV1ModelsList("unavailable-llm"))
 	require.False(t, aipddcatalog.IsHiddenFromV1ModelsList("enabled-task"))
 	require.False(t, aipddcatalog.IsHiddenFromV1ModelsList("enabled-llm"))
 

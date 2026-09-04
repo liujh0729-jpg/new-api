@@ -1,6 +1,7 @@
 package common
 
 import (
+	"encoding/base64"
 	"strings"
 	"testing"
 
@@ -38,9 +39,24 @@ func TestSensitiveValueEncryptionRoundTripAndRandomNonce(t *testing.T) {
 
 	assert.NotEqual(t, first, second)
 	assert.True(t, strings.HasPrefix(first, encryptedValuePrefix))
+	payload, err := base64.RawStdEncoding.DecodeString(strings.TrimPrefix(first, encryptedValuePrefixV2))
+	require.NoError(t, err)
+	assert.NotContains(t, string(payload), "merchant-private-key")
 	plaintext, err := DecryptSensitiveValue(first)
 	require.NoError(t, err)
 	assert.Equal(t, "merchant-private-key", plaintext)
+}
+
+func TestSensitiveValueEncryptionReadsLegacyV1Ciphertext(t *testing.T) {
+	useCryptoSecretForTest(t, "0123456789abcdef0123456789abcdef", true)
+
+	legacy, err := encryptSensitiveValueV1("legacy-private-key")
+	require.NoError(t, err)
+	require.True(t, strings.HasPrefix(legacy, encryptedValuePrefixV1))
+
+	plaintext, err := DecryptSensitiveValue(legacy)
+	require.NoError(t, err)
+	require.Equal(t, "legacy-private-key", plaintext)
 }
 
 func TestSensitiveValueEncryptionRejectsTamperingAndWrongSecret(t *testing.T) {
@@ -49,12 +65,12 @@ func TestSensitiveValueEncryptionRejectsTamperingAndWrongSecret(t *testing.T) {
 	encrypted, err := EncryptSensitiveValue("api-v3-key")
 	require.NoError(t, err)
 
-	last := encrypted[len(encrypted)-1]
-	replacement := byte('A')
-	if last == replacement {
-		replacement = 'B'
-	}
-	_, err = DecryptSensitiveValue(encrypted[:len(encrypted)-1] + string(replacement))
+	payload, err := base64.RawStdEncoding.DecodeString(strings.TrimPrefix(encrypted, encryptedValuePrefixV2))
+	require.NoError(t, err)
+	require.NotEmpty(t, payload)
+	payload[len(payload)-1] ^= 1
+	tampered := encryptedValuePrefixV2 + base64.RawStdEncoding.EncodeToString(payload)
+	_, err = DecryptSensitiveValue(tampered)
 	require.Error(t, err)
 
 	CryptoSecret = "fedcba9876543210fedcba9876543210"

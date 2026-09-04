@@ -19,8 +19,9 @@ For commercial licensing, please contact support@quantumnous.com
 import {
   ERROR_MESSAGES,
   getLTXVideoDimensions,
-  isLTX23StartEndModel,
+  isLTX23StartEndVariant,
   isLTXVideoModel,
+  isUnifiedLTX23Model,
   isSeedanceModel,
   normalizeImageSizeForModel,
 } from '../constants'
@@ -38,6 +39,7 @@ import { LTX_23_FRAME_RATE, resolveLTXStartEndTimeline } from './ltx-start-end'
 import { formatMessageForAPI, isValidMessage } from './message-utils'
 import {
   getMinimaxH3ModelSpec,
+  inferMinimaxH3ModelSpec,
   validateMinimaxH3VideoInput,
 } from './minimax-h3'
 
@@ -65,7 +67,13 @@ function buildMinimaxH3VideoGenerationPayload(
   config: PlaygroundConfig,
   clientTaskId?: string
 ): VideoGenerationRequest | undefined {
-  const spec = getMinimaxH3ModelSpec(config.model)
+  if (!getMinimaxH3ModelSpec(config.model)) return undefined
+
+  const spec = inferMinimaxH3ModelSpec({
+    model: config.model,
+    prompt,
+    references,
+  })
   if (!spec) return undefined
 
   const validationIssue = validateMinimaxH3VideoInput({
@@ -222,7 +230,8 @@ export function buildVideoGenerationPayload(
   }
 
   const isLTXVideo = isLTXVideoModel(config.model)
-  const isLTXStartEnd = isLTX23StartEndModel(config.model)
+  const isLTXStartEnd = isLTX23StartEndVariant(config.model, config.ltx_variant)
+  const isUnifiedLTX23 = isUnifiedLTX23Model(config.model)
   const isSeedanceVideo = isSeedanceModel(config.model)
   const imageReferences = references.filter(
     (reference) => reference.kind === 'image'
@@ -317,6 +326,7 @@ export function buildVideoGenerationPayload(
   }
   const metadata: VideoGenerationRequest['metadata'] = {
     content,
+    ...(isUnifiedLTX23 ? { variant: config.ltx_variant } : {}),
     ...(ltxDimensions
       ? {
           width: ltxDimensions.width,
@@ -342,6 +352,7 @@ export function buildVideoGenerationPayload(
     model: config.model,
     group: config.group,
     prompt,
+    ...(isUnifiedLTX23 ? { variant: config.ltx_variant } : {}),
     ...(clientTaskId ? { client_task_id: clientTaskId } : {}),
     ...(ltxImageReferences.length > 0
       ? {

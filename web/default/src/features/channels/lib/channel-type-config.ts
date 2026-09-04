@@ -149,6 +149,17 @@ export const CHANNEL_TYPE_CONFIGS: Record<number, ChannelTypeConfig> = {
       'aipdd-indextts',
     ],
   },
+  59: {
+    id: 59,
+    name: CHANNEL_TYPES[59],
+    icon: 'Doubao',
+    defaultBaseUrl: 'https://ark.cn-beijing.volces.com',
+    hints: {
+      baseUrl: 'Default: https://ark.cn-beijing.volces.com',
+      key: 'Managed in the Seedance administrator page',
+      models: 'Only published Seedance offerings are exposed',
+    },
+  },
 }
 
 /**

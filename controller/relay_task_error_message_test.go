@@ -203,3 +203,55 @@ func TestRespondTaskErrorPreservesNormalizedAIPDDMessage(t *testing.T) {
 	require.Contains(t, w.Body.String(), relaycommon.AIPDDErrorCodeRateLimited)
 	require.Contains(t, w.Body.String(), `"retryable":true`)
 }
+
+func TestRespondTaskErrorMasksIndependentSeedanceLocalDetails(t *testing.T) {
+	for _, testCase := range []struct {
+		name         string
+		code         string
+		status       int
+		expectedCode string
+		expected     string
+	}{
+		{
+			name: "private execution provider lookup",
+			code: "seedance_model_unavailable", status: http.StatusServiceUnavailable,
+			expectedCode: "video_service_unavailable", expected: "Video service is temporarily unavailable",
+		},
+		{
+			name: "credential lookup",
+			code: "seedance_credential_unavailable", status: http.StatusServiceUnavailable,
+			expectedCode: "video_service_unavailable", expected: "Video service is temporarily unavailable",
+		},
+		{
+			name: "local transaction",
+			code: "persist_task_failed", status: http.StatusInternalServerError,
+			expectedCode: "server_error", expected: "Failed to create video task",
+		},
+		{
+			name: "unpublished model",
+			code: "seedance_model_not_published", status: http.StatusBadRequest,
+			expectedCode: "model_not_found", expected: "The requested video model is unavailable",
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			raw := "enhancement provider credential lookup failed at private-db.internal"
+			taskErr := &dto.TaskError{
+				Code: testCase.code, Message: raw, Data: map[string]any{"provider_type": "DIRECT_EXTERNAL"},
+				StatusCode: testCase.status, Error: errors.New(raw), LocalError: true,
+			}
+
+			respondTaskError(c, taskErr)
+
+			require.Equal(t, testCase.status, w.Code)
+			require.Equal(t, testCase.expectedCode, taskErr.Code)
+			require.Equal(t, testCase.expected, taskErr.Message)
+			normalized := strings.ToLower(w.Body.String())
+			for _, forbidden := range []string{"enhancement", "provider", "credential", "private-db", "direct_external"} {
+				require.NotContains(t, normalized, forbidden)
+			}
+		})
+	}
+}

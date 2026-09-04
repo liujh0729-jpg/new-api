@@ -1,0 +1,59 @@
+{
+  "java_reference_commit": "83137cd59afa23dd42b7050d47c2d9de64374385",
+  "official": {
+    "create": {
+      "status": 200,
+      "request": {
+        "model": "Public Seedance 2.5",
+        "content": [{"type": "text", "text": "hello"}],
+        "resolution": "720p",
+        "ratio": "adaptive",
+        "duration": -1,
+        "generate_audio": false,
+        "watermark": false,
+        "priority": 0,
+        "callback_url": "https://client.example/callback"
+      },
+      "response": {"id": "task_public"}
+    },
+    "running": {
+      "id": "task_public",
+      "model": "Public Seedance 2.5",
+      "status": "running",
+      "duration": 4,
+      "resolution": "720p"
+    },
+    "succeeded": {
+      "id": "task_public",
+      "model": "Public Seedance 2.5",
+      "status": "succeeded",
+      "duration": 4,
+      "resolution": "720p",
+      "content": {"video_url": "/v1/videos/task_public/content"},
+      "usage": {"completion_tokens": 1358000, "total_tokens": 1358000}
+    },
+    "list": {
+      "status": 200,
+      "response": {"items": [{"id": "task_public", "model": "Public Seedance 2.5", "status": "queued"}], "total": 1}
+    },
+    "cancel": {
+      "status": 200,
+      "response": {"id": "task_public", "model": "Public Seedance 2.5", "status": "cancelled"}
+    }
+  },
+  "openai": {
+    "create": {
+      "status": 202,
+      "response": {"id": "task_public", "task_id": "task_public", "object": "video", "model": "Public Seedance 2.5", "status": "queued", "progress": 0}
+    },
+    "running_status": "in_progress",
+    "completed_status": "completed",
+    "delete_status": 204,
+    "content": {
+      "full_status": 200,
+      "partial_status": 206,
+      "request_header": "Range: bytes=0-1023",
+      "response_headers": ["Accept-Ranges", "Content-Range", "Content-Length", "Content-Type", "ETag", "Last-Modified", "Cache-Control"]
+    }
+  }
+}

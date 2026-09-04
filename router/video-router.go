@@ -11,10 +11,12 @@ import (
 func SetVideoRouter(router *gin.Engine) {
 	seedanceOfficialRouter := router.Group(relayconstant.SeedanceOfficialTasksPath)
 	seedanceOfficialRouter.Use(middleware.RouteTag("relay"))
-	seedanceOfficialRouter.Use(middleware.TokenAuth(), middleware.Distribute())
+	seedanceOfficialRouter.Use(middleware.TokenAuth())
 	{
-		seedanceOfficialRouter.POST("", middleware.BindVirtualCharacter(), controller.RelayTask)
-		seedanceOfficialRouter.GET("/:task_id", controller.RelayTaskFetch)
+		seedanceOfficialRouter.POST("", middleware.Distribute(), middleware.BindVirtualCharacter(), controller.RelayTask)
+		seedanceOfficialRouter.GET("", controller.ListSeedanceOfficialTasks)
+		seedanceOfficialRouter.GET("/:task_id", middleware.Distribute(), controller.RelayTaskFetch)
+		seedanceOfficialRouter.DELETE("/:task_id", controller.DeleteSeedanceOfficialTask)
 	}
 
 	// API-key virtual character lifecycle endpoints. The dashboard keeps using
@@ -55,6 +57,12 @@ func SetVideoRouter(router *gin.Engine) {
 	{
 		videoV1Router.POST("/videos", middleware.BindVirtualCharacter(), controller.RelayTask)
 		videoV1Router.GET("/videos/:task_id", controller.RelayTaskFetch)
+	}
+	videoDeleteRouter := router.Group("/v1")
+	videoDeleteRouter.Use(middleware.RouteTag("relay"))
+	videoDeleteRouter.Use(middleware.TokenAuth())
+	{
+		videoDeleteRouter.DELETE("/videos/:task_id", controller.DeleteSeedanceOpenAIVideo)
 	}
 
 	klingV1Router := router.Group("/kling/v1")

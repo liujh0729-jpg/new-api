@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -32,11 +33,16 @@ import (
 )
 
 type TaskSubmitResult struct {
-	UpstreamTaskID string
-	TaskData       []byte
-	Platform       constant.TaskPlatform
-	Quota          int
-	AIPDDExecution *model.AIPDDTaskExecutionSnapshot
+	UpstreamTaskID      string
+	TaskData            []byte
+	Platform            constant.TaskPlatform
+	Quota               int
+	CallbackURL         string
+	DeferredHTTPStatus  int
+	DeferredContentType string
+	DeferredBody        []byte
+	TaskPersisted       bool
+	AIPDDExecution      *model.AIPDDTaskExecutionSnapshot
 	//PerCallPrice   types.PriceData
 }
 
@@ -571,19 +577,31 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	if err != nil {
 		return nil, service.TaskErrorWrapper(err, "build_request_failed", http.StatusInternalServerError)
 	}
-
-	// 9. 发送请求
-	resp, err := adaptor.DoRequest(c, info, requestBody)
-	if err != nil {
-		return nil, service.TaskErrorWrapper(err, "do_request_failed", http.StatusInternalServerError)
+	isIndependentSeedance := platform == constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeSeedance))
+	wasSeedanceSubmissionPrepared := info.SeedanceSubmissionPrepared
+	if isIndependentSeedance && wasSeedanceSubmissionPrepared {
+		// A previous invocation already crossed the durable pre-submit boundary.
+		// Without an Ark idempotency token we cannot distinguish "never sent" from
+		// "accepted but response lost", so a repeated invocation only returns the
+		// existing public task and never sends another create request.
+		return deferredIndependentSeedanceResult(info, platform, info.PriceData.Quota, "", nil)
 	}
-	if resp != nil && !isSuccessfulTaskSubmitStatus(resp.StatusCode) {
-		responseBody, _ := io.ReadAll(resp.Body)
-		isAIPDD := platform == constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeAIPDD))
-		return nil, taskErrorFromUpstreamResponse(responseBody, resp.StatusCode, isAIPDD)
+	if isIndependentSeedance && !info.SeedanceSubmissionPrepared {
+		if info.BeforeSeedanceGenerationSubmit == nil {
+			return nil, service.TaskErrorWrapperLocal(
+				errors.New("Seedance submission persistence hook is unavailable"),
+				"persist_task_failed", http.StatusInternalServerError,
+			)
+		}
+		if err := info.BeforeSeedanceGenerationSubmit(); err != nil {
+			return nil, service.TaskErrorWrapperLocal(err, "persist_task_failed", http.StatusInternalServerError)
+		}
+		info.SeedanceSubmissionPrepared = true
 	}
 
-	// 10. 返回 OtherRatios 给下游（header 必须在 DoResponse 写 body 之前设置）
+	// Ratios are known before the asynchronous request is sent. Emit the header
+	// here so an accepted Seedance intent has the same public response metadata
+	// even when the Ark response is lost.
 	otherRatios := info.PriceData.OtherRatios
 	if otherRatios == nil {
 		otherRatios = map[string]float64{}
@@ -591,9 +609,52 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	ratiosJSON, _ := common.Marshal(otherRatios)
 	c.Header("X-New-Api-Other-Ratios", string(ratiosJSON))
 
+	// 9. 发送请求
+	resp, err := adaptor.DoRequest(c, info, requestBody)
+	if err != nil {
+		if isIndependentSeedance && info.SeedanceSubmissionPrepared {
+			if markErr := service.MarkSeedanceGenerationSubmissionOutcomeUnknown(info.PublicTaskID, "ark create transport outcome unknown"); markErr != nil {
+				common.SysError("mark Seedance generation submission unknown: " + markErr.Error())
+			}
+			return deferredIndependentSeedanceResult(info, platform, info.PriceData.Quota, "", nil)
+		}
+		return nil, service.TaskErrorWrapper(err, "do_request_failed", http.StatusInternalServerError)
+	}
+	if resp == nil {
+		if isIndependentSeedance && info.SeedanceSubmissionPrepared {
+			if markErr := service.MarkSeedanceGenerationSubmissionOutcomeUnknown(info.PublicTaskID, "ark create empty response outcome unknown"); markErr != nil {
+				common.SysError("mark Seedance generation empty response unknown: " + markErr.Error())
+			}
+			return deferredIndependentSeedanceResult(info, platform, info.PriceData.Quota, "", nil)
+		}
+		return nil, service.TaskErrorWrapper(errors.New("upstream returned an empty response"), "empty_response", http.StatusBadGateway)
+	}
+	if !isSuccessfulTaskSubmitStatus(resp.StatusCode) {
+		responseBody, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		isAIPDD := platform == constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeAIPDD))
+		if isIndependentSeedance && info.SeedanceSubmissionPrepared {
+			if isDefinitiveArkCreateRejection(resp.StatusCode) {
+				failPreparedIndependentSeedanceSubmission(c, info.PublicTaskID, "ark create definitively rejected")
+				return nil, independentSeedanceCreateRejectionError(responseBody, resp.StatusCode)
+			}
+			if markErr := service.MarkSeedanceGenerationSubmissionOutcomeUnknown(info.PublicTaskID, "ark create HTTP outcome unknown"); markErr != nil {
+				common.SysError("mark Seedance generation HTTP response unknown: " + markErr.Error())
+			}
+			return deferredIndependentSeedanceResult(info, platform, info.PriceData.Quota, "", nil)
+		}
+		return nil, taskErrorFromUpstreamResponse(responseBody, resp.StatusCode, isAIPDD)
+	}
+
 	// 11. 解析响应
 	upstreamTaskID, taskData, taskErr := adaptor.DoResponse(c, resp, info)
 	if taskErr != nil {
+		if isIndependentSeedance && info.SeedanceSubmissionPrepared {
+			if markErr := service.MarkSeedanceGenerationSubmissionOutcomeUnknown(info.PublicTaskID, "ark create response outcome unknown"); markErr != nil {
+				common.SysError("mark Seedance generation response unknown: " + markErr.Error())
+			}
+			return deferredIndependentSeedanceResult(info, platform, info.PriceData.Quota, "", nil)
+		}
 		return nil, taskErr
 	}
 
@@ -611,6 +672,13 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		TaskData:       taskData,
 		Platform:       platform,
 		Quota:          finalQuota,
+		CallbackURL:    info.SeedanceCallbackURL,
+		TaskPersisted:  isIndependentSeedance && info.SeedanceSubmissionPrepared,
+	}
+	if isIndependentSeedance {
+		if _, responseErr := populateIndependentSeedanceDeferredResult(result, info); responseErr != nil {
+			return nil, responseErr
+		}
 	}
 	if provider, ok := adaptor.(channel.AIPDDTaskSnapshotProvider); ok {
 		result.AIPDDExecution = provider.AIPDDTaskSnapshot(info)
@@ -618,8 +686,81 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	return result, nil
 }
 
+func deferredIndependentSeedanceResult(info *relaycommon.RelayInfo, platform constant.TaskPlatform, quota int, upstreamTaskID string, taskData []byte) (*TaskSubmitResult, *dto.TaskError) {
+	result := &TaskSubmitResult{
+		UpstreamTaskID: upstreamTaskID,
+		TaskData:       taskData,
+		Platform:       platform,
+		Quota:          quota,
+		CallbackURL:    info.SeedanceCallbackURL,
+		TaskPersisted:  true,
+	}
+	return populateIndependentSeedanceDeferredResult(result, info)
+}
+
+func populateIndependentSeedanceDeferredResult(result *TaskSubmitResult, info *relaycommon.RelayInfo) (*TaskSubmitResult, *dto.TaskError) {
+	result.DeferredContentType = "application/json"
+	var err error
+	if relayconstant.IsSeedanceOfficialTasksPath(info.RequestURLPath) {
+		result.DeferredHTTPStatus = http.StatusOK
+		result.DeferredBody, err = common.Marshal(map[string]any{"id": info.PublicTaskID})
+	} else {
+		publicVideo := dto.NewOpenAIVideo()
+		publicVideo.ID = info.PublicTaskID
+		publicVideo.TaskID = info.PublicTaskID
+		publicVideo.CreatedAt = time.Now().Unix()
+		publicVideo.Model = info.OriginModelName
+		result.DeferredHTTPStatus = http.StatusAccepted
+		result.DeferredBody, err = common.Marshal(publicVideo)
+	}
+	if err != nil {
+		return nil, service.TaskErrorWrapper(err, "build_response_failed", http.StatusInternalServerError)
+	}
+	return result, nil
+}
+
+func failPreparedIndependentSeedanceSubmission(ctx context.Context, taskID string, evidence string) {
+	var task model.Task
+	if err := model.DB.Where("task_id = ?", taskID).First(&task).Error; err != nil {
+		common.SysError("load prepared Seedance task for failure: " + err.Error())
+		return
+	}
+	if _, err := service.FailSeedanceWorkflow(ctx, &task, evidence); err != nil {
+		common.SysError("fail prepared Seedance generation submission: " + err.Error())
+	}
+}
+
 func isSuccessfulTaskSubmitStatus(statusCode int) bool {
 	return statusCode >= http.StatusOK && statusCode < http.StatusMultipleChoices
+}
+
+// Ark's content-generation create API does not expose an idempotency token.
+// A response proves non-acceptance only when it is a client-side rejection;
+// request timeout remains ambiguous because the server may already have acted.
+func isDefinitiveArkCreateRejection(statusCode int) bool {
+	return statusCode >= http.StatusBadRequest &&
+		statusCode < http.StatusInternalServerError &&
+		statusCode != http.StatusRequestTimeout
+}
+
+func independentSeedanceCreateRejectionError(responseBody []byte, statusCode int) *dto.TaskError {
+	taskErr := taskErrorFromUpstreamResponse(responseBody, statusCode)
+	taskErr.Data = nil
+	switch statusCode {
+	case http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound:
+		// These statuses describe the server-owned Ark credential/model mapping,
+		// not the caller's NewAPI authentication or public model name.
+		taskErr.Code = "video_service_unavailable"
+		taskErr.Message = "Video service is temporarily unavailable"
+		taskErr.StatusCode = http.StatusServiceUnavailable
+	case http.StatusTooManyRequests:
+		taskErr.Code = "video_service_busy"
+		taskErr.Message = "Video service is temporarily busy"
+	default:
+		taskErr.Code = "video_request_rejected"
+		taskErr.Message = "The video request was rejected"
+	}
+	return taskErr
 }
 
 func boolFloat64(value bool) float64 {
@@ -755,6 +896,17 @@ func taskFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *dt
 
 	isOpenAIVideoAPI := strings.HasPrefix(c.Request.RequestURI, "/v1/videos/")
 	isSeedanceOfficialAPI := relayconstant.IsSeedanceOfficialTasksPath(c.Request.URL.Path)
+	if (isOpenAIVideoAPI || isSeedanceOfficialAPI) && originTask.Platform == constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeSeedance)) {
+		order, visibilityErr := model.GetVisibleSeedanceOrderByTaskID(originTask.TaskID)
+		expectedProtocol := model.SeedanceProtocolOpenAI
+		if isSeedanceOfficialAPI {
+			expectedProtocol = model.SeedanceProtocolOfficial
+		}
+		if visibilityErr != nil || order.PublicProtocol != expectedProtocol {
+			taskResp = service.TaskErrorWrapperLocal(errors.New("task_not_exist"), "task_not_exist", http.StatusNotFound)
+			return
+		}
+	}
 	if isSeedanceOfficialAPI && !isSeedanceOfficialTask(originTask) {
 		taskResp = service.TaskErrorWrapperLocal(
 			fmt.Errorf("task is not a Seedance official task"),
@@ -927,6 +1079,10 @@ func isSeedanceOfficialTask(task *model.Task) bool {
 		return false
 	}
 	if task.Platform != constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeAIPDD)) {
+		if task.Platform == constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeSeedance)) {
+			order, err := model.GetVisibleSeedanceOrderByTaskID(task.TaskID)
+			return err == nil && order.PublicProtocol == model.SeedanceProtocolOfficial
+		}
 		adaptor := GetTaskAdaptor(task.Platform)
 		if adaptor == nil {
 			return false
@@ -1192,6 +1348,9 @@ func resolveTaskMediaInfo(task *model.Task, requestPath string) taskMediaInfo {
 
 func endpointTypeFromTaskPath(requestPath string) constant.EndpointType {
 	switch {
+	case strings.HasPrefix(requestPath, "/v1/images/edits/"),
+		strings.HasPrefix(requestPath, "/pg/images/edits/"):
+		return constant.EndpointTypeImageEdit
 	case strings.HasPrefix(requestPath, "/v1/images/generations/"),
 		strings.HasPrefix(requestPath, "/pg/images/generations/"):
 		return constant.EndpointTypeImageGeneration
@@ -1209,7 +1368,7 @@ func endpointTypeFromTaskPath(requestPath string) constant.EndpointType {
 
 func mediaTypeFromEndpoint(endpointType constant.EndpointType) string {
 	switch endpointType {
-	case constant.EndpointTypeImageGeneration:
+	case constant.EndpointTypeImageGeneration, constant.EndpointTypeImageToImage, constant.EndpointTypeImageEdit:
 		return "image"
 	case constant.EndpointTypeOpenAIVideo:
 		return "video"
@@ -1277,6 +1436,7 @@ func mapTaskStatusToSimple(status model.TaskStatus) string {
 }
 
 func TaskModel2Dto(task *model.Task) *dto.TaskDto {
+	isIndependentSeedance := task != nil && task.Platform == constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeSeedance))
 	output := extractTaskOutputURLs(task)
 	mediaInfo := resolveTaskMediaInfo(task, "")
 	failReason := task.FailReason
@@ -1320,6 +1480,24 @@ func TaskModel2Dto(task *model.Task) *dto.TaskDto {
 	if task.Status == model.TaskStatusSuccess {
 		resultURL = task.GetResultURL()
 	}
+	properties := task.Properties
+	if isIndependentSeedance {
+		// The independent Seedance workflow intentionally keeps the real media
+		// location in Task.PrivateData so the authenticated content proxy can
+		// fetch it. Generic user task DTOs must never project that private URL (or
+		// arbitrary persisted provider payloads) back to the caller.
+		resultURL = ""
+		output = nil
+		if task.Status == model.TaskStatusSuccess {
+			resultURL = taskcommon.BuildProxyURL(task.TaskID)
+			output = []string{resultURL}
+		}
+		if task.Status == model.TaskStatusFailure {
+			failReason = "视频处理失败，请稍后重试"
+		}
+		properties.UpstreamModelName = properties.OriginModelName
+		taskData = independentSeedanceUserTaskData(task, resultURL)
+	}
 	var metadata map[string]any
 	if len(output) > 0 {
 		metadata = map[string]any{
@@ -1349,7 +1527,7 @@ func TaskModel2Dto(task *model.Task) *dto.TaskDto {
 		StartTime:        task.StartTime,
 		FinishTime:       task.FinishTime,
 		Progress:         task.Progress,
-		Properties:       task.Properties,
+		Properties:       properties,
 		Username:         task.Username,
 		Output:           output,
 		Metadata:         metadata,
@@ -1359,6 +1537,31 @@ func TaskModel2Dto(task *model.Task) *dto.TaskDto {
 		OutputModalities: mediaInfo.OutputModalities,
 		Data:             taskData,
 	}
+}
+
+func independentSeedanceUserTaskData(task *model.Task, resultURL string) json.RawMessage {
+	payload := map[string]any{
+		"id":     task.TaskID,
+		"model":  task.Properties.OriginModelName,
+		"status": mapTaskStatusToSimple(task.Status),
+	}
+	if task.Progress != "" {
+		payload["progress"] = task.Progress
+	}
+	switch task.Status {
+	case model.TaskStatusSuccess:
+		payload["content"] = map[string]any{"video_url": resultURL}
+	case model.TaskStatusFailure:
+		payload["error"] = map[string]any{
+			"code":    "video_processing_failed",
+			"message": "视频处理失败，请稍后重试",
+		}
+	}
+	data, err := common.Marshal(payload)
+	if err != nil {
+		return json.RawMessage(`{}`)
+	}
+	return data
 }
 
 var publicTaskPrivateMoneyFields = map[string]struct{}{

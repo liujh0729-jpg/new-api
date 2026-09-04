@@ -105,6 +105,13 @@ export function normalizeMinimaxH3InputFiles(
     (file) => inferMinimaxH3ReferenceKind(file) === 'audio'
   )
 
+  if (spec.kind === 'auto') {
+    return [
+      ...images.slice(0, spec.imageRange[1]),
+      ...audios.slice(0, spec.audioRange[1]),
+    ]
+  }
+
   if (spec.kind === 'reference-to-video') {
     return images.slice(0, spec.imageRange[1])
   }

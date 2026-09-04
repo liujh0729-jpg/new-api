@@ -70,10 +70,15 @@ import {
   getVideoResolutionOptionsForModel,
   IMAGE_REFERENCE_ACCEPT,
   IMAGE_REFERENCE_LIMITS,
-  isLTX23StartEndModel,
+  isLTX23StartEndVariant,
   isLTX23PolicyModel,
   isLTXVideoModel,
+  isQwenImageEditModel,
+  isUnifiedLTX23Model,
+  LTX_23_VARIANTS,
+  LTX_START_END_REFERENCE_ACCEPT,
   normalizeVideoDurationForModel,
+  QWEN_IMAGE_EDIT_REFERENCE_LIMITS,
   SEEDANCE_REFERENCE_ACCEPT,
   SEEDANCE_REFERENCE_LIMITS,
 } from '../constants'
@@ -131,6 +136,10 @@ interface PlaygroundInputProps {
   onVideoSizeChange: (value: string) => void
   ltxTimelineData: string
   onLtxTimelineDataChange: (value: string) => void
+  ltxVariant: 'standard' | 'start_end' | 'licon_1role' | 'licon_2role'
+  onLtxVariantChange: (
+    value: 'standard' | 'start_end' | 'licon_1role' | 'licon_2role'
+  ) => void
 }
 
 const imageQualities = ['standard', 'hd', 'auto']
@@ -145,6 +154,7 @@ function PlaygroundSubmitButton({
   disabled,
   isVideoMode,
   isImageMode,
+  isReferenceImageMode,
   isLTXStartEnd,
   timelineData,
   videoDuration,
@@ -152,10 +162,12 @@ function PlaygroundSubmitButton({
   videoRatio,
   model,
   text,
+  ltxVariant,
 }: {
   disabled?: boolean
   isVideoMode: boolean
   isImageMode: boolean
+  isReferenceImageMode: boolean
   isLTXStartEnd: boolean
   timelineData: string
   videoDuration: number
@@ -163,6 +175,7 @@ function PlaygroundSubmitButton({
   videoRatio: string
   model: string
   text: string
+  ltxVariant: 'standard' | 'start_end' | 'licon_1role' | 'licon_2role'
 }) {
   const { t } = useTranslation()
   const attachments = usePromptInputAttachments()
@@ -188,11 +201,22 @@ function PlaygroundSubmitButton({
       )
     : null
   let canSubmit = hasText
-  if (minimaxH3Spec) {
+  if (isQwenImageEditModel(model)) {
+    canSubmit =
+      hasText &&
+      attachments.files.length >= QWEN_IMAGE_EDIT_REFERENCE_LIMITS.minFiles &&
+      attachments.files.length <= QWEN_IMAGE_EDIT_REFERENCE_LIMITS.maxFiles
+  } else if (minimaxH3Spec) {
     canSubmit = !minimaxH3Issue
   } else if (isLTXStartEnd) {
     canSubmit =
       hasText && ltxAttachmentState.isValid && !timelineResolution.error
+  } else if (isUnifiedLTX23Model(model)) {
+    const requiredImages =
+      ltxVariant === 'licon_2role' ? 3 : ltxVariant === 'licon_1role' ? 2 : 1
+    canSubmit = hasText && attachments.files.length === requiredImages
+  } else if (isReferenceImageMode) {
+    canSubmit = hasText && hasReferences
   } else if (isVideoMode || isImageMode) {
     canSubmit = hasText || hasReferences
   }
@@ -285,15 +309,24 @@ export function PlaygroundInput({
   onVideoSizeChange,
   ltxTimelineData,
   onLtxTimelineDataChange,
+  ltxVariant,
+  onLtxVariantChange,
 }: PlaygroundInputProps) {
   const { t } = useTranslation()
   const [text, setText] = useState('')
   const [isMaterialSelectorOpen, setIsMaterialSelectorOpen] = useState(false)
   const [isPreparingReferences, setIsPreparingReferences] = useState(false)
-  const isImageMode = mode === 'image'
+  const isImageGenerationMode = mode === 'image'
+  const isImageToImageMode = mode === 'image_to_image'
+  const isImageEditMode = mode === 'image_edit'
+  const isImageMode =
+    isImageGenerationMode || isImageToImageMode || isImageEditMode
+  const isReferenceImageMode = isImageToImageMode || isImageEditMode
   const isVideoMode = mode === 'video'
   const isLTXVideo = isVideoMode && isLTXVideoModel(modelValue)
-  const isLTX23StartEnd = isVideoMode && isLTX23StartEndModel(modelValue)
+  const isUnifiedLTX23 = isVideoMode && isUnifiedLTX23Model(modelValue)
+  const isLTX23StartEnd =
+    isVideoMode && isLTX23StartEndVariant(modelValue, ltxVariant)
   const isLTX23Policy = isVideoMode && isLTX23PolicyModel(modelValue)
   const minimaxH3Spec = isVideoMode
     ? getMinimaxH3ModelSpec(modelValue)
@@ -308,7 +341,10 @@ export function PlaygroundInput({
     modelValue,
     videoResolution
   )
-  const videoSizeOptions = getLTXVideoSizeOptionsForModel(modelValue)
+  const videoSizeOptions = getLTXVideoSizeOptionsForModel(
+    modelValue,
+    ltxVariant
+  )
   const effectiveVideoResolutions = models.find(
     (model) => model.value === modelValue
   )?.video_resolutions
@@ -338,9 +374,17 @@ export function PlaygroundInput({
   let videoReferenceMaxFiles: number = SEEDANCE_REFERENCE_LIMITS.total
   let videoReferenceMultiple = true
   if (isLTXVideo) {
-    videoReferenceAccept = IMAGE_REFERENCE_ACCEPT
-    videoReferenceMaxFiles = 1
-    videoReferenceMultiple = false
+    videoReferenceAccept = isLTX23StartEnd
+      ? LTX_START_END_REFERENCE_ACCEPT
+      : IMAGE_REFERENCE_ACCEPT
+    videoReferenceMaxFiles = isLTX23StartEnd
+      ? 3
+      : ltxVariant === 'licon_2role'
+        ? 3
+        : ltxVariant === 'licon_1role'
+          ? 2
+          : 1
+    videoReferenceMultiple = videoReferenceMaxFiles > 1
   } else if (minimaxH3Spec) {
     if (minimaxH3Spec.kind === 'text-to-video') {
       videoReferenceAccept = 'application/x-no-minimax-h3-reference'
@@ -358,22 +402,23 @@ export function PlaygroundInput({
   }
 
   const showGenericReferenceAttachments =
-    (isVideoMode || isImageMode) &&
+    (isVideoMode || isReferenceImageMode) &&
     !isLTX23StartEnd &&
     !isMinimaxH3FirstLast &&
     !isMinimaxH3TextToVideo
   const showDirectAttachmentButton =
-    (isVideoMode || isImageMode) &&
+    (isVideoMode || isReferenceImageMode) &&
     !isLTX23StartEnd &&
     !isMinimaxH3FirstLast &&
     !isMinimaxH3TextToVideo
   const showMaterialButton =
-    isImageMode ||
+    isReferenceImageMode ||
     (isVideoMode &&
       !isLTX23StartEnd &&
       !isMinimaxH3FirstLast &&
       !isMinimaxH3TextToVideo)
   const minimaxH3MaterialTypes =
+    minimaxH3Spec?.kind === 'auto' ||
     minimaxH3Spec?.kind === 'multimodal-to-video' ||
     minimaxH3Spec?.kind === 'image-audio-lipsync'
       ? (['image', 'audio'] as Array<'image' | 'audio'>)
@@ -382,7 +427,11 @@ export function PlaygroundInput({
     minimaxH3Spec?.kind === 'reference-to-video' ? 'image' : undefined
 
   let promptPlaceholder = t('Ask anything')
-  if (isImageMode) {
+  if (isImageEditMode) {
+    promptPlaceholder = t('Describe how to edit the attached images')
+  } else if (isImageToImageMode) {
+    promptPlaceholder = t('Describe the image to generate from the reference')
+  } else if (isImageGenerationMode) {
     promptPlaceholder = t('Describe the image to generate')
   } else if (isVideoMode) {
     promptPlaceholder = t('Upload references or describe the video')
@@ -411,7 +460,7 @@ export function PlaygroundInput({
               url: uploaded.url,
               mediaType: uploaded.media_type || file.type,
               filename: uploaded.filename || file.name,
-              sourceFile: isVideoMode ? file : undefined,
+              sourceFile: file,
             }
           })
         )
@@ -420,7 +469,7 @@ export function PlaygroundInput({
         throw new Error(uploadError.message, { cause: error })
       }
     },
-    [isVideoMode, t]
+    [t]
   )
 
   const handleSubmit = (message: PromptInputMessage) => {
@@ -431,6 +480,7 @@ export function PlaygroundInput({
     const hasReferences = !!files?.length
     if (
       isSubmitDisabled ||
+      (isReferenceImageMode && (!hasText || !hasReferences)) ||
       (!hasText && ((!isVideoMode && !isImageMode) || !hasReferences))
     ) {
       return
@@ -480,7 +530,7 @@ export function PlaygroundInput({
         accept={
           isVideoMode
             ? videoReferenceAccept
-            : isImageMode
+            : isReferenceImageMode
               ? IMAGE_REFERENCE_ACCEPT
               : undefined
         }
@@ -488,22 +538,30 @@ export function PlaygroundInput({
         maxFileSize={
           isVideoMode
             ? SEEDANCE_REFERENCE_LIMITS.maxFileSize
-            : isImageMode
-              ? IMAGE_REFERENCE_LIMITS.maxFileSize
+            : isReferenceImageMode
+              ? isQwenImageEditModel(modelValue)
+                ? QWEN_IMAGE_EDIT_REFERENCE_LIMITS.maxFileSize
+                : IMAGE_REFERENCE_LIMITS.maxFileSize
               : undefined
         }
         maxFiles={
           isVideoMode
             ? videoReferenceMaxFiles
-            : isImageMode
-              ? IMAGE_REFERENCE_LIMITS.maxFiles
+            : isReferenceImageMode
+              ? isQwenImageEditModel(modelValue)
+                ? QWEN_IMAGE_EDIT_REFERENCE_LIMITS.maxFiles
+                : IMAGE_REFERENCE_LIMITS.maxFiles
               : undefined
         }
-        multiple={(isVideoMode && videoReferenceMultiple) || isImageMode}
+        multiple={
+          (isVideoMode && videoReferenceMultiple) || isReferenceImageMode
+        }
         onError={(error) => toast.error(error.message)}
         onFilesPreparingChange={setIsPreparingReferences}
         prepareFiles={
-          isImageMode || isVideoMode ? prepareReferenceFiles : undefined
+          isReferenceImageMode || isVideoMode
+            ? prepareReferenceFiles
+            : undefined
         }
         onSubmit={handleSubmit}
       >
@@ -572,9 +630,13 @@ export function PlaygroundInput({
                 <span>
                   {isVideoMode
                     ? t('Video')
-                    : isImageMode
-                      ? t('Image')
-                      : t('Chat')}
+                    : isImageEditMode
+                      ? t('Image editing')
+                      : isImageToImageMode
+                        ? t('Image to Image')
+                        : isImageGenerationMode
+                          ? t('Image generation')
+                          : t('Chat')}
                 </span>
                 <ChevronDownIcon className='opacity-70' size={14} />
               </DropdownMenuTrigger>
@@ -591,7 +653,15 @@ export function PlaygroundInput({
                   </DropdownMenuRadioItem>
                   <DropdownMenuRadioItem value='image'>
                     <ImageIcon className='mr-2' size={16} />
-                    {t('Image')}
+                    {t('Image generation')}
+                  </DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value='image_to_image'>
+                    <ImageIcon className='mr-2' size={16} />
+                    {t('Image to Image')}
+                  </DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value='image_edit'>
+                    <ImageIcon className='mr-2' size={16} />
+                    {t('Image editing')}
                   </DropdownMenuRadioItem>
                   <DropdownMenuRadioItem value='video'>
                     <VideoIcon className='mr-2' size={16} />
@@ -689,7 +759,7 @@ export function PlaygroundInput({
               </DropdownMenu>
             )}
 
-            {isImageMode && (
+            {(isImageGenerationMode || isImageToImageMode) && (
               <DropdownMenu>
                 <DropdownMenuTrigger
                   render={
@@ -762,6 +832,51 @@ export function PlaygroundInput({
 
             {isVideoMode && (
               <>
+                {isUnifiedLTX23 && (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger
+                      render={
+                        <PromptInputButton
+                          className='border font-medium'
+                          disabled={controlsDisabled}
+                          type='button'
+                          variant='outline'
+                        />
+                      }
+                    >
+                      <Settings2Icon size={16} />
+                      <span>{ltxVariant}</span>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align='start' className='min-w-44'>
+                      <DropdownMenuGroup>
+                        <DropdownMenuLabel>
+                          {t('LTX generation mode')}
+                        </DropdownMenuLabel>
+                        <DropdownMenuRadioGroup
+                          value={ltxVariant}
+                          onValueChange={(value) =>
+                            onLtxVariantChange(
+                              value as
+                                | 'standard'
+                                | 'start_end'
+                                | 'licon_1role'
+                                | 'licon_2role'
+                            )
+                          }
+                        >
+                          {LTX_23_VARIANTS.map((variant) => (
+                            <DropdownMenuRadioItem
+                              key={variant}
+                              value={variant}
+                            >
+                              {variant}
+                            </DropdownMenuRadioItem>
+                          ))}
+                        </DropdownMenuRadioGroup>
+                      </DropdownMenuGroup>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                )}
                 {usesVideoSizeOptions ? (
                   <DropdownMenu>
                     <DropdownMenuTrigger
@@ -973,6 +1088,7 @@ export function PlaygroundInput({
                 disabled={isSubmitDisabled}
                 isVideoMode={isVideoMode}
                 isImageMode={isImageMode}
+                isReferenceImageMode={isReferenceImageMode}
                 isLTXStartEnd={isLTX23StartEnd}
                 model={modelValue}
                 timelineData={ltxTimelineData}
@@ -980,6 +1096,7 @@ export function PlaygroundInput({
                 videoRatio={videoRatio}
                 videoResolution={videoResolution}
                 text={text}
+                ltxVariant={ltxVariant}
               />
             )}
           </div>
@@ -994,7 +1111,7 @@ export function PlaygroundInput({
               fixedType={minimaxH3FixedMaterialType}
               open={isMaterialSelectorOpen}
               onOpenChange={setIsMaterialSelectorOpen}
-              mode={mode as 'image' | 'video'}
+              mode={isImageMode ? 'image' : 'video'}
             />
           )}
       </PromptInput>

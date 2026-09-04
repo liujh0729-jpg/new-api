@@ -57,6 +57,17 @@ func sweepTimedOutTasks(ctx context.Context) {
 
 	for _, task := range tasks {
 		isLegacy := task.SubmitTime > 0 && task.SubmitTime < legacyTaskCutoff
+		if !isLegacy {
+			handled, workflowErr := FailSeedanceWorkflow(ctx, task, reason)
+			if workflowErr != nil {
+				logger.LogError(ctx, fmt.Sprintf("sweepTimedOutTasks Seedance transition error for task %s: %v", task.TaskID, workflowErr))
+				continue
+			}
+			if handled {
+				timedOutCount++
+				continue
+			}
+		}
 
 		oldStatus := task.Status
 		task.Status = model.TaskStatusFailure
@@ -110,6 +121,13 @@ func TaskPollingLoop() {
 			for _, task := range tasks {
 				upstreamID := task.GetUpstreamTaskID()
 				if upstreamID == "" {
+					if preservesMissingUpstreamIDUntilTimeout(platform) {
+						// Independent Seedance persists its generation attempt before
+						// contacting Ark. A missing ID can therefore mean that Ark
+						// accepted the request but its response was lost. Only the
+						// timeout sweeper may close that durable workflow and refund it.
+						continue
+					}
 					// 统计失败的未完成任务
 					nullTaskIds = append(nullTaskIds, task.ID)
 					continue
@@ -136,6 +154,10 @@ func TaskPollingLoop() {
 		}
 		common.SysLog("任务进度轮询完成")
 	}
+}
+
+func preservesMissingUpstreamIDUntilTimeout(platform constant.TaskPlatform) bool {
+	return platform == constant.TaskPlatform(fmt.Sprintf("%d", constant.ChannelTypeSeedance))
 }
 
 // DispatchPlatformUpdate 按平台分发轮询更新
@@ -312,6 +334,14 @@ func updateVideoTasks(ctx context.Context, platform constant.TaskPlatform, chann
 			if !ok || task == nil {
 				continue
 			}
+			handled, workflowErr := FailSeedanceWorkflow(ctx, task, reason)
+			if workflowErr != nil {
+				logger.LogError(ctx, fmt.Sprintf("Failed to close Seedance task %s after channel lookup failure: %v", task.TaskID, workflowErr))
+				continue
+			}
+			if handled {
+				continue
+			}
 			oldStatus := task.Status
 			if oldStatus == model.TaskStatus(model.TaskStatusFailure) || oldStatus == model.TaskStatus(model.TaskStatusSuccess) {
 				continue
@@ -369,7 +399,17 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 		logger.LogError(ctx, fmt.Sprintf("Task %s not found in taskM", taskId))
 		return fmt.Errorf("task %s not found", taskId)
 	}
+	if handled, workflowErr := HandleSeedanceWorkflowPoll(ctx, ch, task); handled {
+		return workflowErr
+	}
 	key := ch.Key
+	if ch.Type == constant.ChannelTypeSeedance {
+		resolvedKey, _, credentialErr := model.ResolveSeedanceArkAPIKeyForTask(task.TaskID, ch.Id)
+		if credentialErr != nil {
+			return fmt.Errorf("resolve Seedance Ark credential: %w", credentialErr)
+		}
+		key = resolvedKey
+	}
 	requestBody := map[string]any{"task_id": task.GetUpstreamTaskID(), "action": task.Action}
 
 	privateData := task.PrivateData
@@ -394,7 +434,11 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 		return fmt.Errorf("readAll failed for task %s: %w", taskId, err)
 	}
 
-	logger.LogDebug(ctx, fmt.Sprintf("updateVideoSingleTask response: %s", string(responseBody)))
+	if ch.Type == constant.ChannelTypeSeedance {
+		logger.LogDebug(ctx, "updateVideoSingleTask received Seedance response")
+	} else {
+		logger.LogDebug(ctx, fmt.Sprintf("updateVideoSingleTask response: %s", string(responseBody)))
+	}
 	if finance := task.PrivateData.AIPDDFinance; finance != nil {
 		if settlementErr := ApplyAIPDDTransitSettlementResponse(finance, responseBody); settlementErr != nil {
 			logger.LogWarn(ctx, "apply AIPDD task source cost failed: "+settlementErr.Error())
@@ -418,6 +462,10 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 	} else if taskResult, err = adaptor.ParseTaskResult(responseBody); err != nil {
 		return fmt.Errorf("parseTaskResult failed for task %s: %w", taskId, err)
 	}
+	if ch.Type == constant.ChannelTypeSeedance && taskResult.Status == string(model.TaskStatusSuccess) {
+		task.Data = redactVideoResponseBody(responseBody)
+		return HandleSeedanceGenerationSuccess(ctx, task, taskResult, responseBody)
+	}
 
 	task.Data = redactVideoResponseBody(responseBody)
 
@@ -440,9 +488,19 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 				taskResult = relaycommon.FailTaskInfo("upstream returned error")
 			} else {
 				// unknown error format, log original response
-				logger.LogError(ctx, fmt.Sprintf("Task %s returned empty status with unrecognized error format, response: %s", taskId, string(responseBody)))
+				if ch.Type == constant.ChannelTypeSeedance {
+					logger.LogError(ctx, fmt.Sprintf("Seedance task %s returned empty status with unrecognized error format", taskId))
+				} else {
+					logger.LogError(ctx, fmt.Sprintf("Task %s returned empty status with unrecognized error format, response: %s", taskId, string(responseBody)))
+				}
 				taskResult = relaycommon.FailTaskInfo("upstream returned unrecognized message")
 			}
+		}
+	}
+	if ch.Type == constant.ChannelTypeSeedance && taskResult.Status == string(model.TaskStatusFailure) {
+		handled, workflowErr := FailSeedanceWorkflow(ctx, task, taskResult.Reason)
+		if handled {
+			return workflowErr
 		}
 	}
 

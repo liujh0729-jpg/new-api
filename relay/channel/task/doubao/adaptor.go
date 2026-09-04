@@ -389,7 +389,11 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 		ov.TaskID = info.PublicTaskID
 		ov.CreatedAt = time.Now().Unix()
 		ov.Model = info.OriginModelName
-		c.JSON(http.StatusOK, ov)
+		status := http.StatusOK
+		if info.ChannelMeta != nil && info.ChannelType == constant.ChannelTypeSeedance {
+			status = http.StatusAccepted
+		}
+		c.JSON(status, ov)
 	}
 	return dResp.ID, responseBody, nil
 }
@@ -562,7 +566,10 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	}
 
 	taskResult := relaycommon.TaskInfo{
-		Code: 0,
+		Code:       0,
+		Duration:   float64(resTask.Duration),
+		Resolution: resTask.Resolution,
+		OutputFPS:  resTask.FramesPerSecond,
 	}
 
 	// Map Doubao status to internal status
@@ -646,9 +653,10 @@ func (a *TaskAdaptor) ConvertToSeedanceOfficialTask(originTask *model.Task) ([]b
 	} else {
 		delete(response, "model")
 	}
-	response["status"] = seedanceOfficialStatus(originTask.Status, response["status"])
+	publicStatus := seedanceOfficialStatus(originTask.Status, response["status"])
+	response["status"] = publicStatus
 
-	if originTask.Status == model.TaskStatusFailure && response["error"] == nil {
+	if originTask.Status == model.TaskStatusFailure && publicStatus != "cancelled" && response["error"] == nil {
 		message := strings.TrimSpace(originTask.FailReason)
 		if message == "" {
 			message = "Seedance task failed"

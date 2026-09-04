@@ -40,11 +40,11 @@ import type {
 } from '../src/features/playground/types'
 
 const models = {
-  text: 'ap-minimax-h3-text-to-video',
-  reference: 'ap-minimax-h3-reference-to-video',
-  multimodal: 'ap-minimax-h3-multimodal-to-video',
-  lipsync: 'ap-minimax-h3-image-audio-lipsync',
-  firstLast: 'ap-minimax-h3-first-last-frame-to-video',
+  text: 'ap-minimax-h3',
+  reference: 'ap-minimax-h3',
+  multimodal: 'ap-minimax-h3',
+  lipsync: 'ap-minimax-h3',
+  firstLast: 'ap-minimax-h3',
 } as const
 
 const firstImage = 'https://cdn.example.com/first.png'
@@ -74,6 +74,7 @@ function playgroundConfig(
     video_duration: 5,
     video_resolution: '768p',
     video_size: '1280x720',
+    ltx_variant: 'standard',
     ltx_timeline_data: '',
     ...overrides,
   }
@@ -185,7 +186,7 @@ describe('MiniMax H3 Playground payloads', () => {
 
   test('builds the image-audio lipsync contract without prompt or seed', () => {
     const payload = buildVideoGenerationPayload(
-      'This prompt must be ignored',
+      '',
       [image(firstImage), audioReference()],
       playgroundConfig(models.lipsync, { video_resolution: '1080p' })
     )
@@ -227,7 +228,7 @@ describe('MiniMax H3 Playground payloads', () => {
 })
 
 describe('MiniMax H3 Playground model policy', () => {
-  test('exposes exact ratios and resolutions for all five models', () => {
+  test('exposes the union of ratios and resolutions on the unified model', () => {
     expect(getVideoRatioOptionsForModel(models.text)).toEqual([
       '16:9',
       '9:16',
@@ -236,10 +237,12 @@ describe('MiniMax H3 Playground model policy', () => {
     expect(getVideoRatioOptionsForModel(models.multimodal)).toEqual([
       '16:9',
       '9:16',
+      '1:1',
     ])
     expect(getVideoResolutionOptionsForModel(models.firstLast)).toEqual([
       '480p',
       '768p',
+      '1080p',
     ])
     expect(getVideoResolutionOptionsForModel(models.lipsync)).toEqual([
       '480p',
@@ -255,13 +258,13 @@ describe('MiniMax H3 Playground model policy', () => {
     expect(
       normalizeVideoResolutionForModel(models.text, '720p')
     ).toBe('480p')
-    expect(normalizeVideoRatioForModel(models.multimodal, '1:1')).toBe('16:9')
+    expect(normalizeVideoRatioForModel(models.multimodal, '1:1')).toBe('1:1')
   })
 
-  test('uses one-second duration steps and clamps 1080p reference models to ten seconds', () => {
+  test('uses one-second duration steps and leaves route-specific limits to validation', () => {
     expect(getVideoDurationRangeForModel(models.reference, '1080p')).toEqual({
       min: 1,
-      max: 10,
+      max: 15,
       step: 1,
     })
     expect(getVideoDurationRangeForModel(models.lipsync, '1080p')).toEqual({
@@ -269,13 +272,11 @@ describe('MiniMax H3 Playground model policy', () => {
       max: 15,
       step: 1,
     })
-    expect(normalizeVideoDurationForModel(models.reference, 15, '1080p')).toBe(
-      10
-    )
+    expect(normalizeVideoDurationForModel(models.reference, 15, '1080p')).toBe(15)
     expect(normalizeVideoDurationForModel(models.text, 6.7, '768p')).toBe(7)
   })
 
-  test('rejects stale references after switching MiniMax H3 models', () => {
+  test('infers a route from the unified model parameters', () => {
     const textIssue = validateMinimaxH3VideoInput({
       model: models.text,
       prompt: 'Generate a clip',
@@ -293,11 +294,11 @@ describe('MiniMax H3 Playground model policy', () => {
       ratio: '16:9',
     })
 
-    expect(textIssue?.key).toContain('image references')
-    expect(referenceIssue?.key).toContain('audio references')
+    expect(textIssue).toBeNull()
+    expect(referenceIssue).toBeNull()
   })
 
-  test('keeps compatible files and removes incompatible files on model switch', () => {
+  test('keeps all supported image and audio inputs for route inference', () => {
     const files = [
       inputFile('first.png', 'image/png'),
       inputFile('second.png', 'image/png'),
@@ -305,32 +306,34 @@ describe('MiniMax H3 Playground model policy', () => {
       inputFile('clip.mp4', 'video/mp4'),
     ]
 
+    const expected = ['first.png', 'second.png', 'voice.wav']
     expect(
       normalizeMinimaxH3InputFiles(models.text, files).map((file) => file.id)
-    ).toEqual([])
+    ).toEqual(expected)
     expect(
       normalizeMinimaxH3InputFiles(models.reference, files).map(
         (file) => file.id
       )
-    ).toEqual(['first.png', 'second.png'])
+    ).toEqual(expected)
     expect(
       normalizeMinimaxH3InputFiles(models.multimodal, files).map(
         (file) => file.id
       )
-    ).toEqual(['first.png', 'second.png', 'voice.wav'])
+    ).toEqual(expected)
     expect(
       normalizeMinimaxH3InputFiles(models.lipsync, files).map(
         (file) => file.id
       )
-    ).toEqual(['first.png', 'voice.wav'])
+    ).toEqual(expected)
     expect(
       normalizeMinimaxH3InputFiles(models.firstLast, files).map((file) => ({
         id: file.id,
         role: file.role,
       }))
     ).toEqual([
-      { id: 'first.png', role: 'first_frame' },
-      { id: 'second.png', role: 'last_frame' },
+      { id: 'first.png', role: undefined },
+      { id: 'second.png', role: undefined },
+      { id: 'voice.wav', role: undefined },
     ])
   })
 
@@ -350,7 +353,10 @@ describe('MiniMax H3 Playground model policy', () => {
       validateMinimaxH3VideoInput({
         model: models.firstLast,
         prompt: 'Transition',
-        references: [image(firstImage), image(secondImage)],
+        references: [
+          image(firstImage, 'first_frame'),
+          image(secondImage),
+        ],
         duration: 5,
         resolution: '768p',
         ratio: '16:9',
@@ -383,8 +389,9 @@ describe('MiniMax H3 Playground model policy', () => {
 
   test('recognizes normalized model names and public reference URLs', () => {
     expect(
-      getMinimaxH3ModelSpec('AP_MINIMAX_H3_REFERENCE_TO_VIDEO')?.kind
-    ).toBe('reference-to-video')
+      getMinimaxH3ModelSpec('AP_MINIMAX_H3')?.kind
+    ).toBe('auto')
+    expect(getMinimaxH3ModelSpec('ap-minimax-h3-text-to-video')).toBeUndefined()
     expect(isPublicHttpReferenceUrl(firstImage)).toBe(true)
     expect(isPublicHttpReferenceUrl('data:image/png;base64,AAAA')).toBe(false)
     expect(isPublicHttpReferenceUrl('http://localhost/image.png')).toBe(false)

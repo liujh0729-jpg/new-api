@@ -20,7 +20,11 @@ import {
   getMinimaxH3DurationRange,
   getMinimaxH3ModelSpec,
 } from './lib/minimax-h3'
-import type { PlaygroundConfig, ParameterEnabled } from './types'
+import type {
+  PlaygroundConfig,
+  ParameterEnabled,
+  PlaygroundMode,
+} from './types'
 
 // Message constants
 export const MESSAGE_ROLES = {
@@ -40,6 +44,7 @@ export const MESSAGE_STATUS = {
 export const API_ENDPOINTS = {
   CHAT_COMPLETIONS: '/pg/chat/completions',
   IMAGE_GENERATIONS: '/pg/images/generations',
+  IMAGE_EDITS: '/pg/images/edits',
   VIDEO_GENERATIONS: '/pg/video/generations',
   REFERENCE_MEDIA_UPLOAD: '/pg/reference-media/upload',
   USER_MODELS: '/api/user/models',
@@ -48,6 +53,21 @@ export const API_ENDPOINTS = {
 
 // Default group
 export const DEFAULT_GROUP = 'auto' as const
+
+export function isImagePlaygroundMode(mode: PlaygroundMode): boolean {
+  return mode === 'image' || mode === 'image_to_image' || mode === 'image_edit'
+}
+
+export function isReferenceImagePlaygroundMode(mode: PlaygroundMode): boolean {
+  return mode === 'image_to_image' || mode === 'image_edit'
+}
+
+export function usesImageEditsEndpoint(
+  mode: PlaygroundMode,
+  referenceCount = 0
+): boolean {
+  return isReferenceImagePlaygroundMode(mode) || referenceCount > 0
+}
 
 export const DEFAULT_IMAGE_SIZE = '1024x1024'
 export const SEEDREAM_MIN_PIXELS = 3686400
@@ -179,6 +199,16 @@ export const LTX_23_VIDEO_SIZE_OPTIONS = [
   '480x640',
   '480x480',
 ] as const
+export const DEFAULT_LTX_23_LICON_VIDEO_SIZE = '1280x720'
+export const LTX_23_LICON_VIDEO_SIZE_OPTIONS = [
+  DEFAULT_LTX_23_LICON_VIDEO_SIZE,
+] as const
+export const LTX_23_VARIANTS = [
+  'standard',
+  'start_end',
+  'licon_1role',
+  'licon_2role',
+] as const
 
 const SEEDANCE_VIDEO_RESOLUTION_OPTIONS_BY_MODEL: Record<
   string,
@@ -283,6 +313,11 @@ export const IMAGE_REFERENCE_LIMITS = {
   maxFiles: 10,
   maxFileSize: 300 * 1024 * 1024,
 } as const
+export const QWEN_IMAGE_EDIT_REFERENCE_LIMITS = {
+  minFiles: 1,
+  maxFiles: 3,
+  maxFileSize: 50 * 1024 * 1024,
+} as const
 
 function normalizeModelName(model: string): string {
   return model.trim().toLowerCase().replace(/[_.]/g, '-')
@@ -295,6 +330,10 @@ export function isSeedreamModel(model: string): boolean {
 export function isAIPDDFluxImageToImageModel(model: string): boolean {
   const normalized = normalizeModelName(model)
   return normalized === 'aipdd-flux-gguf' || normalized === 'flux-gguf-v2'
+}
+
+export function isQwenImageEditModel(model: string): boolean {
+  return normalizeModelName(model) === 'ap-qwen-image-edit'
 }
 
 export function isSeedream40xModel(model: string): boolean {
@@ -346,7 +385,22 @@ export function isLTX23StartEndModel(model: string): boolean {
 }
 
 export function isLTX23PolicyModel(model: string): boolean {
-  return normalizeModelName(model) === 'aipdd-ltx-2-3'
+  const normalized = normalizeModelName(model)
+  return normalized === 'aipdd-ltx-2-3' || normalized === 'ap-ltx-2-3'
+}
+
+export function isUnifiedLTX23Model(model: string): boolean {
+  return normalizeModelName(model) === 'ap-ltx-2-3'
+}
+
+export function isLTX23StartEndVariant(
+  model: string,
+  variant: string
+): boolean {
+  return (
+    isLTX23StartEndModel(model) ||
+    (isUnifiedLTX23Model(model) && variant === 'start_end')
+  )
 }
 
 export function getImageSizePixels(size: string): number | null {
@@ -432,8 +486,15 @@ export function getVideoResolutionOptionsForModel(
 }
 
 export function getLTXVideoSizeOptionsForModel(
-  model: string
+  model: string,
+  variant = 'standard'
 ): readonly string[] {
+  if (
+    isUnifiedLTX23Model(model) &&
+    (variant === 'licon_1role' || variant === 'licon_2role')
+  ) {
+    return LTX_23_LICON_VIDEO_SIZE_OPTIONS
+  }
   if (isLTX23StartEndModel(model) || isLTX23PolicyModel(model)) {
     return LTX_23_VIDEO_SIZE_OPTIONS
   }
@@ -506,9 +567,10 @@ export function normalizeVideoResolutionForModel(
 
 export function normalizeLTXVideoSizeForModel(
   model: string,
-  size: string
+  size: string,
+  variant = 'standard'
 ): string {
-  const options = getLTXVideoSizeOptionsForModel(model)
+  const options = getLTXVideoSizeOptionsForModel(model, variant)
   if (options.length === 0) return size
   if (options.includes(size)) return size
   if (options.includes(DEFAULT_LTX_23_VIDEO_SIZE)) {
@@ -568,6 +630,7 @@ export const DEFAULT_CONFIG: PlaygroundConfig = {
   video_duration: DEFAULT_VIDEO_DURATION,
   video_resolution: DEFAULT_VIDEO_RESOLUTION,
   video_size: DEFAULT_LTX_VIDEO_SIZE,
+  ltx_variant: 'standard',
   ltx_timeline_data: '',
 }
 

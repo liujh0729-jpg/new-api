@@ -81,6 +81,8 @@ func Path2RelayMode(path string) int {
 		relayMode = RelayModeTaskFetchByID
 	} else if strings.HasPrefix(path, "/v1/images/generations") || strings.HasPrefix(path, "/pg/images/generations") {
 		relayMode = RelayModeImagesGenerations
+	} else if strings.HasPrefix(path, "/v1/images/edits/") || strings.HasPrefix(path, "/pg/images/edits/") {
+		relayMode = RelayModeTaskFetchByID
 	} else if strings.HasPrefix(path, "/pg/video/generations/") {
 		relayMode = RelayModeVideoFetchByID
 	} else if strings.HasPrefix(path, "/pg/video/generations") {
@@ -95,7 +97,7 @@ func Path2RelayMode(path string) int {
 		relayMode = RelayModeVideoFetchByID
 	} else if path == SeedanceOfficialTasksPath {
 		relayMode = RelayModeVideoSubmit
-	} else if strings.HasPrefix(path, "/v1/images/edits") {
+	} else if strings.HasPrefix(path, "/v1/images/edits") || strings.HasPrefix(path, "/pg/images/edits") {
 		relayMode = RelayModeImagesEdits
 	} else if strings.HasPrefix(path, "/v1/edits") {
 		relayMode = RelayModeEdits

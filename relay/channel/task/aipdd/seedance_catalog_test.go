@@ -12,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
@@ -113,6 +114,65 @@ func TestTokenMarketVideoCatalogPreservesH3RequestAndPricingFacts(t *testing.T) 
 	require.Equal(t, "768p", payload["video_resolution"])
 	require.Equal(t, float64(6), payload["duration_seconds"])
 	require.Equal(t, "16:9", payload["ratio"])
+}
+
+func TestSharedMinimaxH3FallsBackToTokenMarketVideoWhenCapacityUnavailable(t *testing.T) {
+	service.InitHttpClient()
+	const modelName = "ap-minimax-h3"
+	capability := seedanceTestCapabilityForModel(modelName)
+	capability.AdapterCode = "token_market_shared"
+	capability.ExecutionProtocol = "shared_task"
+	capability.ExecutionPath = "/shared-tasks/tasks"
+	capability.FallbackExecutionProtocol = tokenMarketVideoProtocol
+	capability.FallbackExecutionPath = "/v1/videos"
+	capability.SeedancePricing.ByResolution["768p"] = capability.SeedancePricing.ByResolution["720p"]
+	constant.SetAIPDDCapabilities([]constant.AIPDDCapability{capability})
+	t.Cleanup(constant.ResetAIPDDCapabilities)
+
+	paths := make([]string, 0, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/shared-tasks/tasks":
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"code":503,"message":"capacity_unavailable"}`))
+		case "/v1/videos":
+			var payload map[string]any
+			require.NoError(t, common.DecodeJson(r.Body, &payload))
+			require.Equal(t, modelName, payload["model"])
+			require.Equal(t, float64(6), payload["duration_seconds"])
+			require.Equal(t, "768p", payload["video_resolution"])
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = w.Write([]byte(`{"id":"autodl-task","status":"queued","model":"ap-minimax-h3"}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	body := `{"model":"ap-minimax-h3","prompt":"hello","duration_seconds":6,"video_resolution":"768p","ratio":"16:9"}`
+	ctx, info, adaptor := seedanceRequestContextForModel(t, modelName, body)
+	adaptor.baseURL = server.URL
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(ctx, info))
+	facts, taskErr := adaptor.EstimateTaskPricingFacts(ctx, info)
+	require.Nil(t, taskErr)
+	require.Equal(t, "768p", facts.Resolution)
+	require.InDelta(t, 6, facts.Quantity, 0.0000001)
+
+	requestBody, err := adaptor.BuildRequestBody(ctx, info)
+	require.NoError(t, err)
+	resp, err := adaptor.DoRequest(ctx, info, requestBody)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusAccepted, resp.StatusCode)
+	taskID, _, taskErr := adaptor.DoResponse(ctx, resp, info)
+	require.Nil(t, taskErr)
+	require.Equal(t, "autodl-task", taskID)
+	require.Equal(t, []string{"/shared-tasks/tasks", "/v1/videos"}, paths)
+
+	snapshot := adaptor.AIPDDTaskSnapshot(info)
+	require.Equal(t, tokenMarketVideoProtocol, snapshot.Protocol)
+	require.Equal(t, "/v1/videos", snapshot.Endpoint)
 }
 
 func TestTokenMarketVideoFetchAndContentURLResult(t *testing.T) {
@@ -492,6 +552,16 @@ func TestSeedance25DefaultsForwardingAndThirtySecondPreauthorization(t *testing.
 	referencePayload, err := getSeedanceOfficialPayload(referenceCtx)
 	require.NoError(t, err)
 	require.Equal(t, "auto", referencePayload["omni_reference_task_type"])
+
+	rolelessImageCtx, rolelessImageInfo, rolelessImageAdaptor := seedanceRequestContextForModel(
+		t,
+		capability.ModelName,
+		`{"model":"AP Seedance-2.5 标准版","content":[{"type":"text","text":"图片1缓缓往镜头移动，然后发光，最后消失"},{"type":"image_url","image_url":{"url":"asset://asset-20260904150424-n226t"}}],"ratio":"adaptive","duration":5,"watermark":false}`,
+	)
+	require.Nil(t, rolelessImageAdaptor.ValidateRequestAndSetAction(rolelessImageCtx, rolelessImageInfo))
+	rolelessImagePayload, err := getSeedanceOfficialPayload(rolelessImageCtx)
+	require.NoError(t, err)
+	require.NotContains(t, rolelessImagePayload, "omni_reference_task_type")
 }
 
 func TestSeedance25RejectsUnsupportedAndInvalidModeCombinations(t *testing.T) {
@@ -507,6 +577,7 @@ func TestSeedance25RejectsUnsupportedAndInvalidModeCombinations(t *testing.T) {
 		{"seed", `{"model":"AP Seedance-2.5 标准版","prompt":"hello","seed":0}`, "unsupported_parameter"},
 		{"invalid duration", `{"model":"AP Seedance-2.5 标准版","prompt":"hello","duration":3}`, "invalid_duration"},
 		{"edit fixed duration", `{"model":"AP Seedance-2.5 标准版","duration":4,"ratio":"adaptive","omni_reference_task_type":"edit","content":[{"type":"video_url","role":"reference_video","video_url":{"url":"https://cdn.example.com/ref.mp4"}}]}`, "invalid_edit_request"},
+		{"reference requires explicit role", `{"model":"AP Seedance-2.5 标准版","ratio":"adaptive","omni_reference_task_type":"reference","content":[{"type":"image_url","image_url":{"url":"https://cdn.example.com/ref.png"}}]}`, "invalid_reference_request"},
 		{"frame reference conflict", `{"model":"AP Seedance-2.5 标准版","ratio":"adaptive","content":[{"type":"image_url","role":"first_frame","image_url":{"url":"https://cdn.example.com/first.png"}},{"type":"audio_url","role":"reference_audio","audio_url":{"url":"https://cdn.example.com/ref.mp3"}}]}`, "invalid_content_mode"},
 	}
 	for _, test := range tests {

@@ -73,6 +73,8 @@ const TASK_KIND_META: Record<string, TaskMeta> = {
 
 const ENDPOINT_MEDIA_TYPES: Record<string, TaskMediaType> = {
   'image-generation': 'image',
+  'image-to-image': 'image',
+  'image-edit': 'image',
   'openai-video': 'video',
   'audio-speech': 'audio',
 }

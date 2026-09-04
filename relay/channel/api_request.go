@@ -534,6 +534,10 @@ func DoTaskApiRequest(a TaskAdaptor, c *gin.Context, info *common.RelayInfo, req
 	if err != nil {
 		return nil, err
 	}
+	return DoTaskApiRequestToURL(a, c, info, requestBody, fullRequestURL)
+}
+
+func DoTaskApiRequestToURL(a TaskAdaptor, c *gin.Context, info *common.RelayInfo, requestBody io.Reader, fullRequestURL string) (*http.Response, error) {
 	req, err := http.NewRequest(c.Request.Method, fullRequestURL, requestBody)
 	if err != nil {
 		return nil, fmt.Errorf("new request failed: %w", err)

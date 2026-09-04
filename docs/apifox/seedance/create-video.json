@@ -5,7 +5,7 @@
   "path": "/v1/videos",
   "status": "released",
   "operationId": "createSeedanceOpenAIVideo",
-  "description": "实际路径是 `POST /v1/videos`。请求体与 Seedance 官方兼容入口相同，成功返回 OpenAI Video 对象（`status=queued`）。查询必须用 `GET /v1/videos/{task_id}`，成功状态为 `completed`，视频地址在 `metadata.url`。\n\n`prompt` 与 `content` 至少提供一个。2.5 默认 resolution=720p、ratio=adaptive、duration=-1、generate_audio=true、watermark=false、output_format=mp4；不支持 frames/fps 变体、seed、camera_fixed、draft、service_tier。",
+  "description": "实际路径是 `POST /v1/videos`。请求体与 Seedance 官方兼容入口相同；服务器接受任务后返回 202 与 OpenAI Video 对象（`status=queued`）。查询必须用 `GET /v1/videos/{task_id}`，成功状态为 `completed`，视频地址在 `metadata.url`。\n\n`prompt` 与 `content` 至少提供一个。2.5 默认 resolution=720p、ratio=adaptive、duration=-1、generate_audio=true、watermark=false、output_format=mp4。普通 2.5 模型不支持 frames/fps 变体、seed、camera_fixed、draft、service_tier；Seedance 售卖模型的输出 FPS 由 Root 固定配置。",
   "tags": ["Seedance"],
   "auth": { "type": "bearer", "bearer": { "token": "" } },
   "requestBody": {
@@ -47,6 +47,7 @@
         },
         "width": { "type": "integer", "minimum": 1 },
         "height": { "type": "integer", "minimum": 1 },
+        "framespersecond": { "type": "integer", "minimum": 1, "maximum": 240, "description": "仅 Seedance 售卖模型：输出 FPS。可以省略；显式传入时必须与售卖模型固定配置一致，否则返回 400。普通 2.5 模型不支持该字段" },
         "image": { "type": "string", "description": "单图兼容字段，可传 URL、Base64 或 asset://{asset_id}" },
         "images": { "type": "array", "items": { "type": "string" }, "description": "多图兼容字段" },
         "generate_audio": { "type": "boolean", "description": "2.5 默认 true；2.0 默认 false" },
@@ -71,11 +72,12 @@
   "responses": [
     {
       "name": "成功",
-      "code": 200,
+      "code": 202,
       "contentType": "json",
       "description": "任务已创建",
       "jsonSchema": {
         "type": "object",
+        "additionalProperties": false,
         "properties": {
           "id": { "type": "string" },
           "task_id": { "type": "string" },
@@ -85,25 +87,16 @@
           "progress": { "type": "integer" },
           "created_at": { "type": "integer", "format": "int64" },
           "completed_at": { "type": "integer", "format": "int64" },
-          "expires_at": { "type": "integer", "format": "int64" },
-          "seconds": { "type": "string" },
-          "size": { "type": "string" },
-          "remixed_from_video_id": { "type": "string" },
           "error": {
             "type": "object",
+            "additionalProperties": false,
             "properties": {
               "message": { "type": "string" },
-              "code": { "type": "string" },
-              "param": { "type": "string" },
-              "request_id": { "type": "string" },
-              "provider": { "type": "string" },
-              "category": { "type": "string" },
-              "upstream_code": { "type": "string" },
-              "retryable": { "type": "boolean" }
+              "code": { "type": "string" }
             }
           },
-          "metadata": { "type": "object", "additionalProperties": true },
-          "usage": { "type": "object", "properties": { "completion_tokens": { "type": "integer", "format": "int64" }, "total_tokens": { "type": "integer", "format": "int64" } } }
+          "metadata": { "type": "object", "additionalProperties": false, "properties": { "url": { "type": "string", "format": "uri" } } },
+          "usage": { "type": "object", "additionalProperties": false, "properties": { "completion_tokens": { "type": "integer", "format": "int64" }, "total_tokens": { "type": "integer", "format": "int64" } } }
         }
       }
     },

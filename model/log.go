@@ -16,6 +16,7 @@ import (
 
 	"github.com/bytedance/gopkg/util/gopool"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type Log struct {
@@ -39,7 +40,10 @@ type Log struct {
 	Group            string  `json:"group" gorm:"index"`
 	Ip               string  `json:"ip" gorm:"index;default:''"`
 	RequestId        string  `json:"request_id,omitempty" gorm:"type:varchar(64);index:idx_logs_request_id;default:''"`
-	Other            string  `json:"other"`
+	// BillingEventKey is an internal, nullable idempotency key used by durable
+	// async billing workers. It is never returned in user log DTOs.
+	BillingEventKey *string `json:"-" gorm:"type:varchar(191);uniqueIndex"`
+	Other           string  `json:"other"`
 }
 
 func otherNumber(other map[string]interface{}, key string) float64 {
@@ -370,8 +374,23 @@ type RecordTaskBillingLogParams struct {
 }
 
 func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
+	_, _ = recordTaskBillingLog(nil, params)
+}
+
+// RecordTaskBillingLogOnce creates a user-visible billing log exactly once for
+// a durable worker event. A retry after a lost response is absorbed by the
+// unique billing_event_key constraint.
+func RecordTaskBillingLogOnce(eventKey string, params RecordTaskBillingLogParams) (bool, error) {
+	eventKey = strings.TrimSpace(eventKey)
+	if eventKey == "" {
+		return false, errors.New("billing event key is empty")
+	}
+	return recordTaskBillingLog(&eventKey, params)
+}
+
+func recordTaskBillingLog(eventKey *string, params RecordTaskBillingLogParams) (bool, error) {
 	if params.LogType == LogTypeConsume && !common.LogConsumeEnabled {
-		return
+		return false, nil
 	}
 	username, _ := GetUsernameById(params.UserId, false)
 	tokenName := ""
@@ -382,23 +401,33 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 	}
 	params.Other = quotaCurrencySnapshot(params.Other)
 	log := &Log{
-		UserId:    params.UserId,
-		Username:  username,
-		CreatedAt: common.GetTimestamp(),
-		Type:      params.LogType,
-		Content:   params.Content,
-		TokenName: tokenName,
-		ModelName: params.ModelName,
-		Quota:     params.Quota,
-		ChannelId: params.ChannelId,
-		TokenId:   params.TokenId,
-		Group:     params.Group,
-		Other:     common.MapToJsonStr(params.Other),
+		UserId:          params.UserId,
+		Username:        username,
+		CreatedAt:       common.GetTimestamp(),
+		Type:            params.LogType,
+		Content:         params.Content,
+		TokenName:       tokenName,
+		ModelName:       params.ModelName,
+		Quota:           params.Quota,
+		ChannelId:       params.ChannelId,
+		TokenId:         params.TokenId,
+		Group:           params.Group,
+		BillingEventKey: eventKey,
+		Other:           common.MapToJsonStr(params.Other),
 	}
-	err := LOG_DB.Create(log).Error
+	tx := LOG_DB
+	if eventKey != nil {
+		tx = tx.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "billing_event_key"}},
+			DoNothing: true,
+		})
+	}
+	result := tx.Create(log)
+	err := result.Error
 	if err != nil {
 		common.SysLog("failed to record task billing log: " + err.Error())
 	}
+	return result.RowsAffected > 0, err
 }
 
 func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, startIdx int, num int, channel int, group string, requestId string) (logs []*Log, total int64, err error) {

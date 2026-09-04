@@ -7,6 +7,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/stretchr/testify/require"
 )
@@ -148,7 +149,7 @@ func TestResolveTaskMediaInfoSupportsSnapshotsAndLegacyTasks(t *testing.T) {
 
 		info := resolveTaskMediaInfo(task, "")
 
-		require.Equal(t, constant.EndpointTypeImageGeneration, info.EndpointType)
+		require.Equal(t, constant.EndpointTypeImageToImage, info.EndpointType)
 		require.Equal(t, "image", info.MediaType)
 	})
 }
@@ -227,4 +228,66 @@ func TestTaskModel2DtoRemovesUpstreamMoneyFields(t *testing.T) {
 	require.True(t, ok)
 	require.NotContains(t, nested, "unit_price_usd")
 	require.Equal(t, "https://example.com/video.mp4", nested["url"])
+}
+
+func TestTaskModel2DtoIndependentSeedanceNeverExposesPrivateWorkflow(t *testing.T) {
+	task := &model.Task{
+		TaskID:   "task_public_seedance_log",
+		Platform: constant.TaskPlatform("59"),
+		Status:   model.TaskStatusSuccess,
+		Progress: "100%",
+		Properties: model.Properties{
+			OriginModelName:   "Public Seedance 2.5",
+			UpstreamModelName: "private-provider-model",
+		},
+		PrivateData: model.TaskPrivateData{
+			ResultURL: "https://private-supplier.example/enhancement/result.mp4",
+		},
+		Data: common.StringToByteSlice(`{
+			"status":"succeeded",
+			"provider_type":"DIRECT_EXTERNAL",
+			"execution_task_id":"private-execution-id",
+			"content":{"video_url":"https://private-supplier.example/enhancement/result.mp4"}
+		}`),
+	}
+
+	taskDTO := TaskModel2Dto(task)
+	encoded, err := common.Marshal(taskDTO)
+	require.NoError(t, err)
+	normalized := strings.ToLower(string(encoded))
+	for _, forbidden := range []string{
+		"private-supplier", "private-provider", "enhancement", "provider_type",
+		"execution_task_id", "direct_external",
+	} {
+		require.NotContains(t, normalized, forbidden)
+	}
+	require.Equal(t, taskcommon.BuildProxyURL(task.TaskID), taskDTO.ResultURL)
+	require.Equal(t, []string{taskcommon.BuildProxyURL(task.TaskID)}, taskDTO.Output)
+	require.Equal(t, task.Properties.OriginModelName, taskDTO.Properties.(model.Properties).UpstreamModelName)
+	require.Contains(t, string(taskDTO.Data), taskcommon.BuildProxyURL(task.TaskID))
+}
+
+func TestTaskModel2DtoIndependentSeedanceFailureUsesGenericMessage(t *testing.T) {
+	task := &model.Task{
+		TaskID:     "task_failed_seedance_log",
+		Platform:   constant.TaskPlatform("59"),
+		Status:     model.TaskStatusFailure,
+		FailReason: "private provider upscale failed with credential secret",
+		Data:       common.StringToByteSlice(`{"provider":"private","error":"upscale failed"}`),
+		Properties: model.Properties{
+			OriginModelName:   "Public Seedance 2.5",
+			UpstreamModelName: "private-model-id",
+		},
+	}
+
+	taskDTO := TaskModel2Dto(task)
+	encoded, err := common.Marshal(taskDTO)
+	require.NoError(t, err)
+	normalized := strings.ToLower(string(encoded))
+	for _, forbidden := range []string{"provider", "upscale", "credential", "secret", "private-model-id"} {
+		require.NotContains(t, normalized, forbidden)
+	}
+	require.Equal(t, "视频处理失败，请稍后重试", taskDTO.FailReason)
+	require.Empty(t, taskDTO.ResultURL)
+	require.Empty(t, taskDTO.Output)
 }

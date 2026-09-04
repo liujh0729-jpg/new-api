@@ -15,6 +15,7 @@ import (
 
 const (
 	TaskPricingUnitSecond = "second"
+	TaskPricingUnitCall   = "call"
 
 	ReferenceVideoPolicySame     = "same"
 	ReferenceVideoPolicyCustom   = "custom"

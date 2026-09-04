@@ -1,8 +1,11 @@
 package aipdd
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -59,7 +62,7 @@ func TestAIPDDTaskSnapshotPersistsImageMediaMetadata(t *testing.T) {
 	if snapshot == nil {
 		t.Fatal("expected AIPDD execution snapshot")
 	}
-	if snapshot.EndpointType != constant.EndpointTypeImageGeneration {
+	if snapshot.EndpointType != constant.EndpointTypeImageToImage {
 		t.Fatalf("unexpected endpoint type: %s", snapshot.EndpointType)
 	}
 	if snapshot.MediaType != "image" {
@@ -70,6 +73,211 @@ func TestAIPDDTaskSnapshotPersistsImageMediaMetadata(t *testing.T) {
 	}
 	if len(snapshot.OutputModalities) != 1 || snapshot.OutputModalities[0] != "image" {
 		t.Fatalf("unexpected output modalities: %#v", snapshot.OutputModalities)
+	}
+}
+
+func TestQwenImageEditMultipartSelectsImagesAndBuildsCanonicalPayload(t *testing.T) {
+	original := constant.GetAIPDDCapabilities()
+	t.Cleanup(func() { constant.SetAIPDDCapabilities(original) })
+	constant.SetAIPDDCapabilities([]constant.AIPDDCapability{{
+		ModelName:         qwenImageEditModelID,
+		ScriptCode:        qwenImageEditModelID,
+		EndpointType:      constant.EndpointTypeImageGeneration,
+		BillingType:       constant.AIPDDBillingTypePerCall,
+		WorkflowParamKeys: []string{"prompt", "images", "image_1", "image_2", "image_3"},
+		RequiredWorkflowParams: map[string]bool{
+			"prompt": true, "images": true,
+		},
+	}})
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	require.NoError(t, writer.WriteField("model", qwenImageEditModelID))
+	require.NoError(t, writer.WriteField("prompt", "merge the references"))
+	for _, content := range []string{"\x89PNG\r\n\x1a\nfirst-image", "\x89PNG\r\n\x1a\nsecond-image"} {
+		part, err := writer.CreateFormFile("image", "input.png")
+		require.NoError(t, err)
+		_, err = part.Write([]byte(content))
+		require.NoError(t, err)
+	}
+	require.NoError(t, writer.Close())
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/images/edits", &body)
+	ctx.Request.Header.Set("Content-Type", writer.FormDataContentType())
+	adaptor := &TaskAdaptor{}
+	info := relayInfoWithModel(qwenImageEditModelID)
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(ctx, info))
+	requestBody, err := adaptor.BuildRequestBody(ctx, info)
+	require.NoError(t, err)
+	encoded, err := io.ReadAll(requestBody)
+	require.NoError(t, err)
+	var payload createTaskPayload
+	require.NoError(t, common.Unmarshal(encoded, &payload))
+	require.Equal(t, qwenImageEditModelID, payload.Model)
+	require.Len(t, payload.Input["images"], 2)
+	require.Contains(t, payload.Input["image_1"], "data:image/")
+	require.Contains(t, payload.Input["image_2"], "data:image/")
+	require.NotContains(t, payload.Input, "image_3")
+}
+
+func TestQwenImageEditMultipartRequiresOneToThreeImages(t *testing.T) {
+	for _, count := range []int{0, 4} {
+		t.Run(fmt.Sprintf("images_%d", count), func(t *testing.T) {
+			var body bytes.Buffer
+			writer := multipart.NewWriter(&body)
+			require.NoError(t, writer.WriteField("model", qwenImageEditModelID))
+			require.NoError(t, writer.WriteField("prompt", "edit"))
+			for index := 0; index < count; index++ {
+				part, err := writer.CreateFormFile("image", fmt.Sprintf("input-%d.png", index))
+				require.NoError(t, err)
+				_, err = part.Write([]byte("\x89PNG\r\n\x1a\nimage"))
+				require.NoError(t, err)
+			}
+			require.NoError(t, writer.Close())
+
+			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+			ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/images/edits", &body)
+			ctx.Request.Header.Set("Content-Type", writer.FormDataContentType())
+			var request relaycommon.TaskSubmitReq
+			err := normalizeQwenImageEditMultipart(ctx, &request)
+			require.ErrorContains(t, err, "between 1 and 3")
+		})
+	}
+}
+
+func TestImageEndpointRoutingMatchesOpenAITransport(t *testing.T) {
+	require.False(t, capabilityAcceptsEndpoint(
+		constant.EndpointTypeImageToImage,
+		constant.EndpointTypeImageGeneration,
+	))
+	require.True(t, capabilityAcceptsEndpoint(
+		constant.EndpointTypeImageToImage,
+		constant.EndpointTypeImageEdit,
+	))
+	require.True(t, capabilityAcceptsEndpoint(
+		constant.EndpointTypeImageEdit,
+		constant.EndpointTypeImageEdit,
+	))
+	require.False(t, capabilityAcceptsEndpoint(
+		constant.EndpointTypeImageEdit,
+		constant.EndpointTypeImageGeneration,
+	))
+}
+
+func TestImageToImageMultipartAcceptsOfficialImageArrayField(t *testing.T) {
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	require.NoError(t, writer.WriteField("model", ModelFluxGGUF))
+	require.NoError(t, writer.WriteField("prompt", "use this reference"))
+	part, err := writer.CreateFormFile("image[]", "reference.png")
+	require.NoError(t, err)
+	_, err = part.Write([]byte("\x89PNG\r\n\x1a\nreference-image"))
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/images/edits", &body)
+	ctx.Request.Header.Set("Content-Type", writer.FormDataContentType())
+	adaptor := &TaskAdaptor{}
+	info := relayInfoWithModel(ModelFluxGGUF)
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(ctx, info))
+	request, err := relaycommon.GetTaskRequest(ctx)
+	require.NoError(t, err)
+	require.Len(t, request.Images, 1)
+	require.Equal(t, request.Images[0], request.Image)
+	require.Contains(t, request.Image, "data:image/")
+
+	requestBody, err := adaptor.BuildRequestBody(ctx, info)
+	require.NoError(t, err)
+	encoded, err := io.ReadAll(requestBody)
+	require.NoError(t, err)
+	var payload createTaskPayload
+	require.NoError(t, common.Unmarshal(encoded, &payload))
+	require.Contains(t, payload.Input["image"], "data:image/")
+}
+
+func TestCanonicalLtx23VariantsBuildDistinctWorkflowInputs(t *testing.T) {
+	original := constant.GetAIPDDCapabilities()
+	t.Cleanup(func() { constant.SetAIPDDCapabilities(original) })
+	constant.SetAIPDDCapabilities([]constant.AIPDDCapability{canonicalLtx23TestCapability()})
+	adaptor := &TaskAdaptor{}
+
+	standard, err := adaptor.convertToRequestPayload(relaycommon.TaskSubmitReq{
+		Model: ltx23PublicModelID, Prompt: "standard", Image: "https://cdn.example/scene.png", Duration: 5,
+		Metadata: map[string]interface{}{"variant": "standard", "width": 1280, "height": 704},
+	}, relayInfoWithModel(ltx23PublicModelID))
+	require.NoError(t, err)
+	require.Equal(t, "standard", standard.Input["variant"])
+	require.Equal(t, 121, standard.Input["numFrames"])
+
+	startEnd, err := adaptor.convertToRequestPayload(relaycommon.TaskSubmitReq{
+		Model: ltx23PublicModelID, Prompt: "start end", FirstFrame: "https://cdn.example/first.png", Duration: 5,
+		Metadata: map[string]interface{}{"variant": "start_end", "width": 1280, "height": 704},
+	}, relayInfoWithModel(ltx23PublicModelID))
+	require.NoError(t, err)
+	require.Equal(t, "https://cdn.example/first.png", startEnd.Input["first_frame_image"])
+	require.NotContains(t, startEnd.Input, "last_frame_image")
+
+	licon, err := adaptor.convertToRequestPayload(relaycommon.TaskSubmitReq{
+		Model: ltx23PublicModelID, Prompt: "one role", Duration: 5,
+		Images:   []string{"https://cdn.example/background.png", "https://cdn.example/role.png"},
+		Metadata: map[string]interface{}{"variant": "licon_1role"},
+	}, relayInfoWithModel(ltx23PublicModelID))
+	require.NoError(t, err)
+	require.Equal(t, "https://cdn.example/background.png", licon.Input["image"])
+	require.Equal(t, "https://cdn.example/role.png", licon.Input["referenceImage"])
+	require.Equal(t, 720, licon.Input["height"])
+
+	_, err = adaptor.convertToRequestPayload(relaycommon.TaskSubmitReq{
+		Model: ltx23PublicModelID, Prompt: "two roles", Duration: 5,
+		Images:   []string{"https://cdn.example/background.png", "https://cdn.example/role1.png"},
+		Metadata: map[string]interface{}{"variant": "licon_2role"},
+	}, relayInfoWithModel(ltx23PublicModelID))
+	require.ErrorContains(t, err, "requires exactly 3 images")
+
+	_, err = adaptor.convertToRequestPayload(relaycommon.TaskSubmitReq{
+		Model: ltx23PublicModelID, Prompt: "one role with an extra", Duration: 5,
+		Images: []string{
+			"https://cdn.example/background.png",
+			"https://cdn.example/role.png",
+			"https://cdn.example/extra.png",
+		},
+		Metadata: map[string]interface{}{"variant": "licon_1role"},
+	}, relayInfoWithModel(ltx23PublicModelID))
+	require.ErrorContains(t, err, "requires exactly 2 images")
+
+	_, err = adaptor.convertToRequestPayload(relaycommon.TaskSubmitReq{
+		Model: ltx23PublicModelID, Prompt: "missing variant", Image: "https://cdn.example/scene.png", Duration: 5,
+		Metadata: map[string]interface{}{"width": 1280, "height": 704},
+	}, relayInfoWithModel(ltx23PublicModelID))
+	require.ErrorContains(t, err, "variant is required")
+}
+
+func canonicalLtx23TestCapability() constant.AIPDDCapability {
+	keys := []string{"variant", "prompt", "image", "first_frame_image", "last_frame_image", "referenceImage", "referenceImage2", "audio", "negativePrompt", "width", "height", "durationSeconds", "numFrames", "frameRate", "seed"}
+	required := make(map[string]bool, len(keys))
+	required["variant"] = true
+	required["prompt"] = true
+	return constant.AIPDDCapability{
+		ModelName: ltx23PublicModelID, ScriptCode: ltx23PublicModelID,
+		EndpointType: constant.EndpointTypeOpenAIVideo, BillingType: constant.AIPDDBillingTypeDurationSeconds,
+		WorkflowParamKeys: keys, RequiredWorkflowParams: required,
+		WorkflowDefaults: []constant.AIPDDWorkflowParamDefault{
+			{ParamKey: "variant", ValueType: constant.AIPDDWorkflowValueTypeString, Sources: []constant.AIPDDWorkflowValueSource{{Type: constant.AIPDDWorkflowSourceMetadata, Key: "variant"}, {Type: constant.AIPDDWorkflowSourceStatic, Key: "standard"}}},
+			{ParamKey: "prompt", ValueType: constant.AIPDDWorkflowValueTypeString, Sources: []constant.AIPDDWorkflowValueSource{{Type: constant.AIPDDWorkflowSourcePrompt}}},
+			{ParamKey: "image", ValueType: constant.AIPDDWorkflowValueTypeString, Sources: []constant.AIPDDWorkflowValueSource{{Type: constant.AIPDDWorkflowSourceImage}}},
+			{ParamKey: "first_frame_image", ValueType: constant.AIPDDWorkflowValueTypeString, Sources: []constant.AIPDDWorkflowValueSource{{Type: constant.AIPDDWorkflowSourceFirstImage}}},
+			{ParamKey: "last_frame_image", ValueType: constant.AIPDDWorkflowValueTypeString, Sources: []constant.AIPDDWorkflowValueSource{{Type: constant.AIPDDWorkflowSourceLastImage}}},
+			{ParamKey: "referenceImage", ValueType: constant.AIPDDWorkflowValueTypeString, Sources: []constant.AIPDDWorkflowValueSource{{Type: constant.AIPDDWorkflowSourceMetadata, Key: "referenceImage"}}},
+			{ParamKey: "referenceImage2", ValueType: constant.AIPDDWorkflowValueTypeString, Sources: []constant.AIPDDWorkflowValueSource{{Type: constant.AIPDDWorkflowSourceMetadata, Key: "referenceImage2"}}},
+			{ParamKey: "width", ValueType: constant.AIPDDWorkflowValueTypeInt, Sources: []constant.AIPDDWorkflowValueSource{{Type: constant.AIPDDWorkflowSourceMetadata, Key: "width"}, {Type: constant.AIPDDWorkflowSourceStatic, Key: "1280"}}},
+			{ParamKey: "height", ValueType: constant.AIPDDWorkflowValueTypeInt, Sources: []constant.AIPDDWorkflowValueSource{{Type: constant.AIPDDWorkflowSourceMetadata, Key: "height"}, {Type: constant.AIPDDWorkflowSourceStatic, Key: "704"}}},
+			{ParamKey: "durationSeconds", ValueType: constant.AIPDDWorkflowValueTypeInt, Sources: []constant.AIPDDWorkflowValueSource{{Type: constant.AIPDDWorkflowSourceDuration}, {Type: constant.AIPDDWorkflowSourceStatic, Key: "5"}}},
+			{ParamKey: "numFrames", ValueType: constant.AIPDDWorkflowValueTypeInt, Sources: []constant.AIPDDWorkflowValueSource{{Type: constant.AIPDDWorkflowSourceStatic, Key: "121"}}},
+			{ParamKey: "frameRate", ValueType: constant.AIPDDWorkflowValueTypeInt, Sources: []constant.AIPDDWorkflowValueSource{{Type: constant.AIPDDWorkflowSourceStatic, Key: "24"}}},
+		},
 	}
 }
 

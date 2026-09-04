@@ -299,11 +299,38 @@ func migrateDB() error {
 		&PerfMetric{},
 		&AIPDDCatalogSnapshot{},
 		&AIPDDTransitOrder{},
+		&SeedanceChannelConfig{},
+		&SeedanceVolcengineCredential{},
+		&MediaEnhancementProvider{},
+		&SeedanceBaseModel{},
+		&SeedanceEnhancementModel{},
+		&SeedanceModelOffering{},
+		&SeedanceOrder{},
+		&SeedanceCustomerRefund{},
+		&MediaServiceUsage{},
+		&SeedanceAttempt{},
+		&ServiceBillingEvent{},
+		&ServiceBillingOutbox{},
+		&ServiceBillingFailureAttempt{},
+		&SeedanceAdminAudit{},
+		&SeedanceVolcengineBillCursor{},
+		&SeedanceVolcengineBillItem{},
+		&SeedanceCostAllocation{},
+		&SeedanceCostReconciliationIssue{},
 	)
 	if err != nil {
 		return err
 	}
 	if err := EnsureMaterialSourceTypeDefault(); err != nil {
+		return err
+	}
+	if err := BackfillSeedanceProviderAdapterType(); err != nil {
+		return err
+	}
+	if err := BackfillSeedanceThreeLayerCatalog(); err != nil {
+		return err
+	}
+	if err := BackfillSeedanceOrderFinanceRevision(); err != nil {
 		return err
 	}
 	if common.UsingSQLite {
@@ -383,6 +410,24 @@ func migrateDBFast() error {
 		{&PerfMetric{}, "PerfMetric"},
 		{&AIPDDCatalogSnapshot{}, "AIPDDCatalogSnapshot"},
 		{&AIPDDTransitOrder{}, "AIPDDTransitOrder"},
+		{&SeedanceChannelConfig{}, "SeedanceChannelConfig"},
+		{&SeedanceVolcengineCredential{}, "SeedanceVolcengineCredential"},
+		{&MediaEnhancementProvider{}, "MediaEnhancementProvider"},
+		{&SeedanceBaseModel{}, "SeedanceBaseModel"},
+		{&SeedanceEnhancementModel{}, "SeedanceEnhancementModel"},
+		{&SeedanceModelOffering{}, "SeedanceModelOffering"},
+		{&SeedanceOrder{}, "SeedanceOrder"},
+		{&SeedanceCustomerRefund{}, "SeedanceCustomerRefund"},
+		{&MediaServiceUsage{}, "MediaServiceUsage"},
+		{&SeedanceAttempt{}, "SeedanceAttempt"},
+		{&ServiceBillingEvent{}, "ServiceBillingEvent"},
+		{&ServiceBillingOutbox{}, "ServiceBillingOutbox"},
+		{&ServiceBillingFailureAttempt{}, "ServiceBillingFailureAttempt"},
+		{&SeedanceAdminAudit{}, "SeedanceAdminAudit"},
+		{&SeedanceVolcengineBillCursor{}, "SeedanceVolcengineBillCursor"},
+		{&SeedanceVolcengineBillItem{}, "SeedanceVolcengineBillItem"},
+		{&SeedanceCostAllocation{}, "SeedanceCostAllocation"},
+		{&SeedanceCostReconciliationIssue{}, "SeedanceCostReconciliationIssue"},
 	}
 	// 动态计算migration数量，确保errChan缓冲区足够大
 	errChan := make(chan error, len(migrations))
@@ -419,6 +464,15 @@ func migrateDBFast() error {
 	if err := EnsureMaterialSourceTypeDefault(); err != nil {
 		return err
 	}
+	if err := BackfillSeedanceProviderAdapterType(); err != nil {
+		return err
+	}
+	if err := BackfillSeedanceThreeLayerCatalog(); err != nil {
+		return err
+	}
+	if err := BackfillSeedanceOrderFinanceRevision(); err != nil {
+		return err
+	}
 	if err := EnsureAIPDDDefaults(); err != nil {
 		return err
 	}
@@ -440,6 +494,9 @@ func migrateDBFast() error {
 
 func migrateLOGDB() error {
 	var err error
+	if err = ensureSQLiteLogBillingEventKey(LOG_DB, common.LogSqlType == common.DatabaseTypeSQLite); err != nil {
+		return err
+	}
 	if err = LOG_DB.AutoMigrate(&Log{}); err != nil {
 		return err
 	}
@@ -471,6 +528,7 @@ func ensureSQLiteUniqueColumnsBeforeAutoMigrate() error {
 		{&WechatPayTestOrder{}, "wechat_pay_test_orders", "provider_transaction_id", "`provider_transaction_id` varchar(64)", "idx_wechat_pay_test_orders_provider_transaction_id"},
 		{&WechatPayTestOrder{}, "wechat_pay_test_orders", "notify_id", "`notify_id` varchar(64)", "idx_wechat_pay_test_orders_notify_id"},
 		{&VirtualCharacter{}, "virtual_characters", "real_person_slot", "`real_person_slot` integer", ""},
+		{&Log{}, "logs", "billing_event_key", "`billing_event_key` varchar(191)", "idx_logs_billing_event_key"},
 	}
 	for _, spec := range specs {
 		if !DB.Migrator().HasTable(spec.table) {
@@ -501,6 +559,19 @@ func ensureSQLiteUniqueColumnsBeforeAutoMigrate() error {
 				return fmt.Errorf("sqlite create unique index %s: %w", spec.index, err)
 			}
 		}
+	}
+	return nil
+}
+
+func ensureSQLiteLogBillingEventKey(db *gorm.DB, usingSQLite bool) error {
+	if !usingSQLite || db == nil || !db.Migrator().HasTable("logs") || db.Migrator().HasColumn(&Log{}, "billing_event_key") {
+		return nil
+	}
+	if err := db.Exec("ALTER TABLE `logs` ADD COLUMN `billing_event_key` varchar(191)").Error; err != nil {
+		return fmt.Errorf("sqlite add column logs.billing_event_key: %w", err)
+	}
+	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS `idx_logs_billing_event_key` ON `logs`(`billing_event_key`)").Error; err != nil {
+		return fmt.Errorf("sqlite create unique index idx_logs_billing_event_key: %w", err)
 	}
 	return nil
 }

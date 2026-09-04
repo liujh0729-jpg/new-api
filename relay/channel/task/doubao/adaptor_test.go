@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	rootcommon "github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/gin-gonic/gin"
@@ -408,6 +409,22 @@ func TestDoResponseKeepsOpenAIVideoCreateShapeOnV1Path(t *testing.T) {
 	require.Equal(t, "queued", body["status"])
 }
 
+func TestDoResponseUsesAcceptedForIndependentSeedanceOpenAIPath(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", nil)
+	response := &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"id":"upstream-task"}`))}
+
+	_, _, taskErr := (&TaskAdaptor{}).DoResponse(ctx, response, &relaycommon.RelayInfo{
+		OriginModelName: "doubao-seedance-2-5-260628",
+		ChannelMeta:     &relaycommon.ChannelMeta{ChannelType: constant.ChannelTypeSeedance},
+		TaskRelayInfo:   &relaycommon.TaskRelayInfo{PublicTaskID: "task-public"},
+	})
+	require.Nil(t, taskErr)
+	require.Equal(t, http.StatusAccepted, recorder.Code)
+}
+
 func TestConvertToSeedanceOfficialTaskPreservesOfficialFields(t *testing.T) {
 	task := &model.Task{
 		TaskID: "task-public",
@@ -461,4 +478,20 @@ func TestConvertToSeedanceOfficialTaskNormalizesFailure(t *testing.T) {
 	require.Equal(t, "failed", response["status"])
 	require.Equal(t, "seedance_task_failed", response["error"].(map[string]any)["code"])
 	require.Equal(t, "provider rejected request", response["error"].(map[string]any)["message"])
+}
+
+func TestConvertToSeedanceOfficialTaskDoesNotAddFailureToCancelledTask(t *testing.T) {
+	task := &model.Task{
+		TaskID: "task-public-cancelled",
+		Status: model.TaskStatusFailure,
+		Data:   []byte(`{"id":"private-task","status":"cancelled"}`),
+		Properties: model.Properties{
+			OriginModelName: "Public Seedance",
+		},
+	}
+
+	data, err := (&TaskAdaptor{}).ConvertToSeedanceOfficialTask(task)
+
+	require.NoError(t, err)
+	require.JSONEq(t, `{"id":"task-public-cancelled","model":"Public Seedance","status":"cancelled"}`, string(data))
 }

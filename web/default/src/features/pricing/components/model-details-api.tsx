@@ -429,6 +429,64 @@ function buildImageSample(lang: Lang, ctx: SampleContext): string {
   ].join('\n')
 }
 
+function buildImageToImageSample(lang: Lang, ctx: SampleContext): string {
+  return buildImageEditSample(
+    lang,
+    ctx,
+    'Use the reference image to create a cinematic night scene.'
+  )
+}
+
+function buildImageEditSample(
+  lang: Lang,
+  ctx: SampleContext,
+  prompt = 'Keep the subject and replace the background with a snowy city.'
+): string {
+  const url = `${ctx.baseUrl}${ctx.endpointPath}`
+
+  if (lang === 'curl') {
+    return [
+      `curl ${url} \\`,
+      `  -H "Authorization: Bearer $${ctx.apiKeyEnv}" \\`,
+      `  -F "model=${ctx.modelName}" \\`,
+      `  -F "prompt=${prompt}" \\`,
+      `  -F "image=@./reference.png"`,
+    ].join('\n')
+  }
+  if (lang === 'python') {
+    return [
+      'import os',
+      'import requests',
+      '',
+      `with open("./reference.png", "rb") as image:`,
+      `    response = requests.post(`,
+      `        "${url}",`,
+      `        headers={"Authorization": f"Bearer {os.environ['${ctx.apiKeyEnv}']}"},`,
+      `        data={"model": "${ctx.modelName}", "prompt": "${prompt}"},`,
+      `        files=[("image", ("reference.png", image, "image/png"))],`,
+      '    )',
+      'response.raise_for_status()',
+      'print(response.json())',
+    ].join('\n')
+  }
+  return [
+    `import { openAsBlob } from 'node:fs'`,
+    '',
+    `const form = new FormData()`,
+    `form.append('model', '${ctx.modelName}')`,
+    `form.append('prompt', '${prompt}')`,
+    `form.append('image', await openAsBlob('./reference.png'), 'reference.png')`,
+    '',
+    `const response = await fetch('${url}', {`,
+    `  method: 'POST',`,
+    `  headers: { Authorization: \`Bearer \${process.env.${ctx.apiKeyEnv}}\` },`,
+    `  body: form,`,
+    `})`,
+    '',
+    `console.log(await response.json())`,
+  ].join('\n')
+}
+
 function buildVideoTaskSample(lang: Lang, ctx: SampleContext): string {
   const url = `${ctx.baseUrl}${ctx.endpointPath}`
   const body = {
@@ -508,6 +566,9 @@ function buildSample(
   if (endpointType === 'embeddings' || endpointType === 'jina-rerank')
     return buildEmbeddingSample(lang, ctx)
   if (endpointType === 'image-generation') return buildImageSample(lang, ctx)
+  if (endpointType === 'image-to-image')
+    return buildImageToImageSample(lang, ctx)
+  if (endpointType === 'image-edit') return buildImageEditSample(lang, ctx)
   if (endpointType === 'openai-video') return buildVideoTaskSample(lang, ctx)
   if (endpointType === 'audio-speech')
     return buildAudioSpeechTaskSample(lang, ctx)

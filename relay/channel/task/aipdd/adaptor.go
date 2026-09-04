@@ -3,9 +3,11 @@ package aipdd
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"math"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -34,6 +36,10 @@ const (
 	seedanceOfficialPayloadContextKey = "aipdd_seedance_official_payload"
 	tokenMarketVideoPayloadContextKey = "aipdd_token_market_video_payload"
 	tokenMarketVideoProtocol          = "token_market_video"
+	qwenImageEditModelID              = "ap-qwen-image-edit"
+	ltx23PublicModelID                = "ap-ltx-2.3"
+	qwenImageEditMaxFileSize          = int64(50 << 20)
+	aipddImageToImageMaxFiles         = 10
 
 	ModelFluxGGUF         = constant.AIPDDModelFluxGGUF
 	ModelFluxGGUFT2I      = constant.AIPDDModelFluxGGUFT2I
@@ -51,14 +57,17 @@ type modelConfig = constant.AIPDDCapability
 
 type TaskAdaptor struct {
 	taskcommon.BaseBilling
-	apiKey  string
-	baseURL string
-	proxy   string
+	apiKey                  string
+	baseURL                 string
+	proxy                   string
+	actualExecutionProtocol string
+	actualExecutionPath     string
 }
 
 type createTaskPayload struct {
 	RequestID    string         `json:"requestId,omitempty"`
 	TaskName     string         `json:"taskName,omitempty"`
+	Model        string         `json:"model"`
 	TaskTypeCode string         `json:"taskTypeCode"`
 	Priority     int            `json:"priority,omitempty"`
 	Input        map[string]any `json:"input"`
@@ -152,6 +161,8 @@ func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 	}
 	a.apiKey = info.ApiKey
 	a.proxy = info.ChannelSetting.Proxy
+	a.actualExecutionProtocol = ""
+	a.actualExecutionPath = ""
 }
 
 func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
@@ -174,12 +185,31 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	if !ok {
 		return service.TaskErrorWrapperLocal(fmt.Errorf("unsupported AIPDD model: %s", configModelName), "unsupported_model", http.StatusBadRequest)
 	}
-	if endpoint := endpointTypeFromPath(c.Request.URL.Path); endpoint != "" && endpoint != cfg.EndpointType {
+	if endpoint := endpointTypeFromPath(c.Request.URL.Path); endpoint != "" && !capabilityAcceptsEndpoint(cfg.EndpointType, endpoint) {
 		return service.TaskErrorWrapperLocal(
 			fmt.Errorf("%s must be used with %s endpoint", cfg.ModelName, cfg.EndpointType),
 			"invalid_endpoint",
 			http.StatusBadRequest,
 		)
+	}
+	if isQwenImageEditConfig(cfg) {
+		if !strings.HasPrefix(c.Request.URL.Path, "/v1/images/edits") &&
+			!strings.HasPrefix(c.Request.URL.Path, "/pg/images/edits") {
+			return service.TaskErrorWrapperLocal(
+				fmt.Errorf("%s must be used with /v1/images/edits", cfg.ModelName),
+				"invalid_endpoint",
+				http.StatusBadRequest,
+			)
+		}
+		if err := normalizeQwenImageEditMultipart(c, &req); err != nil {
+			return service.TaskErrorWrapperLocal(err, "invalid_image", http.StatusBadRequest)
+		}
+		normalizeTaskSubmitReq(&req)
+	} else if cfg.EndpointType == constant.EndpointTypeImageToImage && endpointTypeFromPath(c.Request.URL.Path) == constant.EndpointTypeImageEdit {
+		if err := normalizeAIPDDImageToImageMultipart(c, &req); err != nil {
+			return service.TaskErrorWrapperLocal(err, "invalid_image", http.StatusBadRequest)
+		}
+		normalizeTaskSubmitReq(&req)
 	}
 	if relayconstant.IsSeedanceOfficialTasksPath(c.Request.URL.Path) && cfg.ExecutionProtocol != "seedance_official" {
 		return service.TaskErrorWrapperLocal(
@@ -221,7 +251,7 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 			}
 		}
 	}
-	if cfg.ExecutionProtocol == tokenMarketVideoProtocol {
+	if usesTokenMarketVideoRequest(cfg) {
 		var raw map[string]any
 		if err := common.UnmarshalBodyReusable(c, &raw); err != nil {
 			return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
@@ -307,7 +337,7 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 		}
 		return ratios
 	}
-	if cfg.ExecutionProtocol == tokenMarketVideoProtocol {
+	if usesTokenMarketVideoRequest(cfg) {
 		raw, err := getTokenMarketVideoPayload(c)
 		if err != nil {
 			return nil
@@ -328,7 +358,7 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 		ratios["seconds"] = duration
 	}
 
-	if cfg.EndpointType == constant.EndpointTypeImageGeneration {
+	if isImageEndpointType(cfg.EndpointType) {
 		if count := taskSubmitReqCount(req); count > 1 {
 			ratios["n"] = float64(count)
 		}
@@ -404,7 +434,7 @@ func (a *TaskAdaptor) EstimateTaskPricingFacts(c *gin.Context, info *relaycommon
 			HasReferenceVideo: seedanceHasReferenceVideo(raw["content"]),
 		}, nil
 	}
-	if cfg.ExecutionProtocol == tokenMarketVideoProtocol {
+	if usesTokenMarketVideoRequest(cfg) {
 		raw, err := getTokenMarketVideoPayload(c)
 		if err != nil {
 			return relaycommon.TaskPricingFacts{}, service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
@@ -436,9 +466,17 @@ func (a *TaskAdaptor) AIPDDTaskSnapshot(info *relaycommon.RelayInfo) *model.AIPD
 	if !ok {
 		return nil
 	}
+	protocol := cfg.ExecutionProtocol
+	endpoint := cfg.ExecutionPath
+	if strings.TrimSpace(a.actualExecutionProtocol) != "" {
+		protocol = a.actualExecutionProtocol
+	}
+	if strings.TrimSpace(a.actualExecutionPath) != "" {
+		endpoint = a.actualExecutionPath
+	}
 	snapshot := &model.AIPDDTaskExecutionSnapshot{
-		CatalogRevision: cfg.CatalogRevision, Protocol: cfg.ExecutionProtocol,
-		Endpoint: cfg.ExecutionPath, EndpointType: cfg.EndpointType,
+		CatalogRevision: cfg.CatalogRevision, Protocol: protocol,
+		Endpoint: endpoint, EndpointType: cfg.EndpointType,
 		MediaType: mediaTypeFromCapability(cfg), TaskKind: cfg.TaskKind,
 		OutputModalities: append([]string(nil), cfg.OutputModalities...),
 		BaseURL:          a.baseURL,
@@ -465,7 +503,7 @@ func (a *TaskAdaptor) AIPDDTaskSnapshot(info *relaycommon.RelayInfo) *model.AIPD
 
 func mediaTypeFromCapability(cfg modelConfig) string {
 	switch cfg.EndpointType {
-	case constant.EndpointTypeImageGeneration:
+	case constant.EndpointTypeImageGeneration, constant.EndpointTypeImageToImage, constant.EndpointTypeImageEdit:
 		return "image"
 	case constant.EndpointTypeOpenAIVideo:
 		return "video"
@@ -560,7 +598,31 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 }
 
 func (a *TaskAdaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (*http.Response, error) {
-	return channel.DoTaskApiRequest(a, c, info, requestBody)
+	resp, err := channel.DoTaskApiRequest(a, c, info, requestBody)
+	if err != nil || resp == nil {
+		return resp, err
+	}
+	cfg, ok := constant.GetAIPDDCapability(firstNonEmpty(info.UpstreamModelName, info.OriginModelName))
+	if !ok || !shouldFallbackToTokenMarketVideo(cfg, resp) {
+		return resp, nil
+	}
+	raw, err := getTokenMarketVideoPayload(c)
+	if err != nil {
+		return nil, err
+	}
+	raw = cloneAnyMap(raw)
+	if info.IsModelMapped {
+		raw["model"] = info.UpstreamModelName
+	}
+	data, err := common.Marshal(raw)
+	if err != nil {
+		return nil, err
+	}
+	_ = resp.Body.Close()
+	a.actualExecutionProtocol = cfg.FallbackExecutionProtocol
+	a.actualExecutionPath = cfg.FallbackExecutionPath
+	fallbackURL := a.baseURL + normalizeExecutionPath(cfg.FallbackExecutionPath)
+	return channel.DoTaskApiRequestToURL(a, c, info, bytes.NewReader(data), fallbackURL)
 }
 
 func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (taskID string, taskData []byte, taskErr *dto.TaskError) {
@@ -571,7 +633,11 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	_ = resp.Body.Close()
 
 	cfg, _ := constant.GetAIPDDCapability(firstNonEmpty(info.UpstreamModelName, info.OriginModelName))
-	if cfg.ExecutionProtocol == "seedance_official" || cfg.ExecutionProtocol == tokenMarketVideoProtocol {
+	executionProtocol := cfg.ExecutionProtocol
+	if strings.TrimSpace(a.actualExecutionProtocol) != "" {
+		executionProtocol = a.actualExecutionProtocol
+	}
+	if executionProtocol == "seedance_official" || executionProtocol == tokenMarketVideoProtocol {
 		var official seedanceOfficialTaskResponse
 		if err := common.Unmarshal(responseBody, &official); err != nil {
 			return "", nil, service.TaskErrorWrapper(errors.Wrapf(err, "body: %s", responseBody), "unmarshal_response_body_failed", http.StatusInternalServerError)
@@ -650,6 +716,10 @@ func writeCreateTaskResponse(c *gin.Context, info *relaycommon.RelayInfo, cfg mo
 	switch cfg.EndpointType {
 	case constant.EndpointTypeImageGeneration:
 		object = "image.generation.task"
+	case constant.EndpointTypeImageToImage:
+		object = "image.to-image.task"
+	case constant.EndpointTypeImageEdit:
+		object = "image.edit.task"
 	case constant.EndpointTypeAudioSpeech:
 		object = "audio.speech.task"
 	}
@@ -1370,6 +1440,7 @@ func (a *TaskAdaptor) convertToRequestPayload(req relaycommon.TaskSubmitReq, inf
 	return &createTaskPayload{
 		RequestID:    requestID,
 		TaskName:     taskName,
+		Model:        cfg.ModelName,
 		TaskTypeCode: cfg.ScriptCode,
 		Input:        content,
 	}, nil
@@ -1381,6 +1452,11 @@ func buildWorkflowContent(req relaycommon.TaskSubmitReq, cfg modelConfig) (map[s
 	explicitDurationSeconds := hasContentValue(content["durationSeconds"])
 	explicitLength := hasContentValue(content["length"])
 	applyModelDefaults(content, req, cfg)
+	if isQwenImageEditConfig(cfg) {
+		if err := normalizeQwenImageEditContent(content, req); err != nil {
+			return nil, err
+		}
+	}
 	// The catalog normally describes this mapping in WorkflowDefaults. Keep a
 	// direct fallback for prompt because it is the primary user input and older
 	// or partially refreshed catalogs may omit the prompt parameter entirely.
@@ -1391,7 +1467,11 @@ func buildWorkflowContent(req relaycommon.TaskSubmitReq, cfg modelConfig) (map[s
 			content["prompt"] = prompt
 		}
 	}
-	if isLtx23StartEndConfig(cfg) {
+	if isUnifiedLtx23Config(cfg) {
+		if err := normalizeUnifiedLtx23Content(content, req, explicitNumFrames, explicitDurationSeconds); err != nil {
+			return nil, err
+		}
+	} else if isLtx23StartEndConfig(cfg) {
 		if err := normalizeLtxStartEndContent(content, req, explicitLength, explicitNumFrames); err != nil {
 			return nil, err
 		}
@@ -1720,7 +1800,7 @@ func seedance25ContentHasReferenceMaterial(content []any) bool {
 		case "video", "video_url", "audio", "audio_url":
 			return true
 		case "image", "image_url":
-			if role != "first_frame" && role != "last_frame" {
+			if role == "reference_image" {
 				return true
 			}
 		}
@@ -1780,10 +1860,14 @@ func validateSeedance25Content(content []any, taskType, ratio string, duration i
 			}
 		case "image", "image_url":
 			images++
-			isFrame := role == "first_frame" || role == "last_frame"
+			// The upstream treats an image without an explicit role as an
+			// implicit first frame. Do not classify it as reference material,
+			// otherwise we add omni_reference_task_type=auto and the upstream
+			// rejects the request with TaskTypeConstraint.
+			isFrame := role == "" || role == "first_frame" || role == "last_frame"
 			frameMode = frameMode || isFrame
-			firstFrame = firstFrame || role == "first_frame"
-			referenceMaterial = referenceMaterial || !isFrame
+			firstFrame = firstFrame || role == "" || role == "first_frame"
+			referenceMaterial = referenceMaterial || role == "reference_image"
 		case "video", "video_url":
 			videos++
 			referenceMaterial = true
@@ -2019,6 +2103,24 @@ func getTokenMarketVideoPayload(c *gin.Context) (map[string]any, error) {
 	return payload, nil
 }
 
+func usesTokenMarketVideoRequest(cfg modelConfig) bool {
+	return strings.EqualFold(strings.TrimSpace(cfg.ExecutionProtocol), tokenMarketVideoProtocol) ||
+		strings.EqualFold(strings.TrimSpace(cfg.FallbackExecutionProtocol), tokenMarketVideoProtocol)
+}
+
+func shouldFallbackToTokenMarketVideo(cfg modelConfig, resp *http.Response) bool {
+	if resp == nil || resp.Body == nil || resp.StatusCode != http.StatusServiceUnavailable ||
+		!strings.EqualFold(strings.TrimSpace(cfg.ExecutionProtocol), "shared_task") ||
+		!strings.EqualFold(strings.TrimSpace(cfg.FallbackExecutionProtocol), tokenMarketVideoProtocol) ||
+		strings.TrimSpace(cfg.FallbackExecutionPath) == "" {
+		return false
+	}
+	body, err := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	resp.Body = io.NopCloser(bytes.NewReader(body))
+	return err == nil && bytes.Contains(bytes.ToLower(body), []byte("capacity_unavailable"))
+}
+
 func cloneAnyMap(source map[string]any) map[string]any {
 	cloned := make(map[string]any, len(source))
 	for key, value := range source {
@@ -2219,6 +2321,8 @@ func endpointTypeFromPath(path string) constant.EndpointType {
 	switch {
 	case strings.HasPrefix(path, "/v1/images/generations"), strings.HasPrefix(path, "/pg/images/generations"):
 		return constant.EndpointTypeImageGeneration
+	case strings.HasPrefix(path, "/v1/images/edits"), strings.HasPrefix(path, "/pg/images/edits"):
+		return constant.EndpointTypeImageEdit
 	case strings.HasPrefix(path, "/v1/audio/speech"), strings.HasPrefix(path, "/pg/audio/speech"):
 		return constant.EndpointTypeAudioSpeech
 	case strings.HasPrefix(path, "/v1/videos"), strings.HasPrefix(path, "/pg/videos"), strings.HasPrefix(path, "/pg/video/generations"):
@@ -2228,6 +2332,20 @@ func endpointTypeFromPath(path string) constant.EndpointType {
 	default:
 		return ""
 	}
+}
+
+func capabilityAcceptsEndpoint(capabilityEndpoint, requestEndpoint constant.EndpointType) bool {
+	if capabilityEndpoint == requestEndpoint {
+		return true
+	}
+	return capabilityEndpoint == constant.EndpointTypeImageToImage &&
+		requestEndpoint == constant.EndpointTypeImageEdit
+}
+
+func isImageEndpointType(endpoint constant.EndpointType) bool {
+	return endpoint == constant.EndpointTypeImageGeneration ||
+		endpoint == constant.EndpointTypeImageToImage ||
+		endpoint == constant.EndpointTypeImageEdit
 }
 
 func normalizeDurationSeconds(req *relaycommon.TaskSubmitReq, cfg modelConfig) (int, error) {
@@ -2428,7 +2546,12 @@ func validateWorkflowConstraint(value any, constraint constant.AIPDDWorkflowPara
 }
 
 func isLtx23Config(cfg modelConfig) bool {
-	return isLtx23StandardConfig(cfg) || isLtx23StartEndConfig(cfg)
+	return isUnifiedLtx23Config(cfg) || isLtx23StandardConfig(cfg) || isLtx23StartEndConfig(cfg)
+}
+
+func isUnifiedLtx23Config(cfg modelConfig) bool {
+	return strings.EqualFold(strings.TrimSpace(cfg.ModelName), ltx23PublicModelID) ||
+		strings.EqualFold(strings.TrimSpace(cfg.ScriptCode), ltx23PublicModelID)
 }
 
 func isLtx23StandardConfig(cfg modelConfig) bool {
@@ -2451,6 +2574,182 @@ func isLtx23StartEndValue(value string) bool {
 		return true
 	}
 	return strings.Contains(value, "first") && strings.Contains(value, "last") && strings.Contains(value, "ltx")
+}
+
+func isQwenImageEditConfig(cfg modelConfig) bool {
+	return strings.EqualFold(strings.TrimSpace(cfg.ModelName), qwenImageEditModelID) ||
+		strings.EqualFold(strings.TrimSpace(cfg.ScriptCode), qwenImageEditModelID)
+}
+
+func normalizeQwenImageEditMultipart(c *gin.Context, req *relaycommon.TaskSubmitReq) error {
+	if c == nil || c.Request == nil || req == nil {
+		return fmt.Errorf("invalid image edit request")
+	}
+	if !strings.HasPrefix(strings.ToLower(c.Request.Header.Get("Content-Type")), "multipart/form-data") {
+		return fmt.Errorf("Qwen image edits require multipart/form-data")
+	}
+	return normalizeAIPDDImageMultipart(c, req, 1, 3, qwenImageEditMaxFileSize)
+}
+
+func normalizeAIPDDImageToImageMultipart(c *gin.Context, req *relaycommon.TaskSubmitReq) error {
+	if c == nil || c.Request == nil || req == nil {
+		return fmt.Errorf("invalid image-to-image request")
+	}
+	if !strings.HasPrefix(strings.ToLower(c.Request.Header.Get("Content-Type")), "multipart/form-data") {
+		return fmt.Errorf("image-to-image requests require multipart/form-data")
+	}
+	return normalizeAIPDDImageMultipart(c, req, 1, aipddImageToImageMaxFiles, qwenImageEditMaxFileSize)
+}
+
+func normalizeAIPDDImageMultipart(
+	c *gin.Context,
+	req *relaycommon.TaskSubmitReq,
+	minFiles int,
+	maxFiles int,
+	maxFileSize int64,
+) error {
+	form, err := common.ParseMultipartFormReusable(c)
+	if err != nil {
+		return fmt.Errorf("parse image edit form: %w", err)
+	}
+	defer form.RemoveAll()
+	files := append([]*multipart.FileHeader(nil), form.File["image"]...)
+	files = append(files, form.File["image[]"]...)
+	for fieldName, fieldFiles := range form.File {
+		if fieldName != "image" && fieldName != "image[]" && strings.HasPrefix(fieldName, "image[") {
+			files = append(files, fieldFiles...)
+		}
+	}
+	if len(files) < minFiles || len(files) > maxFiles {
+		return fmt.Errorf("image must contain between %d and %d files", minFiles, maxFiles)
+	}
+	images := make([]string, 0, len(files))
+	for _, header := range files {
+		if header == nil {
+			return fmt.Errorf("image file is invalid")
+		}
+		if header.Size > maxFileSize {
+			return fmt.Errorf("image %q exceeds the %d MiB limit", header.Filename, maxFileSize>>20)
+		}
+		file, err := header.Open()
+		if err != nil {
+			return fmt.Errorf("open image %q: %w", header.Filename, err)
+		}
+		data, readErr := io.ReadAll(io.LimitReader(file, maxFileSize+1))
+		_ = file.Close()
+		if readErr != nil {
+			return fmt.Errorf("read image %q: %w", header.Filename, readErr)
+		}
+		if int64(len(data)) > maxFileSize {
+			return fmt.Errorf("image %q exceeds the %d MiB limit", header.Filename, maxFileSize>>20)
+		}
+		contentType := strings.TrimSpace(header.Header.Get("Content-Type"))
+		if contentType == "" || strings.EqualFold(contentType, "application/octet-stream") {
+			contentType = http.DetectContentType(data)
+		}
+		contentType = strings.ToLower(strings.TrimSpace(strings.Split(contentType, ";")[0]))
+		if !strings.HasPrefix(contentType, "image/") {
+			return fmt.Errorf("image %q has unsupported content type %q", header.Filename, contentType)
+		}
+		images = append(images, "data:"+contentType+";base64,"+base64.StdEncoding.EncodeToString(data))
+	}
+	req.Images = images
+	req.Image = images[0]
+	if req.Metadata == nil {
+		req.Metadata = map[string]interface{}{}
+	}
+	for index, image := range images {
+		req.Metadata[fmt.Sprintf("image_%d", index+1)] = image
+	}
+	return nil
+}
+
+func normalizeQwenImageEditContent(content map[string]any, req relaycommon.TaskSubmitReq) error {
+	if len(req.Images) < 1 || len(req.Images) > 3 {
+		return fmt.Errorf("Qwen image edits require between 1 and 3 images")
+	}
+	content["images"] = append([]string(nil), req.Images...)
+	for index, image := range req.Images {
+		content[fmt.Sprintf("image_%d", index+1)] = image
+	}
+	return nil
+}
+
+func normalizeUnifiedLtx23Content(
+	content map[string]any,
+	req relaycommon.TaskSubmitReq,
+	explicitNumFrames bool,
+	explicitDurationSeconds bool,
+) error {
+	variant := strings.ToLower(strings.TrimSpace(metadataString(req.Metadata, "variant")))
+	if variant == "" {
+		return fmt.Errorf("variant is required for LTX 2.3")
+	}
+	content["variant"] = variant
+	switch variant {
+	case "standard":
+		if len(req.Images) > 1 {
+			return fmt.Errorf("LTX 2.3 standard requires exactly 1 image")
+		}
+		if !hasContentValue(content["image"]) {
+			return fmt.Errorf("image is required for LTX 2.3 standard")
+		}
+		return normalizeAndValidateLtx23Content(content, req.Duration, explicitNumFrames, explicitDurationSeconds)
+	case "start_end":
+		if len(req.Images) > 2 {
+			return fmt.Errorf("LTX 2.3 start_end supports at most 2 images")
+		}
+		if !hasContentValue(content["first_frame_image"]) {
+			return fmt.Errorf("first_frame_image is required for LTX 2.3 start_end")
+		}
+		return normalizeAndValidateLtx23Content(content, req.Duration, explicitNumFrames, explicitDurationSeconds)
+	case "licon_1role", "licon_2role":
+		expectedImages := 2
+		if variant == "licon_2role" {
+			expectedImages = 3
+		}
+		if len(req.Images) > 0 && len(req.Images) != expectedImages {
+			return fmt.Errorf("LTX 2.3 %s requires exactly %d images", variant, expectedImages)
+		}
+		if len(req.Images) > 0 && metadataString(req.Metadata, "image") == "" {
+			content["image"] = req.Images[0]
+		}
+		if metadataString(req.Metadata, "referenceImage") == "" {
+			delete(content, "referenceImage")
+			if len(req.Images) > 1 {
+				content["referenceImage"] = req.Images[1]
+			}
+		}
+		if metadataString(req.Metadata, "referenceImage2") == "" {
+			delete(content, "referenceImage2")
+			if len(req.Images) > 2 {
+				content["referenceImage2"] = req.Images[2]
+			}
+		}
+		if !hasContentValue(content["image"]) || !hasContentValue(content["referenceImage"]) {
+			return fmt.Errorf("image and referenceImage are required for LTX 2.3 %s", variant)
+		}
+		if variant == "licon_2role" && !hasContentValue(content["referenceImage2"]) {
+			return fmt.Errorf("referenceImage2 is required for LTX 2.3 licon_2role")
+		}
+		if metadataPositiveInt(req.Metadata, "height") == 0 {
+			content["height"] = 720
+		}
+		duration := req.Duration
+		if duration <= 0 {
+			duration = positiveIntValue(content["durationSeconds"])
+		}
+		if duration <= 0 {
+			duration = 5
+		}
+		if duration < 1 || duration > 20 {
+			return fmt.Errorf("LTX 2.3 duration must be an integer between 1 and 20 seconds")
+		}
+		content["durationSeconds"] = duration
+		return nil
+	default:
+		return fmt.Errorf("variant must be one of standard, start_end, licon_1role, licon_2role")
+	}
 }
 
 func normalizeLtxStartEndContent(content map[string]any, req relaycommon.TaskSubmitReq, explicitLength, explicitNumFrames bool) error {

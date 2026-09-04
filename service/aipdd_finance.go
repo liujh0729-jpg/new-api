@@ -55,7 +55,7 @@ func PrepareAIPDDFinanceAttempt(c *gin.Context, info *relaycommon.RelayInfo) err
 		}
 		info.AIPDDFinance = nil
 	}
-	instanceID, err := resolveAIPDDFinanceInstanceID()
+	instanceID, err := ResolveAIPDDFinanceInstanceID()
 	if err != nil {
 		return err
 	}
@@ -77,7 +77,10 @@ func PrepareAIPDDFinanceAttempt(c *gin.Context, info *relaycommon.RelayInfo) err
 	return nil
 }
 
-func resolveAIPDDFinanceInstanceID() (string, error) {
+// ResolveAIPDDFinanceInstanceID returns the stable delivery-site identity
+// registered with AIPDD. It is exported so administration surfaces can show
+// the authoritative value instead of asking operators to enter it repeatedly.
+func ResolveAIPDDFinanceInstanceID() (string, error) {
 	if configured := strings.TrimSpace(os.Getenv(aipddInstanceIDEnv)); configured != "" {
 		parsed, err := uuid.Parse(configured)
 		if err != nil {

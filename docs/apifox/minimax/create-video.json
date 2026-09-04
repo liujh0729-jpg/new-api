@@ -5,7 +5,7 @@
   "path": "/v1/videos",
   "status": "released",
   "operationId": "createMinimaxH3Video",
-  "description": "MiniMax H3 的五个公开模型都使用 `POST /v1/videos`。`model`、`duration_seconds` 和 `video_resolution` 必填；时长必须是正整数秒，`ratio` 默认 `16:9`。\n\n参考图必须使用 `image_urls` 数组，参考音频必须使用 `audio_urls` 数组；不要使用 `duration`、`resolution`、`images` 或单值 `audio`。参考图和多模态的 1080p 最多 10 秒，其他可用组合最多 15 秒。`seed` 只对多图参考和多图多音频模型生效。完整约束见「MiniMax H3 模型与约束」。\n\n创建后使用返回的 `id` 请求 `GET /v1/videos/{task_id}`。",
+  "description": "MiniMax H3 只公开模型 `ap-minimax-h3`，使用 `POST /v1/videos`。可传 `request_kind` 明确选择能力，不传时由素材和提示词自动判断。`model`、`duration_seconds` 和 `video_resolution` 必填；时长必须是正整数秒，`ratio` 默认 `16:9`。\n\n参考图必须使用 `image_urls` 数组，参考音频必须使用 `audio_urls` 数组；不要使用 `duration`、`resolution`、`images` 或单值 `audio`。参考图和多模态的 1080p 最多 10 秒，其他可用组合最多 15 秒。`seed` 只对多图参考和多图多音频能力生效。完整约束见「MiniMax H3 模型与约束」。\n\n创建后使用返回的 `id` 请求 `GET /v1/videos/{task_id}`。",
   "tags": ["MiniMax H3"],
   "auth": { "type": "bearer", "bearer": { "token": "" } },
   "requestBody": {
@@ -14,19 +14,14 @@
     "jsonSchema": {
       "type": "object",
       "required": ["model", "duration_seconds", "video_resolution"],
-      "description": "prompt 除图片音频同步视频模型外必填。不同模型的素材数量、分辨率、比例和时长约束见接口说明。",
+      "description": "prompt 除图片音频同步视频能力外必填。不同能力的素材数量、分辨率、比例和时长约束见接口说明。",
       "properties": {
         "model": {
           "type": "string",
-          "description": "MiniMax H3 公开模型名",
-          "enum": [
-            "ap-minimax-h3-text-to-video",
-            "ap-minimax-h3-reference-to-video",
-            "ap-minimax-h3-multimodal-to-video",
-            "ap-minimax-h3-image-audio-lipsync",
-            "ap-minimax-h3-first-last-frame-to-video"
-          ]
+          "description": "MiniMax H3 唯一公开模型名",
+          "enum": ["ap-minimax-h3"]
         },
+        "request_kind": { "type": "string", "enum": ["text_to_video", "reference_to_video", "multimodal_to_video", "image_audio_lipsync", "first_last_frame_to_video"], "description": "可选；明确选择能力。不传时按素材和提示词自动判断" },
         "prompt": { "type": "string", "minLength": 1, "description": "文生视频、多图参考、多图多音频和首尾帧模型必填；图片音频同步视频模型不使用" },
         "duration_seconds": { "type": "integer", "minimum": 1, "maximum": 15, "description": "必填，正整数秒。reference-to-video 和 multimodal-to-video 在 1080p 时最大为 10，其他可用组合最大为 15" },
         "video_resolution": { "type": "string", "enum": ["480p", "768p", "1080p"], "description": "必填。text-to-video 和 first-last-frame-to-video 不支持 1080p" },
@@ -38,7 +33,7 @@
         "seed": { "type": "integer", "description": "仅 reference-to-video 和 multimodal-to-video 生效" }
       }
     },
-    "data": "{\n  \"model\": \"ap-minimax-h3-text-to-video\",\n  \"prompt\": \"一只橘猫在木桌旁喝水\",\n  \"duration_seconds\": 5,\n  \"video_resolution\": \"480p\",\n  \"ratio\": \"16:9\"\n}"
+    "data": "{\n  \"model\": \"ap-minimax-h3\",\n  \"request_kind\": \"text_to_video\",\n  \"prompt\": \"一只橘猫在木桌旁喝水\",\n  \"duration_seconds\": 5,\n  \"video_resolution\": \"480p\",\n  \"ratio\": \"16:9\"\n}"
   },
   "responses": [
     {

@@ -64,9 +64,10 @@ type AtomicCapability struct {
 	Params           ScriptParams `json:"params"`
 	// Available is optional. Java ComfyUI entries historically omitted it;
 	// a missing or null value must not be treated as false.
-	Available *bool           `json:"available"`
-	Execution AtomicExecution `json:"execution"`
-	Pricing   AtomicPricing   `json:"pricing"`
+	Available         *bool            `json:"available"`
+	Execution         AtomicExecution  `json:"execution"`
+	FallbackExecution *AtomicExecution `json:"fallbackExecution,omitempty"`
+	Pricing           AtomicPricing    `json:"pricing"`
 }
 
 type AtomicModel struct {
@@ -154,6 +155,7 @@ func FetchAtomic(ctx context.Context, client *http.Client, baseURL, apiKey strin
 	if err := envelope.Data.Validate(); err != nil {
 		return AtomicCatalog{}, err
 	}
+	envelope.Data.FilterSeedanceForNewAPI()
 	envelope.Data.FilterFreeModels()
 	return envelope.Data, nil
 }
@@ -217,6 +219,44 @@ func (catalog *AtomicCatalog) FilterExcluded() {
 	catalog.Models = models
 }
 
+// FilterSeedanceForNewAPI removes the legacy AIPDD Seedance proxy catalog.
+// New Seedance business is published only by the independent Seedance channel;
+// AIPDD remains a finance service (and a future enhancement provider), not a
+// public Seedance model source.
+func (catalog *AtomicCatalog) FilterSeedanceForNewAPI() {
+	if catalog == nil {
+		return
+	}
+	capabilities := catalog.Capabilities[:0]
+	for _, capability := range catalog.Capabilities {
+		if isAIPDDSeedanceCatalogEntry(
+			capability.AdapterCode, capability.Code, capability.ID, capability.Name,
+		) {
+			continue
+		}
+		capabilities = append(capabilities, capability)
+	}
+	catalog.Capabilities = capabilities
+
+	models := catalog.Models[:0]
+	for _, model := range catalog.Models {
+		if isAIPDDSeedanceCatalogEntry(model.ID, model.Name) {
+			continue
+		}
+		models = append(models, model)
+	}
+	catalog.Models = models
+}
+
+func isAIPDDSeedanceCatalogEntry(values ...string) bool {
+	for _, value := range values {
+		if strings.Contains(strings.ToLower(strings.TrimSpace(value)), "seedance") {
+			return true
+		}
+	}
+	return false
+}
+
 func excludedAIPDDCatalogText(values ...string) bool {
 	return constant.IsAIPDDExcludedModel(strings.Join(values, " "))
 }
@@ -232,14 +272,25 @@ func (catalog AtomicCatalog) Validate() error {
 		return fmt.Errorf("AIPDD catalog AWCoin rate must be positive")
 	}
 	for _, capability := range catalog.Capabilities {
-		if capability.AdapterCode != "comfyui" && capability.AdapterCode != "seedance" && capability.AdapterCode != "token_market_media" {
+		if capability.AdapterCode != "comfyui" && capability.AdapterCode != "seedance" &&
+			capability.AdapterCode != "token_market_media" && capability.AdapterCode != "token_market_shared" {
 			return fmt.Errorf("unsupported AIPDD task adapter %q", capability.AdapterCode)
 		}
 		if strings.TrimSpace(capability.ID) == "" || strings.TrimSpace(capability.Execution.Protocol) == "" || strings.TrimSpace(capability.Execution.Path) == "" {
 			return fmt.Errorf("AIPDD task capability has incomplete execution metadata")
 		}
+		if capability.FallbackExecution != nil {
+			fallback := capability.FallbackExecution
+			if strings.TrimSpace(fallback.Protocol) == "" || strings.TrimSpace(fallback.Path) == "" {
+				return fmt.Errorf("AIPDD task capability %q has incomplete fallback execution metadata", capability.ID)
+			}
+			if !strings.EqualFold(strings.TrimSpace(capability.Execution.Protocol), "shared_task") ||
+				!strings.EqualFold(strings.TrimSpace(fallback.Protocol), "token_market_video") {
+				return fmt.Errorf("AIPDD task capability %q has unsupported fallback execution", capability.ID)
+			}
+		}
 		if capability.AdapterCode == "seedance" ||
-			(capability.AdapterCode == "token_market_media" &&
+			((capability.AdapterCode == "token_market_media" || capability.AdapterCode == "token_market_shared") &&
 				strings.EqualFold(strings.TrimSpace(capability.Pricing.PricingModel), "per_second")) {
 			if err := validateSeedancePricing(capability.ID, capability.Pricing); err != nil {
 				return err
@@ -383,14 +434,16 @@ func (catalog AtomicCatalog) ModelNames() []string {
 	models := make([]string, 0, len(catalog.Capabilities)+len(catalog.Models))
 	for _, capability := range catalog.Capabilities {
 		name := strings.TrimSpace(capability.ID)
-		if name != "" && !excludedAIPDDCatalogText(capability.AdapterCode, capability.Code, capability.ID, capability.Name) && !seen[name] {
+		if name != "" && !constant.IsAIPDDMergedLegacyPublicModel(name) &&
+			!excludedAIPDDCatalogText(capability.AdapterCode, capability.Code, capability.ID, capability.Name) && !seen[name] {
 			seen[name] = true
 			models = append(models, name)
 		}
 	}
 	for _, model := range catalog.Models {
 		name := strings.TrimSpace(model.ID)
-		if name != "" && !excludedAIPDDCatalogText(model.ID, model.Name) && !seen[name] {
+		if name != "" && !constant.IsAIPDDMergedLegacyPublicModel(name) &&
+			!excludedAIPDDCatalogText(model.ID, model.Name) && !seen[name] {
 			seen[name] = true
 			models = append(models, name)
 		}
@@ -419,9 +472,13 @@ func (catalog AtomicCatalog) RuntimeCapabilities() []constant.AIPDDCapability {
 		capability.CatalogRevision = catalog.Revision
 		capability.ExecutionProtocol = item.Execution.Protocol
 		capability.ExecutionPath = item.Execution.Path
+		if item.FallbackExecution != nil {
+			capability.FallbackExecutionProtocol = item.FallbackExecution.Protocol
+			capability.FallbackExecutionPath = item.FallbackExecution.Path
+		}
 		capability.AWCoinUSDPerCoin = catalog.AWCoinRate.USDPerAWCoin
 		if item.AdapterCode == "seedance" ||
-			(item.AdapterCode == "token_market_media" &&
+			((item.AdapterCode == "token_market_media" || item.AdapterCode == "token_market_shared") &&
 				strings.EqualFold(strings.TrimSpace(item.Pricing.PricingModel), "per_second")) {
 			capability.BillingType = constant.AIPDDBillingTypeDurationSeconds
 			capability.SeedancePricing = &constant.AIPDDSeedancePricing{
@@ -505,6 +562,7 @@ func UnmarshalAtomic(data []byte) (AtomicCatalog, error) {
 	if err := catalog.Validate(); err != nil {
 		return catalog, err
 	}
+	catalog.FilterSeedanceForNewAPI()
 	catalog.FilterFreeModels()
 	return catalog, nil
 }

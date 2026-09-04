@@ -109,6 +109,17 @@ func SetRelayRouter(router *gin.Engine) {
 			c.Set("relay_mode", relayconstant.RelayModeTaskFetchByID)
 			controller.RelayTaskFetch(c)
 		})
+		playgroundRouter.POST("/images/edits", func(c *gin.Context) {
+			if common.GetContextKeyInt(c, constant.ContextKeyChannelType) == constant.ChannelTypeAIPDD {
+				controller.PlaygroundTask(c)
+				return
+			}
+			controller.Playground(c, types.RelayFormatOpenAIImage)
+		})
+		playgroundRouter.GET("/images/edits/:task_id", func(c *gin.Context) {
+			c.Set("relay_mode", relayconstant.RelayModeTaskFetchByID)
+			controller.RelayTaskFetch(c)
+		})
 		playgroundRouter.POST("/video/generations", middleware.BindVirtualCharacter(), controller.PlaygroundVideo)
 		playgroundRouter.GET("/video/generations/:task_id", func(c *gin.Context) {
 			c.Set("relay_mode", relayconstant.RelayModeVideoFetchByID)
@@ -166,7 +177,11 @@ func SetRelayRouter(router *gin.Engine) {
 			controller.RelayTaskFetch(c)
 		})
 		httpRouter.POST("/images/edits", func(c *gin.Context) {
-			controller.Relay(c, types.RelayFormatOpenAIImage)
+			relayOrAIPDDTask(c, types.RelayFormatOpenAIImage)
+		})
+		httpRouter.GET("/images/edits/:task_id", func(c *gin.Context) {
+			c.Set("relay_mode", relayconstant.RelayModeTaskFetchByID)
+			controller.RelayTaskFetch(c)
 		})
 
 		// embedding related routes

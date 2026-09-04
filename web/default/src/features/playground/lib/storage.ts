@@ -78,6 +78,8 @@ export function getConversationTitle(
 
   if (firstUserText) return truncateTitle(firstUserText)
   if (mode === 'image') return 'Image conversation'
+  if (mode === 'image_to_image') return 'Image-to-image conversation'
+  if (mode === 'image_edit') return 'Image editing conversation'
   if (mode === 'video') return 'Video conversation'
   return 'New conversation'
 }
@@ -136,7 +138,8 @@ function normalizeConversation(
   )
   config.video_size = normalizeLTXVideoSizeForModel(
     config.model || '',
-    config.video_size
+    config.video_size,
+    config.ltx_variant
   )
   const parameterEnabled = (
     isObject(value.parameterEnabled)
@@ -256,7 +259,8 @@ export function loadConfig(): Partial<PlaygroundConfig> {
       if (typeof config.video_size === 'string') {
         config.video_size = normalizeLTXVideoSizeForModel(
           config.model || '',
-          config.video_size
+          config.video_size,
+          config.ltx_variant
         )
       }
       return config

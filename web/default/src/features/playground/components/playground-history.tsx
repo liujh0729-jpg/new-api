@@ -69,6 +69,8 @@ function getDisplayTitle(
   if (
     conversation.title === 'New conversation' ||
     conversation.title === 'Image conversation' ||
+    conversation.title === 'Image-to-image conversation' ||
+    conversation.title === 'Image editing conversation' ||
     conversation.title === 'Video conversation'
   ) {
     return t(conversation.title)
@@ -80,7 +82,9 @@ function getModeLabel(
   mode: PlaygroundMode,
   t: (key: string) => string
 ): string {
-  if (mode === 'image') return t('Image')
+  if (mode === 'image') return t('Image generation')
+  if (mode === 'image_to_image') return t('Image to Image')
+  if (mode === 'image_edit') return t('Image editing')
   if (mode === 'video') return t('Video')
   return t('Chat')
 }

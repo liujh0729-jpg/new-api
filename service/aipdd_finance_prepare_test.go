@@ -19,7 +19,7 @@ import (
 func TestResolveAIPDDFinanceInstanceIDRequiresRegisteredSiteIdentity(t *testing.T) {
 	t.Setenv(aipddInstanceIDEnv, "")
 
-	resolved, err := resolveAIPDDFinanceInstanceID()
+	resolved, err := ResolveAIPDDFinanceInstanceID()
 
 	require.ErrorContains(t, err, aipddInstanceIDEnv+" is required")
 	require.Empty(t, resolved)
@@ -29,7 +29,7 @@ func TestResolveAIPDDFinanceInstanceIDHonorsExplicitOverride(t *testing.T) {
 	const configured = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
 	t.Setenv(aipddInstanceIDEnv, configured)
 
-	resolved, err := resolveAIPDDFinanceInstanceID()
+	resolved, err := ResolveAIPDDFinanceInstanceID()
 
 	require.NoError(t, err)
 	require.Equal(t, configured, resolved)

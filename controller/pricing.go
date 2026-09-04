@@ -115,7 +115,12 @@ func attachModelGroupRatios(pricing []model.Pricing, userGroup string, available
 	for index := range pricing {
 		pricing[index].GroupRatio = make(map[string]float64, len(availableRatios))
 		for usingGroup := range availableRatios {
-			ratio, _ := ratio_setting.ResolveModelGroupRatio(pricing[index].ModelName, userGroup, usingGroup)
+			ratio := 1.0
+			if pricing[index].IsIndependentSeedance {
+				ratio, _ = ratio_setting.ResolveSeedanceGroupRatio(userGroup, usingGroup)
+			} else {
+				ratio, _ = ratio_setting.ResolveModelGroupRatio(pricing[index].ModelName, userGroup, usingGroup)
+			}
 			pricing[index].GroupRatio[usingGroup] = ratio
 		}
 	}

@@ -27,6 +27,7 @@
       "description": "任务状态",
       "jsonSchema": {
         "type": "object",
+        "additionalProperties": false,
         "properties": {
           "id": { "type": "string" },
           "task_id": { "type": "string" },
@@ -36,35 +37,23 @@
           "progress": { "type": "integer" },
           "created_at": { "type": "integer", "format": "int64" },
           "completed_at": { "type": "integer", "format": "int64" },
-          "expires_at": { "type": "integer", "format": "int64" },
-          "seconds": { "type": "string", "description": "兼容 OpenAI Video 的时长字符串" },
-          "size": { "type": "string", "description": "兼容 OpenAI Video 的画面尺寸" },
-          "remixed_from_video_id": { "type": "string" },
           "error": {
             "type": "object",
             "description": "失败时返回",
+            "additionalProperties": false,
             "properties": {
               "message": { "type": "string" },
-              "code": { "type": "string" },
-              "param": { "type": "string" },
-              "request_id": { "type": "string" },
-              "provider": { "type": "string" },
-              "category": { "type": "string" },
-              "upstream_code": { "type": "string" },
-              "retryable": { "type": "boolean" }
+              "code": { "type": "string" }
             }
           },
           "metadata": {
             "type": "object",
-            "additionalProperties": true,
+            "additionalProperties": false,
             "properties": {
-              "url": { "type": "string", "format": "uri" },
-              "duration": { "type": "number" },
-              "output_format": { "type": "string" },
-              "resolution": { "type": "string" }
+              "url": { "type": "string", "format": "uri" }
             }
           },
-          "usage": { "type": "object", "properties": { "completion_tokens": { "type": "integer", "format": "int64" }, "total_tokens": { "type": "integer", "format": "int64" } } }
+          "usage": { "type": "object", "additionalProperties": false, "properties": { "completion_tokens": { "type": "integer", "format": "int64" }, "total_tokens": { "type": "integer", "format": "int64" } } }
         }
       }
     },

@@ -157,3 +157,25 @@ func TestAdminAuthStillRequiresUserHeader(t *testing.T) {
 	require.Equal(t, http.StatusUnauthorized, recorder.Code)
 	require.Contains(t, recorder.Body.String(), "auth.user_id_not_provided")
 }
+
+func TestStrictAdminAuthRejectsOrdinaryUserWithForbiddenStatus(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for name, auth := range map[string]gin.HandlerFunc{
+		"admin": StrictAdminAuth(),
+		"root":  StrictRootAuth(),
+	} {
+		t.Run(name, func(t *testing.T) {
+			router := newSessionAuthTestRouter(t, auth)
+			cookie := loginSession(t, router, common.RoleCommonUser)
+			req := httptest.NewRequest(http.MethodGet, "/protected", nil)
+			req.AddCookie(cookie)
+			req.Header.Set("New-Api-User", "7")
+			recorder := httptest.NewRecorder()
+
+			router.ServeHTTP(recorder, req)
+
+			require.Equal(t, http.StatusForbidden, recorder.Code)
+			require.Contains(t, recorder.Body.String(), `"success":false`)
+		})
+	}
+}

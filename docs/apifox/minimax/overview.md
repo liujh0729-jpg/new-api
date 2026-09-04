@@ -1,6 +1,6 @@
 # MiniMax H3
 
-五个公开模型都走 **`POST /v1/videos`**，查询走 **`GET /v1/videos/{task_id}`**。不要请求不存在的 `/minimax-h3` 路径。
+MiniMax H3 只公开一个模型 ID：**`ap-minimax-h3`**。创建任务走 **`POST /v1/videos`**，查询走 **`GET /v1/videos/{task_id}`**。旧的五个场景模型 ID 已直接下线，不提供别名兼容。
 
 价格和当前可用档位以 `GET /api/pricing` 为准。
 
@@ -11,19 +11,20 @@
 - `video_resolution` 取值可为 `480p`、`768p`、`1080p`，但具体取值受模型限制；不要使用 `resolution`。
 - `ratio` 默认 `16:9`，具体取值受模型限制。
 - 参考图使用 `image_urls` 数组，参考音频使用 `audio_urls` 数组。不要使用 `images` 或单值 `audio`。
+- 可传 `request_kind` 明确选择能力；不传时由请求参数自动判断。
 - 素材 URL 必须非空且能被上游访问。
 
-## 模型限制
+## 能力模式与限制
 
-| 模型 | `prompt` | 分辨率与时长 | `ratio` | 图片 | 音频 | `seed` |
+| `request_kind` | `prompt` | 分辨率与时长 | `ratio` | 图片 | 音频 | `seed` |
 |---|---|---|---|---|---|---|
-| `ap-minimax-h3-text-to-video` | 必填 | 480p / 768p：1–15 秒 | 16:9 / 9:16 / 1:1 | 不支持 | 不支持 | 不支持 |
-| `ap-minimax-h3-reference-to-video` | 必填 | 480p / 768p：1–15 秒；1080p：1–10 秒 | 16:9 / 9:16 / 1:1 | `image_urls` 1–9 个 | 不支持 | 支持整数 |
-| `ap-minimax-h3-multimodal-to-video` | 必填 | 480p / 768p：1–15 秒；1080p：1–10 秒 | 16:9 / 9:16 | `image_urls` 1–9 个 | `audio_urls` 1–3 个 | 支持整数 |
-| `ap-minimax-h3-image-audio-lipsync` | 不使用 | 480p / 768p / 1080p：1–15 秒 | 16:9 / 9:16 | `image_urls` 恰好 1 个 | `audio_urls` 恰好 1 个 | 不支持 |
-| `ap-minimax-h3-first-last-frame-to-video` | 必填 | 480p / 768p：1–15 秒 | 16:9 / 9:16 | `first_frame` 和 `last_frame` 均必填；不传 `image_urls` | 不支持 | 不支持 |
+| `text_to_video` | 必填 | 480p / 768p：1–15 秒 | 16:9 / 9:16 / 1:1 | 不支持 | 不支持 | 不支持 |
+| `reference_to_video` | 必填 | 480p / 768p：1–15 秒；1080p：1–10 秒 | 16:9 / 9:16 / 1:1 | `image_urls` 1–9 个 | 不支持 | 支持整数 |
+| `multimodal_to_video` | 必填 | 480p / 768p：1–15 秒；1080p：1–10 秒 | 16:9 / 9:16 | `image_urls` 1–9 个 | `audio_urls` 1–3 个 | 支持整数 |
+| `image_audio_lipsync` | 不使用 | 480p / 768p / 1080p：1–15 秒 | 16:9 / 9:16 | `image_urls` 恰好 1 个 | `audio_urls` 恰好 1 个 | 不支持 |
+| `first_last_frame_to_video` | 必填 | 480p / 768p：1–15 秒 | 16:9 / 9:16 | `first_frame` 和 `last_frame` 均必填；不传 `image_urls` | 不支持 | 不支持 |
 
-`seed` 只在多图参考和多图多音频模型上生效。分辨率、比例或时长组合不在表中时，请求会被拒绝。
+自动判断顺序为：首尾帧字段、无素材文生视频、仅图片参考、单图单音频且无提示词的口型同步，其他图音组合为多模态。建议需要稳定行为的调用方显式传 `request_kind`。`seed` 只在多图参考和多图多音频能力上生效。分辨率、比例或时长组合不在表中时，请求会被拒绝。
 
 ## 请求示例
 
@@ -31,7 +32,8 @@
 
 ```json
 {
-  "model": "ap-minimax-h3-text-to-video",
+  "model": "ap-minimax-h3",
+  "request_kind": "text_to_video",
   "prompt": "一只橘猫在木桌旁喝水",
   "duration_seconds": 5,
   "video_resolution": "768p",
@@ -43,7 +45,8 @@
 
 ```json
 {
-  "model": "ap-minimax-h3-reference-to-video",
+  "model": "ap-minimax-h3",
+  "request_kind": "reference_to_video",
   "prompt": "保持参考图中角色一致，缓慢走向镜头",
   "duration_seconds": 10,
   "video_resolution": "1080p",
@@ -57,7 +60,8 @@
 
 ```json
 {
-  "model": "ap-minimax-h3-multimodal-to-video",
+  "model": "ap-minimax-h3",
+  "request_kind": "multimodal_to_video",
   "prompt": "保持参考人物一致，按音频节奏说话",
   "duration_seconds": 8,
   "video_resolution": "768p",
@@ -71,7 +75,8 @@
 
 ```json
 {
-  "model": "ap-minimax-h3-image-audio-lipsync",
+  "model": "ap-minimax-h3",
+  "request_kind": "image_audio_lipsync",
   "duration_seconds": 7,
   "video_resolution": "1080p",
   "ratio": "16:9",
@@ -84,7 +89,8 @@
 
 ```json
 {
-  "model": "ap-minimax-h3-first-last-frame-to-video",
+  "model": "ap-minimax-h3",
+  "request_kind": "first_last_frame_to_video",
   "prompt": "从首帧自然过渡到尾帧",
   "duration_seconds": 5,
   "video_resolution": "768p",

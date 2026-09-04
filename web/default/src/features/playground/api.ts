@@ -66,6 +66,59 @@ export async function sendImageGeneration(
 }
 
 /**
+ * Submit an OpenAI-compatible image edit. Repeated image parts select the
+ * one-, two-, or three-reference Qwen workflow on the AIPDD backend.
+ */
+export async function sendImageEdit(
+  payload: ImageGenerationRequest,
+  references: Array<File | string>
+): Promise<ImageGenerationResponse> {
+  const formData = new FormData()
+  formData.append('model', payload.model)
+  formData.append('prompt', payload.prompt)
+  if (payload.group) formData.append('group', payload.group)
+  if (payload.client_task_id) {
+    formData.append('client_task_id', payload.client_task_id)
+  }
+  if (payload.size) formData.append('size', payload.size)
+  if (payload.quality) formData.append('quality', payload.quality)
+  if (payload.n !== undefined) formData.append('n', String(payload.n))
+  const imageField = references.length > 1 ? 'image[]' : 'image'
+  for (let index = 0; index < references.length; index += 1) {
+    const reference = references[index]!
+    const file =
+      reference instanceof File
+        ? reference
+        : await imageReferenceToFile(reference, index)
+    formData.append(imageField, file, file.name)
+  }
+  const res = await api.post(API_ENDPOINTS.IMAGE_EDITS, formData, {
+    skipErrorHandler: true,
+  } as Record<string, unknown>)
+  return res.data
+}
+
+async function imageReferenceToFile(
+  reference: string,
+  index: number
+): Promise<File> {
+  const response = await fetch(reference)
+  if (!response.ok) {
+    throw new Error(`Unable to read image reference ${index + 1}`)
+  }
+  const blob = await response.blob()
+  if (!blob.type.toLowerCase().startsWith('image/')) {
+    throw new Error(`Reference ${index + 1} is not an image`)
+  }
+  const extension = blob.type.includes('jpeg')
+    ? 'jpg'
+    : blob.type.split('/')[1] || 'png'
+  return new File([blob], `reference-${index + 1}.${extension}`, {
+    type: blob.type,
+  })
+}
+
+/**
  * Fetch image generation task status
  */
 export async function getImageGenerationTask(
@@ -73,6 +126,18 @@ export async function getImageGenerationTask(
 ): Promise<TaskFetchResponse> {
   const res = await api.get(
     `${API_ENDPOINTS.IMAGE_GENERATIONS}/${encodeURIComponent(taskId)}`,
+    {
+      skipErrorHandler: true,
+    } as Record<string, unknown>
+  )
+  return res.data
+}
+
+export async function getImageEditTask(
+  taskId: string
+): Promise<TaskFetchResponse> {
+  const res = await api.get(
+    `${API_ENDPOINTS.IMAGE_EDITS}/${encodeURIComponent(taskId)}`,
     {
       skipErrorHandler: true,
     } as Record<string, unknown>
@@ -149,12 +214,7 @@ export async function uploadReferenceMedia(
 export async function getUserModels(
   mode: PlaygroundMode = 'chat'
 ): Promise<ModelOption[]> {
-  const endpointType =
-    mode === 'image'
-      ? 'image-generation'
-      : mode === 'video'
-        ? 'openai-video'
-        : 'openai'
+  const endpointType = getPlaygroundModelEndpointType(mode)
   const res = await api.get(API_ENDPOINTS.USER_MODELS, {
     params: {
       endpoint_type: endpointType,
@@ -193,6 +253,14 @@ export async function getUserModels(
       },
     ]
   })
+}
+
+export function getPlaygroundModelEndpointType(mode: PlaygroundMode): string {
+  if (mode === 'image') return 'image-generation'
+  if (mode === 'image_to_image') return 'image-to-image'
+  if (mode === 'image_edit') return 'image-edit'
+  if (mode === 'video') return 'openai-video'
+  return 'openai'
 }
 
 /**

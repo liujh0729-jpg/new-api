@@ -15,6 +15,8 @@ const (
 	AIPDDModelIndexTTS      = "aipdd-indextts"
 	AIPDDModelLTX23         = "aipdd_ltx_2.3"
 	AIPDDModelLTX23StartEnd = "aipdd_ltx_2.3 (首尾帧)"
+	AIPDDModelQwenImageEdit = "ap-qwen-image-edit"
+	AIPDDModelUnifiedLTX23  = "ap-ltx-2.3"
 	AIPDDLogoPath           = "/aipdd-logo.png"
 	AIPDDWebsiteURL         = "https://app.aipdd.work"
 )
@@ -66,25 +68,27 @@ type AIPDDWorkflowParamConstraint struct {
 }
 
 type AIPDDCapability struct {
-	ModelName              string
-	AdapterCode            string
-	ScriptID               string
-	ScriptCode             string
-	TaskKind               string
-	InputModalities        []string
-	OutputModalities       []string
-	TaskCost               float64
-	WorkflowParamKeys      []string
-	RequiredWorkflowParams map[string]bool
-	WorkflowDefaults       []AIPDDWorkflowParamDefault
-	WorkflowConstraints    []AIPDDWorkflowParamConstraint
-	EndpointType           EndpointType
-	BillingType            AIPDDBillingType
-	CatalogRevision        string
-	ExecutionProtocol      string
-	ExecutionPath          string
-	AWCoinUSDPerCoin       float64
-	SeedancePricing        *AIPDDSeedancePricing
+	ModelName                 string
+	AdapterCode               string
+	ScriptID                  string
+	ScriptCode                string
+	TaskKind                  string
+	InputModalities           []string
+	OutputModalities          []string
+	TaskCost                  float64
+	WorkflowParamKeys         []string
+	RequiredWorkflowParams    map[string]bool
+	WorkflowDefaults          []AIPDDWorkflowParamDefault
+	WorkflowConstraints       []AIPDDWorkflowParamConstraint
+	EndpointType              EndpointType
+	BillingType               AIPDDBillingType
+	CatalogRevision           string
+	ExecutionProtocol         string
+	ExecutionPath             string
+	FallbackExecutionProtocol string
+	FallbackExecutionPath     string
+	AWCoinUSDPerCoin          float64
+	SeedancePricing           *AIPDDSeedancePricing
 }
 
 type AIPDDSeedanceResolutionPricing struct {
@@ -152,7 +156,7 @@ var AIPDDCapabilities = []AIPDDCapability{
 			aipddStringDefault("image", aipddMetadata("image"), aipddSource(AIPDDWorkflowSourceImage), aipddSource(AIPDDWorkflowSourceFirstImage)),
 			aipddStringDefault("positive_prompt", aipddMetadata("positive_prompt"), aipddMetadata("prompt"), aipddSource(AIPDDWorkflowSourcePrompt)),
 		},
-		EndpointType: EndpointTypeImageGeneration,
+		EndpointType: EndpointTypeImageToImage,
 		BillingType:  AIPDDBillingTypePerCall,
 	},
 	{
@@ -362,7 +366,7 @@ func buildAIPDDTaskModelList(capabilities []AIPDDCapability) []string {
 	seen := make(map[string]bool, len(capabilities))
 	for _, capability := range capabilities {
 		modelName := strings.TrimSpace(capability.ModelName)
-		if modelName == "" || IsAIPDDExcludedModel(modelName) || seen[modelName] {
+		if modelName == "" || IsAIPDDExcludedModel(modelName) || IsAIPDDMergedLegacyPublicModel(modelName) || seen[modelName] {
 			continue
 		}
 		models = append(models, modelName)
@@ -443,6 +447,9 @@ func SetAIPDDCapabilities(capabilities []AIPDDCapability) {
 			IsAIPDDExcludedModel(capability.TaskKind) {
 			continue
 		}
+		capability.EndpointType = ClassifyAIPDDImageEndpoint(
+			capability.ModelName, capability.TaskKind, capability.EndpointType,
+		)
 		filtered = append(filtered, capability)
 	}
 	cloned := cloneAIPDDCapabilities(filtered)
@@ -573,12 +580,31 @@ func GetAIPDDEndpointTypes(modelName string) []EndpointType {
 	return []EndpointType{capability.EndpointType}
 }
 
+// ClassifyAIPDDImageEndpoint keeps image-to-image generation and instruction
+// based image editing as separate public capabilities. Older AIPDD catalogs
+// used image-generation for both, so normalize them while importing.
+func ClassifyAIPDDImageEndpoint(modelName, taskKind string, endpoint EndpointType) EndpointType {
+	if endpoint != EndpointTypeImageGeneration && endpoint != EndpointTypeImageToImage && endpoint != EndpointTypeImageEdit {
+		return endpoint
+	}
+	normalizedModel := strings.ToLower(strings.TrimSpace(modelName))
+	normalizedTask := strings.NewReplacer("-", "_", " ", "_").Replace(strings.ToLower(strings.TrimSpace(taskKind)))
+	if endpoint == EndpointTypeImageEdit || normalizedModel == AIPDDModelQwenImageEdit || strings.Contains(normalizedTask, "image_edit") {
+		return EndpointTypeImageEdit
+	}
+	if endpoint == EndpointTypeImageToImage ||
+		normalizedTask == "image_to_image" || strings.Contains(normalizedTask, "img2img") {
+		return EndpointTypeImageToImage
+	}
+	return EndpointTypeImageGeneration
+}
+
 func normalizeAIPDDModelList(models []string) []string {
 	normalized := make([]string, 0, len(models))
 	seen := make(map[string]bool, len(models))
 	for _, modelName := range models {
 		modelName = strings.TrimSpace(modelName)
-		if modelName == "" || IsAIPDDExcludedModel(modelName) || seen[modelName] {
+		if modelName == "" || IsAIPDDExcludedModel(modelName) || IsAIPDDMergedLegacyPublicModel(modelName) || seen[modelName] {
 			continue
 		}
 		normalized = append(normalized, modelName)
@@ -598,11 +624,35 @@ func IsAIPDDFunASRModel(modelName string) bool {
 // IsAIPDDExcludedModel reports whether an AIPDD identifier belongs to a
 // capability family intentionally hidden from new-api.
 func IsAIPDDExcludedModel(modelName string) bool {
-	normalized := strings.ToLower(strings.TrimSpace(modelName))
-	normalized = strings.NewReplacer("-", "", "_", "", ".", "", " ", "").Replace(normalized)
-	return strings.Contains(normalized, "funasr") ||
-		strings.Contains(normalized, "lightx2v") ||
-		strings.Contains(normalized, "seedvr2")
+	return false
+}
+
+// IsAIPDDMergedLegacyPublicModel identifies capability-shaped ids that remain
+// valid internally for shared-compute execution and historical tasks but must
+// not be advertised as public NewAPI models after their canonical ids shipped.
+func IsAIPDDMergedLegacyPublicModel(modelName string) bool {
+	_, legacy := aipddMergedLegacyPublicModels[strings.ToLower(strings.TrimSpace(modelName))]
+	return legacy
+}
+
+var aipddMergedLegacyPublicModels = map[string]struct{}{
+	"aipdd_qwen_image_edit_single_reference":  {},
+	"aipdd_qwen_image_edit_dual_reference":    {},
+	"aipdd_qwen_image_edit_triple_reference":  {},
+	"aipdd_ltx_2.3":                           {},
+	"aipdd_ltx_2.3 (首尾帧)":                     {},
+	"aipdd_ltx_2.3_licon_msr_1role_1scene":    {},
+	"aipdd_ltx_2.3_licon_msr_2role_1scene":    {},
+	"aipdd_lightx2v_ltx23_distilled_fp8_i2av": {},
+	"aipdd_ltx2_3_distilled_fp8_ti2v":         {},
+	"aipdd_ltx2_3_distilled_bf16_ti2v":        {},
+	"aipdd_ltx2_3_dev_fp8_ti2v":               {},
+	"aipdd_ltx2_3_dev_bf16_ti2v":              {},
+	"aipdd_ltx2_3_a2v":                        {},
+	"aipdd_ltx2_3_retake":                     {},
+	"aipdd_ltx2_3_lipdub":                     {},
+	"aipdd_ltx2_3_ic_lora_i2v":                {},
+	"aipdd_ltx2_3_ic_lora_v2v":                {},
 }
 
 // FilterAIPDDModelNames removes capabilities that new-api intentionally does

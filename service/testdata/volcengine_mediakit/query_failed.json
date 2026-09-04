@@ -1,0 +1,14 @@
+{
+  "success": true,
+  "task_id": "mediakit-task-0001",
+  "task_type": "enhance-video",
+  "status": "failed",
+  "created_at": 1777291767,
+  "finished_at": 1777291851,
+  "request_id": "redacted-request-id",
+  "error": {
+    "code": "DownloadFailed",
+    "type": "TaskError",
+    "message": "source media download failed"
+  }
+}

@@ -106,6 +106,7 @@ export function getChannelTypeIcon(type: number): string {
     54: 'Doubao', // DoubaoVideo
     56: 'Replicate', // Replicate
     58: '/aipdd-logo.png', // AIPDD
+    59: 'Doubao', // ByteDance Seedance
 
     // Tools & Platforms
     37: 'Dify', // Dify

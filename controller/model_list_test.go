@@ -460,27 +460,42 @@ func TestGetUserModelsIncludesImageToImageModelsForPlayground(t *testing.T) {
 		Type:   constant.ChannelTypeOpenAI,
 		Key:    "openai-test-key",
 		Name:   "openai",
-		Models: "gpt-image-1,gpt-4o,custom-t2i,custom-img2img",
+		Models: "gpt-image-1,gpt-4o,custom-t2i,custom-img2img,custom-image-edit",
 		Status: common.ChannelStatusEnabled,
 		Group:  "default",
 	}
 	require.NoError(t, openAIChannel.Insert())
 
-	imageEndpoints, err := common.Marshal(map[string]string{
+	imageGenerationEndpoints, err := common.Marshal(map[string]string{
 		string(constant.EndpointTypeImageGeneration): "/v1/images/generations",
+	})
+	require.NoError(t, err)
+	imageToImageEndpoints, err := common.Marshal(map[string]string{
+		string(constant.EndpointTypeImageToImage): "/v1/images/edits",
+	})
+	require.NoError(t, err)
+	imageEditEndpoints, err := common.Marshal(map[string]string{
+		string(constant.EndpointTypeImageEdit): "/v1/images/edits",
 	})
 	require.NoError(t, err)
 	require.NoError(t, db.Create(&model.Model{
 		ModelName: "custom-t2i",
 		Tags:      "文生图",
-		Endpoints: string(imageEndpoints),
+		Endpoints: string(imageGenerationEndpoints),
+		Status:    1,
+		NameRule:  model.NameRuleExact,
+	}).Error)
+	require.NoError(t, db.Create(&model.Model{
+		ModelName: "custom-image-edit",
+		Tags:      "图片编辑",
+		Endpoints: string(imageEditEndpoints),
 		Status:    1,
 		NameRule:  model.NameRuleExact,
 	}).Error)
 	require.NoError(t, db.Create(&model.Model{
 		ModelName: "custom-img2img",
 		Tags:      "图生图",
-		Endpoints: string(imageEndpoints),
+		Endpoints: string(imageToImageEndpoints),
 		Status:    1,
 		NameRule:  model.NameRuleExact,
 	}).Error)
@@ -507,11 +522,44 @@ func TestGetUserModelsIncludesImageToImageModelsForPlayground(t *testing.T) {
 	require.True(t, payload.Success)
 	require.Contains(t, payload.Data, "gpt-image-1")
 	require.Contains(t, payload.Data, "custom-t2i")
-	require.Contains(t, payload.Data, "custom-img2img")
 	require.Contains(t, payload.Data, constant.AIPDDModelFluxGGUFT2I)
-	require.Contains(t, payload.Data, constant.AIPDDModelFluxGGUF)
+	require.NotContains(t, payload.Data, "custom-img2img")
+	require.NotContains(t, payload.Data, "custom-image-edit")
+	require.NotContains(t, payload.Data, constant.AIPDDModelFluxGGUF)
 	require.NotContains(t, payload.Data, "gpt-4o")
 	require.NotContains(t, payload.Data, constant.AIPDDModelIndexTTS)
+
+	model.InvalidatePricingCache()
+	recorder = httptest.NewRecorder()
+	ctx, _ = gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/user/models?endpoint_type=image-to-image", nil)
+	ctx.Set("id", 1003)
+
+	GetUserModels(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
+	require.True(t, payload.Success)
+	require.Contains(t, payload.Data, "custom-img2img")
+	require.Contains(t, payload.Data, constant.AIPDDModelFluxGGUF)
+	require.NotContains(t, payload.Data, "custom-t2i")
+	require.NotContains(t, payload.Data, "custom-image-edit")
+	require.NotContains(t, payload.Data, constant.AIPDDModelFluxGGUFT2I)
+
+	model.InvalidatePricingCache()
+	recorder = httptest.NewRecorder()
+	ctx, _ = gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/user/models?endpoint_type=image-edit", nil)
+	ctx.Set("id", 1003)
+
+	GetUserModels(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
+	require.True(t, payload.Success)
+	require.Contains(t, payload.Data, "custom-image-edit")
+	require.NotContains(t, payload.Data, "custom-t2i")
+	require.NotContains(t, payload.Data, "custom-img2img")
 }
 
 func TestGetUserModelsFiltersChatEndpointForPlayground(t *testing.T) {
@@ -802,7 +850,7 @@ func TestListModelsHidesDisabledAIPDDCatalogModelsOnly(t *testing.T) {
 	require.Contains(t, ids, enabledTask)
 	require.Contains(t, ids, nonAIPDD)
 	require.Contains(t, ids, legacyMissing)
-	require.NotContains(t, ids, unavailableTask)
+	require.Contains(t, ids, unavailableTask)
 	require.NotContains(t, ids, pricingDisabledTask)
 
 	adminRecorder := httptest.NewRecorder()

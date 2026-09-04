@@ -6,7 +6,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestV1ModelsListHiddenNamesUsesAvailableAndPricingEnabled(t *testing.T) {
+func TestV1ModelsListHiddenNamesUsesPublicationPricingOnly(t *testing.T) {
 	catalog := AtomicCatalog{
 		Capabilities: []AtomicCapability{
 			{
@@ -22,7 +22,7 @@ func TestV1ModelsListHiddenNamesUsesAvailableAndPricingEnabled(t *testing.T) {
 				Pricing: AtomicPricing{Enabled: false},
 			},
 			{
-				ID: "omitted-available-task",
+				ID:      "omitted-available-task",
 				Pricing: AtomicPricing{Enabled: true},
 			},
 		},
@@ -45,9 +45,9 @@ func TestV1ModelsListHiddenNamesUsesAvailableAndPricingEnabled(t *testing.T) {
 	require.Equal(t, []string{
 		"pricing-disabled-llm",
 		"pricing-disabled-task",
-		"unavailable-llm",
-		"unavailable-task",
 	}, catalog.V1ModelsListHiddenNames())
+	require.NotContains(t, catalog.V1ModelsListHiddenNames(), "unavailable-llm")
+	require.NotContains(t, catalog.V1ModelsListHiddenNames(), "unavailable-task")
 	require.NotContains(t, catalog.V1ModelsListHiddenNames(), "omitted-available-task")
 }
 

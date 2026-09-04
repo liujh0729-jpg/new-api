@@ -156,6 +156,9 @@ func buildCapability(script Script, feeRuleByKey map[string]FeeRule) (constant.A
 		EndpointType:           inferEndpointType(script, params, base, hasBase),
 		BillingType:            inferBillingType(script, params, feeRule, hasFeeRule, base, hasBase),
 	}
+	capability.EndpointType = constant.ClassifyAIPDDImageEndpoint(
+		capability.ModelName, capability.TaskKind, capability.EndpointType,
+	)
 	return capability, rawPrice, true
 }
 
@@ -413,6 +416,10 @@ func parseEndpointType(value string) (constant.EndpointType, bool) {
 	switch constant.EndpointType(strings.TrimSpace(value)) {
 	case constant.EndpointTypeImageGeneration:
 		return constant.EndpointTypeImageGeneration, true
+	case constant.EndpointTypeImageToImage:
+		return constant.EndpointTypeImageToImage, true
+	case constant.EndpointTypeImageEdit:
+		return constant.EndpointTypeImageEdit, true
 	case constant.EndpointTypeOpenAIVideo:
 		return constant.EndpointTypeOpenAIVideo, true
 	case constant.EndpointTypeAudioSpeech:

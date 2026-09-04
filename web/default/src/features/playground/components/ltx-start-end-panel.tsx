@@ -53,6 +53,7 @@ import {
 import { Textarea } from '@/components/ui/textarea'
 import {
   type PromptInputPreparedFile,
+  type PromptInputAttachmentRole,
   usePromptInputAttachments,
 } from '@/components/ai-elements/prompt-input'
 import type { Material } from '@/features/materials/types'
@@ -87,9 +88,12 @@ export function LTXStartEndPanel({
   const { t } = useTranslation()
   const attachments = usePromptInputAttachments()
   const [advancedOpen, setAdvancedOpen] = useState(false)
-  const [materialOpen, setMaterialOpen] = useState(false)
+  const [materialRole, setMaterialRole] = useState<LTXReferenceRole | null>(
+    null
+  )
   const [preparing, setPreparing] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
+  const uploadRoleRef = useRef<LTXReferenceRole>('first_frame')
   const attachmentState = useMemo(
     () => getLTXStartEndAttachmentState(attachments.files),
     [attachments.files]
@@ -101,40 +105,50 @@ export function LTXStartEndPanel({
   const controlsDisabled = disabled || preparing
 
   useEffect(() => {
-    const firstFrame = attachmentState.firstFrame
-    for (const file of attachments.files) {
-      if (file.id !== firstFrame?.id) attachments.remove(file.id)
+    for (const file of attachmentState.extras) attachments.remove(file.id)
+    const selected: Array<
+      [LTXReferenceRole, (typeof attachments.files)[number] | undefined]
+    > = [
+      ['first_frame', attachmentState.firstFrame],
+      ['last_frame', attachmentState.lastFrame],
+      ['audio', attachmentState.audio],
+    ]
+    for (const [role, file] of selected) {
+      if (!file || file.role === role) continue
+      attachments.remove(file.id)
+      attachments.upsertRemote(role, {
+        url: file.url,
+        mediaType: file.mediaType,
+        filename: file.filename,
+        sourceFile: file.sourceFile,
+        role,
+      })
     }
-    if (!firstFrame || firstFrame.role === 'first_frame') return
-
-    attachments.remove(firstFrame.id)
-    attachments.upsertRemote('first_frame', {
-      url: firstFrame.url,
-      mediaType: firstFrame.mediaType,
-      filename: firstFrame.filename,
-      sourceFile: firstFrame.sourceFile,
-      role: 'first_frame',
-    })
-  }, [attachmentState.firstFrame, attachments])
+  }, [attachmentState, attachments])
 
   useEffect(() => {
     if (timelineResolution.error) setAdvancedOpen(true)
   }, [timelineResolution.error])
 
-  const replaceFirstFrame = useCallback(
-    (file: PromptInputPreparedFile) => {
-      attachments.clear()
-      attachments.upsertRemote('first_frame', {
-        ...file,
-        role: 'first_frame',
-      })
+  const replaceReference = useCallback(
+    (role: LTXReferenceRole, file: PromptInputPreparedFile) => {
+      attachments.upsertRemote(role, { ...file, role })
     },
     [attachments]
   )
 
+  const openUpload = (role: LTXReferenceRole) => {
+    uploadRoleRef.current = role
+    inputRef.current?.click()
+  }
+
   const handleFile = async (file: File | undefined) => {
     if (!file) return
-    if (!fileMatchesImage(file)) {
+    const role = uploadRoleRef.current
+    if (
+      (role === 'audio' && !fileMatchesAudio(file)) ||
+      (role !== 'audio' && !fileMatchesImage(file))
+    ) {
       toast.error(t('No files match the accepted types.'))
       return
     }
@@ -147,7 +161,7 @@ export function LTXStartEndPanel({
     onPreparingChange(true)
     try {
       const prepared = await prepareFiles([file])
-      if (prepared[0]) replaceFirstFrame(prepared[0])
+      if (prepared[0]) replaceReference(role, prepared[0])
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : t('Failed to upload material')
@@ -159,65 +173,127 @@ export function LTXStartEndPanel({
   }
 
   const handleMaterialSelect = (material: Material) => {
-    replaceFirstFrame({
+    if (!materialRole) return
+    replaceReference(materialRole, {
       url: material.url,
       mediaType: material.mime_type,
       filename: material.file_name || material.name,
     })
-    setMaterialOpen(false)
+    setMaterialRole(null)
   }
 
   const firstFrame = attachmentState.firstFrame
+  const lastFrame = attachmentState.lastFrame
+  const audio = attachmentState.audio
+
+  const renderReference = (
+    role: LTXReferenceRole,
+    label: string,
+    required: boolean,
+    file: (typeof attachments.files)[number] | undefined
+  ) => (
+    <Card size='sm'>
+      <CardHeader>
+        <CardTitle>{label}</CardTitle>
+        <CardAction>
+          <Badge variant={file ? 'secondary' : 'outline'}>
+            {file ? t('Added') : required ? t('Required') : t('Optional')}
+          </Badge>
+        </CardAction>
+      </CardHeader>
+      <CardContent className='flex flex-col gap-3'>
+        {file ? (
+          <div className='flex min-w-0 flex-col gap-2'>
+            {role === 'audio' ? (
+              <div className='bg-muted flex h-24 items-center justify-center rounded-lg px-3 text-center text-sm'>
+                {file.filename || t('Audio')}
+              </div>
+            ) : (
+              <div className='bg-muted flex aspect-video items-center justify-center overflow-hidden rounded-lg'>
+                <img
+                  alt={file.filename || label}
+                  className='size-full object-contain'
+                  src={file.url}
+                />
+              </div>
+            )}
+            <p className='text-muted-foreground truncate text-xs'>
+              {file.filename || label}
+            </p>
+          </div>
+        ) : (
+          <Button
+            className='h-24 w-full flex-col gap-2 whitespace-normal'
+            disabled={controlsDisabled}
+            onClick={() => openUpload(role)}
+            type='button'
+            variant='outline'
+          >
+            <HugeiconsIcon icon={Image01Icon} strokeWidth={1.5} />
+            <span>
+              {role === 'audio' ? t('Upload audio') : t('Upload image')}
+            </span>
+          </Button>
+        )}
+        <div className='flex flex-wrap gap-2'>
+          <Button
+            disabled={controlsDisabled}
+            onClick={() => openUpload(role)}
+            size='sm'
+            type='button'
+          >
+            <HugeiconsIcon icon={FileUploadIcon} strokeWidth={2} />
+            {file ? t('Replace') : t('Upload')}
+          </Button>
+          <Button
+            disabled={controlsDisabled}
+            onClick={() => setMaterialRole(role)}
+            size='sm'
+            type='button'
+            variant='outline'
+          >
+            <HugeiconsIcon icon={FolderLibraryIcon} strokeWidth={2} />
+            {t('Material library')}
+          </Button>
+          {file && (
+            <Button
+              aria-label={t('Remove {{label}}', { label })}
+              disabled={controlsDisabled}
+              onClick={() => attachments.remove(file.id)}
+              size='icon-sm'
+              type='button'
+              variant='ghost'
+            >
+              <HugeiconsIcon icon={Delete02Icon} strokeWidth={2} />
+            </Button>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  )
 
   return (
     <>
+      <div className='grid gap-3 px-4 pt-3 sm:grid-cols-2 lg:grid-cols-3'>
+        {renderReference('first_frame', t('First frame'), true, firstFrame)}
+        {renderReference('last_frame', t('Last frame'), false, lastFrame)}
+        {renderReference('audio', t('Audio'), false, audio)}
+      </div>
+
       <Card className='mx-4 mt-3 self-stretch' size='sm'>
         <CardHeader>
-          <CardTitle>{t('First frame')}</CardTitle>
+          <CardTitle>{t('Advanced timeline')}</CardTitle>
           <CardDescription>
-            {t('Upload one image. It will be used as the first frame.')}
+            {t('Configure the 24 FPS timeline used by this LTX workflow.')}
           </CardDescription>
           <CardAction>
-            <Badge variant={firstFrame ? 'secondary' : 'outline'}>
-              {firstFrame ? t('Added') : t('Required')}
+            <Badge variant='outline'>
+              {duration}s · {timelineResolution.frameCount} {t('frames')}
             </Badge>
           </CardAction>
         </CardHeader>
 
         <CardContent className='flex flex-col gap-3'>
-          {firstFrame ? (
-            <div className='flex min-w-0 flex-col gap-2'>
-              <div className='bg-muted flex aspect-video max-h-56 items-center justify-center overflow-hidden rounded-lg'>
-                <img
-                  alt={firstFrame.filename || t('First frame')}
-                  className='size-full object-contain'
-                  src={firstFrame.url}
-                />
-              </div>
-              <p className='text-muted-foreground truncate text-xs'>
-                {firstFrame.filename || t('First frame')}
-              </p>
-            </div>
-          ) : (
-            <Button
-              className='h-36 w-full flex-col gap-2 whitespace-normal'
-              disabled={controlsDisabled}
-              onClick={() => inputRef.current?.click()}
-              type='button'
-              variant='outline'
-            >
-              <HugeiconsIcon
-                data-icon='inline-start'
-                icon={Image01Icon}
-                strokeWidth={1.5}
-              />
-              <span>{t('Upload image')}</span>
-              <span className='text-muted-foreground text-xs font-normal'>
-                {t('Upload one image. It will be used as the first frame.')}
-              </span>
-            </Button>
-          )}
-
           <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
             <div className='flex flex-wrap items-center justify-between gap-2'>
               <CollapsibleTrigger
@@ -286,53 +362,9 @@ export function LTXStartEndPanel({
           </Collapsible>
         </CardContent>
 
-        <CardFooter className='flex-wrap gap-2'>
-          <Button
-            disabled={controlsDisabled}
-            onClick={() => inputRef.current?.click()}
-            size='sm'
-            type='button'
-          >
-            <HugeiconsIcon
-              data-icon='inline-start'
-              icon={FileUploadIcon}
-              strokeWidth={2}
-            />
-            {firstFrame ? t('Replace') : t('Upload')}
-          </Button>
-          <Button
-            disabled={controlsDisabled}
-            onClick={() => setMaterialOpen(true)}
-            size='sm'
-            type='button'
-            variant='outline'
-          >
-            <HugeiconsIcon
-              data-icon='inline-start'
-              icon={FolderLibraryIcon}
-              strokeWidth={2}
-            />
-            {t('Material library')}
-          </Button>
-          {firstFrame && (
-            <Button
-              aria-label={t('Remove {{label}}', { label: t('First frame') })}
-              disabled={controlsDisabled}
-              onClick={() => attachments.remove(firstFrame.id)}
-              size='icon-sm'
-              type='button'
-              variant='ghost'
-            >
-              <HugeiconsIcon
-                data-icon='inline-start'
-                icon={Delete02Icon}
-                strokeWidth={2}
-              />
-            </Button>
-          )}
+        <CardFooter>
           {!!timelineData.trim() && (
             <Button
-              className='ml-auto'
               disabled={controlsDisabled}
               onClick={() => onTimelineDataChange('')}
               size='sm'
@@ -347,7 +379,7 @@ export function LTXStartEndPanel({
 
       <input
         ref={inputRef}
-        accept='image/*'
+        accept={uploadRoleRef.current === 'audio' ? 'audio/*' : 'image/*'}
         className='hidden'
         disabled={controlsDisabled}
         onChange={(event) => {
@@ -359,11 +391,13 @@ export function LTXStartEndPanel({
       />
 
       <MaterialSelectorDialog
-        fixedType='image'
+        fixedType={materialRole === 'audio' ? 'audio' : 'image'}
         mode='video'
-        onOpenChange={setMaterialOpen}
+        onOpenChange={(open) => {
+          if (!open) setMaterialRole(null)
+        }}
         onSelect={handleMaterialSelect}
-        open={materialOpen}
+        open={materialRole !== null}
       />
     </>
   )
@@ -376,3 +410,16 @@ function fileMatchesImage(file: File): boolean {
     (!mediaType && /\.(avif|gif|jpe?g|png|webp)$/i.test(file.name))
   )
 }
+
+function fileMatchesAudio(file: File): boolean {
+  const mediaType = file.type.toLowerCase()
+  return (
+    mediaType.startsWith('audio/') ||
+    (!mediaType && /\.(aac|flac|m4a|mp3|ogg|wav)$/i.test(file.name))
+  )
+}
+
+type LTXReferenceRole = Extract<
+  PromptInputAttachmentRole,
+  'first_frame' | 'last_frame' | 'audio'
+>

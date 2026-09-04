@@ -8,7 +8,7 @@ import (
 
 // Runtime state used only by GET /v1/models list filtering.
 // Models in this set are known AIPDD catalog entries that are not listable
-// because they are explicitly unavailable or pricing-disabled. Absence from
+// because pricing is disabled. Runtime availability never controls listing. Absence from
 // the set must never be treated as "disabled", so unknown / stale / non-AIPDD
 // models keep their existing list behavior when catalog state is missing.
 var (
@@ -18,11 +18,8 @@ var (
 )
 
 // V1ModelsListHiddenNames returns AIPDD catalog model IDs that must not appear
-// in GET /v1/models. A model is hidden only when every catalog entry for that
-// ID is explicitly unavailable (available=false) or pricing-disabled.
-// A missing/null available flag is not a denylist signal: Java ComfyUI
-// entries historically omitted the field. Models not present in the catalog
-// are omitted from the result.
+// in GET /v1/models. A published model remains visible while workers are
+// offline; requests then fail with capacity_unavailable.
 func (catalog AtomicCatalog) V1ModelsListHiddenNames() []string {
 	enabledByName := make(map[string]bool)
 	for _, capability := range catalog.Capabilities {
@@ -30,7 +27,7 @@ func (catalog AtomicCatalog) V1ModelsListHiddenNames() []string {
 		if name == "" || excludedAIPDDCatalogText(capability.AdapterCode, capability.Code, capability.ID, capability.Name) {
 			continue
 		}
-		enabled := catalogAvailable(capability.Available) && capability.Pricing.Enabled
+		enabled := capability.Pricing.Enabled
 		if prev, ok := enabledByName[name]; ok {
 			enabledByName[name] = prev || enabled
 		} else {
@@ -42,8 +39,7 @@ func (catalog AtomicCatalog) V1ModelsListHiddenNames() []string {
 		if name == "" || excludedAIPDDCatalogText(model.ID, model.Name) {
 			continue
 		}
-		available := model.Available
-		enabled := catalogAvailable(&available) && model.Pricing.Enabled
+		enabled := model.Pricing.Enabled
 		if prev, ok := enabledByName[name]; ok {
 			enabledByName[name] = prev || enabled
 		} else {

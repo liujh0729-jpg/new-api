@@ -40,9 +40,10 @@ type videoProxyFailure struct {
 }
 
 type videoContentTarget struct {
-	URL     string
-	Headers http.Header
-	Proxy   string
+	URL                     string
+	Headers                 http.Header
+	Proxy                   string
+	SanitizeResponseHeaders bool
 }
 
 func newVideoProxyFailure(status int, errType string, message string) *videoProxyFailure {
@@ -174,9 +175,10 @@ func resolveTaskVideoContentTarget(ctx context.Context, task *model.Task) (*vide
 	}
 
 	return &videoContentTarget{
-		URL:     videoURL,
-		Headers: headers,
-		Proxy:   channel.GetSetting().Proxy,
+		URL:                     videoURL,
+		Headers:                 headers,
+		Proxy:                   channel.GetSetting().Proxy,
+		SanitizeResponseHeaders: channel.Type == constant.ChannelTypeSeedance,
 	}, nil
 }
 
@@ -190,6 +192,9 @@ func streamVideoContentTarget(c *gin.Context, taskID string, target *videoConten
 	fetchSetting := system_setting.GetFetchSetting()
 	if err := common.ValidateURLWithFetchSetting(target.URL, fetchSetting.EnableSSRFProtection, fetchSetting.AllowPrivateIp, fetchSetting.DomainFilterMode, fetchSetting.IpFilterMode, fetchSetting.DomainList, fetchSetting.IpList, fetchSetting.AllowedPorts, fetchSetting.ApplyIPFilterForDomain); err != nil {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Video URL blocked for task %s: %v", taskID, err))
+		if target.SanitizeResponseHeaders {
+			return newVideoProxyFailure(http.StatusForbidden, "server_error", "Failed to fetch video content")
+		}
 		return newVideoProxyFailure(http.StatusForbidden, "server_error", fmt.Sprintf("request blocked: %v", err))
 	}
 
@@ -216,19 +221,51 @@ func streamVideoContentTarget(c *gin.Context, taskID string, target *videoConten
 			fmt.Sprintf("Upstream service returned status %d", resp.StatusCode))
 	}
 
-	for key, values := range resp.Header {
-		for _, value := range values {
-			c.Writer.Header().Add(key, value)
-		}
-	}
+	copyVideoProxyResponseHeaders(c.Writer.Header(), resp.Header, target.SanitizeResponseHeaders)
 
-	setVideoProxyContentHeaders(c, taskID, target.URL, resp.Header.Get("Content-Type"))
+	contentType := resp.Header.Get("Content-Type")
+	if target.SanitizeResponseHeaders {
+		contentType = sanitizeVideoContentType(contentType)
+	}
+	setVideoProxyContentHeaders(c, taskID, target.URL, contentType)
 	setDefaultVideoProxyCacheControl(c)
 	c.Writer.WriteHeader(resp.StatusCode)
 	if _, err = io.Copy(c.Writer, resp.Body); err != nil {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to stream video content: %s", err.Error()))
 	}
 	return nil
+}
+
+func copyVideoProxyResponseHeaders(dst http.Header, src http.Header, sanitize bool) {
+	allowed := map[string]struct{}{
+		"Accept-Ranges": {}, "Cache-Control": {}, "Content-Length": {}, "Content-Range": {},
+		"Content-Type": {}, "Last-Modified": {},
+	}
+	for key, values := range src {
+		canonicalKey := http.CanonicalHeaderKey(key)
+		if sanitize {
+			if _, ok := allowed[canonicalKey]; !ok {
+				continue
+			}
+		}
+		for _, value := range values {
+			if sanitize && canonicalKey == "Content-Type" {
+				value = sanitizeVideoContentType(value)
+				if value == "" {
+					continue
+				}
+			}
+			dst.Add(canonicalKey, value)
+		}
+	}
+}
+
+func sanitizeVideoContentType(contentType string) string {
+	mediaType, _, err := mime.ParseMediaType(strings.TrimSpace(contentType))
+	if err != nil {
+		return ""
+	}
+	return mediaType
 }
 
 func copyHeaderValues(dst http.Header, src http.Header) {

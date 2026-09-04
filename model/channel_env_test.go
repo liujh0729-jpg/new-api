@@ -247,11 +247,10 @@ func TestEnsureAIPDDDefaultsRestoresLegacyV1SnapshotWithoutCachePrices(t *testin
 	require.Contains(t, constant.GetAIPDDOpenAIModelList(), "deepseek-v4-flash")
 }
 
-func TestEnsureAIPDDDefaultsRestoresRuntimeSnapshotWhenSyncDisabled(t *testing.T) {
+func TestEnsureAIPDDDefaultsRemovesLegacySeedanceFromManagedCatalog(t *testing.T) {
 	truncateTables(t)
 	constant.ResetAIPDDCapabilities()
 	constant.ResetAIPDDOpenAIModels()
-	preserveAIPDDPricingRuntime(t)
 	t.Cleanup(func() {
 		constant.ResetAIPDDCapabilities()
 		constant.ResetAIPDDOpenAIModels()
@@ -261,12 +260,12 @@ func TestEnsureAIPDDDefaultsRestoresRuntimeSnapshotWhenSyncDisabled(t *testing.T
 
 	const (
 		baseURL   = "https://aipdd.snapshot.test"
-		modelName = "AP Seedance snapshot test"
+		modelName = "AP Seedance legacy proxy"
 	)
 	displayAmount := 40.0
 	displayVideoAmount := 60.0
-	catalog := aipddTestCatalog("snapshot-runtime-revision", "unused-task", "unused-llm")
-	catalog.Capabilities = []aipddcatalog.AtomicCapability{{
+	catalog := aipddTestCatalog("snapshot-runtime-revision", "keep-task", "keep-llm")
+	catalog.Capabilities = append(catalog.Capabilities, aipddcatalog.AtomicCapability{
 		ID: modelName, Code: "seedance", Name: modelName, AdapterCode: "seedance",
 		EndpointType: "openai-video", TaskKind: "video_generation", Available: aipddcatalog.BoolPtr(true),
 		Execution: aipddcatalog.AtomicExecution{Protocol: "seedance_official", Path: "/api/v3/contents/generations/tasks"},
@@ -282,54 +281,89 @@ func TestEnsureAIPDDDefaultsRestoresRuntimeSnapshotWhenSyncDisabled(t *testing.T
 				},
 			},
 		},
-	}}
-	catalog.Models = nil
-	_, err := applyAIPDDCatalog(catalog, baseURL, "sk-snapshot-test")
+	})
+	payload, err := aipddcatalog.MarshalAtomic(catalog)
 	require.NoError(t, err)
-	require.NoError(t, UpdateOption(
-		"billing_setting.task_pricing",
-		`{"AP Seedance snapshot test":{"unit":"second","by_resolution":{"720p":{"no_reference_video_unit_price":0.08,"reference_video_policy":"custom","reference_video_unit_price":0.12}}}}`,
-	))
-	require.NoError(t, UpdateOption(
-		"billing_setting.billing_mode",
-		`{"AP Seedance snapshot test":"task_pricing"}`,
-	))
-
-	var channelBefore Channel
-	require.NoError(t, DB.Where("type = ?", constant.ChannelTypeAIPDD).First(&channelBefore).Error)
-	var snapshotBefore AIPDDCatalogSnapshot
-	require.NoError(t, DB.First(&snapshotBefore, aipddCatalogSnapshotID).Error)
-	var abilityCountBefore int64
-	require.NoError(t, DB.Model(&Ability{}).Count(&abilityCountBefore).Error)
-
-	constant.ResetAIPDDCapabilities()
-	constant.ResetAIPDDOpenAIModels()
-	InvalidatePricingCache()
-	_, found := findPricingForTest(GetPricing(), modelName)
-	require.False(t, found, "compiled defaults do not contain dynamic Seedance metadata")
+	require.NoError(t, DB.Create(&AIPDDCatalogSnapshot{
+		ID: aipddCatalogSnapshotID, SchemaVersion: 1, Revision: catalog.Revision,
+		SourceBaseURL: baseURL, Payload: string(payload),
+	}).Error)
+	vendor := Vendor{Name: "AIPDD", Status: 1}
+	require.NoError(t, DB.Create(&vendor).Error)
+	for _, name := range []string{modelName, "keep-task", "keep-llm"} {
+		require.NoError(t, DB.Create(&Model{
+			ModelName: name, VendorID: vendor.Id, Status: 1, SyncOfficial: 1,
+		}).Error)
+	}
+	baseURLValue := baseURL
+	channel := Channel{
+		Type: constant.ChannelTypeAIPDD, Name: aipddEnvChannelName, Key: "sk-snapshot-test",
+		Group: "default", Models: modelName + ",keep-task,keep-llm", Status: common.ChannelStatusEnabled,
+		BaseURL: &baseURLValue,
+	}
+	require.NoError(t, DB.Create(&channel).Error)
+	require.NoError(t, channel.AddAbilities(DB))
 
 	t.Setenv("AIPDD_API_KEY", "sk-snapshot-test")
 	t.Setenv("AIPDD_BASE_URL", baseURL)
 	t.Setenv("AIPDD_CATALOG_SYNC_ON_BOOT", "false")
 	require.NoError(t, EnsureAIPDDDefaults())
 
-	pricing, found := findPricingForTest(GetPricing(), modelName)
-	require.True(t, found)
-	require.Equal(t, "task_pricing", pricing.BillingMode)
-	require.Equal(t, []string{"720p"}, pricing.TaskPricingResolutions)
-	capability, found := constant.GetAIPDDCapability(modelName)
-	require.True(t, found)
-	require.Contains(t, capability.SeedancePricing.ByResolution, "720p")
+	var stored Channel
+	require.NoError(t, DB.First(&stored, channel.Id).Error)
+	require.Equal(t, "keep-task,keep-llm", stored.Models)
+	var legacyModelCount, legacyAbilityCount int64
+	require.NoError(t, DB.Unscoped().Model(&Model{}).Where("model_name = ?", modelName).Count(&legacyModelCount).Error)
+	require.NoError(t, DB.Model(&Ability{}).Where("model = ?", modelName).Count(&legacyAbilityCount).Error)
+	require.Zero(t, legacyModelCount)
+	require.Zero(t, legacyAbilityCount)
+	InvalidatePricingCache()
+	_, pricingFound := findPricingForTest(GetPricing(), modelName)
+	require.False(t, pricingFound)
+	_, capabilityFound := constant.GetAIPDDCapability(modelName)
+	require.False(t, capabilityFound)
+	require.Contains(t, constant.GetAIPDDTaskModelList(), "keep-task")
+	require.Contains(t, constant.GetAIPDDOpenAIModelList(), "keep-llm")
+}
 
-	var channelAfter Channel
-	require.NoError(t, DB.Where("type = ?", constant.ChannelTypeAIPDD).First(&channelAfter).Error)
-	var snapshotAfter AIPDDCatalogSnapshot
-	require.NoError(t, DB.First(&snapshotAfter, aipddCatalogSnapshotID).Error)
-	var abilityCountAfter int64
-	require.NoError(t, DB.Model(&Ability{}).Count(&abilityCountAfter).Error)
-	require.Equal(t, channelBefore, channelAfter)
-	require.Equal(t, snapshotBefore, snapshotAfter)
-	require.Equal(t, abilityCountBefore, abilityCountAfter)
+func TestCleanupManagedAIPDDSeedanceCatalogPreservesIndependentOfferingMetadata(t *testing.T) {
+	truncateTables(t)
+	const modelName = "Seedance migration alias"
+	aipddVendor := Vendor{Name: "AIPDD", Icon: constant.AIPDDLogoPath, Status: 1}
+	require.NoError(t, DB.Create(&aipddVendor).Error)
+	require.NoError(t, DB.Create(&Model{
+		ModelName: modelName, Description: "legacy proxy", Icon: constant.AIPDDLogoPath,
+		Tags: "AIPDD,Seedance,增强", VendorID: aipddVendor.Id, Status: 1, SyncOfficial: 1,
+	}).Error)
+	aipddChannel := Channel{
+		Type: constant.ChannelTypeAIPDD, Name: aipddEnvChannelName, Key: "sk-old",
+		Group: "default", Models: modelName, Status: common.ChannelStatusEnabled,
+	}
+	require.NoError(t, DB.Create(&aipddChannel).Error)
+	require.NoError(t, aipddChannel.AddAbilities(DB))
+	seedanceChannel := Channel{
+		Type: constant.ChannelTypeSeedance, Name: "字节跳动 Seedance", Key: "managed",
+		Group: "default", Models: modelName, Status: common.ChannelStatusEnabled,
+	}
+	require.NoError(t, DB.Create(&seedanceChannel).Error)
+	require.NoError(t, seedanceChannel.AddAbilities(DB))
+
+	changed, err := cleanupManagedAIPDDSeedanceCatalog()
+	require.NoError(t, err)
+	require.True(t, changed)
+
+	var oldAbilityCount, independentAbilityCount int64
+	require.NoError(t, DB.Model(&Ability{}).Where("channel_id = ? AND model = ?", aipddChannel.Id, modelName).Count(&oldAbilityCount).Error)
+	require.NoError(t, DB.Model(&Ability{}).Where("channel_id = ? AND model = ?", seedanceChannel.Id, modelName).Count(&independentAbilityCount).Error)
+	require.Zero(t, oldAbilityCount)
+	require.Equal(t, int64(1), independentAbilityCount)
+	var metadata Model
+	require.NoError(t, DB.Where("model_name = ?", modelName).First(&metadata).Error)
+	require.Equal(t, seedancePublicModelTags, metadata.Tags)
+	require.NotEqual(t, aipddVendor.Id, metadata.VendorID)
+	var vendor Vendor
+	require.NoError(t, DB.First(&vendor, metadata.VendorID).Error)
+	require.Equal(t, seedancePublicVendorName, vendor.Name)
 }
 
 func TestEnsureAIPDDDefaultsSyncsDynamicCatalogOnBoot(t *testing.T) {

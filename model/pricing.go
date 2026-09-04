@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"sync"
@@ -10,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
 )
@@ -38,6 +40,12 @@ type Pricing struct {
 	TaskPricing            *billing_setting.TaskPricingConfig `json:"task_pricing,omitempty"`
 	TaskPricingResolutions []string                           `json:"task_pricing_resolutions,omitempty"`
 	PricingVersion         string                             `json:"pricing_version,omitempty"`
+	IsIndependentSeedance  bool                               `json:"-"`
+}
+
+type seedanceRetailPrice struct {
+	MicroRMB int64
+	Valid    bool
 }
 
 type PricingVendor struct {
@@ -619,6 +627,7 @@ func updatePricing() {
 	pricingMap = make([]Pricing, 0)
 	taskPricingRequiredModels := getAIPDDTaskPricingRequiredSetLocked()
 	taskPricingResolutionOptions := getTaskPricingResolutionOptionsLocked()
+	seedanceRetailPrices := getPublishedSeedanceRetailPrices()
 	for model, groups := range modelGroupsMap {
 		pricing := Pricing{
 			ModelName:              model,
@@ -637,8 +646,20 @@ func updatePricing() {
 			pricing.Tags = meta.Tags
 			pricing.VendorID = meta.VendorID
 		}
+		seedanceRetail, isIndependentSeedance := seedanceRetailPrices[model]
 		billingMode := billing_setting.GetBillingMode(model)
-		if billingMode == billing_setting.BillingModeTaskPricing {
+		if isIndependentSeedance {
+			exchangeRate := operation_setting.USDExchangeRate
+			if !seedanceRetail.Valid || exchangeRate <= 0 || math.IsNaN(exchangeRate) || math.IsInf(exchangeRate, 0) {
+				// A global model listing cannot truthfully quote channel-specific
+				// prices when active offerings disagree. Hide the entry until the
+				// administrator resolves the conflict.
+				continue
+			}
+			pricing.IsIndependentSeedance = true
+			pricing.ModelPrice = float64(seedanceRetail.MicroRMB) / 1_000_000 / exchangeRate
+			pricing.QuotaType = 1
+		} else if billingMode == billing_setting.BillingModeTaskPricing {
 			taskPricing, ok := billing_setting.GetTaskPricing(model)
 			if !ok || billing_setting.ValidateTaskPricingConfig(taskPricing) != nil {
 				continue
@@ -714,6 +735,50 @@ func updatePricing() {
 	modelEnableGroupsLock.Unlock()
 
 	lastGetPricingTime = time.Now()
+}
+
+// getPublishedSeedanceRetailPrices reads the independent channel's published
+// single total price without importing any AIPDD catalog state. A public model
+// is returned as invalid when multiple executable channels advertise different
+// totals, because the global pricing page cannot represent that safely.
+func getPublishedSeedanceRetailPrices() map[string]seedanceRetailPrice {
+	prices := make(map[string]seedanceRetailPrice)
+	if DB == nil || !DB.Migrator().HasTable(&SeedanceModelOffering{}) ||
+		!DB.Migrator().HasTable(&SeedanceChannelConfig{}) ||
+		!DB.Migrator().HasTable(&SeedanceVolcengineCredential{}) ||
+		!DB.Migrator().HasTable(&MediaEnhancementProvider{}) {
+		return prices
+	}
+	var rows []struct {
+		DisplayName string
+		Minimum     int64
+		Maximum     int64
+	}
+	err := DB.Table("seedance_model_offerings AS offerings").
+		Select("offerings.display_name, MIN(offerings.model_sale_micro_rmb) AS minimum, MAX(offerings.model_sale_micro_rmb) AS maximum").
+		Joins("JOIN channels ON channels.id = offerings.channel_id").
+		Joins("JOIN seedance_channel_configs AS configs ON configs.channel_id = offerings.channel_id").
+		Joins("JOIN seedance_volcengine_credentials AS credentials ON credentials.channel_id = offerings.channel_id").
+		Joins("JOIN media_enhancement_providers AS providers ON providers.id = offerings.enhancement_provider_id").
+		Where("offerings.enabled = ? AND offerings.published_at > 0", true).
+		Where("channels.type = ? AND channels.status = ?", constant.ChannelTypeSeedance, common.ChannelStatusEnabled).
+		Where("configs.status = ? AND configs.last_verified_at > 0", SeedanceConfigActive).
+		Where("credentials.status = ?", SeedanceCredentialActive).
+		Where("providers.status = ?", SeedanceConfigActive).
+		Group("offerings.display_name").
+		Scan(&rows).Error
+	if err != nil {
+		common.SysLog("failed to load published Seedance retail prices: " + err.Error())
+		return prices
+	}
+	for _, row := range rows {
+		modelName := strings.TrimSpace(row.DisplayName)
+		if modelName == "" {
+			continue
+		}
+		prices[modelName] = seedanceRetailPrice{MicroRMB: row.Minimum, Valid: row.Minimum == row.Maximum}
+	}
+	return prices
 }
 
 // GetSupportedEndpointMap 返回全局端点到路径的映射

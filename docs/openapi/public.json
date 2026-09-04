@@ -38,7 +38,7 @@
     },
     {
       "name": "MiniMax H3",
-      "description": "MiniMax H3 五个公开模型，走 /v1/videos。请使用 duration_seconds、video_resolution、image_urls 和 audio_urls 等 H3 字段"
+      "description": "MiniMax H3 统一模型 ap-minimax-h3，走 /v1/videos。可用 request_kind 选择能力，也可按输入参数自动判断"
     },
     {
       "name": "Agnes",
@@ -71,7 +71,7 @@
         "tags": ["基础接口"],
         "summary": "获取价格目录",
         "operationId": "getPricing",
-        "description": "公开的动态价格与可用分辨率目录，无需 API Token。同一模型可能因分辨率、是否含参考视频、PLATFORM/BYOK 而不同。响应固定声明 `currency=CNY`；`model_price` 以及 `task_pricing` 下所有 `*_unit_price` 均为人民币金额，任务价格当前按秒计价。`model_ratio`、倍率字段和 `billing_expr` 是计算元数据，不是金额。登录站点后的浏览器会按当前账号分组过滤目录；普通 API 客户端获得公开目录。",
+        "description": "公开的动态价格与可用分辨率目录，无需 API Token。同一模型可能因分辨率、是否含参考视频和计费方式而不同。响应固定声明 `currency=CNY`；`model_price` 以及 `task_pricing` 下所有 `*_unit_price` 均为人民币金额，任务价格当前按秒计价。`model_ratio`、倍率字段和 `billing_expr` 是计算元数据，不是金额。登录站点后的浏览器会按当前账号分组过滤目录；普通 API 客户端获得公开目录。",
         "security": [],
         "responses": {
           "200": {
@@ -346,9 +346,9 @@
     "/v1/images/edits": {
       "post": {
         "tags": ["通用图片生成"],
-        "summary": "图编辑",
+        "summary": "图生图 / 图片编辑",
         "operationId": "editImage",
-        "description": "同步图片编辑，使用 `multipart/form-data`。\n\n### AP 图片模型图生图\n\n`ap-image-2.0` 和 `ap-image-fast-2.0` 都通过本接口输入参考图。`model`、`prompt` 和至少一个 `image` 文件必填，`n` 只能为 `1`；不支持 `mask`。图片格式仅限 PNG、JPEG、WebP，单张不超过 10 MB，所有参考图合计不超过 40 MB。\n\n- `ap-image-2.0`：最多 8 张参考图；尺寸为 `auto`、`1024x1024`、`2048x2048`、`1024x1536`、`1536x1024`。\n- `ap-image-fast-2.0`：最多 3 张参考图；尺寸为 `1024x1024`、`2048x2048`、`1536x1024`、`1024x1536`、`2048x1152`、`1152x2048`。\n- 多图时重复提交同名 `image` 字段；NewAPI 也兼容 `image[]`。结果统一位于 `data[].url`。\n\n`ap-image-2.0` 多参考图示例：\n\n```bash\ncurl --request POST 'https://susciyuan.com/v1/images/edits' \\\n  --header 'Authorization: Bearer <YOUR_API_KEY>' \\\n  --form 'model=ap-image-2.0' \\\n  --form 'prompt=保持人物一致，把背景改为雪夜城市' \\\n  --form 'size=1536x1024' \\\n  --form 'quality=high' \\\n  --form 'n=1' \\\n  --form 'image=@subject.png' \\\n  --form 'image=@style.webp'\n```\n\n`ap-image-fast-2.0` 示例：\n\n```bash\ncurl --request POST 'https://susciyuan.com/v1/images/edits' \\\n  --header 'Authorization: Bearer <YOUR_API_KEY>' \\\n  --form 'model=ap-image-fast-2.0' \\\n  --form 'prompt=保留主体，改成复古海报风格' \\\n  --form 'size=2048x1152' \\\n  --form 'n=1' \\\n  --form 'image=@reference.jpg'\n```\n\nAgnes Image 2.1 Flash 接受 1–8 个 `image` 文件，支持 PNG、JPEG、WebP；整个请求最大 64 MB。",
+        "description": "图片编辑使用 `multipart/form-data`。\n\n### Qwen Image Edit\n\n统一模型 ID 为 `ap-qwen-image-edit`。`model`、`prompt` 和 1–3 个重复的 `image` 文件必填，单张最大 50 MiB。系统按图片数量自动选择单图、双图或三图共享算力工作流。该模型异步返回任务 ID，使用 `GET /v1/images/edits/{task_id}` 查询。\n\n```bash\ncurl --request POST 'https://susciyuan.com/v1/images/edits' \\\n  --header 'Authorization: Bearer <YOUR_API_KEY>' \\\n  --form 'model=ap-qwen-image-edit' \\\n  --form 'prompt=保持人物一致，把背景改为雪夜城市' \\\n  --form 'image=@subject.png' \\\n  --form 'image=@style.webp'\n```\n\n### 其他图片模型\n\n`ap-image-2.0` 支持 1–8 张参考图，`ap-image-fast-2.0` 支持 1–3 张参考图；PNG/JPEG/WebP，单张不超过 10 MB、合计不超过 40 MB。Agnes Image 2.1 Flash 接受 1–8 个 `image` 文件，整个请求最大 64 MB。",
         "security": [{ "BearerAuth": [] }],
         "requestBody": {
           "required": true,
@@ -360,9 +360,16 @@
         },
         "responses": {
           "200": {
-            "description": "编辑后的图片；上游若附带 usage.cost，该值以人民币返回并声明 usage.currency=CNY",
+            "description": "同步编辑结果或异步任务",
             "content": {
-              "application/json": { "schema": { "$ref": "#/components/schemas/ImageGenerationResponse" } }
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    { "$ref": "#/components/schemas/ImageGenerationResponse" },
+                    { "$ref": "#/components/schemas/AsyncMediaTaskCreateResponse" }
+                  ]
+                }
+              }
             }
           },
           "400": { "$ref": "#/components/responses/BadRequest" },
@@ -372,12 +379,34 @@
         }
       }
     },
+    "/v1/images/edits/{task_id}": {
+      "get": {
+        "tags": ["通用图片生成"],
+        "summary": "查询异步图片编辑任务",
+        "operationId": "getImageEditTask",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "task_id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "异步图片编辑任务状态",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/AsyncMediaTaskResponse" } }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "502": { "$ref": "#/components/responses/UpstreamError" }
+        }
+      }
+    },
     "/v1/videos": {
       "post": {
         "tags": ["通用视频生成"],
         "summary": "创建视频任务",
         "operationId": "createVideo",
-        "description": "OpenAI Video 风格创建入口。Wan / LTX / Seedance / MiniMax H3 / Agnes 都可走此路径。\n\n查询必须用 `GET /v1/videos/{task_id}`。Seedance 若要用官方响应格式，改走 Seedance 分类的 `/api/v3/contents/generations/tasks`。MiniMax H3 与 Agnes 都使用 `duration_seconds`、`video_resolution`，但素材字段和模型约束不同，分别见对应分类。",
+        "description": "OpenAI Video 风格创建入口。Wan / LTX / Seedance / MiniMax H3 / Agnes 都可走此路径。\n\n`ap-ltx-2.3` 必须显式传 `variant`：`standard` 使用 1 张 `image`；`start_end` 使用必填 `first_frame`、可选 `last_frame` 和可选 `audio`；`licon_1role` 的 `images` 依次为场景图、人物图；`licon_2role` 再追加第二张人物图。\n\n查询必须用 `GET /v1/videos/{task_id}`。Seedance 若要用官方响应格式，改走 Seedance 分类的 `/api/v3/contents/generations/tasks`。MiniMax H3 与 Agnes 都使用 `duration_seconds`、`video_resolution`，但素材字段和模型约束不同，分别见对应分类。",
         "security": [{ "BearerAuth": [] }],
         "requestBody": {
           "required": true,
@@ -406,7 +435,7 @@
                 "minimax": {
                   "summary": "MiniMax H3 文生视频",
                   "value": {
-                    "model": "ap-minimax-h3-text-to-video",
+                    "model": "ap-minimax-h3",
                     "prompt": "一只橘猫在木桌旁喝水",
                     "duration_seconds": 5,
                     "video_resolution": "480p",
@@ -423,6 +452,18 @@
                     "video_resolution": "960P",
                     "ratio": "16:9"
                   }
+                },
+                "ltx23": {
+                  "summary": "LTX 2.3 统一模型",
+                  "value": {
+                    "model": "ap-ltx-2.3",
+                    "variant": "standard",
+                    "prompt": "镜头缓慢推近",
+                    "image": "https://example.com/first.png",
+                    "duration": 5,
+                    "width": 1280,
+                    "height": 704
+                  }
                 }
               }
             }
@@ -430,10 +471,18 @@
         },
         "responses": {
           "200": {
-            "description": "任务已创建",
+            "description": "其他异步视频模型返回的任务已创建响应",
             "content": {
               "application/json": {
                 "schema": { "$ref": "#/components/schemas/OpenAIVideoTask" }
+              }
+            }
+          },
+          "202": {
+            "description": "Seedance 任务已接受",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SeedanceOpenAIVideoTask" }
               }
             }
           },
@@ -467,6 +516,23 @@
           },
           "400": { "$ref": "#/components/responses/BadRequest" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
+          "502": { "$ref": "#/components/responses/UpstreamError" }
+        }
+      },
+      "delete": {
+        "tags": ["通用视频生成"],
+        "summary": "删除或取消视频任务",
+        "operationId": "deleteVideo",
+        "description": "删除已完成任务，或取消仍在处理的任务；成功返回空响应。",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "task_id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "204": { "description": "已删除或取消" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" },
           "502": { "$ref": "#/components/responses/UpstreamError" }
         }
       }
@@ -614,8 +680,8 @@
                     "model": "AP Seedance-2.5 标准版",
                     "content": [
                       { "type": "text", "text": "两位角色在咖啡馆交谈" },
-                      { "type": "image_url", "image_url": { "url": "asset://provider-asset-a" }, "role": "reference_image" },
-                      { "type": "image_url", "image_url": { "url": "asset://provider-asset-b" }, "role": "reference_image" }
+                      { "type": "image_url", "image_url": { "url": "asset://character-a" }, "role": "reference_image" },
+                      { "type": "image_url", "image_url": { "url": "asset://character-b" }, "role": "reference_image" }
                     ],
                     "resolution": "720p",
                     "ratio": "adaptive",
@@ -652,6 +718,36 @@
           "502": { "$ref": "#/components/responses/UpstreamError" },
           "503": { "$ref": "#/components/responses/ServiceUnavailable" }
         }
+      },
+      "get": {
+        "tags": ["Seedance"],
+        "summary": "列出视频任务（Seedance官方协议）",
+        "operationId": "listSeedanceTasks",
+        "description": "返回当前用户创建的任务快照，支持状态、模型和任务 ID 过滤。",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "filter.status", "in": "query", "required": false, "schema": { "type": "string", "enum": ["queued", "running", "succeeded", "failed", "cancelled"] } },
+          { "name": "filter.model", "in": "query", "required": false, "schema": { "type": "string" } },
+          { "name": "filter.task_ids", "in": "query", "required": false, "schema": { "type": "array", "items": { "type": "string" } }, "description": "可重复提交，也可用逗号分隔" },
+          { "name": "filter.service_tier", "in": "query", "required": false, "schema": { "type": "string" } },
+          { "name": "page_size", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 500, "default": 20 } },
+          { "name": "page_num", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 500, "default": 1 } }
+        ],
+        "responses": {
+          "200": {
+            "description": "当前用户的任务列表",
+            "content": { "application/json": { "schema": {
+              "type": "object",
+              "required": ["items", "total"],
+              "properties": {
+                "items": { "type": "array", "items": { "$ref": "#/components/schemas/SeedanceOfficialTask" } },
+                "total": { "type": "integer", "format": "int64" }
+              }
+            } } }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
       }
     },
     "/api/v3/contents/generations/tasks/{task_id}": {
@@ -676,7 +772,7 @@
                   "status": "succeeded",
                   "duration": 8,
                   "resolution": "1080p",
-                  "content": { "video_url": "https://example.com/result.mp4" },
+                  "content": { "video_url": "https://gateway.example/v1/videos/task_xxx/content" },
                   "usage": { "completion_tokens": 400000, "total_tokens": 400000 }
                 }
               }
@@ -687,6 +783,26 @@
           "404": { "$ref": "#/components/responses/NotFound" },
           "502": { "$ref": "#/components/responses/UpstreamError" },
           "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      },
+      "delete": {
+        "tags": ["Seedance"],
+        "summary": "删除或取消视频任务（Seedance官方协议）",
+        "operationId": "deleteSeedanceTask",
+        "description": "处理中任务先取消，终态任务执行软删除；两种情况都返回最后的公开任务快照。",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "task_id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "取消或软删除后的公开任务快照",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SeedanceOfficialTask" } } }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "502": { "$ref": "#/components/responses/UpstreamError" }
         }
       }
     },
@@ -1281,19 +1397,12 @@
         "required": ["model"],
         "additionalProperties": true,
         "properties": {
-          "model": { "type": "string", "description": "AP 图片模型可选 ap-image-2.0（旗舰版）或 ap-image-fast-2.0（极速版）" },
+          "model": { "type": "string", "description": "文生图模型 ID；带参考图的请求请使用 /v1/images/edits" },
           "prompt": { "type": "string", "description": "图片生成提示词；AP 图片模型必填" },
           "n": { "type": "integer", "minimum": 1, "description": "AP 图片模型和 Agnes 只能为 1" },
           "size": { "type": "string", "description": "ap-image-2.0：auto / 1024x1024 / 2048x2048 / 1024x1536 / 1536x1024；ap-image-fast-2.0：1024x1024 / 2048x2048 / 1536x1024 / 1024x1536 / 2048x1152 / 1152x2048；Agnes 必填：1K / 2K / 3K / 4K" },
           "quality": { "type": "string", "maxLength": 32, "description": "AP 图片模型可选，原样传递给上游质量策略" },
           "ratio": { "type": "string", "description": "Agnes：1:1 / 3:4 / 4:3 / 16:9 / 9:16 / 2:3 / 3:2 / 21:9" },
-          "image": {
-            "oneOf": [
-              { "type": "string", "description": "参考图 URL 或 Data URI" },
-              { "type": "array", "items": { "type": "string" } }
-            ]
-          },
-          "images": { "type": "array", "items": { "type": "string" }, "description": "参考图 URL 或 Data URI 数组" },
           "response_format": { "type": "string", "enum": ["url", "b64_json"], "description": "AP 图片模型和 Agnes 均接受；NewAPI 会转存结果并统一返回 data[].url" }
         }
       },
@@ -1367,7 +1476,7 @@
               "quota_cny": { "type": "number", "description": "人民币任务费用" },
               "cost_cny": { "type": "number", "description": "quota_cny 的人民币语义别名" },
               "currency": { "type": "string", "enum": ["CNY"] },
-              "endpoint_type": { "type": "string", "example": "image_generation" },
+              "endpoint_type": { "type": "string", "enum": ["image-generation", "image-to-image", "image-edit", "openai-video", "audio-speech"] },
               "media_type": { "type": "string", "example": "image" },
               "data": { "type": "object", "additionalProperties": true }
             }
@@ -1376,9 +1485,9 @@
       },
       "ImageEditRequest": {
         "type": "object",
-        "required": ["model"],
+        "required": ["model", "prompt", "image"],
         "properties": {
-          "model": { "type": "string", "description": "AP 图片模型可选 ap-image-2.0（旗舰版）或 ap-image-fast-2.0（极速版）" },
+          "model": { "type": "string", "description": "图片编辑模型 ID；Qwen 统一图片编辑模型使用 ap-qwen-image-edit" },
           "prompt": { "type": "string", "description": "编辑指令；AP 图片模型必填" },
           "size": { "type": "string", "description": "ap-image-2.0：auto / 1024x1024 / 2048x2048 / 1024x1536 / 1536x1024；ap-image-fast-2.0：1024x1024 / 2048x2048 / 1536x1024 / 1024x1536 / 2048x1152 / 1152x2048；Agnes：1K / 2K / 3K / 4K" },
           "quality": { "type": "string", "maxLength": 32, "description": "AP 图片模型可选，原样传递给上游质量策略" },
@@ -1388,7 +1497,7 @@
           "image": {
             "type": "string",
             "format": "binary",
-            "description": "参考图文件，可重复提交：ap-image-2.0 为 1–8 张，ap-image-fast-2.0 为 1–3 张；PNG/JPEG/WebP，单张不超过 10 MB、合计不超过 40 MB。Agnes 为 1–8 张。"
+            "description": "参考图文件；多图兼容重复 image 或 OpenAI 示例中的 image[]。ap-qwen-image-edit 为 1–3 张、单张最大 50 MiB。"
           }
         }
       },
@@ -1399,6 +1508,7 @@
         "properties": {
           "model": { "type": "string" },
           "prompt": { "type": "string" },
+          "variant": { "type": "string", "enum": ["standard", "start_end", "licon_1role", "licon_2role"], "description": "ap-ltx-2.3 必填；精确选择四种共享算力工作流" },
           "mode": { "type": "string", "description": "Agnes：text / text_to_video / keyframe / first_last_frame_to_video / reference / reference_to_video" },
           "duration": { "type": "number" },
           "seconds": {
@@ -1416,13 +1526,20 @@
           "audios": { "type": "array", "maxItems": 3, "items": { "type": "string" }, "description": "Agnes reference 模式的参考音频 URL/Data URI" },
           "videos": { "type": "array", "maxItems": 3, "items": { "$ref": "#/components/schemas/AgnesVideoReference" }, "description": "仅 ap-agnes-video-2.5 的 reference 模式支持" },
           "content": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
+          "request_kind": { "type": "string", "enum": ["text_to_video", "reference_to_video", "multimodal_to_video", "image_audio_lipsync", "first_last_frame_to_video"], "description": "MiniMax H3 可选能力类型；不传时按请求参数自动判断" },
           "duration_seconds": { "type": "integer", "minimum": 1, "description": "MiniMax H3 必填；Agnes 取 4–12，默认 5" },
           "video_resolution": { "type": "string", "description": "MiniMax H3：480p / 768p / 1080p；Agnes 普通版：720P / 960P / 2K，Flash：仅 720P" },
           "image_urls": { "type": "array", "items": { "type": "string", "format": "uri" }, "description": "MiniMax H3 参考图 URL 数组" },
           "audio_urls": { "type": "array", "items": { "type": "string", "format": "uri" }, "description": "MiniMax H3 参考音频 URL 数组" },
-          "first_frame": { "type": "string", "description": "MiniMax H3 或 Agnes keyframe 模式的首帧；Agnes 接受 HTTPS URL 或图片 Data URI" },
-          "last_frame": { "type": "string", "description": "MiniMax H3 或 Agnes keyframe 模式的尾帧；Agnes 必须同时提供 first_frame" },
-          "seed": { "type": "integer", "description": "MiniMax H3 仅多图参考和多图多音频模型生效" }
+          "first_frame": { "type": "string", "description": "MiniMax H3、Agnes keyframe 或 ap-ltx-2.3 start_end 的首帧；LTX start_end 必填" },
+          "last_frame": { "type": "string", "description": "MiniMax H3、Agnes keyframe 或 ap-ltx-2.3 start_end 的尾帧；LTX 中可选" },
+          "audio": { "type": "string", "description": "ap-ltx-2.3 start_end 的可选音频 URL/Data URI" },
+          "width": { "type": "integer", "description": "LTX 输出宽度" },
+          "height": { "type": "integer", "description": "LTX 输出高度" },
+          "numFrames": { "type": "integer", "minimum": 1, "description": "LTX 输出帧数；24 FPS 时 N 秒对应 N×24+1 帧" },
+          "frameRate": { "type": "integer", "enum": [24], "description": "LTX 固定 24 FPS" },
+          "negativePrompt": { "type": "string", "description": "LTX 可选反向提示词" },
+          "seed": { "type": "integer", "description": "MiniMax H3 仅多图参考和多图多音频能力生效" }
         }
       },
       "AgnesVideoReference": {
@@ -1470,17 +1587,46 @@
           "usage": { "$ref": "#/components/schemas/SeedanceOfficialUsage" }
         }
       },
+      "SeedanceOpenAIVideoTask": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "object", "model", "status", "progress", "created_at"],
+        "properties": {
+          "id": { "type": "string" },
+          "task_id": { "type": "string", "deprecated": true },
+          "object": { "type": "string", "enum": ["video"] },
+          "model": { "type": "string" },
+          "status": { "type": "string", "enum": ["queued", "in_progress", "completed", "failed"] },
+          "progress": { "type": "integer", "minimum": 0, "maximum": 100 },
+          "created_at": { "type": "integer", "format": "int64" },
+          "completed_at": { "type": "integer", "format": "int64" },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": { "url": { "type": "string", "format": "uri" } }
+          },
+          "usage": { "$ref": "#/components/schemas/SeedanceOfficialUsage" },
+          "error": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["code", "message"],
+            "properties": {
+              "code": { "type": "string" },
+              "message": { "type": "string" }
+            }
+          }
+        }
+      },
       "OpenAIVideoError": {
         "type": "object",
+        "additionalProperties": false,
         "required": ["message", "code"],
         "properties": {
           "message": { "type": "string" },
           "code": { "type": "string" },
           "param": { "type": "string" },
           "request_id": { "type": "string" },
-          "provider": { "type": "string" },
           "category": { "type": "string" },
-          "upstream_code": { "type": "string" },
           "retryable": { "type": "boolean" }
         }
       },
@@ -1500,7 +1646,7 @@
       "SeedanceCreateRequest": {
         "type": "object",
         "required": ["model"],
-        "description": "`prompt` 与 `content` 至少提供一个。顶层标准字段优先于 metadata 中的同名字段。2.5 不支持 frames/fps 变体、seed、camera_fixed、draft、service_tier；首尾帧不能与 reference 媒体混用，last_frame 必须搭配 first_frame。2.0 与 2.5 的其他约束详见各字段说明。",
+        "description": "`prompt` 与 `content` 至少提供一个。顶层标准字段优先于 metadata 中的同名字段。普通 2.5 模型不支持 frames/fps 变体、seed、camera_fixed、draft、service_tier；Seedance 售卖模型的输出 FPS 由 Root 固定配置。首尾帧不能与 reference 媒体混用，last_frame 必须搭配 first_frame。2.0 与 2.5 的其他约束详见各字段说明。",
         "properties": {
           "model": {
             "type": "string",
@@ -1520,6 +1666,7 @@
           },
           "width": { "type": "integer", "minimum": 1, "description": "兼容字段；通常优先使用 resolution + ratio" },
           "height": { "type": "integer", "minimum": 1, "description": "兼容字段；通常优先使用 resolution + ratio" },
+          "framespersecond": { "type": "integer", "minimum": 1, "maximum": 240, "description": "仅 Seedance 售卖模型：输出 FPS。可以省略；显式传入时必须与售卖模型固定配置一致，否则返回 400。普通 2.5 模型不支持该字段" },
           "image": { "type": "string", "description": "单图兼容字段，可传公网 URL、Base64 或 asset://{asset_id}" },
           "images": { "type": "array", "items": { "type": "string" }, "description": "多图兼容字段" },
           "generate_audio": { "type": "boolean", "description": "2.5 默认 true；2.0 默认 false" },
@@ -1552,14 +1699,15 @@
       },
       "SeedanceOfficialUsage": {
         "type": "object",
+        "additionalProperties": false,
         "properties": {
           "completion_tokens": { "type": "integer", "format": "int64" },
-          "total_tokens": { "type": "integer", "format": "int64" },
-          "tool_usage": { "type": "object", "additionalProperties": true }
+          "total_tokens": { "type": "integer", "format": "int64" }
         }
       },
       "SeedanceOfficialTask": {
         "type": "object",
+        "additionalProperties": false,
         "required": ["id", "status"],
         "properties": {
           "id": { "type": "string" },
@@ -1570,6 +1718,7 @@
           "output_format": { "type": "string", "enum": ["mp4", "mov"] },
           "content": {
             "type": "object",
+            "additionalProperties": false,
             "properties": {
               "video_url": { "type": "string", "format": "uri" }
             }
@@ -1578,7 +1727,7 @@
           "error": {
             "type": "object",
             "description": "失败时返回",
-            "additionalProperties": true,
+            "additionalProperties": false,
             "properties": {
               "code": { "type": "string" },
               "message": { "type": "string" }

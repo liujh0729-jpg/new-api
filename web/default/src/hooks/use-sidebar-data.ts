@@ -36,6 +36,7 @@ import {
   Image as ImageIcon,
   UserRoundCog,
   ScrollText,
+  Video,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { WORKSPACE_IDS } from '@/components/layout/lib/workspace-registry'
@@ -148,11 +149,6 @@ export function useSidebarData(): SidebarData {
             icon: Ticket,
           },
           {
-            title: t('AIPDD Order Records'),
-            url: '/aipdd-transit-orders',
-            icon: ScrollText,
-          },
-          {
             title: t('Subscription Management'),
             url: '/subscriptions',
             icon: CreditCard,
@@ -162,6 +158,16 @@ export function useSidebarData(): SidebarData {
             url: '/system-settings/site',
             activeUrls: ['/system-settings'],
             icon: Settings,
+          },
+          {
+            title: t('Seedance Management'),
+            url: '/seedance-management',
+            icon: Video,
+          },
+          {
+            title: t('AIPDD Order Records'),
+            url: '/aipdd-transit-orders',
+            icon: ScrollText,
           },
         ],
       },

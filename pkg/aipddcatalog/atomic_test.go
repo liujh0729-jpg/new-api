@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestFetchAtomicFiltersExcludedFamiliesOnReceiver(t *testing.T) {
+func TestFetchAtomicUsesTokenMarketCatalogWithoutFamilyExclusions(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, AtomicCatalogPath, r.URL.Path)
 		_, _ = w.Write([]byte(`{
@@ -20,7 +20,7 @@ func TestFetchAtomicFiltersExcludedFamiliesOnReceiver(t *testing.T) {
 				"capabilities":[
 					{"id":"keep-comfy","code":"keep-comfy","adapterCode":"comfyui","execution":{"protocol":"shared_task","path":"/shared-tasks/tasks"},"pricing":{"enabled":true,"chargeConfig":{"amountAwcoin":10}}},
 					{"id":"seedvr2-upscale","code":"seedvr2-upscale","adapterCode":"comfyui","execution":{"protocol":"shared_task","path":"/shared-tasks/tasks"},"pricing":{"enabled":true,"chargeConfig":{"amountAwcoin":10}}},
-					{"id":"aipdd_lightx2v_ltx23_distilled_fp8_i2av","code":"aipdd_lightx2v_ltx23_distilled_fp8_i2av","adapterCode":"lightx2v_python","execution":{"protocol":"shared_task","path":"/shared-tasks/tasks"},"pricing":{"enabled":true,"chargeConfig":{"amountAwcoin":10}}}
+					{"id":"aipdd_lightx2v_ltx23_distilled_fp8_i2av","code":"aipdd_lightx2v_ltx23_distilled_fp8_i2av","adapterCode":"token_market_shared","execution":{"protocol":"shared_task","path":"/shared-tasks/tasks"},"pricing":{"enabled":true,"pricingModel":"per_call","currency":"awcoin","chargeConfig":{"amountAwcoin":10}}}
 				],
 				"models":[
 					{"id":"qwen3:8b","execution":{"protocol":"openai","path":"/v1/chat/completions"},"pricing":{"enabled":true,"promptPerMillion":10,"completionPerMillion":20,"cacheReadPerMillion":0,"cacheWritePerMillion":10}},
@@ -33,10 +33,11 @@ func TestFetchAtomicFiltersExcludedFamiliesOnReceiver(t *testing.T) {
 
 	catalog, err := FetchAtomic(context.Background(), server.Client(), server.URL, "sk-test")
 	require.NoError(t, err)
-	require.Equal(t, []string{"keep-comfy", "qwen3:8b"}, catalog.ModelNames())
+	require.Equal(t, []string{
+		"funasr-llm", "keep-comfy", "qwen3:8b", "seedvr2-upscale",
+	}, catalog.ModelNames())
 	runtimeCapabilities := catalog.RuntimeCapabilities()
-	require.Len(t, runtimeCapabilities, 1)
-	require.Equal(t, "keep-comfy", runtimeCapabilities[0].ModelName)
+	require.Len(t, runtimeCapabilities, 3)
 }
 
 func TestAtomicCatalogV2AcceptsVisionAndFunctionToolMetadata(t *testing.T) {
@@ -406,6 +407,41 @@ func TestAtomicCatalogAcceptsTokenMarketVideoAndBuildsRuntimeRouting(t *testing.
 	require.Equal(t, 12.0, runtimeCapabilities[0].SeedancePricing.ByResolution["768p"].AmountAWCoinPerSecond)
 }
 
+func TestAtomicCatalogBuildsSharedVideoWithTokenMarketFallback(t *testing.T) {
+	display := 12.0
+	catalog := AtomicCatalog{
+		SchemaVersion: 2,
+		Revision:      "revision-minimax-h3-shared-fallback",
+		AWCoinRate:    AtomicAWCoinRate{RMBPerAWCoin: 0.01, USDPerAWCoin: 0.0014},
+		Capabilities: []AtomicCapability{{
+			ID: "ap-minimax-h3", AdapterCode: "token_market_shared",
+			EndpointType: "openai-video", TaskKind: "video_generation",
+			Execution:         AtomicExecution{Protocol: "shared_task", Path: "/shared-tasks/tasks"},
+			FallbackExecution: &AtomicExecution{Protocol: "token_market_video", Path: "/v1/videos"},
+			Pricing: AtomicPricing{
+				PricingModel: "per_second", Currency: "awcoin", PricingBasis: "display", Enabled: true,
+				ByResolution: map[string]constant.AIPDDSeedanceResolutionPricing{
+					"768p": {
+						TargetResolution:                 "768p",
+						DisplayAmountAWCoinPerSecond:     &display,
+						DisplayVideoInputAWCoinPerSecond: &display,
+						DefaultDurationSeconds:           1,
+						DefaultFramesPerSecond:           24,
+					},
+				},
+			},
+		}},
+	}
+
+	require.NoError(t, catalog.Validate())
+	runtimeCapabilities := catalog.RuntimeCapabilities()
+	require.Len(t, runtimeCapabilities, 1)
+	require.Equal(t, "shared_task", runtimeCapabilities[0].ExecutionProtocol)
+	require.Equal(t, "/shared-tasks/tasks", runtimeCapabilities[0].ExecutionPath)
+	require.Equal(t, "token_market_video", runtimeCapabilities[0].FallbackExecutionProtocol)
+	require.Equal(t, "/v1/videos", runtimeCapabilities[0].FallbackExecutionPath)
+}
+
 func TestAtomicCatalogAcceptsTokenMarketImageWithoutDurationBilling(t *testing.T) {
 	catalog := AtomicCatalog{
 		SchemaVersion: 2,
@@ -429,6 +465,28 @@ func TestAtomicCatalogAcceptsTokenMarketImageWithoutDurationBilling(t *testing.T
 	require.Equal(t, constant.EndpointTypeImageGeneration, runtimeCapabilities[0].EndpointType)
 	require.Equal(t, float64(7), runtimeCapabilities[0].TaskCost)
 	require.Nil(t, runtimeCapabilities[0].SeedancePricing)
+}
+
+func TestAtomicCatalogClassifiesCanonicalQwenAsImageEdit(t *testing.T) {
+	catalog := AtomicCatalog{
+		SchemaVersion: 2,
+		Revision:      "revision-qwen-image-edit",
+		AWCoinRate:    AtomicAWCoinRate{RMBPerAWCoin: 0.01, USDPerAWCoin: 0.0014},
+		Capabilities: []AtomicCapability{{
+			ID: constant.AIPDDModelQwenImageEdit, AdapterCode: "token_market_shared",
+			EndpointType: "image-generation", TaskKind: "image_to_image",
+			Execution: AtomicExecution{Protocol: "shared_task", Path: "/shared-tasks/tasks"},
+			Pricing: AtomicPricing{
+				PricingModel: "per_call", Currency: "awcoin", Enabled: true,
+				ChargeConfig: map[string]any{"unit": "image", "amountAwcoin": float64(100)},
+			},
+		}},
+	}
+
+	require.NoError(t, catalog.Validate())
+	runtimeCapabilities := catalog.RuntimeCapabilities()
+	require.Len(t, runtimeCapabilities, 1)
+	require.Equal(t, constant.EndpointTypeImageEdit, runtimeCapabilities[0].EndpointType)
 }
 
 func TestAtomicCatalogRejectsUnsupportedPerUnitChargeUnit(t *testing.T) {
@@ -484,7 +542,7 @@ func TestFetchAtomicNormalizesMissingPerUnitSecondUnit(t *testing.T) {
 				"schemaVersion":1,"revision":"revision-normalize-fetch","generatedAt":"2026-08-13T00:00:00",
 				"awcoinRate":{"rmbPerAwcoin":0.01,"usdPerAwcoin":0.0015,"updatedAt":"2026-08-13T00:00:00"},
 				"capabilities":[
-					{"id":"aipdd_ltx_2.3","code":"aipdd_ltx_2.3","adapterCode":"comfyui",
+					{"id":"ap-ltx-2.3","code":"ap-ltx-2.3","adapterCode":"token_market_shared",
 					 "execution":{"protocol":"shared_task","path":"/shared-tasks/tasks"},
 					 "pricing":{"pricingModel":"per_unit","currency":"awcoin","enabled":true,
 					            "chargeConfig":{"amount":4000,"unitLabel":"second","minSeconds":1}}}
@@ -498,5 +556,5 @@ func TestFetchAtomicNormalizesMissingPerUnitSecondUnit(t *testing.T) {
 	catalog, err := FetchAtomic(context.Background(), server.Client(), server.URL, "sk-test")
 	require.NoError(t, err)
 	require.Equal(t, "second", catalog.Capabilities[0].Pricing.ChargeConfig["unit"])
-	require.Equal(t, []string{"aipdd_ltx_2.3"}, catalog.ModelNames())
+	require.Equal(t, []string{"ap-ltx-2.3"}, catalog.ModelNames())
 }

@@ -550,13 +550,25 @@ func RelayTask(c *gin.Context) {
 					_ = model.MarkVirtualCharacterBlocked(boundCharacter.ID, taskErr.Message)
 				}
 			}
-			if relayInfo.Billing != nil {
+			if relayInfo.Billing != nil && !relayInfo.SeedanceSubmissionPrepared {
 				relayInfo.Billing.Refund(c)
-			} else if financeErr := service.RecordAIPDDFinanceSettlement(relayInfo, 0, "NOT_CHARGED"); financeErr != nil {
-				common.SysError("record failed AIPDD task finance order error: " + financeErr.Error())
+			} else if relayInfo.Billing == nil && !relayInfo.SeedanceSubmissionPrepared {
+				if financeErr := service.RecordAIPDDFinanceSettlement(relayInfo, 0, "NOT_CHARGED"); financeErr != nil {
+					common.SysError("record failed AIPDD task finance order error: " + financeErr.Error())
+				}
 			}
 		}
 	}()
+	var preparedTask *model.Task
+	relayInfo.BeforeSeedanceGenerationSubmit = func() error {
+		taskAction := relayInfo.Action
+		if boundCharacter != nil {
+			taskAction = model.VirtualCharacterTaskAction
+		}
+		var prepareErr error
+		preparedTask, prepareErr = prepareTaskAndWorkflowOrder(relayInfo, taskAction)
+		return prepareErr
+	}
 
 	retryParam := &service.RetryParam{
 		Ctx:        c,
@@ -614,6 +626,12 @@ func RelayTask(c *gin.Context) {
 					common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()),
 				types.NewOpenAIError(taskErr.Error, types.ErrorCodeBadResponseStatusCode, taskErr.StatusCode))
 		}
+		if relayInfo.SeedanceSubmissionPrepared {
+			// Ark video creation has no idempotency token. Once the durable attempt
+			// may have reached Ark, never let the generic channel retry loop submit
+			// it a second time.
+			break
+		}
 
 		if !shouldRetryTaskRelay(c, channel.Id, taskErr, common.RetryTimes-retryParam.GetRetry()) {
 			break
@@ -627,65 +645,119 @@ func RelayTask(c *gin.Context) {
 	}
 
 	// ── 成功：结算 + 日志 + 插入任务 ──
+	// The independent Seedance channel defers its public acknowledgement until
+	// the task, private order and first attempt have committed atomically. This
+	// also keeps the pre-consumption refundable if the local transaction fails.
+	deferredResponse := taskErr == nil && result != nil && result.DeferredHTTPStatus != 0
 	if taskErr == nil {
-		if settleErr := service.SettleBilling(c, relayInfo, result.Quota); settleErr != nil {
-			common.SysError("settle task billing error: " + settleErr.Error())
+		if !deferredResponse {
+			if settleErr := service.SettleBilling(c, relayInfo, result.Quota); settleErr != nil {
+				common.SysError("settle task billing error: " + settleErr.Error())
+			}
+			service.LogTaskConsumption(c, relayInfo)
 		}
-		service.LogTaskConsumption(c, relayInfo)
 
-		task := model.InitTask(result.Platform, relayInfo)
-		task.PrivateData.UpstreamTaskID = result.UpstreamTaskID
-		task.PrivateData.LogRequestID = strings.TrimSpace(relayInfo.RequestId)
-		task.PrivateData.BillingSource = relayInfo.BillingSource
-		task.PrivateData.SubscriptionId = relayInfo.SubscriptionId
-		task.PrivateData.TokenId = relayInfo.TokenId
-		task.PrivateData.BillingContext = &model.TaskBillingContext{
-			ModelPrice:      relayInfo.PriceData.ModelPrice,
-			GroupRatio:      relayInfo.PriceData.GroupRatioInfo.GroupRatio,
-			ModelRatio:      relayInfo.PriceData.ModelRatio,
-			OtherRatios:     relayInfo.PriceData.OtherRatios,
-			OriginModelName: relayInfo.OriginModelName,
-			PerCallBilling:  isTaskPerCallBilling(relayInfo),
-			QuotaPerUnit:    common.QuotaPerUnit,
-			USDExchangeRate: operation_setting.USDExchangeRate,
-		}
-		if quote := relayInfo.TaskPricingQuote; quote != nil {
-			task.PrivateData.BillingContext.PerCallBilling = false
-			task.PrivateData.BillingContext.GroupRatio = quote.GroupRatio
-			task.PrivateData.BillingContext.BillingMode = billing_setting.BillingModeTaskPricing
-			task.PrivateData.BillingContext.BillingUnit = quote.Unit
-			task.PrivateData.BillingContext.PricingVariant = quote.Variant
-			task.PrivateData.BillingContext.UnitPriceUSD = quote.UnitPriceUSD
-			task.PrivateData.BillingContext.Quantity = quote.Quantity
-			task.PrivateData.BillingContext.SaleUSD = quote.SaleUSD
-			task.PrivateData.BillingContext.HasReferenceVideo = quote.HasReferenceVideo
-			task.PrivateData.BillingContext.Resolution = quote.Resolution
-		}
-		task.PrivateData.AIPDDExecution = result.AIPDDExecution
-		task.PrivateData.AIPDDFinance = relayInfo.AIPDDFinance
-		task.Quota = result.Quota
-		task.Data = result.TaskData
-		task.Action = relayInfo.Action
-		if boundCharacter != nil {
-			task.Action = model.VirtualCharacterTaskAction
-			payload, marshalErr := common.Marshal(task)
-			if marshalErr != nil {
-				common.SysError("marshal virtual character task recovery payload: " + marshalErr.Error())
-			} else if readyErr := model.MarkVirtualCharacterTaskReady(task.TaskID, result.UpstreamTaskID, task.ChannelId, string(payload)); readyErr != nil {
-				common.SysError("mark virtual character task ready: " + readyErr.Error())
-			} else {
-				characterTaskReady = true
+		if result.TaskPersisted {
+			task := preparedTask
+			var finalizeErr error
+			if task == nil {
+				var persisted model.Task
+				finalizeErr = model.DB.Where("task_id = ?", relayInfo.PublicTaskID).First(&persisted).Error
+				if finalizeErr == nil {
+					task = &persisted
+				}
+			}
+			if finalizeErr == nil && strings.TrimSpace(result.UpstreamTaskID) != "" {
+				finalizeErr = service.ConfirmSeedanceGenerationSubmission(task, result.UpstreamTaskID, result.TaskData)
+			}
+			if finalizeErr == nil && boundCharacter != nil && strings.TrimSpace(result.UpstreamTaskID) != "" {
+				payload, marshalErr := common.Marshal(task)
+				if marshalErr != nil {
+					finalizeErr = marshalErr
+				} else if readyErr := model.MarkVirtualCharacterTaskReady(task.TaskID, result.UpstreamTaskID, task.ChannelId, string(payload)); readyErr != nil {
+					finalizeErr = readyErr
+				} else {
+					characterTaskReady = true
+					_ = model.MarkVirtualCharacterTaskActive(task.TaskID)
+				}
+			}
+			if finalizeErr != nil {
+				common.SysError("finalize prepared Seedance task error: " + finalizeErr.Error())
+				// The public task/order/attempt already committed before Ark was
+				// called. Returning an HTTP error here invites the client to create a
+				// second logical task even though Ark may have accepted the first one.
+				// Keep the durable acknowledgement and let timeout/manual recovery
+				// reconcile the missing confirmation without another Ark submission.
+				if markErr := service.MarkSeedanceGenerationSubmissionOutcomeUnknown(relayInfo.PublicTaskID, "ark confirmation persistence outcome unknown"); markErr != nil {
+					common.SysError("mark Seedance generation confirmation unknown: " + markErr.Error())
+				}
+			}
+		} else {
+			task := model.InitTask(result.Platform, relayInfo)
+			task.PrivateData.UpstreamTaskID = result.UpstreamTaskID
+			task.PrivateData.LogRequestID = strings.TrimSpace(relayInfo.RequestId)
+			task.PrivateData.BillingSource = relayInfo.BillingSource
+			task.PrivateData.SubscriptionId = relayInfo.SubscriptionId
+			task.PrivateData.SubscriptionPreConsumed = relayInfo.SubscriptionPreConsumed
+			task.PrivateData.TokenId = relayInfo.TokenId
+			task.PrivateData.BillingContext = &model.TaskBillingContext{
+				ModelPrice:      relayInfo.PriceData.ModelPrice,
+				GroupRatio:      relayInfo.PriceData.GroupRatioInfo.GroupRatio,
+				ModelRatio:      relayInfo.PriceData.ModelRatio,
+				OtherRatios:     relayInfo.PriceData.OtherRatios,
+				OriginModelName: relayInfo.OriginModelName,
+				PerCallBilling:  isTaskPerCallBilling(relayInfo),
+				QuotaPerUnit:    common.QuotaPerUnit,
+				USDExchangeRate: operation_setting.USDExchangeRate,
+			}
+			if quote := relayInfo.TaskPricingQuote; quote != nil {
+				task.PrivateData.BillingContext.PerCallBilling = false
+				task.PrivateData.BillingContext.GroupRatio = quote.GroupRatio
+				task.PrivateData.BillingContext.BillingMode = billing_setting.BillingModeTaskPricing
+				task.PrivateData.BillingContext.BillingUnit = quote.Unit
+				task.PrivateData.BillingContext.PricingVariant = quote.Variant
+				task.PrivateData.BillingContext.UnitPriceUSD = quote.UnitPriceUSD
+				task.PrivateData.BillingContext.Quantity = quote.Quantity
+				task.PrivateData.BillingContext.SaleUSD = quote.SaleUSD
+				task.PrivateData.BillingContext.HasReferenceVideo = quote.HasReferenceVideo
+				task.PrivateData.BillingContext.Resolution = quote.Resolution
+			}
+			task.PrivateData.AIPDDExecution = result.AIPDDExecution
+			task.PrivateData.AIPDDFinance = relayInfo.AIPDDFinance
+			task.Quota = result.Quota
+			task.Data = result.TaskData
+			task.Action = relayInfo.Action
+			if boundCharacter != nil {
+				task.Action = model.VirtualCharacterTaskAction
+				payload, marshalErr := common.Marshal(task)
+				if marshalErr != nil {
+					common.SysError("marshal virtual character task recovery payload: " + marshalErr.Error())
+				} else if readyErr := model.MarkVirtualCharacterTaskReady(task.TaskID, result.UpstreamTaskID, task.ChannelId, string(payload)); readyErr != nil {
+					common.SysError("mark virtual character task ready: " + readyErr.Error())
+				} else {
+					characterTaskReady = true
+				}
+			}
+			if insertErr := task.Insert(); insertErr != nil {
+				common.SysError("insert task error: " + insertErr.Error())
+				if boundCharacter != nil && !characterTaskReady {
+					// A ready link is recovered by the maintenance worker. If the
+					// recovery payload could not be recorded, surface the local gap.
+					_ = model.MarkVirtualCharacterTaskFailed(task.TaskID, insertErr.Error())
+				}
+				if deferredResponse {
+					taskErr = service.TaskErrorWrapperLocal(insertErr, "persist_task_failed", http.StatusInternalServerError)
+				}
+			} else if boundCharacter != nil {
+				_ = model.MarkVirtualCharacterTaskActive(task.TaskID)
 			}
 		}
-		if insertErr := task.Insert(); insertErr != nil {
-			common.SysError("insert task error: " + insertErr.Error())
-			if boundCharacter != nil && !characterTaskReady {
-				// A ready link is recovered by the maintenance worker. If the
-				// recovery payload could not be recorded, surface the local gap.
-				_ = model.MarkVirtualCharacterTaskFailed(task.TaskID, insertErr.Error())
+		if deferredResponse && taskErr == nil {
+			if settleErr := service.SettleBilling(c, relayInfo, result.Quota); settleErr != nil {
+				common.SysError("settle task billing error: " + settleErr.Error())
 			}
-		} else if boundCharacter != nil {
-			_ = model.MarkVirtualCharacterTaskActive(task.TaskID)
+			service.LogTaskConsumption(c, relayInfo)
+			c.Data(result.DeferredHTTPStatus, result.DeferredContentType, result.DeferredBody)
 		}
 	}
 
@@ -743,6 +815,9 @@ func normalizePublicTaskError(taskErr *dto.TaskError) bool {
 	if taskErr == nil {
 		return false
 	}
+	if normalizeIndependentSeedanceLocalError(taskErr) {
+		return true
+	}
 	rawError := ""
 	if taskErr.Error != nil {
 		rawError = taskErr.Error.Error()
@@ -786,6 +861,28 @@ func normalizePublicTaskError(taskErr *dto.TaskError) bool {
 			taskErr.Data = safeData
 		}
 	}
+	return true
+}
+
+func normalizeIndependentSeedanceLocalError(taskErr *dto.TaskError) bool {
+	if taskErr == nil || !taskErr.LocalError {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(taskErr.Code)) {
+	case "seedance_model_not_published":
+		taskErr.Code = "model_not_found"
+		taskErr.Message = "The requested video model is unavailable"
+	case "seedance_credential_unavailable", "seedance_channel_unavailable",
+		"seedance_model_unavailable", "seedance_pricing_unavailable":
+		taskErr.Code = "video_service_unavailable"
+		taskErr.Message = "Video service is temporarily unavailable"
+	case "persist_task_failed", "build_response_failed":
+		taskErr.Code = "server_error"
+		taskErr.Message = "Failed to create video task"
+	default:
+		return false
+	}
+	taskErr.Data = nil
 	return true
 }
 

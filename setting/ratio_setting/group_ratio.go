@@ -109,12 +109,20 @@ func GetGroupGroupRatio(userGroup, usingGroup string) (float64, bool) {
 // in those groups but are charged at their undiscounted price. Custom groups
 // keep their existing global or user-group-specific ratio semantics.
 func ResolveModelGroupRatio(modelName, userGroup, usingGroup string) (float64, bool) {
+	ratio, hasSpecialRatio := ResolveSeedanceGroupRatio(userGroup, usingGroup)
+	if isSeedanceVIPDiscountGroup(usingGroup) && !constant.IsAIPDDSeedanceModel(modelName) {
+		return 1, false
+	}
+	return ratio, hasSpecialRatio
+}
+
+// ResolveSeedanceGroupRatio applies the configured group price directly to an
+// independently owned Seedance offering. It avoids using the legacy AIPDD
+// catalog as the model-identity source.
+func ResolveSeedanceGroupRatio(userGroup, usingGroup string) (float64, bool) {
 	ratio, hasSpecialRatio := GetGroupGroupRatio(userGroup, usingGroup)
 	if !hasSpecialRatio {
 		ratio = GetGroupRatio(usingGroup)
-	}
-	if isSeedanceVIPDiscountGroup(usingGroup) && !constant.IsAIPDDSeedanceModel(modelName) {
-		return 1, false
 	}
 	return ratio, hasSpecialRatio
 }

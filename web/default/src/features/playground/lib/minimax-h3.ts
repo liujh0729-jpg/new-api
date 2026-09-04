@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import type { SeedanceReference } from '../types'
 
 export type MinimaxH3ModelKind =
+  | 'auto'
   | 'text-to-video'
   | 'reference-to-video'
   | 'multimodal-to-video'
@@ -94,12 +95,17 @@ const FIRST_LAST_FRAME_SPEC: MinimaxH3ModelSpec = {
   audioRange: [0, 0],
 }
 
+const AUTO_SPEC: MinimaxH3ModelSpec = {
+  kind: 'auto',
+  prompt: 'required',
+  ratios: ['16:9', '9:16', '1:1'],
+  resolutions: ['480p', '768p', '1080p'],
+  imageRange: [0, 9],
+  audioRange: [0, 3],
+}
+
 const MINIMAX_H3_MODEL_SPECS: Readonly<Record<string, MinimaxH3ModelSpec>> = {
-  'ap-minimax-h3-text-to-video': TEXT_TO_VIDEO_SPEC,
-  'ap-minimax-h3-reference-to-video': REFERENCE_TO_VIDEO_SPEC,
-  'ap-minimax-h3-multimodal-to-video': MULTIMODAL_TO_VIDEO_SPEC,
-  'ap-minimax-h3-image-audio-lipsync': IMAGE_AUDIO_LIPSYNC_SPEC,
-  'ap-minimax-h3-first-last-frame-to-video': FIRST_LAST_FRAME_SPEC,
+  'ap-minimax-h3': AUTO_SPEC,
 }
 
 function normalizeMinimaxH3ModelName(model: string): string {
@@ -116,6 +122,31 @@ export function isMinimaxH3Model(model: string): boolean {
   return getMinimaxH3ModelSpec(model) !== undefined
 }
 
+export function inferMinimaxH3ModelSpec(
+  input: Pick<ValidateMinimaxH3Input, 'model' | 'prompt' | 'references'>
+): MinimaxH3ModelSpec | undefined {
+  if (!isMinimaxH3Model(input.model)) return undefined
+
+  const images = input.references.filter(
+    (reference) => reference.kind === 'image'
+  )
+  const audioCount = input.references.filter(
+    (reference) => reference.kind === 'audio'
+  ).length
+  const hasFrameRoles = images.some(
+    (reference) =>
+      reference.role === 'first_frame' || reference.role === 'last_frame'
+  )
+
+  if (hasFrameRoles) return FIRST_LAST_FRAME_SPEC
+  if (images.length === 0 && audioCount === 0) return TEXT_TO_VIDEO_SPEC
+  if (images.length > 0 && audioCount === 0) return REFERENCE_TO_VIDEO_SPEC
+  if (images.length === 1 && audioCount === 1 && !input.prompt.trim()) {
+    return IMAGE_AUDIO_LIPSYNC_SPEC
+  }
+  return MULTIMODAL_TO_VIDEO_SPEC
+}
+
 export function getMinimaxH3DurationRange(
   model: string,
   resolution: string
@@ -123,6 +154,13 @@ export function getMinimaxH3DurationRange(
   const spec = getMinimaxH3ModelSpec(model)
   if (!spec) return undefined
 
+  return durationRangeForSpec(spec, resolution)
+}
+
+function durationRangeForSpec(
+  spec: MinimaxH3ModelSpec,
+  resolution: string
+): { min: number; max: number; step: number } {
   const hasShort1080pLimit =
     resolution === '1080p' &&
     (spec.kind === 'reference-to-video' || spec.kind === 'multimodal-to-video')
@@ -194,7 +232,7 @@ function validateRange(
 export function validateMinimaxH3VideoInput(
   input: ValidateMinimaxH3Input
 ): MinimaxH3ValidationIssue | null {
-  const spec = getMinimaxH3ModelSpec(input.model)
+  const spec = inferMinimaxH3ModelSpec(input)
   if (!spec) return null
 
   if (spec.prompt === 'required' && !input.prompt.trim()) {
@@ -248,7 +286,7 @@ export function validateMinimaxH3VideoInput(
     return { key: 'This resolution is not supported by the MiniMax H3 model' }
   }
 
-  const durationRange = getMinimaxH3DurationRange(input.model, input.resolution)
+  const durationRange = durationRangeForSpec(spec, input.resolution)
   if (
     !durationRange ||
     !Number.isInteger(input.duration) ||

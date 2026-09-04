@@ -29,12 +29,19 @@ import {
 } from '@/features/materials/constants'
 import {
   getImageGenerationTask,
+  getImageEditTask,
   getVideoGenerationTask,
   sendChatCompletion,
   sendImageGeneration,
+  sendImageEdit,
   sendVideoGeneration,
 } from '../api'
-import { MESSAGE_STATUS, ERROR_MESSAGES } from '../constants'
+import {
+  MESSAGE_STATUS,
+  ERROR_MESSAGES,
+  isImagePlaygroundMode,
+  usesImageEditsEndpoint,
+} from '../constants'
 import {
   buildChatCompletionPayload,
   buildImageGenerationPayload,
@@ -71,6 +78,7 @@ interface UseChatHandlerOptions {
 
 interface SendChatOptions {
   imageReferences?: string[]
+  imageEditReferences?: Array<File | string>
   videoReferences?: SeedanceReference[]
   clientTaskId?: string
 }
@@ -81,10 +89,11 @@ const IMAGE_TASK_POLL_TIMEOUT_MS = 20 * 60 * 1000
 const VIDEO_TASK_POLL_INTERVAL_MS = 3000
 const VIDEO_TASK_INITIAL_POLL_DELAY_MS = 1500
 const VIDEO_TASK_POLL_TIMEOUT_MS = 30 * 60 * 1000
-type TaskType = 'image' | 'video'
+type TaskType = 'image' | 'image_edit' | 'video'
 
 const taskAbortTokens: Record<TaskType, number> = {
   image: 0,
+  image_edit: 0,
   video: 0,
 }
 const activeTaskPolls = new Map<string, Promise<void>>()
@@ -365,11 +374,15 @@ export function useChatHandler({
   )
 
   const completeWithImages = useCallback(
-    (images: GeneratedImage[], taskId?: string) => {
+    (
+      images: GeneratedImage[],
+      taskId?: string,
+      taskType: TaskType = 'image'
+    ) => {
       saveGeneratedImagesToMaterials(images)
       onMessageUpdate((prev) =>
-        updateTaskAssistantMessage(prev, 'image', taskId, (message) => {
-          if (shouldIgnoreTaskCompleteUpdate(message, 'image', taskId)) {
+        updateTaskAssistantMessage(prev, taskType, taskId, (message) => {
+          if (shouldIgnoreTaskCompleteUpdate(message, taskType, taskId)) {
             return message
           }
           return {
@@ -386,10 +399,10 @@ export function useChatHandler({
   )
 
   const markImageGenerationLoading = useCallback(
-    (taskId?: string) => {
+    (taskId?: string, taskType: TaskType = 'image') => {
       onMessageUpdate((prev) =>
-        updateTaskAssistantMessage(prev, 'image', taskId, (message) => {
-          if (shouldIgnoreTaskLoadingUpdate(message, 'image', taskId)) {
+        updateTaskAssistantMessage(prev, taskType, taskId, (message) => {
+          if (shouldIgnoreTaskLoadingUpdate(message, taskType, taskId)) {
             return message
           }
           return {
@@ -399,7 +412,7 @@ export function useChatHandler({
             status: MESSAGE_STATUS.STREAMING,
             isReasoningStreaming: false,
             taskId: taskId || message.taskId,
-            taskType: 'image',
+            taskType,
           }
         })
       )
@@ -582,13 +595,17 @@ export function useChatHandler({
   )
 
   const pollImageTask = useCallback(
-    async (taskId: string, abortToken = getTaskAbortToken('image')) => {
-      return runExclusiveTaskPoll(`image:${taskId}`, async () => {
+    async (
+      taskId: string,
+      abortToken = getTaskAbortToken('image'),
+      taskType: 'image' | 'image_edit' = 'image'
+    ) => {
+      return runExclusiveTaskPoll(`${taskType}:${taskId}`, async () => {
         const deadline = Date.now() + IMAGE_TASK_POLL_TIMEOUT_MS
         let attempt = 0
 
         while (Date.now() < deadline) {
-          if (isTaskAbortRequested('image', abortToken)) return
+          if (isTaskAbortRequested(taskType, abortToken)) return
 
           await new Promise((resolve) =>
             setTimeout(
@@ -599,24 +616,27 @@ export function useChatHandler({
             )
           )
           attempt += 1
-          if (isTaskAbortRequested('image', abortToken)) return
+          if (isTaskAbortRequested(taskType, abortToken)) return
 
           let response: TaskFetchResponse
           try {
-            response = await getImageGenerationTask(taskId)
+            response =
+              taskType === 'image_edit'
+                ? await getImageEditTask(taskId)
+                : await getImageGenerationTask(taskId)
           } catch (error: unknown) {
-            if (isTaskAbortRequested('image', abortToken)) return
+            if (isTaskAbortRequested(taskType, abortToken)) return
             if (isTransientPollingError(error)) {
-              markImageGenerationLoading(taskId)
+              markImageGenerationLoading(taskId, taskType)
               continue
             }
             throw error
           }
-          if (isTaskAbortRequested('image', abortToken)) return
+          if (isTaskAbortRequested(taskType, abortToken)) return
 
           const task = parseImageTaskResponse(response)
           const status = task.status || 'processing'
-          markImageGenerationLoading(taskId)
+          markImageGenerationLoading(taskId, taskType)
 
           if (status === 'failed') {
             throw new Error(task.error || ERROR_MESSAGES.IMAGE_TASK_FAILED)
@@ -624,7 +644,7 @@ export function useChatHandler({
 
           if (status === 'succeeded') {
             if (task.images.length > 0) {
-              completeWithImages(task.images, taskId)
+              completeWithImages(task.images, taskId, taskType)
               return
             }
             throw new Error(ERROR_MESSAGES.PARSE_ERROR)
@@ -704,6 +724,7 @@ export function useChatHandler({
     async (
       messages: Message[],
       imageReferences?: string[],
+      imageEditReferences?: Array<File | string>,
       clientTaskId?: string
     ) => {
       const userMessage = [...messages]
@@ -722,20 +743,34 @@ export function useChatHandler({
         return
       }
 
-      const abortToken = getTaskAbortToken('image')
+      const usesImageEditEndpoint = usesImageEditsEndpoint(
+        config.mode,
+        references.length
+      )
+      const taskType = usesImageEditEndpoint ? 'image_edit' : 'image'
+      const abortToken = getTaskAbortToken(taskType)
       setIsGenerating(true)
       const requestTaskId = clientTaskId || getLastAssistantTaskId(messages)
-      markImageGenerationLoading(requestTaskId)
+      markImageGenerationLoading(requestTaskId, taskType)
 
       try {
-        const response = await sendImageGeneration(
-          buildImageGenerationPayload(prompt, config, references, requestTaskId)
+        const payload = buildImageGenerationPayload(
+          prompt,
+          config,
+          references,
+          requestTaskId
         )
-        if (isTaskAbortRequested('image', abortToken)) return
+        const response = usesImageEditEndpoint
+          ? await sendImageEdit(
+              payload,
+              imageEditReferences?.length ? imageEditReferences : references
+            )
+          : await sendImageGeneration(payload)
+        if (isTaskAbortRequested(taskType, abortToken)) return
 
         const images = extractImageResults(response)
         if (images.length > 0) {
-          completeWithImages(images, requestTaskId)
+          completeWithImages(images, requestTaskId, taskType)
           return
         }
 
@@ -744,14 +779,14 @@ export function useChatHandler({
           if (!taskId) {
             throw new Error(ERROR_MESSAGES.PARSE_ERROR)
           }
-          markImageGenerationLoading(taskId)
-          await pollImageTask(taskId, abortToken)
+          markImageGenerationLoading(taskId, taskType)
+          await pollImageTask(taskId, abortToken, taskType)
           return
         }
 
         throw new Error(ERROR_MESSAGES.PARSE_ERROR)
       } catch (error: unknown) {
-        if (isTaskAbortRequested('image', abortToken)) return
+        if (isTaskAbortRequested(taskType, abortToken)) return
         handleStreamError(error)
       } finally {
         setIsGenerating(false)
@@ -831,10 +866,11 @@ export function useChatHandler({
   // Send chat request (stream or non-stream based on config)
   const sendChat = useCallback(
     (messages: Message[], options: SendChatOptions = {}) => {
-      if (config.mode === 'image') {
+      if (isImagePlaygroundMode(config.mode)) {
         void sendImageChat(
           messages,
           options.imageReferences,
+          options.imageEditReferences,
           options.clientTaskId
         )
         return
@@ -866,6 +902,7 @@ export function useChatHandler({
   // Stop generation
   const stopGeneration = useCallback(() => {
     abortTaskGeneration('image')
+    abortTaskGeneration('image_edit')
     abortTaskGeneration('video')
     stopStream()
     setIsGenerating(false)
@@ -880,18 +917,18 @@ export function useChatHandler({
   }, [stopStream, onMessageUpdate])
 
   const resumeTaskPolling = useCallback(
-    (taskId: string, taskType: 'image' | 'video') => {
+    (taskId: string, taskType: 'image' | 'image_edit' | 'video') => {
       const abortToken = getTaskAbortToken(taskType)
-      if (taskType === 'image') {
+      if (taskType === 'image' || taskType === 'image_edit') {
         setIsGenerating(true)
-        pollImageTask(taskId, abortToken)
+        pollImageTask(taskId, abortToken, taskType)
           .catch((error: unknown) => {
-            if (!isTaskAbortRequested('image', abortToken)) {
+            if (!isTaskAbortRequested(taskType, abortToken)) {
               handleStreamError(error)
             }
           })
           .finally(() => {
-            if (!isTaskAbortRequested('image', abortToken)) {
+            if (!isTaskAbortRequested(taskType, abortToken)) {
               setIsGenerating(false)
             }
           })

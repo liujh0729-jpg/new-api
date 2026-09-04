@@ -103,12 +103,16 @@ type TaskPrivateData struct {
 	ResultURL      string `json:"result_url,omitempty"`       // 任务成功后的结果 URL（视频地址等）
 	LogRequestID   string `json:"log_request_id,omitempty"`   // 对应使用日志的 request_id，用于终态 Usage 回写
 	// 计费上下文：用于异步退款/差额结算（轮询阶段读取）
-	BillingSource  string                           `json:"billing_source,omitempty"`  // "wallet" 或 "subscription"
-	SubscriptionId int                              `json:"subscription_id,omitempty"` // 订阅 ID，用于订阅退款
-	TokenId        int                              `json:"token_id,omitempty"`        // 令牌 ID，用于令牌额度退款
-	BillingContext *TaskBillingContext              `json:"billing_context,omitempty"` // 计费参数快照（用于轮询阶段重新计算）
-	AIPDDExecution *AIPDDTaskExecutionSnapshot      `json:"aipdd_execution,omitempty"`
-	AIPDDFinance   *commonRelay.AIPDDFinanceContext `json:"aipdd_finance,omitempty"`
+	BillingSource  string `json:"billing_source,omitempty"`  // "wallet" 或 "subscription"
+	SubscriptionId int    `json:"subscription_id,omitempty"` // 订阅 ID，用于订阅退款
+	// SubscriptionPreConsumed freezes the exact subscription amount reserved at
+	// submission. It can differ from the public task quota for zero-priced or
+	// future non-quota subscription plans, so recovery must not reconstruct it.
+	SubscriptionPreConsumed int64                            `json:"subscription_pre_consumed,omitempty"`
+	TokenId                 int                              `json:"token_id,omitempty"`        // 令牌 ID，用于令牌额度退款
+	BillingContext          *TaskBillingContext              `json:"billing_context,omitempty"` // 计费参数快照（用于轮询阶段重新计算）
+	AIPDDExecution          *AIPDDTaskExecutionSnapshot      `json:"aipdd_execution,omitempty"`
+	AIPDDFinance            *commonRelay.AIPDDFinanceContext `json:"aipdd_finance,omitempty"`
 }
 
 type AIPDDTaskExecutionSnapshot struct {
