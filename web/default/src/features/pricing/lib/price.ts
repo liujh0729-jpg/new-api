@@ -29,6 +29,8 @@ import { getTaskPricingTiers, isValidTaskPricing } from './model-helpers'
 export type TaskPriceRow = {
   resolution: string
   effectiveGroupRatio: number
+  effectiveMembershipRatio: number
+  effectiveMultiplier: number
   noReferencePrice: string
   referencePrice?: string
   referenceVideoPolicy: ReferenceVideoPolicy
@@ -75,25 +77,35 @@ export function stripTrailingZeros(formatted: string): string {
   return `${symbol}${result}${suffix}`
 }
 
-/**
- * Find minimum group ratio from enabled groups
- */
-export function getMinGroupRatio(
-  enableGroups: string[],
-  groupRatio: Record<string, number>
+export function getViewerGroupRatio(model: PricingModel): number {
+  const group = model.viewer_group || 'default'
+  return model.group_ratio?.[group] ?? 1
+}
+
+export function getMembershipMultiplier(model: PricingModel): number {
+  const ppm = model.viewer_membership?.multiplier_ppm ?? 1_000_000
+  if (!Number.isFinite(ppm) || ppm <= 0 || ppm > 1_000_000) return 1
+  return ppm / 1_000_000
+}
+
+function isAPSeedance480PMembershipExempt(
+  model: PricingModel,
+  resolution?: string
+): boolean {
+  const normalizedModel = model.model_name.toLowerCase().replace(/[\s_-]+/g, '')
+  return (
+    normalizedModel.includes('apseedance') &&
+    resolution?.trim().toLowerCase() === '480p'
+  )
+}
+
+export function getAppliedMembershipMultiplier(
+  model: PricingModel,
+  resolution?: string
 ): number {
-  if (enableGroups.length === 0) return 1
-
-  let minRatio = Number.POSITIVE_INFINITY
-
-  for (const group of enableGroups) {
-    const ratio = groupRatio[group]
-    if (ratio !== undefined && ratio < minRatio) {
-      minRatio = ratio
-    }
-  }
-
-  return minRatio === Number.POSITIVE_INFINITY ? 1 : minRatio
+  return isAPSeedance480PMembershipExempt(model, resolution)
+    ? 1
+    : getMembershipMultiplier(model)
 }
 
 function formatTaskCurrency(
@@ -115,21 +127,6 @@ function formatTaskCurrency(
   })
 }
 
-function taskTierGroupRatio(
-  tier: {
-    resolution?: string
-    group_ratio_policy?: 'global' | 'none'
-  },
-  ratio: number
-): number {
-  const keepsNativePrice =
-    tier.group_ratio_policy === 'none' ||
-    (tier.group_ratio_policy === undefined &&
-      tier.resolution !== undefined &&
-      tier.resolution.trim().toLowerCase() === '480p')
-  return keepsNativePrice ? 1 : ratio
-}
-
 /** Format authoritative local per-second task prices for list/detail views. */
 export function getTaskPriceInfo(
   model: PricingModel,
@@ -139,6 +136,7 @@ export function getTaskPriceInfo(
     priceRate?: number
     usdExchangeRate?: number
     groupRatio?: Record<string, number>
+    applyMembership?: boolean
   } = {}
 ): TaskPriceInfo | null {
   const pricing = model.task_pricing
@@ -149,14 +147,18 @@ export function getTaskPriceInfo(
   const groupRatio = options.groupRatio ?? model.group_ratio ?? {}
   const ratio = options.group
     ? (groupRatio[options.group] ?? 1)
-    : getMinGroupRatio(model.enable_groups || [], groupRatio)
+    : getViewerGroupRatio(model)
+  const applyMembership = options.applyMembership ?? true
   const showWithRecharge = options.showWithRecharge ?? false
   const priceRate = options.priceRate ?? 1
   const usdExchangeRate = options.usdExchangeRate ?? 1
   const tiers = getTaskPricingTiers(pricing, model.task_pricing_resolutions)
   if (tiers.length === 0) return null
   const values = tiers.flatMap((tier) => {
-    const tierRatio = taskTierGroupRatio(tier, ratio)
+    const memberRatio = applyMembership
+      ? getAppliedMembershipMultiplier(model, tier.resolution)
+      : 1
+    const tierRatio = ratio * memberRatio
     const tierValues = [tier.no_reference_video_unit_price * tierRatio]
     if (
       tier.reference_video_policy === 'custom' &&
@@ -168,7 +170,10 @@ export function getTaskPriceInfo(
   })
   const startingValue = Math.min(...values)
   const firstTier = tiers[0]
-  const firstTierRatio = taskTierGroupRatio(firstTier, ratio)
+  const firstTierMemberRatio = applyMembership
+    ? getAppliedMembershipMultiplier(model, firstTier.resolution)
+    : 1
+  const firstTierRatio = ratio * firstTierMemberRatio
   const firstNoReferenceValue =
     firstTier.no_reference_video_unit_price * firstTierRatio
   const firstReferenceValue =
@@ -204,7 +209,10 @@ export function getTaskPriceInfo(
     hasRange: new Set(values).size > 1,
     isFree: values.every((value) => value === 0),
     rows: tiers.map((tier) => {
-      const tierRatio = taskTierGroupRatio(tier, ratio)
+      const memberRatio = applyMembership
+        ? getAppliedMembershipMultiplier(model, tier.resolution)
+        : 1
+      const tierRatio = ratio * memberRatio
       const noReferenceValue = tier.no_reference_video_unit_price * tierRatio
       const referenceValue =
         tier.reference_video_policy === 'same'
@@ -215,7 +223,9 @@ export function getTaskPriceInfo(
             : undefined
       return {
         resolution: tier.resolution,
-        effectiveGroupRatio: tierRatio,
+        effectiveGroupRatio: ratio,
+        effectiveMembershipRatio: memberRatio,
+        effectiveMultiplier: tierRatio,
         noReferencePrice: formatTaskCurrency(
           noReferenceValue,
           showWithRecharge,
@@ -336,13 +346,10 @@ export function formatPrice(
     return '-'
   }
 
-  const enableGroups = Array.isArray(model.enable_groups)
-    ? model.enable_groups
-    : []
-  const groupRatio = model.group_ratio || {}
-  const minRatio = getMinGroupRatio(enableGroups, groupRatio)
+  const effectiveRatio =
+    getViewerGroupRatio(model) * getMembershipMultiplier(model)
 
-  let priceInUSD = calculateTokenPrice(model, type, minRatio)
+  let priceInUSD = calculateTokenPrice(model, type, effectiveRatio)
   priceInUSD = applyRechargeRate(
     priceInUSD,
     showWithRecharge,
@@ -369,13 +376,15 @@ export function formatGroupPrice(
   showWithRecharge = false,
   priceRate = 1,
   usdExchangeRate = 1,
-  groupRatio: Record<string, number>
+  groupRatio: Record<string, number>,
+  applyMembership = true
 ): string {
   if (model.quota_type === QUOTA_TYPE_VALUES.REQUEST) {
     return '-'
   }
 
-  const ratio = groupRatio[group] ?? 1
+  const membershipRatio = applyMembership ? getMembershipMultiplier(model) : 1
+  const ratio = (groupRatio[group] ?? 1) * membershipRatio
   let priceInUSD = calculateTokenPrice(model, type, ratio)
 
   priceInUSD = applyRechargeRate(
@@ -402,13 +411,15 @@ export function formatFixedPrice(
   showWithRecharge = false,
   priceRate = 1,
   usdExchangeRate = 1,
-  groupRatio: Record<string, number>
+  groupRatio: Record<string, number>,
+  applyMembership = true
 ): string {
   if (model.quota_type !== QUOTA_TYPE_VALUES.REQUEST) {
     return '-'
   }
 
-  const ratio = groupRatio[group] ?? 1
+  const membershipRatio = applyMembership ? getMembershipMultiplier(model) : 1
+  const ratio = (groupRatio[group] ?? 1) * membershipRatio
   let priceInUSD = (model.model_price || 0) * ratio
 
   priceInUSD = applyRechargeRate(
@@ -426,7 +437,7 @@ export function formatFixedPrice(
 }
 
 /**
- * Format fixed price for pay-per-request models (minimum price from all groups)
+ * Format the pay-per-request price for the viewer's selected group and membership.
  */
 export function formatRequestPrice(
   model: PricingModel,
@@ -438,13 +449,10 @@ export function formatRequestPrice(
     return '-'
   }
 
-  const enableGroups = Array.isArray(model.enable_groups)
-    ? model.enable_groups
-    : []
-  const groupRatio = model.group_ratio || {}
-  const minRatio = getMinGroupRatio(enableGroups, groupRatio)
+  const effectiveRatio =
+    getViewerGroupRatio(model) * getMembershipMultiplier(model)
 
-  let priceInUSD = (model.model_price || 0) * minRatio
+  let priceInUSD = (model.model_price || 0) * effectiveRatio
 
   priceInUSD = applyRechargeRate(
     priceInUSD,

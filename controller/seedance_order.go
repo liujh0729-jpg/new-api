@@ -25,18 +25,30 @@ func prepareTaskAndWorkflowOrder(info *relaycommon.RelayInfo, taskAction string)
 	task.PrivateData.SubscriptionPreConsumed = info.SubscriptionPreConsumed
 	task.PrivateData.TokenId = info.TokenId
 	task.PrivateData.BillingContext = &model.TaskBillingContext{
-		ModelPrice:      info.PriceData.ModelPrice,
-		GroupRatio:      info.PriceData.GroupRatioInfo.GroupRatio,
-		ModelRatio:      info.PriceData.ModelRatio,
-		OtherRatios:     info.PriceData.OtherRatios,
-		OriginModelName: info.OriginModelName,
-		PerCallBilling:  isTaskPerCallBilling(info),
-		QuotaPerUnit:    common.QuotaPerUnit,
-		USDExchangeRate: operation_setting.USDExchangeRate,
+		ModelPrice:              info.PriceData.ModelPrice,
+		GroupRatio:              info.PriceData.GroupRatioInfo.GroupRatio,
+		MembershipLevelId:       info.PriceData.MembershipRatioInfo.LevelId,
+		MembershipCode:          info.PriceData.MembershipRatioInfo.Code,
+		MembershipMultiplierPPM: info.PriceData.MembershipRatioInfo.ConfiguredMultiplierPPM,
+		AppliedMemberPPM:        info.PriceData.MembershipRatioInfo.AppliedMultiplierPPM,
+		MembershipExempt:        info.PriceData.MembershipRatioInfo.Exempt,
+		MembershipExemptReason:  info.PriceData.MembershipRatioInfo.ExemptionReason,
+		ModelRatio:              info.PriceData.ModelRatio,
+		OtherRatios:             info.PriceData.OtherRatios,
+		OriginModelName:         info.OriginModelName,
+		PerCallBilling:          isTaskPerCallBilling(info),
+		QuotaPerUnit:            common.QuotaPerUnit,
+		USDExchangeRate:         operation_setting.USDExchangeRate,
 	}
 	if quote := info.TaskPricingQuote; quote != nil {
 		task.PrivateData.BillingContext.PerCallBilling = false
 		task.PrivateData.BillingContext.GroupRatio = quote.GroupRatio
+		task.PrivateData.BillingContext.MembershipLevelId = quote.MembershipLevelId
+		task.PrivateData.BillingContext.MembershipCode = quote.MembershipCode
+		task.PrivateData.BillingContext.MembershipMultiplierPPM = quote.MembershipMultiplierPPM
+		task.PrivateData.BillingContext.AppliedMemberPPM = quote.AppliedMemberPPM
+		task.PrivateData.BillingContext.MembershipExempt = quote.MembershipExempt
+		task.PrivateData.BillingContext.MembershipExemptReason = quote.MembershipExemptReason
 		task.PrivateData.BillingContext.BillingMode = billing_setting.BillingModeTaskPricing
 		task.PrivateData.BillingContext.BillingUnit = quote.Unit
 		task.PrivateData.BillingContext.PricingVariant = quote.Variant
@@ -93,10 +105,14 @@ func prepareTaskAndWorkflowOrder(info *relaycommon.RelayInfo, taskAction string)
 	}
 	effectiveOffering := *offering
 	groupRatio := 1.0
+	membershipRatio := 1.0
 	hasReferenceVideo := false
 	durationSeconds := 5.0
 	if info.TaskPricingQuote != nil {
 		groupRatio = info.TaskPricingQuote.GroupRatio
+		if info.TaskPricingQuote.AppliedMemberPPM > 0 {
+			membershipRatio = float64(info.TaskPricingQuote.AppliedMemberPPM) / float64(model.MembershipMultiplierScale)
+		}
 		hasReferenceVideo = info.TaskPricingQuote.HasReferenceVideo
 		durationSeconds = info.TaskPricingQuote.Quantity
 	}
@@ -129,7 +145,7 @@ func prepareTaskAndWorkflowOrder(info *relaycommon.RelayInfo, taskAction string)
 	if err != nil {
 		return nil, err
 	}
-	effectiveOffering.ModelSaleMicroRMB, err = discountedSeedanceSaleMicroRMB(baseSaleTotal, groupRatio)
+	effectiveOffering.ModelSaleMicroRMB, err = discountedSeedanceSaleMicroRMB(baseSaleTotal, groupRatio*membershipRatio)
 	if err != nil {
 		return nil, err
 	}
@@ -172,6 +188,12 @@ func prepareTaskAndWorkflowOrder(info *relaycommon.RelayInfo, taskAction string)
 		"model_sale_micro_rmb":                 effectiveOffering.ModelSaleMicroRMB,
 		"sale_unit_price_micro_rmb":            saleUnitPrice,
 		"group_ratio":                          groupRatio,
+		"membership_level_id":                  task.PrivateData.BillingContext.MembershipLevelId,
+		"membership_code":                      task.PrivateData.BillingContext.MembershipCode,
+		"membership_multiplier_ppm":            task.PrivateData.BillingContext.MembershipMultiplierPPM,
+		"applied_membership_multiplier_ppm":    task.PrivateData.BillingContext.AppliedMemberPPM,
+		"membership_exempt":                    task.PrivateData.BillingContext.MembershipExempt,
+		"membership_exempt_reason":             task.PrivateData.BillingContext.MembershipExemptReason,
 		"service_charge_micro_rmb":             effectiveOffering.ServiceChargeMicroRMB,
 		"super_resolution_unit_cost_micro_rmb": superResolutionUnitCost,
 		"volcengine_unit_cost_micro_rmb":       effectiveOffering.VolcengineUnitCostMicroRMB,

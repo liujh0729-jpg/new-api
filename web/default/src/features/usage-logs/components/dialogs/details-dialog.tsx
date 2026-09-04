@@ -210,6 +210,28 @@ function BillingBreakdown(props: {
     })
   }
 
+  if (other.membership_multiplier != null) {
+    rows.push({
+      label: t('Membership'),
+      value: `${other.membership_name || other.membership_code || 'NORMAL'} · ${formatRatio(other.membership_multiplier)}x`,
+    })
+  }
+  if (
+    other.applied_membership_multiplier != null &&
+    other.applied_membership_multiplier !== other.membership_multiplier
+  ) {
+    rows.push({
+      label: t('Applied membership ratio'),
+      value: `${formatRatio(other.applied_membership_multiplier)}x`,
+    })
+  }
+  if (other.membership_exempt) {
+    rows.push({
+      label: t('Membership exemption'),
+      value: other.membership_exempt_reason || t('Exempt'),
+    })
+  }
+
   if (!isTieredExpr && isClaude && hasAnyCacheTokens(other)) {
     if (other.cache_ratio != null && other.cache_ratio !== 1) {
       rows.push({

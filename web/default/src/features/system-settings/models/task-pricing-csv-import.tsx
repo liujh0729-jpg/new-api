@@ -21,8 +21,8 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Download, FileSpreadsheet, Upload } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-import { ConfirmDialog } from '@/components/confirm-dialog'
 import { Button } from '@/components/ui/button'
+import { ConfirmDialog } from '@/components/confirm-dialog'
 import {
   downloadTaskPricingCSVTemplate,
   exportTaskPricingCSV,
@@ -120,7 +120,7 @@ export function TaskPricingCsvImport(props: TaskPricingCsvImportProps) {
         </h3>
         <p className='text-muted-foreground text-sm'>
           {t(
-            'Download a retail-price template or current config, then import a CSV to update per-second task pricing and fixed Seedance discount groups.'
+            'Download a retail-price template or current config, then import a CSV to update per-second base prices. Group and membership ratios remain unchanged.'
           )}
         </p>
       </div>
@@ -188,12 +188,6 @@ export function TaskPricingCsvImport(props: TaskPricingCsvImportProps) {
               {t('RMB per USD')}: {summary.rmb_per_usd}
             </div>
           ) : null}
-          {summary.exempt_resolutions?.length ? (
-            <div>
-              {t('Native-price tiers')}:{' '}
-              {summary.exempt_resolutions.join(', ')}
-            </div>
-          ) : null}
           <div className='pt-1'>
             <Button
               type='button'
@@ -212,7 +206,7 @@ export function TaskPricingCsvImport(props: TaskPricingCsvImportProps) {
         onOpenChange={setConfirmOpen}
         title={t('Apply task pricing CSV import?')}
         desc={t(
-          'This will overwrite task pricing and billing mode for models in the CSV, and sync fixed Seedance group ratios.'
+          'This will overwrite task base pricing and billing mode for models in the CSV. Group and membership ratios will not be changed.'
         )}
         confirmText={t('Import')}
         isLoading={importMutation.isPending}

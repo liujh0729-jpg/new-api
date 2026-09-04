@@ -70,8 +70,6 @@ export type TaskPricingCSVSummary = {
   models: string[]
   resolution_tiers: number
   source_rows: number
-  exempt_resolutions: string[]
-  groups?: Record<string, number>
   rmb_per_usd?: string
 }
 

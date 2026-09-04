@@ -61,34 +61,12 @@ func SetRelayRouter(router *gin.Engine) {
 		})
 	}
 
-	materialStaticRouter := router.Group("/static/materials")
-	materialStaticRouter.Use(middleware.RouteTag("relay"))
-	materialStaticRouter.Use(middleware.DownloadRateLimit())
-	{
-		materialStaticRouter.GET("/:filename", controller.ServeStaticMaterialFile)
-	}
-
 	playgroundUtilityRouter := router.Group("/pg")
 	playgroundUtilityRouter.Use(middleware.RouteTag("relay"))
 	playgroundUtilityRouter.Use(middleware.SystemPerformanceCheck())
 	playgroundUtilityRouter.Use(middleware.UserAuth())
 	{
 		playgroundUtilityRouter.POST("/reference-media/upload", middleware.UserUploadRateLimit(), controller.PlaygroundUploadReferenceMedia)
-
-		playgroundUtilityRouter.POST("/material/upload", middleware.UserUploadRateLimit(), controller.UploadMaterial)
-		playgroundUtilityRouter.POST("/material/ai-output", middleware.UserUploadRateLimit(), controller.CreateGeneratedMaterial)
-		playgroundUtilityRouter.GET("/material", controller.GetMaterials)
-		playgroundUtilityRouter.GET("/material/search", controller.SearchMaterials)
-		playgroundUtilityRouter.PUT("/material", controller.UpdateMaterial)
-		playgroundUtilityRouter.DELETE("/material/:id", controller.DeleteMaterial)
-	}
-
-	playgroundMaterialFileRouter := router.Group("/pg")
-	playgroundMaterialFileRouter.Use(middleware.RouteTag("relay"))
-	playgroundMaterialFileRouter.Use(middleware.SystemPerformanceCheck())
-	playgroundMaterialFileRouter.Use(middleware.UserAuthWithQueryUserID())
-	{
-		playgroundMaterialFileRouter.GET("/material/file/:id", controller.ServeMaterialFile)
 	}
 
 	playgroundRouter := router.Group("/pg")

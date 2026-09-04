@@ -33,10 +33,10 @@ import {
   CreditCard,
   ListTodo,
   Settings,
-  Image as ImageIcon,
   UserRoundCog,
   ScrollText,
   Video,
+  BadgePercent,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { WORKSPACE_IDS } from '@/components/layout/lib/workspace-registry'
@@ -63,11 +63,6 @@ export function useSidebarData(): SidebarData {
             title: t('Playground'),
             url: '/playground',
             icon: FlaskConical,
-          },
-          {
-            title: t('Material Library'),
-            url: '/materials',
-            icon: ImageIcon,
           },
           {
             title: t('Character Library'),
@@ -158,6 +153,11 @@ export function useSidebarData(): SidebarData {
             url: '/system-settings/site',
             activeUrls: ['/system-settings'],
             icon: Settings,
+          },
+          {
+            title: t('Membership Management'),
+            url: '/membership',
+            icon: BadgePercent,
           },
           {
             title: t('Seedance Management'),

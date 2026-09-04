@@ -24,7 +24,12 @@ import {
   ENDPOINT_TYPES,
 } from '../constants'
 import type { PricingModel } from '../types'
-import { getTaskPricingUnitPrices, isValidTaskPricing } from './model-helpers'
+import { getTaskPricingTiers, isValidTaskPricing } from './model-helpers'
+import {
+  getAppliedMembershipMultiplier,
+  getMembershipMultiplier,
+  getViewerGroupRatio,
+} from './price'
 
 // ----------------------------------------------------------------------------
 // Filter Utilities
@@ -107,14 +112,33 @@ function getModelPrice(model: PricingModel): number {
     model.billing_mode === 'task_pricing' &&
     isValidTaskPricing(model.task_pricing)
   ) {
-    const prices = getTaskPricingUnitPrices(
+    const groupRatio = getViewerGroupRatio(model)
+    const tiers = getTaskPricingTiers(
       model.task_pricing,
       model.task_pricing_resolutions
     )
+    const prices = tiers.flatMap((tier) => {
+      const multiplier =
+        groupRatio * getAppliedMembershipMultiplier(model, tier.resolution)
+      const values = [tier.no_reference_video_unit_price * multiplier]
+      if (
+        tier.reference_video_policy === 'custom' &&
+        Number(tier.reference_video_unit_price) > 0
+      ) {
+        values.push(Number(tier.reference_video_unit_price) * multiplier)
+      }
+      return values
+    })
     if (prices.length === 0) return Number.POSITIVE_INFINITY
     return Math.min(...prices)
   }
-  return model.quota_type === 0 ? model.model_ratio : model.model_price || 0
+  const commercialMultiplier =
+    getViewerGroupRatio(model) * getMembershipMultiplier(model)
+  const basePrice =
+    model.quota_type === QUOTA_TYPE_VALUES.TOKEN
+      ? model.model_ratio
+      : model.model_price || 0
+  return basePrice * commercialMultiplier
 }
 
 /**

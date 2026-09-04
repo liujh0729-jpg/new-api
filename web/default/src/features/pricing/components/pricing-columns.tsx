@@ -159,9 +159,9 @@ export function usePricingColumns(
     // Price column
     {
       accessorKey: 'price',
-      meta: { label: t('Price') },
+      meta: { label: t('Your price') },
       header: ({ column }) => (
-        <DataTableColumnHeader column={column} title={t('Price')} />
+        <DataTableColumnHeader column={column} title={t('Your price')} />
       ),
       cell: ({ row }) => {
         const model = row.original

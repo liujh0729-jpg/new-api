@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestResolveModelGroupRatioLimitsFixedVIPDiscountsToSeedance(t *testing.T) {
+func TestResolveModelGroupRatioAppliesConfiguredGroupsToAllModels(t *testing.T) {
 	groupRatioSnapshot := GroupRatio2JSONString()
 	groupGroupRatioSnapshot := GroupGroupRatio2JSONString()
 	capabilitiesSnapshot := constant.GetAIPDDCapabilities()
@@ -24,16 +24,16 @@ func TestResolveModelGroupRatioLimitsFixedVIPDiscountsToSeedance(t *testing.T) {
 	})
 
 	ratio, special := ResolveModelGroupRatio("regular-llm", "member", "VIP1")
-	require.Equal(t, 1.0, ratio)
-	require.False(t, special)
+	require.Equal(t, 0.7, ratio)
+	require.True(t, special)
 
 	ratio, special = ResolveModelGroupRatio("seedance-vip-model", "member", "VIP1")
 	require.Equal(t, 0.7, ratio)
 	require.True(t, special)
 
 	ratio, special = ResolveModelGroupRatio("regular-llm", "member", "VIP-T1")
-	require.Equal(t, 1.0, ratio)
-	require.False(t, special)
+	require.Equal(t, 0.69, ratio)
+	require.True(t, special)
 
 	ratio, special = ResolveModelGroupRatio("seedance-vip-model", "member", "VIP-T1")
 	require.Equal(t, 0.69, ratio)

@@ -113,7 +113,7 @@ func buildSeedanceTaskPricingQuoteForRequest(offering *model.SeedanceModelOfferi
 	groupRatio, _ := ratio_setting.ResolveSeedanceGroupRatio(info.UserGroup, info.UsingGroup)
 	baseUSD := saleUSD * durationSeconds
 	finalSaleUSD := baseUSD * groupRatio
-	return &billing_setting.TaskPricingQuote{
+	quote := billing_setting.TaskPricingQuote{
 		Unit:              billing_setting.TaskPricingUnitSecond,
 		Variant:           offering.PricingVersion + ":" + variant,
 		UnitPriceUSD:      saleUSD,
@@ -125,6 +125,8 @@ func buildSeedanceTaskPricingQuoteForRequest(offering *model.SeedanceModelOfferi
 		HasReferenceVideo: hasReferenceVideo,
 		Resolution:        offering.SourceResolution,
 	}
+	quote = billing_setting.ApplyMembershipToTaskPricingQuote(quote, info.MembershipRatioInfo, info.OriginModelName, common.QuotaPerUnit)
+	return &quote
 }
 
 func seedanceRequestedDurationSeconds(req relaycommon.TaskSubmitReq) float64 {

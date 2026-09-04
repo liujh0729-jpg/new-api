@@ -374,6 +374,7 @@ function PriceSection(props: {
     priceRate: props.priceRate,
     usdExchangeRate: props.usdExchangeRate,
     groupRatio: baseGroupRatioMap,
+    applyMembership: false,
   })
 
   const primaryPriceTypes: { label: string; type: PriceType }[] = [
@@ -547,7 +548,8 @@ function PriceSection(props: {
               props.showRechargePrice,
               props.priceRate,
               props.usdExchangeRate,
-              baseGroupRatioMap
+              baseGroupRatioMap,
+              false
             )}
           </span>
         </div>
@@ -566,7 +568,8 @@ function PriceSection(props: {
         props.showRechargePrice,
         props.priceRate,
         props.usdExchangeRate,
-        baseGroupRatioMap
+        baseGroupRatioMap,
+        false
       )}
       <span className='text-muted-foreground/40 ml-1 text-xs font-normal'>
         / {tokenUnitLabel}
@@ -648,7 +651,7 @@ function AutoGroupChain(props: { model: PricingModel; autoGroups: string[] }) {
 function GroupPricingSection(props: {
   model: PricingModel
   groupRatio: Record<string, number>
-  usableGroup: Record<string, { desc: string; ratio: number }>
+  usableGroup: Record<string, string>
   autoGroups: string[]
   priceRate: number
   usdExchangeRate: number
@@ -713,7 +716,13 @@ function GroupPricingSection(props: {
               <TableRow className='hover:bg-transparent'>
                 <TableHead className={thClass}>{t('Group')}</TableHead>
                 <TableHead className={thClass}>{t('Resolution')}</TableHead>
-                <TableHead className={thClass}>{t('Ratio')}</TableHead>
+                <TableHead className={thClass}>{t('Group ratio')}</TableHead>
+                <TableHead className={thClass}>
+                  {t('Membership ratio')}
+                </TableHead>
+                <TableHead className={thClass}>
+                  {t('Effective ratio')}
+                </TableHead>
                 <TableHead className={`${thClass} text-right`}>
                   {t('Without video input')}
                 </TableHead>
@@ -741,6 +750,12 @@ function GroupPricingSection(props: {
                     </TableCell>
                     <TableCell className='text-muted-foreground py-2.5 font-mono text-xs'>
                       {priceRow.effectiveGroupRatio}x
+                    </TableCell>
+                    <TableCell className='text-muted-foreground py-2.5 font-mono text-xs'>
+                      {priceRow.effectiveMembershipRatio}x
+                    </TableCell>
+                    <TableCell className='text-muted-foreground py-2.5 font-mono text-xs'>
+                      {priceRow.effectiveMultiplier}x
                     </TableCell>
                     <TableCell className='py-2.5 text-right font-mono'>
                       {info?.isFree ? t('Free') : priceRow.noReferencePrice}
@@ -817,13 +832,17 @@ function GroupPricingSection(props: {
         <AutoGroupChain model={props.model} autoGroups={props.autoGroups} />
         <div className='space-y-3'>
           {availableGroups.map((group) => {
-            const ratio = props.groupRatio[group] || 1
+            const ratio = props.groupRatio[group] ?? 1
+            const membershipRatio =
+              (props.model.viewer_membership?.multiplier_ppm ?? 1_000_000) /
+              1_000_000
+            const effectiveRatio = ratio * membershipRatio
             return (
               <div key={group} className='overflow-hidden rounded-lg border'>
                 <div className='bg-muted/20 flex items-center justify-between gap-3 border-b px-3 py-2'>
                   <GroupBadge group={group} size='sm' />
                   <span className='text-muted-foreground font-mono text-xs'>
-                    {ratio}x
+                    {ratio}x × {membershipRatio}x = {effectiveRatio}x
                   </span>
                 </div>
                 <div className='overflow-x-auto'>
@@ -848,7 +867,7 @@ function GroupPricingSection(props: {
                           showRechargePrice,
                           priceRate: props.priceRate,
                           usdExchangeRate: props.usdExchangeRate,
-                          groupRatioMultiplier: ratio,
+                          groupRatioMultiplier: effectiveRatio,
                         })
                         const entryMap = new Map(
                           entries.map((entry) => [entry.field, entry])
@@ -896,7 +915,9 @@ function GroupPricingSection(props: {
           <TableHeader>
             <TableRow className='hover:bg-transparent'>
               <TableHead className={thClass}>{t('Group')}</TableHead>
-              <TableHead className={thClass}>{t('Ratio')}</TableHead>
+              <TableHead className={thClass}>{t('Group ratio')}</TableHead>
+              <TableHead className={thClass}>{t('Membership ratio')}</TableHead>
+              <TableHead className={thClass}>{t('Effective ratio')}</TableHead>
               {isTokenBased ? (
                 <>
                   <TableHead className={`${thClass} text-right`}>
@@ -923,7 +944,10 @@ function GroupPricingSection(props: {
           </TableHeader>
           <TableBody>
             {availableGroups.map((group) => {
-              const ratio = props.groupRatio[group] || 1
+              const ratio = props.groupRatio[group] ?? 1
+              const membershipRatio =
+                (props.model.viewer_membership?.multiplier_ppm ?? 1_000_000) /
+                1_000_000
               return (
                 <TableRow key={group}>
                   <TableCell className='py-2.5'>
@@ -931,6 +955,12 @@ function GroupPricingSection(props: {
                   </TableCell>
                   <TableCell className='text-muted-foreground py-2.5 font-mono text-xs'>
                     {ratio}x
+                  </TableCell>
+                  <TableCell className='text-muted-foreground py-2.5 font-mono text-xs'>
+                    {membershipRatio}x
+                  </TableCell>
+                  <TableCell className='text-muted-foreground py-2.5 font-mono text-xs'>
+                    {ratio * membershipRatio}x
                   </TableCell>
                   {isTokenBased ? (
                     <>
@@ -1018,7 +1048,7 @@ const TAB_META: Record<
 export interface ModelDetailsContentProps {
   model: PricingModel
   groupRatio: Record<string, number>
-  usableGroup: Record<string, { desc: string; ratio: number }>
+  usableGroup: Record<string, string>
   endpointMap: Record<string, { path?: string; method?: string }>
   autoGroups: string[]
   priceRate: number

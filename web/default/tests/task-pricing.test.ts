@@ -177,28 +177,8 @@ describe('local task pricing display', () => {
     expect(info?.hasRange).toBe(true)
   })
 
-  test('keeps 480p native by default while discounting other resolutions', () => {
+  test('applies the selected group to every resolution', () => {
     const model = createMatrixTaskModel()
-    model.group_ratio = { ...model.group_ratio, VIP1: 0.78 }
-
-    const info = getTaskPriceInfo(model, {
-      group: 'VIP1',
-      groupRatio: model.group_ratio,
-    })
-
-    expect(info?.rows[0].resolution).toBe('480p')
-    expect(info?.rows[0].effectiveGroupRatio).toBe(1)
-    expect(info?.rows[0].noReferencePrice).toContain('0.04')
-    expect(info?.rows[1].resolution).toBe('720p')
-    expect(info?.rows[1].effectiveGroupRatio).toBe(0.78)
-    expect(info?.rows[1].noReferencePrice).toContain('0.0624')
-  })
-
-  test('allows an explicit global policy to discount 480p', () => {
-    const model = createMatrixTaskModel()
-    if ('by_resolution' in model.task_pricing!) {
-      model.task_pricing.by_resolution['480p'].group_ratio_policy = 'global'
-    }
     model.group_ratio = { ...model.group_ratio, VIP1: 0.78 }
 
     const info = getTaskPriceInfo(model, {
@@ -209,10 +189,42 @@ describe('local task pricing display', () => {
     expect(info?.rows[0].resolution).toBe('480p')
     expect(info?.rows[0].effectiveGroupRatio).toBe(0.78)
     expect(info?.rows[0].noReferencePrice).toContain('0.0312')
-    expect(info?.rows[0].referencePrice).toContain('0.0468')
+    expect(info?.rows[1].resolution).toBe('720p')
+    expect(info?.rows[1].effectiveGroupRatio).toBe(0.78)
+    expect(info?.rows[1].noReferencePrice).toContain('0.0624')
   })
 
-  test('allows any resolution to explicitly opt out of group discounts', () => {
+  test('exempts only AP Seedance 480p from membership', () => {
+    const model = createMatrixTaskModel()
+    model.group_ratio = { ...model.group_ratio, VIP1: 0.78 }
+    model.viewer_membership = {
+      grant_id: 1,
+      level_id: 2,
+      code: 'VIP1',
+      display_name: 'VIP 1',
+      multiplier_ppm: 800_000,
+      rank: 10,
+      starts_at: 1,
+      ends_at: 0,
+      resolved_at: 1,
+      fallback_normal: false,
+    }
+
+    const info = getTaskPriceInfo(model, {
+      group: 'VIP1',
+      groupRatio: model.group_ratio,
+    })
+
+    expect(info?.rows[0].resolution).toBe('480p')
+    expect(info?.rows[0].effectiveGroupRatio).toBe(0.78)
+    expect(info?.rows[0].effectiveMembershipRatio).toBe(1)
+    expect(info?.rows[0].noReferencePrice).toContain('0.0312')
+    expect(info?.rows[0].referencePrice).toContain('0.0468')
+    expect(info?.rows[1].effectiveMembershipRatio).toBe(0.8)
+    expect(info?.rows[1].noReferencePrice).toContain('0.04992')
+  })
+
+  test('legacy group policy cannot bypass global group pricing', () => {
     const model = createMatrixTaskModel()
     if ('by_resolution' in model.task_pricing!) {
       model.task_pricing.by_resolution['720p'].group_ratio_policy = 'none'
@@ -225,8 +237,8 @@ describe('local task pricing display', () => {
     })
 
     expect(info?.rows[1].resolution).toBe('720p')
-    expect(info?.rows[1].effectiveGroupRatio).toBe(1)
-    expect(info?.rows[1].noReferencePrice).toContain('0.08')
+    expect(info?.rows[1].effectiveGroupRatio).toBe(0.78)
+    expect(info?.rows[1].noReferencePrice).toContain('0.0624')
   })
 
   test('sorts matrix task pricing by the lowest active tier', () => {
@@ -236,6 +248,42 @@ describe('local task pricing display', () => {
       matrix.id,
       legacy.id,
     ])
+  })
+
+  test('sorts by the selected group and membership-adjusted price', () => {
+    const discounted = createMatrixTaskModel()
+    discounted.id = 101
+    discounted.model_name = 'other-video-model'
+    discounted.viewer_group = 'member'
+    discounted.group_ratio = { member: 0.9 }
+    discounted.viewer_membership = {
+      grant_id: 1,
+      level_id: 2,
+      code: 'VIP1',
+      display_name: 'VIP 1',
+      multiplier_ppm: 500_000,
+      rank: 10,
+      starts_at: 1,
+      ends_at: 0,
+      resolved_at: 1,
+      fallback_normal: false,
+    }
+
+    const regular = createMatrixTaskModel()
+    regular.id = 102
+    regular.task_pricing = {
+      unit: 'second',
+      by_resolution: {
+        '720p': {
+          no_reference_video_unit_price: 0.03,
+          reference_video_policy: 'same',
+        },
+      },
+    }
+
+    expect(
+      sortModels([regular, discounted], 'price-low').map((model) => model.id)
+    ).toEqual([discounted.id, regular.id])
   })
 
   test('deep clones matrix tiers and parses administrator resolution options', () => {

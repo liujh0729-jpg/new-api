@@ -50,6 +50,20 @@ func TestPrepareAIPDDFinanceAttemptDisabledKeepsRelayAvailable(t *testing.T) {
 	require.NotNil(t, info.ChannelMeta)
 }
 
+func TestPrepareAIPDDFinanceAttemptLeavesManagedSeedanceToServiceUsageBilling(t *testing.T) {
+	t.Setenv(aipddFinanceEnabledEnv, "true")
+	t.Setenv(aipddInstanceIDEnv, "")
+	c := aipddFinanceTestContext(constant.ChannelTypeSeedance, 9)
+	info := &relaycommon.RelayInfo{
+		RequestId: "managed-seedance-order", OriginModelName: "any-public-model",
+		UserId: 1, TokenId: 2,
+	}
+
+	require.NoError(t, PrepareAIPDDFinanceAttempt(c, info))
+	require.Nil(t, info.AIPDDFinance)
+	require.Equal(t, constant.ChannelTypeSeedance, info.ChannelType)
+}
+
 func TestPrepareAIPDDFinanceAttemptSupportsMultiKeyChannel(t *testing.T) {
 	previousDB := model.DB
 	dsn := fmt.Sprintf("file:aipdd-finance-multi-key-%d?mode=memory&cache=shared", time.Now().UnixNano())

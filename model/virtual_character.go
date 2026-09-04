@@ -94,7 +94,7 @@ type VirtualCharacterListFilter struct {
 }
 
 // VirtualCharacter stores role-library metadata. Private provider binary content
-// lives in Volc Asset Groups; AIPDD is used only as temporary staging for uploads.
+// is registered as an AIPDD digital asset and then imported into a Volc Asset Group.
 type VirtualCharacter struct {
 	ID                int64          `json:"id" gorm:"primaryKey;autoIncrement"`
 	UserID            int            `json:"user_id" gorm:"index;uniqueIndex:uk_virtual_character_user_slot"`
@@ -114,8 +114,9 @@ type VirtualCharacter struct {
 	Status            string         `json:"status" gorm:"type:varchar(20);index"`
 	ValidationStatus  string         `json:"validation_status" gorm:"type:varchar(20);index"`
 	CoverURL          string         `json:"cover_url,omitempty" gorm:"type:text"`
-	AIPDDAssetID      int64          `json:"-" gorm:"index"`                   // deprecated: legacy private fictional path
+	AIPDDAssetID      int64          `json:"-" gorm:"index"`
 	AIPDDFileID       string         `json:"-" gorm:"type:varchar(191);index"` // deprecated: legacy private fictional path
+	AIPDDChannelID    int            `json:"-" gorm:"column:aipdd_channel_id;index"`
 	VolcAssetID       string         `json:"-" gorm:"type:varchar(191);index"` // deprecated: one-time migration source for ProviderAssetID
 	PublicChannelID   int            `json:"-" gorm:"index"`                   // deprecated legacy catalog field
 	ProviderAccountID int            `json:"provider_account_id,omitempty" gorm:"index"`
@@ -535,8 +536,8 @@ func UpdateVirtualCharacterMetadata(item *VirtualCharacter, name, description, t
 	}).Error
 }
 
-func MarkVirtualCharacterStorage(itemID int64, fileID string, assetID int64) error {
-	updates := map[string]any{"updated_at": time.Now().Unix()}
+func MarkVirtualCharacterStorage(itemID int64, fileID string, assetID int64, aipddChannelID int) error {
+	updates := map[string]any{"aipdd_channel_id": aipddChannelID, "updated_at": time.Now().Unix()}
 	if strings.TrimSpace(fileID) != "" {
 		updates["a_ip_dd_file_id"] = fileID
 	}

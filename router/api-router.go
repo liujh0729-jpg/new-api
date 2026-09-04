@@ -154,6 +154,24 @@ func SetApiRouter(router *gin.Engine) {
 			}
 		}
 
+		membershipRoute := apiRouter.Group("/membership")
+		{
+			membershipRoute.GET("/self", middleware.UserAuth(), controller.GetSelfMembership)
+			membershipAdminRoute := membershipRoute.Group("/admin")
+			membershipAdminRoute.Use(middleware.AdminAuth())
+			{
+				membershipAdminRoute.GET("/levels", controller.GetMembershipLevels)
+				membershipAdminRoute.POST("/levels", controller.CreateMembershipLevel)
+				membershipAdminRoute.PUT("/levels/:id", controller.UpdateMembershipLevel)
+				membershipAdminRoute.DELETE("/levels/:id", controller.ArchiveMembershipLevel)
+				membershipAdminRoute.GET("/users/:user_id", controller.GetUserMemberships)
+				membershipAdminRoute.POST("/grants", controller.CreateUserMembership)
+				membershipAdminRoute.DELETE("/grants/:id", controller.RevokeUserMembership)
+				membershipAdminRoute.GET("/migration/preflight", controller.GetLegacyVIPMigrationPreflight)
+				membershipAdminRoute.POST("/migration/apply", middleware.StrictRootAuth(), controller.ApplyLegacyVIPMigration)
+			}
+		}
+
 		// Subscription billing (plans, purchase, admin management)
 		subscriptionRoute := apiRouter.Group("/subscription")
 		subscriptionRoute.Use(middleware.UserAuth())

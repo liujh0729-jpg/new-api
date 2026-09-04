@@ -40,3 +40,5 @@ cookies.txt
 output/
 tmp_*.go
 tmp_*.py
+__pycache__/
+*.py[cod]

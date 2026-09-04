@@ -728,6 +728,28 @@ func TestComputeTieredQuota_WithGroupRatio(t *testing.T) {
 	}
 }
 
+func TestComputeTieredQuota_AppliesFrozenMembershipAfterGroup(t *testing.T) {
+	exprStr := `tier("default", p + c)`
+	snap := &billingexpr.BillingSnapshot{
+		BillingMode:                "tiered_expr",
+		ExprString:                 exprStr,
+		ExprHash:                   billingexpr.ExprHashString(exprStr),
+		GroupRatio:                 1.25,
+		MembershipMultiplierPPM:    800_000,
+		AppliedMemberMultiplierPPM: 800_000,
+		QuotaPerUnit:               500_000,
+	}
+
+	result, err := billingexpr.ComputeTieredQuota(snap, billingexpr.TokenParams{P: 1000, C: 500})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// before=750, final=round(750*1.25*0.8)=750
+	if result.ActualQuotaAfterGroup != 750 {
+		t.Errorf("after membership = %d, want 750", result.ActualQuotaAfterGroup)
+	}
+}
+
 func TestComputeTieredQuota_ZeroTokens(t *testing.T) {
 	exprStr := `tier("default", p * 2 + c * 10)`
 	snap := &billingexpr.BillingSnapshot{

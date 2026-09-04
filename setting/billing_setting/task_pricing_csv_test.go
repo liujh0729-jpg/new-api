@@ -11,17 +11,11 @@ import (
 
 func csvRow(model, resolution, kind, native string, ratios []string) taskPricingCSVRow {
 	return taskPricingCSVRow{
-		"平台模型":   model,
-		"输出规格":   resolution,
-		"能力类型":   kind,
-		"计费单位":   "条/5秒",
-		"对比原生价":  native,
-		"VIP-T1": ratios[0],
-		"VIP1":   ratios[1],
-		"VIP2":   ratios[2],
-		"VIP3":   ratios[3],
-		"VIP4":   ratios[4],
-		"VIP5":   ratios[5],
+		"平台模型":  model,
+		"输出规格":  resolution,
+		"能力类型":  kind,
+		"计费单位":  "条/5秒",
+		"对比原生价": native,
 	}
 }
 
@@ -38,7 +32,7 @@ func TestBuildTaskPricingFromRowsTreatsNativeAsRMBPerSecond(t *testing.T) {
 		t.Fatal(err)
 	}
 	tiers := pricing["AP Seedance"].ByResolution
-	if tiers["480p"].GroupRatioPolicy != TaskPricingGroupRatioNone {
+	if tiers["480p"].GroupRatioPolicy != "" {
 		t.Fatalf("480p policy = %q", tiers["480p"].GroupRatioPolicy)
 	}
 	if tiers["720p"].GroupRatioPolicy != "" {
@@ -52,8 +46,8 @@ func TestBuildTaskPricingFromRowsTreatsNativeAsRMBPerSecond(t *testing.T) {
 	if mathAbs(tiers["480p"].ReferenceVideoUnitPrice-wantRef) > 1e-9 {
 		t.Fatalf("480p ref = %v, want %v", tiers["480p"].ReferenceVideoUnitPrice, wantRef)
 	}
-	if len(summary.ExemptResolutions) != 1 || summary.ExemptResolutions[0] != "AP Seedance/480p" {
-		t.Fatalf("exempt = %#v", summary.ExemptResolutions)
+	if summary.ResolutionTiers != 2 {
+		t.Fatalf("resolution tiers = %d", summary.ResolutionTiers)
 	}
 }
 
@@ -89,14 +83,14 @@ func TestBuildTaskPricingBillingUnitDoesNotScale(t *testing.T) {
 	}
 }
 
-func TestBuildTaskPricingRejectsNonstandardGroupRatios(t *testing.T) {
+func TestBuildTaskPricingIgnoresRemovedLegacyGroupRatioColumns(t *testing.T) {
 	rows := []taskPricingCSVRow{
 		csvRow("AP Seedance", "1080p", "输入含视频", "10.5", []string{".70", ".75", ".75", ".8", ".8", ".85"}),
 		csvRow("AP Seedance", "1080p", "不含视频", "8", []string{".70", ".75", ".75", ".8", ".8", ".85"}),
 	}
 	_, _, err := BuildTaskPricingFromRows(rows, decimal.RequireFromString("7.3"))
-	if err == nil || !strings.Contains(err.Error(), "第 2 行") || !strings.Contains(err.Error(), "VIP-T1=0.73") {
-		t.Fatalf("expected VIP rejection, got %v", err)
+	if err != nil {
+		t.Fatalf("legacy columns should not affect base pricing: %v", err)
 	}
 }
 
@@ -120,10 +114,9 @@ func TestBuildTaskPricingImportPlanPreservesUnrelatedEntries(t *testing.T) {
 		"UserUsableGroups":             `{"default":"默认分组"}`,
 	}
 	plan, err := BuildTaskPricingImportPlan(options, pricing, TaskPricingCSVSummary{
-		Models:            []string{"AP Seedance"},
-		ResolutionTiers:   1,
-		SourceRows:        2,
-		ExemptResolutions: []string{"AP Seedance/480p"},
+		Models:          []string{"AP Seedance"},
+		ResolutionTiers: 1,
+		SourceRows:      2,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -143,43 +136,32 @@ func TestBuildTaskPricingImportPlanPreservesUnrelatedEntries(t *testing.T) {
 		!strings.Contains(updates["billing_setting.billing_mode"], `"AP Seedance": "task_pricing"`) {
 		t.Fatalf("billing mode missing imported model: %s", updates["billing_setting.billing_mode"])
 	}
-	if !strings.Contains(updates["GroupRatio"], `"VIP1":0.78`) &&
-		!strings.Contains(updates["GroupRatio"], `"VIP1": 0.78`) {
-		t.Fatalf("group ratio missing VIP1: %s", updates["GroupRatio"])
+	if _, exists := updates["GroupRatio"]; exists {
+		t.Fatalf("base-price import must not mutate group ratios: %#v", updates)
 	}
-	if !strings.Contains(updates["GroupRatio"], `"VIP-T1":0.73`) &&
-		!strings.Contains(updates["GroupRatio"], `"VIP-T1": 0.73`) {
-		t.Fatalf("group ratio missing VIP-T1: %s", updates["GroupRatio"])
-	}
-	if !strings.Contains(updates["UserUsableGroups"], `"default":"默认分组"`) &&
-		!strings.Contains(updates["UserUsableGroups"], `"default": "默认分组"`) {
-		t.Fatalf("usable groups lost default: %s", updates["UserUsableGroups"])
-	}
-	if !strings.Contains(updates["UserUsableGroups"], `"VIP1":"VIP1（Seedance 78档）"`) &&
-		!strings.Contains(updates["UserUsableGroups"], `"VIP1": "VIP1（Seedance 78档）"`) {
-		t.Fatalf("usable groups must describe VIP1 as Seedance-only: %s", updates["UserUsableGroups"])
-	}
-	if !strings.Contains(updates["UserUsableGroups"], `"VIP-T1":"VIP-T1（Seedance 73档）"`) &&
-		!strings.Contains(updates["UserUsableGroups"], `"VIP-T1": "VIP-T1（Seedance 73档）"`) {
-		t.Fatalf("usable groups must describe VIP-T1 as Seedance-only: %s", updates["UserUsableGroups"])
+	if _, exists := updates["UserUsableGroups"]; exists {
+		t.Fatalf("base-price import must not mutate usable groups: %#v", updates)
 	}
 }
 
-func TestBuildTaskPricingRejectsMismatchedExemption(t *testing.T) {
+func TestBuildTaskPricingDoesNotInferExemptionFromLegacyColumns(t *testing.T) {
 	rows := []taskPricingCSVRow{
 		csvRow("AP Seedance", "480p", "输入含视频", "4", []string{"1", "1", "1", "1", "1", "1"}),
 		csvRow("AP Seedance", "480p", "不含视频", "3", []string{".73", ".78", ".8", ".85", ".9", ".95"}),
 	}
-	_, _, err := BuildTaskPricingFromRows(rows, decimal.RequireFromString("7.3"))
-	if err == nil || !strings.Contains(err.Error(), "分组豁免定义不一致") {
-		t.Fatalf("expected mismatch error, got %v", err)
+	pricing, _, err := BuildTaskPricingFromRows(rows, decimal.RequireFromString("7.3"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pricing["AP Seedance"].ByResolution["480p"].GroupRatioPolicy != "" {
+		t.Fatalf("legacy VIP columns must not create pricing exemptions")
 	}
 }
 
 func TestParseRetailPricingCSVUTF8BOMAndGBK(t *testing.T) {
 	header := strings.Join(taskPricingCSVRequiredColumns, ",")
 	body := header + "\n" + strings.Join([]string{
-		"AP Seedance", "480p", "不含视频", "条/5秒", "3", "1", "1", "1", "1", "1", "1",
+		"AP Seedance", "480p", "不含视频", "条/5秒", "3",
 	}, ",")
 
 	rows, err := ParseRetailPricingCSV([]byte("\ufeff" + body))
@@ -203,14 +185,14 @@ func TestParseRetailPricingCSVUTF8BOMAndGBK(t *testing.T) {
 	}
 }
 
-func TestParseRetailPricingCSVRejectsOldFiveTierHeaders(t *testing.T) {
+func TestParseRetailPricingCSVAcceptsLegacyExtraTierHeaders(t *testing.T) {
 	legacy := []string{"平台模型", "输出规格", "能力类型", "计费单位", "对比原生价", "VIP1", "VIP2", "VIP3", "VIP4", "VIP5"}
 	content := strings.Join(legacy, ",") + "\n" + strings.Join([]string{
 		"AP Seedance", "480p", "不含视频", "条/5秒", "3", "1", "1", "1", "1", "1",
 	}, ",")
-	_, err := ParseRetailPricingCSV([]byte(content))
-	if err == nil || !strings.Contains(err.Error(), "VIP-T1") {
-		t.Fatalf("expected missing VIP-T1, got %v", err)
+	rows, err := ParseRetailPricingCSV([]byte(content))
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("legacy extra columns should be ignored, got rows=%d err=%v", len(rows), err)
 	}
 }
 
@@ -269,7 +251,7 @@ func TestExportTaskPricingCSVRoundTrip(t *testing.T) {
 	if mathAbs(got.ReferenceVideoUnitPrice-want.ReferenceVideoUnitPrice) > 1e-9 {
 		t.Fatalf("ref roundtrip %v vs %v", got.ReferenceVideoUnitPrice, want.ReferenceVideoUnitPrice)
 	}
-	if got.GroupRatioPolicy != TaskPricingGroupRatioNone {
+	if got.GroupRatioPolicy != "" {
 		t.Fatalf("policy = %q", got.GroupRatioPolicy)
 	}
 }

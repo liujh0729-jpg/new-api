@@ -32,8 +32,10 @@ func DecompressRequestMiddleware() gin.HandlerFunc {
 		if maxMB <= 0 {
 			maxMB = 32
 		}
-		if isPlaygroundUploadPath(c.Request.URL.Path) && int64(maxMB) < constant.PlaygroundUploadMaxMB {
-			maxMB = int(constant.PlaygroundUploadMaxMB)
+		if isPlaygroundUploadPath(c.Request.URL.Path) && int64(maxMB) <= constant.PlaygroundUploadMaxMB {
+			// The file limit excludes multipart boundaries and headers. Reserve a
+			// small envelope so a file exactly at the documented limit is accepted.
+			maxMB = int(constant.PlaygroundUploadMaxMB + 1)
 		}
 		maxBytes := int64(maxMB) << 20
 
@@ -79,5 +81,5 @@ func DecompressRequestMiddleware() gin.HandlerFunc {
 }
 
 func isPlaygroundUploadPath(path string) bool {
-	return path == "/pg/material/upload" || path == "/pg/reference-media/upload"
+	return path == "/pg/reference-media/upload"
 }

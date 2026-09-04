@@ -250,6 +250,15 @@ function buildDetailSegments(
     })
   }
 
+  if (other.membership_multiplier != null) {
+    const applied =
+      other.applied_membership_multiplier ?? other.membership_multiplier
+    segments.push({
+      text: `${other.membership_name || other.membership_code || t('Membership')} ${formatRatioCompact(applied)}x${other.membership_exempt ? ` · ${t('Exempt')}` : ''}`,
+      muted: true,
+    })
+  }
+
   return segments
 }
 

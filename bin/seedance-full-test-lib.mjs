@@ -255,7 +255,7 @@ export function buildPositiveCases(options = {}) {
         duration: 5,
         seed: 271828,
       },
-      description: 'Reference-video continuation and VIP1 pricing.',
+      description: 'Reference-video continuation under the VIP1 membership cohort.',
     },
     {
       id: 'C05',
@@ -424,7 +424,7 @@ export function buildPositiveCases(options = {}) {
       modalities: ['text', 'image'],
       expectedSeconds: 5,
       body: structuredClone(c07Body),
-      description: 'Exact C07 payload under VIP1 for group-price comparison.',
+      description: 'Exact C07 payload under VIP1 for membership-price comparison.',
     },
     {
       id: 'C15',
@@ -635,7 +635,13 @@ function effectiveTier(config, resolution) {
   return config;
 }
 
-export function computeQuote(pricingEntry, groupRatio, testCase, quotaPerUnit) {
+export function computeQuote(
+  pricingEntry,
+  groupRatio,
+  testCase,
+  quotaPerUnit,
+  membershipMultiplier = 1,
+) {
   if (!pricingEntry || pricingEntry.billing_mode !== 'task_pricing') {
     throw new Error('Model is not configured for task_pricing: ' + testCase.model);
   }
@@ -656,19 +662,24 @@ export function computeQuote(pricingEntry, groupRatio, testCase, quotaPerUnit) {
   if (!(unitPrice > 0)) {
     throw new Error('Invalid unit price for ' + testCase.model + ' ' + testCase.resolution);
   }
-  const configuredPolicy = tier.group_ratio_policy || config.group_ratio_policy || '';
-  const ratioPolicy = configuredPolicy || (testCase.resolution === '480p' ? 'none' : 'global');
-  const appliedRatio = ratioPolicy === 'none' ? 1 : Number(groupRatio || 1);
+  const appliedGroupRatio = Number(groupRatio ?? 1);
+  const configuredMembershipMultiplier = Number(membershipMultiplier ?? 1);
+  const normalizedModel = String(testCase.model || '').toLowerCase().replace(/[\s_-]+/g, '');
+  const membershipExempt = normalizedModel.includes('apseedance') &&
+    String(testCase.resolution || '').trim().toLowerCase() === '480p';
+  const appliedMembershipMultiplier = membershipExempt ? 1 : configuredMembershipMultiplier;
   const quantity = Number(testCase.expectedSeconds || 5);
   const baseUsd = unitPrice * quantity;
-  const saleUsd = baseUsd * appliedRatio;
+  const saleUsd = baseUsd * appliedGroupRatio * appliedMembershipMultiplier;
   return {
     unit: config.unit || 'second',
     variant,
     unitPriceUsd: unitPrice,
     quantity,
-    groupRatio: appliedRatio,
-    groupRatioPolicy: ratioPolicy,
+    groupRatio: appliedGroupRatio,
+    membershipMultiplier: configuredMembershipMultiplier,
+    appliedMembershipMultiplier,
+    membershipExempt,
     baseUsd,
     saleUsd,
     quota: Math.round(saleUsd * quotaPerUnit),
@@ -687,11 +698,23 @@ export function groupRatioFor(pricingResponse, group) {
   return Number.isFinite(Number(value)) ? Number(value) : 1;
 }
 
+export function membershipMultiplierFor(pricingResponse) {
+  const ppm = Number(pricingResponse?.membership?.multiplier_ppm);
+  return ppm > 0 && ppm <= 1_000_000 ? ppm / 1_000_000 : 1;
+}
+
 export function buildCostPlan(cases, pricingByGroup, quotaPerUnit, maxCostUsd, allGroups = []) {
   const planned = cases.map((testCase) => {
     const pricing = pricingByGroup[testCase.group];
     const entry = findPricingEntry(pricing, testCase.model);
-    const quote = computeQuote(entry, groupRatioFor(pricing, testCase.group), testCase, quotaPerUnit);
+    const pricingGroup = pricing?.current_group || testCase.group;
+    const quote = computeQuote(
+      entry,
+      groupRatioFor(pricing, pricingGroup),
+      testCase,
+      quotaPerUnit,
+      membershipMultiplierFor(pricing),
+    );
     return { ...testCase, quote };
   });
   const totalUsd = planned.reduce((sum, item) => sum + item.quote.saleUsd, 0);
@@ -1057,6 +1080,8 @@ export function renderBillingCsv(run) {
   const headers = [
     'case_id', 'group', 'model', 'resolution', 'status', 'request_id', 'task_id',
     'pricing_variant', 'unit_price_usd', 'quantity', 'expected_group_ratio',
+    'expected_membership_multiplier', 'expected_applied_membership_multiplier',
+    'membership_exempt',
     'expected_sale_usd', 'log_sale_usd', 'task_quota', 'task_quota_usd',
     'balance_delta_quota', 'balance_delta_usd', 'net_log_quota',
     'net_log_usd', 'discrepancy_usd', 'usd_cny_rate', 'unit_price_cny',
@@ -1078,6 +1103,9 @@ export function renderBillingCsv(run) {
       billing.expected?.unitPriceUsd ?? '',
       billing.expected?.quantity ?? '',
       billing.expected?.groupRatio ?? '',
+      billing.expected?.membershipMultiplier ?? '',
+      billing.expected?.appliedMembershipMultiplier ?? '',
+      billing.expected?.membershipExempt ?? '',
       billing.expected?.saleUsd ?? '',
       billing.log?.saleUsd ?? '',
       billing.taskQuota ?? '',
@@ -1227,7 +1255,7 @@ export function renderMarkdownReport(run) {
   const money = reportMoney(run);
   const externalCost = externalCostInReportCurrency(run, money);
   const combinedActual = usdToReportCurrency(run.summary?.actualBalanceUsd, money);
-  lines.push('# Seedance 双分组全量测试与费用审计');
+  lines.push('# Seedance 双会员档位全量测试与费用审计');
   lines.push('');
   lines.push('- 运行编号：' + run.runId);
   lines.push('- 接口地址：' + redactUrl(run.baseUrl));
@@ -1249,19 +1277,22 @@ export function renderMarkdownReport(run) {
   lines.push('');
   lines.push('## 测试账号');
   lines.push('');
-  lines.push('| 用户名 | 分组 | 角色 | 初始额度 | 结束额度 | 令牌已删除 | 账号已停用 |');
-  lines.push('|---|---:|---:|---:|---:|---:|---:|');
+  lines.push('| 用户名 | 测试档位 | 实际分组 | 会员 | 角色 | 初始额度 | 结束额度 | 令牌已删除 | 会员已撤销 | 账号已停用 |');
+  lines.push('|---|---|---|---|---:|---:|---:|---:|---:|---:|');
   for (const account of run.accounts || []) {
     lines.push(
-      '| ' + account.username + ' | ' + account.group + ' | ' + account.role + ' | ' +
+      '| ' + account.username + ' | ' + account.group + ' | ' + account.actualGroup +
+      ' | ' + account.membershipCode + ' | ' + account.role + ' | ' +
       (account.startQuota ?? '-') + ' | ' + (account.endQuota ?? '-') + ' | ' +
-      (account.tokenDeleted ? '是' : '否') + ' | ' + (account.disabled ? '是' : '否') + ' |',
+      (account.tokenDeleted ? '是' : '否') + ' | ' +
+      (account.membershipRevoked ? '是' : '否') + ' | ' +
+      (account.disabled ? '是' : '否') + ' |',
     );
   }
   lines.push('');
   lines.push('## 用例结果');
   lines.push('');
-  lines.push('| 用例 | 分组 | 模型 | 分辨率 | 输入模态 | 状态 | 请求 ID | 任务 ID | 提交耗时 ms | 轮询耗时 ms | 通过 |');
+  lines.push('| 用例 | 会员档位 | 模型 | 分辨率 | 输入模态 | 状态 | 请求 ID | 任务 ID | 提交耗时 ms | 轮询耗时 ms | 通过 |');
   lines.push('|---|---|---|---|---|---|---|---|---:|---:|---:|');
   for (const result of run.results || []) {
     lines.push(
@@ -1275,8 +1306,8 @@ export function renderMarkdownReport(run) {
   lines.push('');
   lines.push('## 费用明细');
   lines.push('');
-  lines.push('| 用例 | 计价档位 | 单价（' + money.label + '） | 数量 | 分组倍率 | 预计（' + money.label + '） | 日志（' + money.label + '） | 任务额度折算（' + money.label + '） | 余额差（' + money.label + '） | 净日志（' + money.label + '） | 误差（' + money.label + '） |');
-  lines.push('|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|');
+  lines.push('| 用例 | 计价档位 | 单价（' + money.label + '） | 数量 | 分组倍率 | 会员倍率 | 实际会员倍率 | 预计（' + money.label + '） | 日志（' + money.label + '） | 任务额度折算（' + money.label + '） | 余额差（' + money.label + '） | 净日志（' + money.label + '） | 误差（' + money.label + '） |');
+  lines.push('|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|');
   for (const result of run.results || []) {
     const billing = result.billing || {};
     lines.push(
@@ -1284,6 +1315,8 @@ export function renderMarkdownReport(run) {
       ' | ' + fmtReportMoney(billing.expected?.unitPriceUsd, money) + ' | ' +
       finiteNumber(billing.expected?.quantity) + ' | ' +
       finiteNumber(billing.expected?.groupRatio) + ' | ' +
+      finiteNumber(billing.expected?.membershipMultiplier) + ' | ' +
+      finiteNumber(billing.expected?.appliedMembershipMultiplier) + ' | ' +
       fmtReportMoney(billing.expected?.saleUsd, money) + ' | ' + fmtReportMoney(billing.log?.saleUsd, money) + ' | ' +
       fmtReportMoney(billing.taskQuotaUsd, money) + ' | ' + fmtReportMoney(billing.balanceDeltaUsd, money) + ' | ' +
       fmtReportMoney(billing.netLogUsd, money) + ' | ' + fmtReportMoney(billing.discrepancyUsd, money) + ' |',
@@ -1306,7 +1339,7 @@ export function renderMarkdownReport(run) {
   }
   lines.push('## 费用汇总');
   lines.push('');
-  appendMarkdownSummary(lines, '按分组', run.summary?.billingByGroup, money);
+  appendMarkdownSummary(lines, '按会员档位', run.summary?.billingByGroup, money);
   appendMarkdownSummary(lines, '按模型', run.summary?.billingByModel, money);
   appendMarkdownSummary(lines, '按分辨率', run.summary?.billingByResolution, money);
   appendMarkdownSummary(lines, '按输入模态', run.summary?.billingByModality, money);
@@ -1378,6 +1411,8 @@ export function renderHtmlReport(run) {
       escapeHtml(fmtReportMoney(billing.expected?.unitPriceUsd, money)) + '</td><td>' +
       escapeHtml(finiteNumber(billing.expected?.quantity)) + '</td><td>' +
       escapeHtml(finiteNumber(billing.expected?.groupRatio)) + '</td><td>' +
+      escapeHtml(finiteNumber(billing.expected?.membershipMultiplier)) + '</td><td>' +
+      escapeHtml(finiteNumber(billing.expected?.appliedMembershipMultiplier)) + '</td><td>' +
       escapeHtml(fmtReportMoney(billing.expected?.saleUsd, money)) + '</td><td>' +
       escapeHtml(fmtReportMoney(billing.log?.saleUsd, money)) + '</td><td>' +
       escapeHtml(fmtReportMoney(billing.taskQuotaUsd, money)) + '</td><td>' +
@@ -1408,7 +1443,7 @@ export function renderHtmlReport(run) {
     'table{width:100%;border-collapse:collapse;background:#11192b}th,td{padding:9px;border:1px solid #2a3653;vertical-align:top}',
     'th{position:sticky;top:0;background:#1c2740}.pass{color:#66e3a4}.fail{color:#ff7b86}video{width:220px;max-height:180px}',
     'code,pre{word-break:break-all;white-space:pre-wrap}pre{max-width:520px}a{color:#8ab4ff}</style></head><body>',
-    '<h1>Seedance 双分组全量测试与费用审计</h1>',
+    '<h1>Seedance 双会员档位全量测试与费用审计</h1>',
     '<div class="summary">',
     '<div class="card">运行编号<br><strong>' + escapeHtml(run.runId) + '</strong></div>',
     '<div class="card">预计费用<br><strong>' + escapeHtml(fmtReportMoney(run.costPlan?.totalUsd, money)) + '</strong></div>',
@@ -1427,11 +1462,11 @@ export function renderHtmlReport(run) {
         ' 元人民币' + (money.rateDate ? '（' + escapeHtml(money.rateDate) + '）' : '') + '</code>' +
         (money.rateSource ? '，来源：' + escapeHtml(money.rateSource) : '') : '') + '</p>',
     '<h2>用例与计费</h2>',
-    '<div style="overflow:auto"><table><thead><tr><th>用例</th><th>分组</th><th>模型</th><th>分辨率</th><th>输入模态</th><th>状态</th><th>预计费用</th><th>实际费用</th><th>结论</th><th>ID / 请求</th><th>产物</th></tr></thead><tbody>',
+    '<div style="overflow:auto"><table><thead><tr><th>用例</th><th>会员档位</th><th>模型</th><th>分辨率</th><th>输入模态</th><th>状态</th><th>预计费用</th><th>实际费用</th><th>结论</th><th>ID / 请求</th><th>产物</th></tr></thead><tbody>',
     rows,
     '</tbody></table></div>',
     '<h2>费用明细</h2>',
-    '<div style="overflow:auto"><table><thead><tr><th>用例</th><th>计价档位</th><th>单价（' + money.label + '）</th><th>数量</th><th>分组倍率</th><th>预计（' + money.label + '）</th><th>日志（' + money.label + '）</th><th>任务额度折算（' + money.label + '）</th><th>余额差（' + money.label + '）</th><th>净日志（' + money.label + '）</th><th>误差</th></tr></thead><tbody>',
+    '<div style="overflow:auto"><table><thead><tr><th>用例</th><th>计价档位</th><th>单价（' + money.label + '）</th><th>数量</th><th>分组倍率</th><th>会员倍率</th><th>实际会员倍率</th><th>预计（' + money.label + '）</th><th>日志（' + money.label + '）</th><th>任务额度折算（' + money.label + '）</th><th>余额差（' + money.label + '）</th><th>净日志（' + money.label + '）</th><th>误差</th></tr></thead><tbody>',
     billingRows,
     '</tbody></table></div>',
     externalCostRows ? '<h2>上游辅助费用</h2><div style="overflow:auto"><table><thead><tr><th>费用编号</th><th>范围</th><th>任务 ID</th><th>币种</th><th>金额</th><th>AWCoin</th><th>说明</th></tr></thead><tbody>' + externalCostRows + '</tbody></table></div>' : '',

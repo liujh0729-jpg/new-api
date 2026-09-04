@@ -123,6 +123,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		newAPIError = types.NewError(err, types.ErrorCodeGenRelayInfoFailed)
 		return
 	}
+	if err := freezeRelayMembership(relayInfo); err != nil {
+		newAPIError = types.NewError(err, types.ErrorCodeQueryDataError)
+		return
+	}
 
 	needSensitiveCheck := setting.ShouldCheckPromptSensitive()
 	needCountToken := constant.CountToken
@@ -418,6 +422,10 @@ func RelayMidjourney(c *gin.Context) {
 		})
 		return
 	}
+	if err := freezeRelayMembership(relayInfo); err != nil {
+		common.ApiError(c, err)
+		return
+	}
 
 	var mjErr *dto.MidjourneyResponse
 	switch relayInfo.RelayMode {
@@ -497,6 +505,10 @@ func RelayTask(c *gin.Context) {
 			Message:    err.Error(),
 			StatusCode: http.StatusInternalServerError,
 		})
+		return
+	}
+	if err := freezeRelayMembership(relayInfo); err != nil {
+		respondTaskError(c, service.TaskErrorWrapperLocal(err, "membership_resolve_failed", http.StatusInternalServerError))
 		return
 	}
 
@@ -701,18 +713,30 @@ func RelayTask(c *gin.Context) {
 			task.PrivateData.SubscriptionPreConsumed = relayInfo.SubscriptionPreConsumed
 			task.PrivateData.TokenId = relayInfo.TokenId
 			task.PrivateData.BillingContext = &model.TaskBillingContext{
-				ModelPrice:      relayInfo.PriceData.ModelPrice,
-				GroupRatio:      relayInfo.PriceData.GroupRatioInfo.GroupRatio,
-				ModelRatio:      relayInfo.PriceData.ModelRatio,
-				OtherRatios:     relayInfo.PriceData.OtherRatios,
-				OriginModelName: relayInfo.OriginModelName,
-				PerCallBilling:  isTaskPerCallBilling(relayInfo),
-				QuotaPerUnit:    common.QuotaPerUnit,
-				USDExchangeRate: operation_setting.USDExchangeRate,
+				ModelPrice:              relayInfo.PriceData.ModelPrice,
+				GroupRatio:              relayInfo.PriceData.GroupRatioInfo.GroupRatio,
+				MembershipLevelId:       relayInfo.PriceData.MembershipRatioInfo.LevelId,
+				MembershipCode:          relayInfo.PriceData.MembershipRatioInfo.Code,
+				MembershipMultiplierPPM: relayInfo.PriceData.MembershipRatioInfo.ConfiguredMultiplierPPM,
+				AppliedMemberPPM:        relayInfo.PriceData.MembershipRatioInfo.AppliedMultiplierPPM,
+				MembershipExempt:        relayInfo.PriceData.MembershipRatioInfo.Exempt,
+				MembershipExemptReason:  relayInfo.PriceData.MembershipRatioInfo.ExemptionReason,
+				ModelRatio:              relayInfo.PriceData.ModelRatio,
+				OtherRatios:             relayInfo.PriceData.OtherRatios,
+				OriginModelName:         relayInfo.OriginModelName,
+				PerCallBilling:          isTaskPerCallBilling(relayInfo),
+				QuotaPerUnit:            common.QuotaPerUnit,
+				USDExchangeRate:         operation_setting.USDExchangeRate,
 			}
 			if quote := relayInfo.TaskPricingQuote; quote != nil {
 				task.PrivateData.BillingContext.PerCallBilling = false
 				task.PrivateData.BillingContext.GroupRatio = quote.GroupRatio
+				task.PrivateData.BillingContext.MembershipLevelId = quote.MembershipLevelId
+				task.PrivateData.BillingContext.MembershipCode = quote.MembershipCode
+				task.PrivateData.BillingContext.MembershipMultiplierPPM = quote.MembershipMultiplierPPM
+				task.PrivateData.BillingContext.AppliedMemberPPM = quote.AppliedMemberPPM
+				task.PrivateData.BillingContext.MembershipExempt = quote.MembershipExempt
+				task.PrivateData.BillingContext.MembershipExemptReason = quote.MembershipExemptReason
 				task.PrivateData.BillingContext.BillingMode = billing_setting.BillingModeTaskPricing
 				task.PrivateData.BillingContext.BillingUnit = quote.Unit
 				task.PrivateData.BillingContext.PricingVariant = quote.Variant
@@ -764,6 +788,30 @@ func RelayTask(c *gin.Context) {
 	if taskErr != nil {
 		respondTaskError(c, taskErr)
 	}
+}
+
+func freezeRelayMembership(info *relaycommon.RelayInfo) error {
+	if info == nil {
+		return errors.New("relay info is nil")
+	}
+	snapshot, err := model.ResolveUserMembership(info.UserId)
+	if err != nil {
+		return fmt.Errorf("resolve user membership: %w", err)
+	}
+	info.MembershipRatioInfo = types.MembershipRatioInfo{
+		GrantId:                 snapshot.GrantId,
+		LevelId:                 snapshot.LevelId,
+		Code:                    snapshot.Code,
+		DisplayName:             snapshot.DisplayName,
+		Rank:                    snapshot.Rank,
+		ConfiguredMultiplierPPM: snapshot.MultiplierPPM,
+		AppliedMultiplierPPM:    snapshot.MultiplierPPM,
+		StartsAt:                snapshot.StartsAt,
+		EndsAt:                  snapshot.EndsAt,
+		ResolvedAt:              snapshot.ResolvedAt,
+	}.Normalized()
+	info.PriceData.MembershipRatioInfo = info.MembershipRatioInfo
+	return nil
 }
 
 // abortIfOriginTaskModelForbidden validates remix/continuation requests after

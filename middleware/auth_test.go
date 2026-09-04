@@ -19,7 +19,7 @@ func TestApplyQueryUserIDHeaderSetsMissingHeader(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
-	ctx.Request = httptest.NewRequest(http.MethodGet, "/pg/material/file/1?user_id=42", nil)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/pg/private/file/1?user_id=42", nil)
 
 	applyQueryUserIDHeader(ctx)
 
@@ -30,7 +30,7 @@ func TestApplyQueryUserIDHeaderPreservesExistingHeader(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
-	ctx.Request = httptest.NewRequest(http.MethodGet, "/pg/material/file/1?user_id=42", nil)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/pg/private/file/1?user_id=42", nil)
 	ctx.Request.Header.Set("New-Api-User", "7")
 
 	applyQueryUserIDHeader(ctx)

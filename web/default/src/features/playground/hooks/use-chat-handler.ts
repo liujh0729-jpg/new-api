@@ -20,14 +20,6 @@ import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import {
-  createGeneratedMaterial,
-  uploadMaterial,
-} from '@/features/materials/api'
-import {
-  MATERIAL_SOURCE_TYPE,
-  MATERIAL_TYPE,
-} from '@/features/materials/constants'
-import {
   getImageGenerationTask,
   getImageEditTask,
   getVideoGenerationTask,
@@ -98,12 +90,6 @@ const taskAbortTokens: Record<TaskType, number> = {
 }
 const activeTaskPolls = new Map<string, Promise<void>>()
 
-function isPersistableGeneratedUrl(url?: string): url is string {
-  if (!url) return false
-  const value = url.trim().toLowerCase()
-  return !!value && !value.startsWith('data:') && !value.startsWith('blob:')
-}
-
 function getLastAssistantTaskId(messages: Message[]): string | undefined {
   return [...messages].reverse().find((message) => message.from === 'assistant')
     ?.taskId
@@ -161,59 +147,6 @@ function updateTaskAssistantMessage(
   const updated = [...messages]
   updated[targetIndex] = updater(messages[targetIndex]!)
   return updated
-}
-
-function extensionForMime(mimeType: string, fallback: string): string {
-  const normalized = mimeType.toLowerCase()
-  if (normalized.includes('jpeg')) return '.jpg'
-  if (normalized.includes('png')) return '.png'
-  if (normalized.includes('webp')) return '.webp'
-  if (normalized.includes('gif')) return '.gif'
-  if (normalized.includes('mp4')) return '.mp4'
-  if (normalized.includes('webm')) return '.webm'
-  if (normalized.includes('quicktime')) return '.mov'
-  return fallback
-}
-
-function generatedOutputFileName(
-  prefix: string,
-  timestamp: number,
-  index: number,
-  mimeType: string | undefined,
-  fallback: string
-): string | undefined {
-  if (!mimeType) return undefined
-  return `${prefix}-${timestamp}-${index + 1}${extensionForMime(mimeType, fallback)}`
-}
-
-function base64ToFile(
-  base64: string,
-  mimeType: string,
-  fileName: string
-): File {
-  const binary = window.atob(base64)
-  const bytes = new Uint8Array(binary.length)
-  for (let index = 0; index < binary.length; index += 1) {
-    bytes[index] = binary.charCodeAt(index)
-  }
-
-  const buffer = new ArrayBuffer(bytes.byteLength)
-  new Uint8Array(buffer).set(bytes)
-  return new File([buffer], fileName, { type: mimeType })
-}
-
-function logGeneratedMaterialFailures(
-  results: PromiseSettledResult<unknown>[]
-) {
-  for (const result of results) {
-    if (result.status === 'rejected') {
-      // eslint-disable-next-line no-console
-      console.warn(
-        'Failed to save generated output to material library:',
-        result.reason
-      )
-    }
-  }
 }
 
 function getTaskAbortToken(taskType: TaskType): number {
@@ -302,84 +235,12 @@ export function useChatHandler({
   const { sendStreamRequest, stopStream } = useStreamRequest()
   const [isGenerating, setIsGenerating] = useState(false)
 
-  const saveGeneratedImagesToMaterials = useCallback(
-    (images: GeneratedImage[]) => {
-      const now = Date.now()
-      const jobs: Promise<unknown>[] = []
-
-      images.forEach((image, index) => {
-        try {
-          if (isPersistableGeneratedUrl(image.url)) {
-            jobs.push(
-              createGeneratedMaterial({
-                name: image.revised_prompt || t('Generated image'),
-                type: MATERIAL_TYPE.IMAGE,
-                mime_type: image.mime_type,
-                file_name: generatedOutputFileName(
-                  'generated-image',
-                  now,
-                  index,
-                  image.mime_type,
-                  '.png'
-                ),
-                url: image.url,
-              })
-            )
-            return
-          }
-          if (image.b64_json) {
-            const mimeType = image.mime_type || 'image/png'
-            const fileName = `generated-image-${now}-${index + 1}${extensionForMime(mimeType, '.png')}`
-            const file = base64ToFile(image.b64_json, mimeType, fileName)
-            jobs.push(uploadMaterial(file, MATERIAL_SOURCE_TYPE.AI_OUTPUT))
-          }
-        } catch (error) {
-          jobs.push(Promise.reject(error))
-        }
-      })
-
-      if (jobs.length > 0) {
-        void Promise.allSettled(jobs).then(logGeneratedMaterialFailures)
-      }
-    },
-    [t]
-  )
-
-  const saveGeneratedVideosToMaterials = useCallback(
-    (videos: GeneratedVideo[]) => {
-      const now = Date.now()
-      const jobs = videos
-        .filter((video) => isPersistableGeneratedUrl(video.url))
-        .map((video, index) => {
-          return createGeneratedMaterial({
-            name: video.task_id || t('Generated video'),
-            type: MATERIAL_TYPE.VIDEO,
-            mime_type: video.mime_type,
-            file_name: generatedOutputFileName(
-              'generated-video',
-              now,
-              index,
-              video.mime_type,
-              '.mp4'
-            ),
-            url: video.url,
-          })
-        })
-
-      if (jobs.length > 0) {
-        void Promise.allSettled(jobs).then(logGeneratedMaterialFailures)
-      }
-    },
-    [t]
-  )
-
   const completeWithImages = useCallback(
     (
       images: GeneratedImage[],
       taskId?: string,
       taskType: TaskType = 'image'
     ) => {
-      saveGeneratedImagesToMaterials(images)
       onMessageUpdate((prev) =>
         updateTaskAssistantMessage(prev, taskType, taskId, (message) => {
           if (shouldIgnoreTaskCompleteUpdate(message, taskType, taskId)) {
@@ -395,7 +256,7 @@ export function useChatHandler({
         })
       )
     },
-    [onMessageUpdate, saveGeneratedImagesToMaterials, t]
+    [onMessageUpdate, t]
   )
 
   const markImageGenerationLoading = useCallback(
@@ -422,7 +283,6 @@ export function useChatHandler({
 
   const completeWithVideos = useCallback(
     (videos: GeneratedVideo[], taskId?: string) => {
-      saveGeneratedVideosToMaterials(videos)
       onMessageUpdate((prev) =>
         updateTaskAssistantMessage(prev, 'video', taskId, (message) => {
           if (shouldIgnoreTaskCompleteUpdate(message, 'video', taskId)) {
@@ -438,7 +298,7 @@ export function useChatHandler({
         })
       )
     },
-    [onMessageUpdate, saveGeneratedVideosToMaterials, t]
+    [onMessageUpdate, t]
   )
 
   const markVideoGenerationLoading = useCallback(

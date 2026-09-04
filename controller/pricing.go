@@ -8,6 +8,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
@@ -126,6 +127,18 @@ func attachModelGroupRatios(pricing []model.Pricing, userGroup string, available
 	}
 }
 
+func pricingUsableGroups(userGroup string, authenticated bool) map[string]string {
+	if authenticated {
+		return service.GetUserUsableGroups(userGroup)
+	}
+	groups := setting.GetUserUsableGroupsCopy()
+	description := groups["default"]
+	if strings.TrimSpace(description) == "" {
+		description = "默认分组"
+	}
+	return map[string]string{"default": description}
+}
+
 func GetPricing(c *gin.Context) {
 	pricing := model.GetPricing()
 	userId, exists := c.Get("id")
@@ -134,11 +147,18 @@ func GetPricing(c *gin.Context) {
 	for s, f := range ratio_setting.GetGroupRatioCopy() {
 		groupRatio[s] = f
 	}
-	var group string
+	group := "default"
+	authenticatedViewer := false
+	membership, membershipErr := model.ResolveUserMembership(0)
 	if exists {
 		user, err := model.GetUserCache(userId.(int))
 		if err == nil {
+			authenticatedViewer = true
 			group = user.Group
+			if strings.TrimSpace(group) == "" {
+				group = "default"
+			}
+			membership, membershipErr = model.ResolveUserMembership(user.Id)
 			for g := range groupRatio {
 				ratio, ok := ratio_setting.GetGroupGroupRatio(group, g)
 				if ok {
@@ -147,8 +167,12 @@ func GetPricing(c *gin.Context) {
 			}
 		}
 	}
+	if membershipErr != nil {
+		common.SysError("resolve pricing membership failed: " + membershipErr.Error())
+		membership, _ = model.ResolveUserMembership(0)
+	}
 
-	usableGroup = service.GetUserUsableGroups(group)
+	usableGroup = pricingUsableGroups(group, authenticatedViewer)
 	pricing = filterPricingByUsableGroups(pricing, usableGroup)
 	// check groupRatio contains usableGroup
 	for group := range ratio_setting.GetGroupRatioCopy() {
@@ -159,6 +183,10 @@ func GetPricing(c *gin.Context) {
 	attachModelGroupRatios(pricing, group, groupRatio)
 	exchangeRate := pricingResponseExchangeRate()
 	pricing = convertPricingMonetaryFieldsToCNY(pricing, exchangeRate)
+	autoGroups := []string{}
+	if authenticatedViewer {
+		autoGroups = service.GetUserAutoGroup(group)
+	}
 
 	c.JSON(200, gin.H{
 		"success":            true,
@@ -169,8 +197,11 @@ func GetPricing(c *gin.Context) {
 		"group_ratio":        groupRatio,
 		"usable_group":       usableGroup,
 		"supported_endpoint": model.GetSupportedEndpointMap(),
-		"auto_groups":        service.GetUserAutoGroup(group),
-		"pricing_version":    "cny-v1-a42d372ccf0b5dd13ecf71203521f9d2",
+		"auto_groups":        autoGroups,
+		"current_group":      group,
+		"group_locked":       setting.TokenGroupLockedToUserGroupEnabled,
+		"membership":         membership,
+		"pricing_version":    "cny-membership-v1",
 	})
 }
 

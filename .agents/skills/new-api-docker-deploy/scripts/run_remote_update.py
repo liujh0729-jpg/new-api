@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import sys
 import time
 import uuid
@@ -17,19 +18,24 @@ import paramiko
 
 HOST = os.environ.get("DEPLOY_SSH_HOST", "")
 USER = os.environ.get("DEPLOY_SSH_USER", "root")
+SSH_PORT = int(os.environ.get("DEPLOY_SSH_PORT", "22"))
 SSH_PASSWORD = os.environ.get("DEPLOY_SSH_PASSWORD", "")
 SSH_KEY_FILE = os.environ.get("DEPLOY_SSH_KEY_FILE", "").strip()
 ADMIN_USER = os.environ.get("DEPLOY_ADMIN_USER", "root")
 ADMIN_PASSWORD = os.environ.get("DEPLOY_ADMIN_PASSWORD", "")
 DEPLOY_DIR = os.environ.get("DEPLOY_DIR", "/opt/new-api")
+COMPOSE_FILE = os.environ.get("DEPLOY_COMPOSE_FILE", "docker-compose.yml").strip()
+ENV_FILE = os.environ.get("DEPLOY_ENV_FILE", ".env").strip()
 PUBLIC_PORT = os.environ.get("DEPLOY_PUBLIC_PORT", "6070")
 REGISTERED_INSTANCE_ID = os.environ.get("DEPLOY_INSTANCE_ID", "").strip()
-EXPECTED_IMAGE = (
-    "crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest"
-)
+EXPECTED_IMAGE = os.environ.get(
+    "DEPLOY_EXPECTED_IMAGE",
+    "crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest",
+).strip()
+ACR_REGISTRY = os.environ.get("DEPLOY_ACR_REGISTRY", "").strip()
+ACR_USERNAME = os.environ.get("DEPLOY_ACR_USERNAME", "").strip()
+ACR_PASSWORD = os.environ.get("DEPLOY_ACR_PASSWORD", "")
 CHANNEL_OVERWRITE = os.environ.get("DEPLOY_CHANNEL_OVERWRITE", "false").lower() == "true"
-PRICE_OVERWRITE = os.environ.get("DEPLOY_PRICE_OVERWRITE", "false").lower() == "true"
-VIP_SYNC = os.environ.get("DEPLOY_VIP_SYNC", "false").lower() == "true"
 SCRIPT_DIR = Path(__file__).resolve().parent
 WORK_DIR = Path(os.environ.get("DEPLOY_WORK_DIR", str(Path.cwd() / ".tmp_deploy_update")))
 REPORT_BASE = os.environ.get("AIPDD_REPORT_BASE_URL", "https://api.aipdd.work")
@@ -53,9 +59,12 @@ def require_secrets() -> None:
         die("DEPLOY_SSH_PASSWORD or DEPLOY_SSH_KEY_FILE required")
     if SSH_KEY_FILE and not Path(SSH_KEY_FILE).is_file():
         die(f"DEPLOY_SSH_KEY_FILE not found: {SSH_KEY_FILE}")
-    if CHANNEL_OVERWRITE or PRICE_OVERWRITE or VIP_SYNC:
-        if not ADMIN_PASSWORD:
-            die("DEPLOY_ADMIN_PASSWORD required for confirmed admin operations")
+    if not ADMIN_PASSWORD:
+        die("DEPLOY_ADMIN_PASSWORD required for AIPDD catalog and price synchronization")
+    if not COMPOSE_FILE or "/" in COMPOSE_FILE or "\\" in COMPOSE_FILE:
+        die("DEPLOY_COMPOSE_FILE must be a file name inside DEPLOY_DIR")
+    if not ENV_FILE or "/" in ENV_FILE or "\\" in ENV_FILE:
+        die("DEPLOY_ENV_FILE must be a file name inside DEPLOY_DIR")
 
 
 def connect() -> paramiko.SSHClient:
@@ -68,6 +77,7 @@ def connect() -> paramiko.SSHClient:
         client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     kwargs: dict[str, Any] = {
         "hostname": HOST,
+        "port": SSH_PORT,
         "username": USER,
         "timeout": 30,
         "allow_agent": False,
@@ -100,6 +110,13 @@ def run(
     return code, out, err
 
 
+def compose(command: str) -> str:
+    return (
+        f"cd {shlex.quote(DEPLOY_DIR)} && docker compose "
+        f"--env-file {shlex.quote(ENV_FILE)} -f {shlex.quote(COMPOSE_FILE)} {command}"
+    )
+
+
 def sftp_write(client: paramiko.SSHClient, remote_path: str, data: str, mode: int = 0o600) -> None:
     sftp = client.open_sftp()
     try:
@@ -128,6 +145,25 @@ def sftp_remove(client: paramiko.SSHClient, remote_path: str) -> None:
             pass
     finally:
         sftp.close()
+
+
+def registry_login(client: paramiko.SSHClient) -> None:
+    provided = bool(ACR_REGISTRY or ACR_USERNAME or ACR_PASSWORD)
+    if not provided:
+        return
+    if not ACR_REGISTRY or not ACR_USERNAME or not ACR_PASSWORD:
+        die("ACR registry, username, and password must be provided together")
+    password_path = f"/tmp/newapi-acr-{uuid.uuid4().hex}.secret"
+    try:
+        sftp_write(client, password_path, ACR_PASSWORD + "\n")
+        run(
+            client,
+            f"docker login {shlex.quote(ACR_REGISTRY)} --username "
+            f"{shlex.quote(ACR_USERNAME)} --password-stdin < {shlex.quote(password_path)} >/dev/null",
+        )
+        print("ACR login OK")
+    finally:
+        sftp_remove(client, password_path)
 
 
 def ensure_work_dir() -> None:
@@ -261,15 +297,21 @@ def preflight(client: paramiko.SSHClient) -> None:
         print(out.strip() or err.strip())
         if code != 0 and "docker" in cmd:
             die(f"Docker unavailable: {cmd}")
-    code, out, _ = run(client, f"test -f {DEPLOY_DIR}/docker-compose.yml && test -f {DEPLOY_DIR}/.env && echo OK", check=False)
+    compose_path = f"{DEPLOY_DIR}/{COMPOSE_FILE}"
+    env_path = f"{DEPLOY_DIR}/{ENV_FILE}"
+    code, out, _ = run(
+        client,
+        f"test -f {shlex.quote(compose_path)} && test -f {shlex.quote(env_path)} && echo OK",
+        check=False,
+    )
     if "OK" not in out:
         die(f"Incomplete deployment at {DEPLOY_DIR}; refusing to treat as update")
-    _, images, _ = run(client, f"grep -E '^[[:space:]]*image:' {DEPLOY_DIR}/docker-compose.yml")
+    _, images, _ = run(client, f"grep -E '^[[:space:]]*image:' {shlex.quote(compose_path)}")
     print("compose images:")
     print(images.strip())
-    if EXPECTED_IMAGE.split(":")[0] not in images:
+    if EXPECTED_IMAGE.rsplit(":", 1)[0] not in images:
         die(f"Compose image is not ACR expected repo. Found:\n{images}")
-    _, ps, _ = run(client, f"cd {DEPLOY_DIR} && docker compose ps")
+    _, ps, _ = run(client, compose("ps"))
     print(ps)
 
 
@@ -279,7 +321,7 @@ def resolve_instance_id(client: paramiko.SSHClient) -> str:
     file_value = out.strip()
     env_value = ""
     try:
-        for line in sftp_read(client, f"{DEPLOY_DIR}/.env").splitlines():
+        for line in sftp_read(client, f"{DEPLOY_DIR}/{ENV_FILE}").splitlines():
             if line.strip().startswith("AIPDD_INSTANCE_ID="):
                 env_value = line.split("=", 1)[1].strip().strip('"\'')
                 break
@@ -322,14 +364,14 @@ def current_app_image_digest(client: paramiko.SSHClient) -> str:
     """
     script = f"""
 set -e
-cd {DEPLOY_DIR}
+cd {shlex.quote(DEPLOY_DIR)}
 python3 - <<'PY'
 import json
 import subprocess
 import sys
 
 cid = subprocess.check_output(
-    ["docker", "compose", "ps", "-q", "new-api"],
+    ["docker", "compose", "--env-file", {ENV_FILE!r}, "-f", {COMPOSE_FILE!r}, "ps", "-q", "new-api"],
     text=True,
 ).strip().splitlines()
 cid = (cid[0] if cid else "").strip()
@@ -369,26 +411,33 @@ def backup(client: paramiko.SSHClient) -> str:
     run(client, f"mkdir -p {backup_dir} && chmod 700 {DEPLOY_DIR}/backups {backup_dir}")
     run(
         client,
-        f"cp -a {DEPLOY_DIR}/docker-compose.yml {backup_dir}/docker-compose.yml && "
-        f"cp -a {DEPLOY_DIR}/.env {backup_dir}/.env && chmod 600 {backup_dir}/.env",
+        f"cp -a {shlex.quote(f'{DEPLOY_DIR}/{COMPOSE_FILE}')} {shlex.quote(f'{backup_dir}/{COMPOSE_FILE}')} && "
+        f"cp -a {shlex.quote(f'{DEPLOY_DIR}/{ENV_FILE}')} {shlex.quote(f'{backup_dir}/{ENV_FILE}')} && "
+        f"chmod 600 {shlex.quote(f'{backup_dir}/{ENV_FILE}')}",
     )
     print(f"Backup created at {backup_dir}")
     return backup_dir
 
 
-def update_env_flags(client: paramiko.SSHClient, instance_id: str) -> None:
+def update_env_flags(
+    client: paramiko.SSHClient,
+    instance_id: str,
+    *,
+    catalog_on_boot: bool = False,
+    channel_overwrite_on_boot: bool = False,
+) -> None:
     """Set boot toggles and the immutable site identity without printing .env."""
-    catalog = "true" if PRICE_OVERWRITE else "false"
-    channel = "true" if CHANNEL_OVERWRITE else "false"
-    # Update or append the two keys only.
+    catalog = "true" if catalog_on_boot else "false"
+    channel = "true" if channel_overwrite_on_boot else "false"
     script = f"""
 python3 - <<'PY'
 from pathlib import Path
-p = Path({DEPLOY_DIR!r}) / '.env'
+p = Path({DEPLOY_DIR!r}) / {ENV_FILE!r}
 text = p.read_text(encoding='utf-8')
 lines = text.splitlines()
 keys = {{
     'AIPDD_CATALOG_SYNC_ON_BOOT': {catalog!r},
+    'AIPDD_CATALOG_SYNC_INTERVAL_MINUTES': '0',
     'AIPDD_CHANNEL_OVERWRITE_ON_BOOT': {channel!r},
     'AIPDD_INSTANCE_ID': {instance_id!r},
 }}
@@ -422,7 +471,7 @@ PY
     compose_fix = f"""
 python3 - <<'PY'
 from pathlib import Path
-p = Path({DEPLOY_DIR!r}) / 'docker-compose.yml'
+p = Path({DEPLOY_DIR!r}) / {COMPOSE_FILE!r}
 text = p.read_text(encoding='utf-8')
 changed = False
 replacements = {{
@@ -445,6 +494,36 @@ for flag_key in ('AIPDD_CATALOG_SYNC_ON_BOOT', 'AIPDD_CHANNEL_OVERWRITE_ON_BOOT'
     if n:
         text = new_text
         changed = True
+
+for flag_key in ('AIPDD_CATALOG_SYNC_ON_BOOT', 'AIPDD_CATALOG_SYNC_INTERVAL_MINUTES', 'AIPDD_CHANNEL_OVERWRITE_ON_BOOT'):
+    list_pat = re.compile(r'^(\\s*)-\\s*' + flag_key + r'=.*$', re.M)
+    if list_pat.search(text):
+        text, n = list_pat.subn(
+            lambda m, _k=flag_key: m.group(1) + '- ' + _k + '=${{' + _k + '}}',
+            text,
+        )
+        changed = changed or bool(n)
+        continue
+    mapping_pat = re.compile(r'^(\\s*)' + flag_key + r':\\s*.*$', re.M)
+    if mapping_pat.search(text):
+        continue
+    mapping_key = re.compile(r'^(\\s*)AIPDD_API_KEY:\\s*.*$', re.M)
+    list_key = re.compile(r'^(\\s*)-\\s*AIPDD_API_KEY=.*$', re.M)
+    if mapping_key.search(text):
+        text = mapping_key.sub(
+            lambda m, _k=flag_key: m.group(0) + '\\n' + m.group(1) + _k + ': ${{' + _k + '}}',
+            text,
+            count=1,
+        )
+    elif list_key.search(text):
+        text = list_key.sub(
+            lambda m, _k=flag_key: m.group(0) + '\\n' + m.group(1) + '- ' + _k + '=${{' + _k + '}}',
+            text,
+            count=1,
+        )
+    else:
+        raise SystemExit('Compose new-api service does not expose AIPDD_API_KEY')
+    changed = True
 
 mapping_identity = re.compile(r'^(\\s*)AIPDD_INSTANCE_ID:\\s*.*$', re.M)
 list_identity = re.compile(r'^(\\s*)-\\s*AIPDD_INSTANCE_ID=.*$', re.M)
@@ -490,20 +569,21 @@ PY
 
 def pull_and_recreate(client: paramiko.SSHClient) -> None:
     print("=== pull ACR image and recreate app ===")
-    run(client, f"cd {DEPLOY_DIR} && docker compose pull new-api", timeout=600)
+    registry_login(client)
+    run(client, compose("pull new-api"), timeout=600)
     run(
         client,
-        f"cd {DEPLOY_DIR} && docker compose up -d --no-build --no-deps --force-recreate new-api",
+        compose("up -d --no-build --no-deps --force-recreate new-api"),
         timeout=300,
     )
-    _, ps, _ = run(client, f"cd {DEPLOY_DIR} && docker compose ps")
+    _, ps, _ = run(client, compose("ps"))
     print(ps)
 
 
 def verify_instance_identity(client: paramiko.SSHClient, instance_id: str) -> None:
     code, out, _ = run(
         client,
-        f"cd {DEPLOY_DIR} && docker compose exec -T new-api printenv AIPDD_INSTANCE_ID",
+        compose("exec -T new-api printenv AIPDD_INSTANCE_ID"),
         check=False,
     )
     if code != 0 or out.strip() != instance_id:
@@ -618,10 +698,15 @@ def overwrite_channels(
         if not data.get("success"):
             die(f"delete channel {cid} failed: {data.get('message')}")
     # Ensure overwrite/catalog boot flags true, then force-recreate so bootstrap runs.
-    update_env_flags(client, instance_id)
+    update_env_flags(
+        client,
+        instance_id,
+        catalog_on_boot=True,
+        channel_overwrite_on_boot=True,
+    )
     run(
         client,
-        f"cd {DEPLOY_DIR} && docker compose up -d --no-build --no-deps --force-recreate new-api",
+        compose("up -d --no-build --no-deps --force-recreate new-api"),
         timeout=300,
     )
     wait_status(client, 180)
@@ -642,11 +727,12 @@ def overwrite_channels(
         f"""
 python3 - <<'PY'
 from pathlib import Path
-p = Path({DEPLOY_DIR!r}) / '.env'
+p = Path({DEPLOY_DIR!r}) / {ENV_FILE!r}
 lines = []
 for line in p.read_text(encoding='utf-8').splitlines():
-    if line.startswith('AIPDD_CHANNEL_OVERWRITE_ON_BOOT='):
-        lines.append('AIPDD_CHANNEL_OVERWRITE_ON_BOOT=false')
+    key = line.partition('=')[0].strip()
+    if key in ('AIPDD_CHANNEL_OVERWRITE_ON_BOOT', 'AIPDD_CATALOG_SYNC_ON_BOOT'):
+        lines.append(f'{{key}}=false')
     else:
         lines.append(line)
 p.write_text('\\n'.join(lines) + '\\n', encoding='utf-8')
@@ -655,7 +741,7 @@ print('OVERWRITE_FLAG_CLEARED')
 PY
 """,
     )
-    print("AIPDD_CHANNEL_OVERWRITE_ON_BOOT cleared")
+    print("one-shot AIPDD boot flags cleared")
 
 
 def fetch_options(client: paramiko.SSHClient, cookie: str, user_id: int) -> dict[str, Any]:
@@ -700,7 +786,7 @@ def read_remote_aipdd_api_key(client: paramiko.SSHClient) -> str:
 def read_remote_env_value(client: paramiko.SSHClient, name: str) -> str:
     """Read one exact dotenv value in memory without sending it to stdout."""
     try:
-        text = sftp_read(client, f"{DEPLOY_DIR}/.env")
+        text = sftp_read(client, f"{DEPLOY_DIR}/{ENV_FILE}")
     except OSError:
         return ""
     for line in text.splitlines():
@@ -758,17 +844,17 @@ def export_catalog_snapshot(client: paramiko.SSHClient) -> Path:
     out_remote = f"/tmp/aipdd-catalog-{uuid.uuid4().hex}.json"
     script = f"""
 set -e
-cd {DEPLOY_DIR}
+cd {shlex.quote(DEPLOY_DIR)}
 OUT={out_remote!r}
-has_postgres=$(docker compose ps --services 2>/dev/null | grep -E '^postgres$' || true)
+has_postgres=$(docker compose --env-file {shlex.quote(ENV_FILE)} -f {shlex.quote(COMPOSE_FILE)} ps --services 2>/dev/null | grep -E '^postgres$' || true)
 if [ -n "$has_postgres" ]; then
-  TABLE=$(docker compose exec -T postgres psql -U root -d new-api -v ON_ERROR_STOP=1 -At -c "SELECT CASE WHEN EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='a_ip_dd_catalog_snapshots') THEN 'a_ip_dd_catalog_snapshots' WHEN EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='aipdd_catalog_snapshots') THEN 'aipdd_catalog_snapshots' ELSE '' END;")
+  TABLE=$(docker compose --env-file {shlex.quote(ENV_FILE)} -f {shlex.quote(COMPOSE_FILE)} exec -T postgres psql -U root -d new-api -v ON_ERROR_STOP=1 -At -c "SELECT CASE WHEN EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='a_ip_dd_catalog_snapshots') THEN 'a_ip_dd_catalog_snapshots' WHEN EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='aipdd_catalog_snapshots') THEN 'aipdd_catalog_snapshots' ELSE '' END;")
   TABLE=$(printf '%s' "$TABLE" | tr -d '\\r\\n')
   if [ -z "$TABLE" ]; then
     echo 'NO_CATALOG_TABLE' >&2
     exit 2
   fi
-  docker compose exec -T postgres psql -U root -d new-api -v ON_ERROR_STOP=1 -At -c "SELECT payload FROM \\"$TABLE\\" ORDER BY id DESC LIMIT 1;" > "$OUT"
+  docker compose --env-file {shlex.quote(ENV_FILE)} -f {shlex.quote(COMPOSE_FILE)} exec -T postgres psql -U root -d new-api -v ON_ERROR_STOP=1 -At -c "SELECT payload FROM \\"$TABLE\\" ORDER BY id DESC LIMIT 1;" > "$OUT"
 else
   DB=""
   for candidate in {DEPLOY_DIR}/data/one-api.db {DEPLOY_DIR}/data/new-api.db; do
@@ -843,13 +929,13 @@ PY
     return local
 
 
-def reconcile_prices(
+def sync_aipdd_catalog_and_prices(
     client: paramiko.SSHClient, cookie: str, user_id: int
 ) -> dict[str, Any]:
-    print("=== reconcile AIPDD prices ===")
+    print("=== synchronize AIPDD catalog and prices ===")
     channels = list_aipdd_channels(client, cookie, user_id)
     if not channels:
-        die("No managed AIPDD channel for price sync")
+        die("No managed AIPDD channel to synchronize")
     managed = channels[0]
     managed_id = managed["id"]
     models_before = managed.get("models") or managed.get("model") or ""
@@ -868,19 +954,17 @@ def reconcile_prices(
         "billing_setting.billing_mode",
         # Required read-only for RMB-anchored conversion in build_aipdd_pricing_options.
         "USDExchangeRate",
-        "DisplayInCurrencyEnabled",
-        "general_setting.quota_display_type",
     ]
-    options_subset = {k: options_before.get(k) for k in interest_keys}
-    if not options_subset.get("USDExchangeRate"):
-        die("site USDExchangeRate missing; refusing RMB-anchored price overwrite")
+    options_before_subset = {k: options_before.get(k) for k in interest_keys}
+    if not options_before_subset.get("USDExchangeRate"):
+        die("site USDExchangeRate missing; refusing RMB-anchored price update")
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     backup_remote = f"{DEPLOY_DIR}/backups/pricing-{stamp}"
     run(client, f"mkdir -p {backup_remote} && chmod 700 {backup_remote}")
     sftp_write(
         client,
         f"{backup_remote}/options-before.json",
-        json.dumps(options_subset, ensure_ascii=False),
+        json.dumps(options_before_subset, ensure_ascii=False),
     )
     sftp_write(
         client,
@@ -901,28 +985,56 @@ def reconcile_prices(
     sync_data = sync.get("data") or {}
     revision = sync_data.get("revision") or sync_data.get("catalog_revision")
     used_snapshot = sync_data.get("used_snapshot")
-    if used_snapshot is True:
-        die("aipdd sync used fallback snapshot; refusing price overwrite")
+    if used_snapshot is not False:
+        die("AIPDD sync did not prove a live catalog fetch; refusing price update")
     if not revision and isinstance(sync_data.get("catalog"), dict):
         revision = sync_data["catalog"].get("revision")
     if not revision:
-        print("WARN: sync response missing revision field; continuing if catalog export works")
+        die("aipdd sync response is missing the catalog revision")
     print(f"catalog sync OK revision={revision!r} used_snapshot={used_snapshot!r}")
 
     catalog_path = export_catalog_snapshot(client)
-    options_path = WORK_DIR / "options-before.json"
+    catalog_document = json.loads(catalog_path.read_text(encoding="utf-8"))
+    catalog_models = {
+        str(item.get("id", "")).strip()
+        for collection in (catalog_document.get("capabilities", []), catalog_document.get("models", []))
+        for item in collection
+        if isinstance(item, dict)
+        and str(item.get("id", "")).strip()
+    }
+    channels_after_sync = list_aipdd_channels(client, cookie, user_id)
+    managed_after_sync = next(
+        (item for item in channels_after_sync if int(item.get("id", 0) or 0) == int(managed_id)),
+        channels_after_sync[0] if channels_after_sync else None,
+    )
+    if managed_after_sync is None:
+        die("managed AIPDD channel disappeared after catalog synchronization")
+    actual_value = managed_after_sync.get("models") or managed_after_sync.get("model") or ""
+    if isinstance(actual_value, str):
+        actual_models = {name.strip() for name in actual_value.split(",") if name.strip()}
+    elif isinstance(actual_value, list):
+        actual_models = {str(name).strip() for name in actual_value if str(name).strip()}
+    else:
+        actual_models = set()
+    unexpected = sorted(actual_models - catalog_models)
+    if unexpected or not actual_models:
+        die(
+            "managed AIPDD channel model verification failed: "
+            f"unexpected={unexpected} count={len(actual_models)}"
+        )
+    print(f"managed AIPDD channel models verified: {len(actual_models)}")
+
+    options_after_sync = fetch_options(client, cookie, user_id)
+    options_subset = {k: options_after_sync.get(k) for k in interest_keys}
+    if options_subset.get("USDExchangeRate") != options_before_subset.get("USDExchangeRate"):
+        die("USDExchangeRate changed during AIPDD catalog synchronization")
+    options_path = WORK_DIR / "options-after-sync.json"
     models_path = WORK_DIR / "aipdd-models-before.json"
+    current_models_path = WORK_DIR / "aipdd-models-after-sync.json"
     write_local(options_path, json.dumps({"data": [{"key": k, "value": v} for k, v in options_subset.items()]}, ensure_ascii=False))
     write_local(models_path, json.dumps(model_list, ensure_ascii=False))
+    write_local(current_models_path, json.dumps(sorted(actual_models), ensure_ascii=False))
     plan_path = WORK_DIR / "pricing-plan.json"
-
-    # Ensure site display currency is RMB before writing sale prices.
-    if str(options_before.get("DisplayInCurrencyEnabled", "")).lower() != "true":
-        put_option(client, cookie, user_id, "DisplayInCurrencyEnabled", "true")
-        print("set DisplayInCurrencyEnabled=true")
-    if options_before.get("general_setting.quota_display_type") != "CNY":
-        put_option(client, cookie, user_id, "general_setting.quota_display_type", "CNY")
-        print("set general_setting.quota_display_type=CNY")
 
     import subprocess
 
@@ -936,6 +1048,8 @@ def reconcile_prices(
             str(options_path),
             "--managed-models",
             str(models_path),
+            "--current-models",
+            str(current_models_path),
             "--output",
             str(plan_path),
         ],
@@ -997,10 +1111,6 @@ def reconcile_prices(
         actual = _norm_option(options_after.get(key))
         if expected != actual:
             die(f"option verify mismatch for {key}")
-    if str(options_after.get("DisplayInCurrencyEnabled", "")).lower() != "true":
-        die("DisplayInCurrencyEnabled is not true after price reconcile")
-    if options_after.get("general_setting.quota_display_type") != "CNY":
-        die("quota_display_type is not CNY after price reconcile")
     if options_after.get("USDExchangeRate") != options_subset.get("USDExchangeRate"):
         die("USDExchangeRate changed during price reconcile; refusing success")
 
@@ -1041,273 +1151,7 @@ def reconcile_prices(
         "tieredExpressionModelCount": len(summary.get("tiered_expr_models") or []),
         "taskPricingModelCount": len(task_models),
         "taskPricingVerifiedCount": verified,
-        "seedanceResolutionPricingValid": True,
         "perUnitSecondPricingValid": True,
-    }
-
-
-def capture_duration_models(client: paramiko.SSHClient) -> list[str]:
-    data = remote_http_json(client, "GET", "/api/pricing")
-    payload = data.get("data") or data
-    models = payload.get("data") if isinstance(payload, dict) and "data" in payload else payload
-    names: list[str] = []
-    if isinstance(models, list):
-        for m in models:
-            if not isinstance(m, dict):
-                continue
-            mode = m.get("billing_mode") or m.get("billingMode")
-            if mode == "task_pricing" or m.get("task_pricing") or m.get("taskPricing"):
-                name = m.get("model_name") or m.get("modelName") or m.get("model")
-                if name:
-                    names.append(str(name))
-    return sorted(set(names))
-
-
-def _parse_option_map(value: Any) -> dict[str, Any]:
-    if value is None or value == "":
-        return {}
-    if isinstance(value, str):
-        return json.loads(value)
-    if isinstance(value, dict):
-        return value
-    die(f"unexpected option map type: {type(value).__name__}")
-    return {}
-
-
-def get_channel(
-    client: paramiko.SSHClient, cookie: str, user_id: int, channel_id: int
-) -> dict[str, Any]:
-    data = remote_http_json(
-        client,
-        "GET",
-        f"/api/channel/{channel_id}",
-        cookie_file=cookie,
-        user_id=user_id,
-    )
-    if not data.get("success"):
-        die(f"GET channel {channel_id} failed: {data.get('message')}")
-    payload = data.get("data")
-    if not isinstance(payload, dict):
-        die(f"GET channel {channel_id} returned unexpected shape")
-    return payload
-
-
-def put_channel(
-    client: paramiko.SSHClient, cookie: str, user_id: int, body: dict[str, Any]
-) -> None:
-    data = remote_http_json(
-        client, "PUT", "/api/channel/", body, cookie_file=cookie, user_id=user_id
-    )
-    if str(data.get("_http_code")) != "200" or not data.get("success"):
-        die(
-            f"PUT channel {body.get('id')} failed: "
-            f"HTTP {data.get('_http_code')} {data.get('message')}"
-        )
-
-
-def sync_vip_groups(
-    client: paramiko.SSHClient, cookie: str, user_id: int
-) -> dict[str, Any]:
-    """Idempotently synchronize VIP1-VIP5 ratios, private rules, and AIPDD groups."""
-    print("=== synchronize VIP group prices ===")
-    interest_keys = [
-        "GroupRatio",
-        "UserUsableGroups",
-        "group_ratio_setting.group_special_usable_group",
-    ]
-    options_before = fetch_options(client, cookie, user_id)
-    options_subset = {k: options_before.get(k) for k in interest_keys}
-    channels = list_aipdd_channels(client, cookie, user_id)
-    if not channels:
-        die("No AIPDD channel for VIP group synchronization")
-
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    backup_remote = f"{DEPLOY_DIR}/backups/vip-groups-{stamp}"
-    run(client, f"mkdir -p {backup_remote} && chmod 700 {backup_remote}")
-    redacted_channels = []
-    for ch in channels:
-        redacted_channels.append(
-            {
-                "id": ch.get("id"),
-                "name": ch.get("name"),
-                "type": ch.get("type"),
-                "group": ch.get("group", ""),
-            }
-        )
-    sftp_write(
-        client,
-        f"{backup_remote}/options-before.json",
-        json.dumps(options_subset, ensure_ascii=False),
-    )
-    sftp_write(
-        client,
-        f"{backup_remote}/aipdd-channels-before.json",
-        json.dumps({"items": redacted_channels}, ensure_ascii=False),
-    )
-    print(f"vip backup at {backup_remote}")
-
-    options_path = WORK_DIR / "vip-options-before.json"
-    channels_path = WORK_DIR / "vip-aipdd-channels-before.json"
-    plan_path = WORK_DIR / "vip-group-plan.json"
-    write_local(
-        options_path,
-        json.dumps(
-            {"data": [{"key": k, "value": v} for k, v in options_subset.items()]},
-            ensure_ascii=False,
-        ),
-    )
-    write_local(channels_path, json.dumps({"items": redacted_channels}, ensure_ascii=False))
-
-    import subprocess
-
-    proc = subprocess.run(
-        [
-            sys.executable,
-            str(SCRIPT_DIR / "build_vip_group_sync_plan.py"),
-            "--options",
-            str(options_path),
-            "--channels",
-            str(channels_path),
-            "--output",
-            str(plan_path),
-        ],
-        capture_output=True,
-        text=True,
-        timeout=60,
-    )
-    if proc.returncode != 0:
-        die(f"build_vip_group_sync_plan failed: {proc.stderr[:800] or proc.stdout[:800]}")
-    plan = json.loads(plan_path.read_text(encoding="utf-8"))
-    summary = plan.get("summary") or {}
-    fixed = summary.get("fixed_groups") or {}
-    expected_fixed = {
-        "VIP1": 0.78,
-        "VIP2": 0.80,
-        "VIP3": 0.85,
-        "VIP4": 0.90,
-        "VIP5": 0.95,
-    }
-    if fixed != expected_fixed:
-        die(f"VIP plan fixed_groups mismatch: {fixed}")
-    if summary.get("private_user_groups") != ["VIP1", "VIP2", "VIP3", "VIP4", "VIP5"]:
-        die("VIP plan private_user_groups mismatch")
-    if summary.get("private_rule") != "-:default":
-        die("VIP plan private_rule mismatch")
-    contract = summary.get("contract") or ""
-    if "private" not in contract or "preserve" not in contract:
-        die("VIP plan contract missing required language")
-    allowed_option_keys = {
-        "GroupRatio",
-        "UserUsableGroups",
-        "group_ratio_setting.group_special_usable_group",
-    }
-    for item in plan.get("option_updates") or []:
-        if item.get("key") not in allowed_option_keys:
-            die(f"VIP plan contains unauthorized option key: {item.get('key')}")
-    for item in plan.get("channel_updates") or []:
-        if item.get("type") != 58:
-            die(f"VIP plan channel update has non-AIPDD type: {item.get('type')}")
-
-    print(
-        "vip plan summary:",
-        f"option_updates={summary.get('option_updates')}",
-        f"channel_updates={summary.get('channel_updates')}",
-        f"channel_count={summary.get('channel_count')}",
-    )
-
-    applied_options: list[dict[str, str]] = []
-    applied_channels: list[dict[str, Any]] = []
-    try:
-        for item in plan.get("option_updates") or []:
-            key = item["key"]
-            current = fetch_options(client, cookie, user_id).get(key)
-            if _parse_option_map(current) != _parse_option_map(item["previous_value"]):
-                die(f"option {key} changed after plan generation; regenerate required")
-            print(f"writing option {key}")
-            put_option(client, cookie, user_id, key, item["value"])
-            applied_options.append(item)
-
-        for item in plan.get("channel_updates") or []:
-            cid = int(item["id"])
-            latest = get_channel(client, cookie, user_id, cid)
-            if latest.get("id") != cid or latest.get("type") != 58:
-                die(f"channel {cid} identity/type changed before VIP write")
-            if latest.get("group", "") != item["previous_group"]:
-                die(f"channel {cid} group changed after plan generation; regenerate required")
-            body = dict(latest)
-            body["group"] = item["group"]
-            # Keep redacted empty key; backend intentionally ignores key updates here.
-            if "key" not in body:
-                body["key"] = ""
-            print(f"updating channel id={cid} groups")
-            put_channel(client, cookie, user_id, body)
-            verify = get_channel(client, cookie, user_id, cid)
-            if verify.get("group", "") != item["group"]:
-                die(f"channel {cid} group verify mismatch after VIP write")
-            applied_channels.append(item)
-    except SystemExit:
-        print("VIP sync failed; attempting rollback")
-        for item in reversed(applied_channels):
-            try:
-                latest = get_channel(client, cookie, user_id, int(item["id"]))
-                if latest.get("group", "") != item["group"]:
-                    print(f"ROLLBACK_SKIP channel {item['id']}: group drifted")
-                    continue
-                body = dict(latest)
-                body["group"] = item["previous_group"]
-                if "key" not in body:
-                    body["key"] = ""
-                put_channel(client, cookie, user_id, body)
-            except SystemExit as rb_exc:
-                print(f"ROLLBACK_FAIL channel {item['id']}: {rb_exc}")
-        for item in reversed(applied_options):
-            try:
-                put_option(client, cookie, user_id, item["key"], item["previous_value"])
-            except SystemExit as rb_exc:
-                print(f"ROLLBACK_FAIL option {item['key']}: {rb_exc}")
-        raise
-
-    options_after = fetch_options(client, cookie, user_id)
-    for item in plan.get("option_updates") or []:
-        key = item["key"]
-        if _parse_option_map(options_after.get(key)) != _parse_option_map(item["value"]):
-            die(f"VIP option verify mismatch for {key}")
-    # Even on no-op plans, require the five fixed ratios and private-rule contract.
-    ratios = _parse_option_map(options_after.get("GroupRatio"))
-    for name, ratio in expected_fixed.items():
-        if ratios.get(name) != ratio:
-            die(f"GroupRatio[{name}] is {ratios.get(name)!r}, expected {ratio}")
-    usable = _parse_option_map(options_after.get("UserUsableGroups"))
-    for name in expected_fixed:
-        if name in usable:
-            die(f"{name} still present in global UserUsableGroups")
-    special = _parse_option_map(
-        options_after.get("group_ratio_setting.group_special_usable_group")
-    )
-    for name in expected_fixed:
-        rules = special.get(name)
-        if not isinstance(rules, dict) or "-:default" not in rules:
-            die(f"missing private -:default rule for {name}")
-
-    channels_after = list_aipdd_channels(client, cookie, user_id)
-    for ch in channels_after:
-        groups = [g.strip() for g in str(ch.get("group", "")).split(",") if g.strip()]
-        for name in expected_fixed:
-            if groups.count(name) != 1:
-                die(
-                    f"channel {ch.get('id')} must contain {name} exactly once; "
-                    f"got {groups.count(name)}"
-                )
-
-    noop = not (plan.get("option_updates") or plan.get("channel_updates"))
-    print(
-        "VIP synchronization verified:",
-        f"changed_channels={len(applied_channels)}",
-        f"noop={noop}",
-    )
-    return {
-        "vipChangedChannelCount": len(applied_channels),
-        "vipSynchronizationNoop": noop,
     }
 
 
@@ -1320,7 +1164,7 @@ def main() -> None:
     print(f"deployment_id={deployment_id}")
     print(
         f"decisions: channel_overwrite={CHANNEL_OVERWRITE} "
-        f"price_overwrite={PRICE_OVERWRITE} vip_sync={VIP_SYNC}"
+        "aipdd_catalog_and_prices=true"
     )
 
     client = connect()
@@ -1351,7 +1195,7 @@ def main() -> None:
         instance_payload = {
             "instanceLabel": f"new-api@{HOST}",
             "serverIp": HOST,
-            "sshPort": 22,
+            "sshPort": SSH_PORT,
             "sshUsername": USER,
             "sshPassword": SSH_PASSWORD,
             "publicUrl": public_url,
@@ -1371,7 +1215,7 @@ def main() -> None:
                     "instanceId": instance_id,
                     "instanceLabel": instance_payload["instanceLabel"],
                     "serverIp": HOST,
-                    "sshPort": 22,
+                    "sshPort": SSH_PORT,
                     "sshUsername": USER,
                     "publicUrl": public_url,
                     "deploymentDirectory": DEPLOY_DIR,
@@ -1385,17 +1229,11 @@ def main() -> None:
                 "release": release_payload,
                 "decisions": {
                     "aipddChannelOverwrite": CHANNEL_OVERWRITE,
-                    "aipddPriceOverwrite": PRICE_OVERWRITE,
-                    "vipGroupSynchronization": VIP_SYNC,
+                    "aipddPriceOverwrite": True,
                 },
             },
             api_key=report_key,
         )
-
-        duration_before: list[str] = []
-        if not PRICE_OVERWRITE:
-            duration_before = capture_duration_models(client)
-            print(f"pre-update duration models: {len(duration_before)}")
 
         backup_ref = backup(client)
         recovery = {"backupCreated": True, "backupReference": backup_ref}
@@ -1404,26 +1242,14 @@ def main() -> None:
         wait_status(client, 120)
         verify_instance_identity(client, instance_id)
 
-        user_id = 0
-        if CHANNEL_OVERWRITE or PRICE_OVERWRITE or VIP_SYNC:
-            cookie, user_id = login(client)
+        cookie, user_id = login(client)
 
         if CHANNEL_OVERWRITE:
             overwrite_channels(client, cookie, user_id, instance_id)
 
-        if PRICE_OVERWRITE:
-            aipdd_result = reconcile_prices(client, cookie, user_id)
-        else:
-            duration_after = capture_duration_models(client)
-            missing = sorted(set(duration_before) - set(duration_after))
-            if missing:
-                die(f"duration models missing after update without price overwrite: {missing}")
+        aipdd_result = sync_aipdd_catalog_and_prices(client, cookie, user_id)
 
-        if VIP_SYNC:
-            vip_result = sync_vip_groups(client, cookie, user_id)
-            aipdd_result = {**aipdd_result, **vip_result}
-
-        _, ps, _ = run(client, f"cd {DEPLOY_DIR} && docker compose ps")
+        _, ps, _ = run(client, compose("ps"))
         verification = {
             "applicationHealthy": True,
             "postgresHealthy": True,
@@ -1463,7 +1289,7 @@ def main() -> None:
                 "instanceId": instance_id,
                 "instanceLabel": f"new-api@{HOST}",
                 "serverIp": HOST,
-                "sshPort": 22,
+                "sshPort": SSH_PORT,
                 "sshUsername": USER,
                 "publicUrl": f"http://{HOST}:{PUBLIC_PORT}",
                 "deploymentDirectory": DEPLOY_DIR,
@@ -1486,8 +1312,7 @@ def main() -> None:
             },
             "decisions": {
                 "aipddChannelOverwrite": CHANNEL_OVERWRITE,
-                "aipddPriceOverwrite": PRICE_OVERWRITE,
-                "vipGroupSynchronization": VIP_SYNC,
+                "aipddPriceOverwrite": True,
             },
             "aipdd": aipdd_result,
             "verification": verification,

@@ -48,7 +48,7 @@ openssl rand -hex 32
 - SESSION_SECRET 变化会导致现有登录会话失效。
 - CRYPTO_SECRET 变化可能导致已保存的加密配置、共享缓存或多节点数据无法解密。
 
-如果使用 AIPDD 内置任务模型，还需要准备 AIPDD_API_KEY。容器启动后会根据该 Key 自动创建或同步名为 AIPDD 的渠道和模型目录。
+如果使用 AIPDD 内置任务模型、虚拟角色或操练场参考素材数字资产，还需要准备 AIPDD_API_KEY。容器启动后会根据该 Key 自动创建或同步名为 AIPDD 的渠道和模型目录；存储功能未读取到部署 Key 时，也可以回退使用已启用的 AIPDD 渠道 Key。
 
 ## 3. 阿里云 ACR 镜像部署（推荐）
 
@@ -269,13 +269,12 @@ AIPDD_CHANNEL_OVERWRITE_ON_BOOT=false
 | REDIS_CONN_STRING | Redis 连接字符串；多实例、共享缓存和任务轮询建议启用 |
 | SESSION_SECRET | 会话密钥；生产环境必须固定 |
 | CRYPTO_SECRET | 加密密钥；使用 Redis 或多实例时必须固定并保持一致 |
-| AIPDD_API_KEY | AIPDD 上游 API Key；使用 AIPDD 内置任务模型时必填 |
+| AIPDD_API_KEY | AIPDD 上游 API Key；供模型目录、虚拟角色和操练场参考素材数字资产使用；存储功能可回退到已启用的 AIPDD 渠道 Key |
 | AIPDD_BASE_URL | AIPDD 上游地址，默认 https://api.aipdd.work |
 | AIPDD_CATALOG_SYNC_ON_BOOT | 是否在启动时同步 AIPDD 模型目录 |
 | AIPDD_CATALOG_SYNC_INTERVAL_MINUTES | AIPDD 模型目录定时同步间隔（分钟），默认 5；设为 0 禁用 |
 | AIPDD_CATALOG_SYNC_TIMEOUT_SECONDS | 单次 AIPDD 模型目录同步超时（秒），默认 10 |
 | AIPDD_CHANNEL_OVERWRITE_ON_BOOT | 是否允许启动同步覆盖 AIPDD 渠道配置；手动维护渠道时可设为 false |
-| MATERIAL_PUBLIC_BASE_URL | 本地素材的公网访问地址；异步任务或文件上传时按部署域名配置 |
 | ERROR_LOG_ENABLED | 是否记录错误日志 |
 | BATCH_UPDATE_ENABLED | 是否启用批量更新 |
 | NODE_NAME | 节点名称；多容器部署时用于审计日志识别 |
@@ -320,12 +319,6 @@ server {
         proxy_buffering off;
     }
 }
-~~~
-
-配置公网域名后，如果使用本地素材或异步任务，还应设置：
-
-~~~env
-MATERIAL_PUBLIC_BASE_URL=https://api.example.com
 ~~~
 
 ### 7.1 配置微信支付 API v3 Native 充值

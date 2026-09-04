@@ -22,7 +22,6 @@ import {
   ArrowUp01Icon,
   Delete02Icon,
   FileUploadIcon,
-  FolderLibraryIcon,
   Image01Icon,
 } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
@@ -56,13 +55,11 @@ import {
   type PromptInputAttachmentRole,
   usePromptInputAttachments,
 } from '@/components/ai-elements/prompt-input'
-import type { Material } from '@/features/materials/types'
 import {
   LTX_23_FRAME_RATE,
   resolveLTXStartEndTimeline,
 } from '../lib/ltx-start-end'
 import { getLTXStartEndAttachmentState } from '../lib/ltx-start-end-attachments'
-import { MaterialSelectorDialog } from './material-selector-dialog'
 
 interface LTXStartEndPanelProps {
   disabled?: boolean
@@ -88,9 +85,6 @@ export function LTXStartEndPanel({
   const { t } = useTranslation()
   const attachments = usePromptInputAttachments()
   const [advancedOpen, setAdvancedOpen] = useState(false)
-  const [materialRole, setMaterialRole] = useState<LTXReferenceRole | null>(
-    null
-  )
   const [preparing, setPreparing] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
   const uploadRoleRef = useRef<LTXReferenceRole>('first_frame')
@@ -172,16 +166,6 @@ export function LTXStartEndPanel({
     }
   }
 
-  const handleMaterialSelect = (material: Material) => {
-    if (!materialRole) return
-    replaceReference(materialRole, {
-      url: material.url,
-      mediaType: material.mime_type,
-      filename: material.file_name || material.name,
-    })
-    setMaterialRole(null)
-  }
-
   const firstFrame = attachmentState.firstFrame
   const lastFrame = attachmentState.lastFrame
   const audio = attachmentState.audio
@@ -244,16 +228,6 @@ export function LTXStartEndPanel({
           >
             <HugeiconsIcon icon={FileUploadIcon} strokeWidth={2} />
             {file ? t('Replace') : t('Upload')}
-          </Button>
-          <Button
-            disabled={controlsDisabled}
-            onClick={() => setMaterialRole(role)}
-            size='sm'
-            type='button'
-            variant='outline'
-          >
-            <HugeiconsIcon icon={FolderLibraryIcon} strokeWidth={2} />
-            {t('Material library')}
           </Button>
           {file && (
             <Button
@@ -388,16 +362,6 @@ export function LTXStartEndPanel({
         }}
         tabIndex={-1}
         type='file'
-      />
-
-      <MaterialSelectorDialog
-        fixedType={materialRole === 'audio' ? 'audio' : 'image'}
-        mode='video'
-        onOpenChange={(open) => {
-          if (!open) setMaterialRole(null)
-        }}
-        onSelect={handleMaterialSelect}
-        open={materialRole !== null}
       />
     </>
   )

@@ -132,6 +132,7 @@ type VirtualCharacterCleanupJob struct {
 	ID                int64  `json:"id" gorm:"primaryKey;autoIncrement"`
 	CharacterID       int64  `json:"character_id,omitempty" gorm:"index"`
 	ProviderAccountID int    `json:"provider_account_id,omitempty" gorm:"index"`
+	AIPDDChannelID    int    `json:"aipdd_channel_id,omitempty" gorm:"index"`
 	TargetType        string `json:"target_type" gorm:"type:varchar(32);index"`
 	TargetID          string `json:"target_id" gorm:"type:varchar(191);index"`
 	SecondaryTargetID string `json:"secondary_target_id,omitempty" gorm:"type:varchar(191)"`
@@ -267,11 +268,16 @@ func DiscardFailedAIGCVirtualCharacterUpload(characterID int64, providerGroupID,
 		if groupID == "" {
 			groupID = strings.TrimSpace(character.ProviderGroupID)
 		}
+		aipddAssetID := ""
+		if character.AIPDDAssetID > 0 {
+			aipddAssetID = stringInt64(character.AIPDDAssetID)
+		}
 		targets := []struct {
 			targetType string
 			targetID   string
 		}{
 			{targetType: "volc_asset", targetID: character.ProviderAssetID},
+			{targetType: "aipdd_asset", targetID: aipddAssetID},
 			{targetType: "aipdd_file", targetID: character.StagingFileID},
 			{targetType: "volc_group", targetID: groupID},
 		}
@@ -281,7 +287,7 @@ func DiscardFailedAIGCVirtualCharacterUpload(characterID int64, providerGroupID,
 				continue
 			}
 			hasCleanupTarget = true
-			if err := createCleanupJobIfAbsent(tx, character.ID, character.ProviderAccountID, target.targetType, target.targetID, now); err != nil {
+			if err := createCleanupJobIfAbsent(tx, character.ID, character.ProviderAccountID, target.targetType, target.targetID, now, character.AIPDDChannelID); err != nil {
 				return err
 			}
 		}
@@ -302,7 +308,14 @@ func DiscardFailedAIGCVirtualCharacterUpload(characterID int64, providerGroupID,
 	})
 }
 
-func AttachVirtualCharacterImage(characterID int64, providerAssetID, stagingFileID, mimeType, assetType string, fileSize int64) error {
+func AttachVirtualCharacterImage(
+	characterID int64,
+	providerAssetID, stagingFileID string,
+	aipddAssetID int64,
+	aipddChannelID int,
+	mimeType, assetType string,
+	fileSize int64,
+) error {
 	providerAssetID = strings.TrimPrefix(strings.TrimSpace(providerAssetID), "asset://")
 	if characterID <= 0 || providerAssetID == "" {
 		return errors.New("invalid character asset")
@@ -311,6 +324,8 @@ func AttachVirtualCharacterImage(characterID int64, providerAssetID, stagingFile
 	return DB.Model(&VirtualCharacter{}).Where("id = ?", characterID).Updates(map[string]any{
 		"provider_asset_id":   providerAssetID,
 		"staging_file_id":     strings.TrimSpace(stagingFileID),
+		"a_ip_dd_asset_id":    aipddAssetID,
+		"aipdd_channel_id":    aipddChannelID,
 		"asset_type":          EffectiveVirtualCharacterAssetType(assetType),
 		"mime_type":           strings.TrimSpace(mimeType),
 		"file_size":           fileSize,
@@ -461,9 +476,15 @@ func BeginVirtualCharacterGroupDelete(characterID int64, userID int) error {
 				return err
 			}
 		}
+		if character.AIPDDAssetID > 0 {
+			hasCleanupTarget = true
+			if err := createCleanupJobIfAbsent(tx, characterID, character.ProviderAccountID, "aipdd_asset", stringInt64(character.AIPDDAssetID), now, character.AIPDDChannelID); err != nil {
+				return err
+			}
+		}
 		if strings.TrimSpace(character.StagingFileID) != "" {
 			hasCleanupTarget = true
-			if err := createCleanupJobIfAbsent(tx, characterID, character.ProviderAccountID, "aipdd_file", character.StagingFileID, now); err != nil {
+			if err := createCleanupJobIfAbsent(tx, characterID, character.ProviderAccountID, "aipdd_file", character.StagingFileID, now, character.AIPDDChannelID); err != nil {
 				return err
 			}
 		}
@@ -581,7 +602,7 @@ func CreateVirtualCharacterCleanupJob(job *VirtualCharacterCleanupJob) error {
 	if job.NextAttemptAt == 0 {
 		job.NextAttemptAt = time.Now().Unix()
 	}
-	return createCleanupJobIfAbsent(DB, job.CharacterID, job.ProviderAccountID, job.TargetType, job.TargetID, job.NextAttemptAt)
+	return createCleanupJobIfAbsent(DB, job.CharacterID, job.ProviderAccountID, job.TargetType, job.TargetID, job.NextAttemptAt, job.AIPDDChannelID)
 }
 
 func ListVirtualCharacterCleanupJobs(now int64, limit int) ([]VirtualCharacterCleanupJob, error) {
@@ -710,12 +731,12 @@ func MigrateVirtualCharacterABData() error {
 				}
 			}
 			if item.AIPDDAssetID > 0 {
-				if err := createCleanupJobIfAbsent(tx, item.ID, item.ProviderAccountID, "aipdd_asset", strings.TrimSpace(stringInt64(item.AIPDDAssetID)), now); err != nil {
+				if err := createCleanupJobIfAbsent(tx, item.ID, item.ProviderAccountID, "aipdd_asset", strings.TrimSpace(stringInt64(item.AIPDDAssetID)), now, item.AIPDDChannelID); err != nil {
 					return err
 				}
 			}
 			if strings.TrimSpace(item.AIPDDFileID) != "" {
-				if err := createCleanupJobIfAbsent(tx, item.ID, item.ProviderAccountID, "aipdd_file", item.AIPDDFileID, now); err != nil {
+				if err := createCleanupJobIfAbsent(tx, item.ID, item.ProviderAccountID, "aipdd_file", item.AIPDDFileID, now, item.AIPDDChannelID); err != nil {
 					return err
 				}
 			}
@@ -917,23 +938,30 @@ func isLegacyVirtualCharacterPreviewURL(value string) bool {
 	return strings.HasPrefix(value, "/api/virtual-characters/") && strings.Contains(value, "/assets/") && strings.HasSuffix(value, "/preview")
 }
 
-func createCleanupJobIfAbsent(tx *gorm.DB, characterID int64, providerAccountID int, targetType, targetID string, now int64) error {
+func createCleanupJobIfAbsent(tx *gorm.DB, characterID int64, providerAccountID int, targetType, targetID string, now int64, aipddChannelIDs ...int) error {
 	targetID = strings.TrimSpace(targetID)
-	if targetType == "" || targetID == "" {
+	if targetType == "" || targetID == "" || ((targetType == "aipdd_asset" || targetType == "aipdd_file") && targetID == "0") {
 		return nil
 	}
-	var count int64
-	if err := tx.Model(&VirtualCharacterCleanupJob{}).
-		Where("target_type = ? AND target_id = ?", targetType, targetID).
-		Count(&count).Error; err != nil {
-		return err
+	aipddChannelID := 0
+	if len(aipddChannelIDs) > 0 {
+		aipddChannelID = aipddChannelIDs[0]
 	}
-	if count > 0 {
+	var existing VirtualCharacterCleanupJob
+	result := tx.Where("target_type = ? AND target_id = ?", targetType, targetID).Limit(1).Find(&existing)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected > 0 {
+		if existing.AIPDDChannelID == 0 && aipddChannelID > 0 {
+			return tx.Model(&existing).Update("aipdd_channel_id", aipddChannelID).Error
+		}
 		return nil
 	}
 	return tx.Create(&VirtualCharacterCleanupJob{
 		CharacterID:       characterID,
 		ProviderAccountID: providerAccountID,
+		AIPDDChannelID:    aipddChannelID,
 		TargetType:        targetType,
 		TargetID:          targetID,
 		Status:            VirtualCharacterCleanupPending,

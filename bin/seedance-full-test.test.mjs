@@ -87,34 +87,36 @@ test('redaction strips signed URL queries and secret-shaped fields recursively',
   );
 });
 
-test('task pricing applies native 480p policy and global VIP1 ratio', () => {
+test('task pricing keeps group pricing global and exempts only AP Seedance 480p from membership', () => {
   const entry = pricingEntry(SEEDANCE_MODELS.standard, {
     '480p': tier(0.06, 0.08, 'none'),
     '720p': tier(0.10, 0.13, 'global'),
   });
-  const at480 = computeQuote(entry, 0.78, {
+  const at480 = computeQuote(entry, 0.9, {
     model: SEEDANCE_MODELS.standard,
     resolution: '480p',
     expectedSeconds: 5,
     referenceVideo: false,
-  }, 500000);
-  assert.equal(at480.groupRatio, 1);
-  assert.equal(at480.saleUsd, 0.3);
-  const at720 = computeQuote(entry, 0.78, {
+  }, 500000, 0.8);
+  assert.equal(at480.groupRatio, 0.9);
+  assert.equal(at480.appliedMembershipMultiplier, 1);
+  assert.ok(Math.abs(at480.saleUsd - 0.27) < 1e-12);
+  const at720 = computeQuote(entry, 0.9, {
     model: SEEDANCE_MODELS.standard,
     resolution: '720p',
     expectedSeconds: 5,
     referenceVideo: true,
-  }, 500000);
-  assert.equal(at720.groupRatio, 0.78);
+  }, 500000, 0.8);
+  assert.equal(at720.groupRatio, 0.9);
+  assert.equal(at720.appliedMembershipMultiplier, 0.8);
   assert.equal(at720.variant, 'reference_video');
-  assert.ok(Math.abs(at720.saleUsd - 0.507) < 1e-12);
+  assert.ok(Math.abs(at720.saleUsd - 0.468) < 1e-12);
 });
 
 test('cost planner covers the live-shaped matrix and rejects a low hard cap', () => {
   const cases = buildPositiveCases();
-  const defaultPricing = pricingEnvelope(1);
-  const vipPricing = pricingEnvelope(0.78);
+  const defaultPricing = pricingEnvelope(1_000_000);
+  const vipPricing = pricingEnvelope(800_000);
   const plan = buildCostPlan(
     cases,
     { default: defaultPricing, VIP1: vipPricing },
@@ -134,7 +136,7 @@ test('selected cases assign zero quota to an idle audit group', () => {
   const selected = buildPositiveCases().filter((item) => item.id === 'C16');
   const plan = buildCostPlan(
     selected,
-    { default: pricingEnvelope(1), VIP1: pricingEnvelope(0.78) },
+    { default: pricingEnvelope(1_000_000), VIP1: pricingEnvelope(800_000) },
     500000,
     12,
     ['default', 'VIP1'],
@@ -330,10 +332,12 @@ function pricingEntry(model, byResolution) {
   };
 }
 
-function pricingEnvelope(groupRatio) {
+function pricingEnvelope(membershipPPM) {
   return {
     success: true,
-    group_ratio: { default: 1, VIP1: groupRatio },
+    current_group: 'default',
+    membership: { multiplier_ppm: membershipPPM },
+    group_ratio: { default: 1 },
     data: [
       pricingEntry(SEEDANCE_MODELS.vip, {
         '480p': tier(0.07994089205, 0.10624307095, 'none'),

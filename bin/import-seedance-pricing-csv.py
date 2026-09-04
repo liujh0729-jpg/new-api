@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
-"""Import Seedance task prices and fixed VIP groups from a retail CSV.
+"""Import Seedance task base prices from a retail CSV.
 
 The CSV's "对比原生价" is treated directly as RMB/second and converted only
 to NewAPI's USD/second task-pricing base. The "计费单位" column is retained for
-template compatibility but does not scale the price. VIP-T1 and VIP1..VIP5 use fixed
-ratios that NewAPI applies only to Seedance models; other models remain at
-their undiscounted price. A resolution whose six tier cells are all 1 is
-marked to keep its native price for every group.
+template compatibility but does not scale the price. Membership and group
+multipliers are managed independently by NewAPI and are never imported from
+this file. Legacy extra columns are accepted and ignored.
 
 The command is a dry run unless --apply is supplied. Authentication uses an
 in-memory cookie jar and an interactive password prompt; secrets are not saved.
@@ -27,7 +26,6 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections import OrderedDict
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
@@ -41,38 +39,23 @@ if os.name == "nt":
             stream.reconfigure(encoding="utf-8", errors="replace")
 
 
-GROUPS = OrderedDict(
-    (
-        ("VIP-T1", Decimal("0.73")),
-        ("VIP1", Decimal("0.78")),
-        ("VIP2", Decimal("0.80")),
-        ("VIP3", Decimal("0.85")),
-        ("VIP4", Decimal("0.90")),
-        ("VIP5", Decimal("0.95")),
-    )
-)
-
 REQUIRED_COLUMNS = {
     "平台模型",
     "输出规格",
     "能力类型",
     "计费单位",
     "对比原生价",
-} | set(GROUPS)
+}
 
 OPTION_KEYS = (
     "billing_setting.task_pricing",
     "billing_setting.billing_mode",
-    "GroupRatio",
-    "UserUsableGroups",
     "USDExchangeRate",
 )
 
 UPDATE_ORDER = (
     "billing_setting.task_pricing",
     "billing_setting.billing_mode",
-    "GroupRatio",
-    "UserUsableGroups",
 )
 
 MAX_RESOLUTION_LENGTH = 128
@@ -192,44 +175,14 @@ def build_task_pricing(
             row["对比原生价"], f"第 {index} 行对比原生价", positive=True
         )
 
-        source_ratios: dict[str, Decimal] = {}
-        for group_name in GROUPS:
-            ratio = decimal_value(row[group_name], f"第 {index} 行{group_name}")
-            source_ratios[group_name] = ratio
-        keeps_native_price = all(
-            value == Decimal(1) for value in source_ratios.values()
-        )
-        uses_fixed_groups = all(
-            source_ratios[group_name] == fixed_ratio
-            for group_name, fixed_ratio in GROUPS.items()
-        )
-        if not keeps_native_price and not uses_fixed_groups:
-            expected = ", ".join(
-                f"{group_name}={fixed_ratio}"
-                for group_name, fixed_ratio in GROUPS.items()
-            )
-            actual = ", ".join(
-                f"{group_name}={source_ratios[group_name]}" for group_name in GROUPS
-            )
-            raise ImportFailure(
-                f"第 {index} 行：VIP 分组倍率必须全部为 1，或严格为 {expected}；"
-                f"实际为 {actual}"
-            )
-        group_ratio_policy = "none" if keeps_native_price else "global"
-
         key = (model, resolution)
         record = records.setdefault(
             key,
             {
-                "group_ratio_policy": group_ratio_policy,
                 "prices_rmb": {},
                 "rows": [],
             },
         )
-        if record["group_ratio_policy"] != group_ratio_policy:
-            raise ImportFailure(
-                f"{model}/{resolution} 的含视频和不含视频行对分组豁免定义不一致"
-            )
         if has_reference_video in record["prices_rmb"]:
             variant = "输入含视频" if has_reference_video else "不含视频"
             raise ImportFailure(f"{model}/{resolution} 存在重复的{variant}行")
@@ -237,7 +190,6 @@ def build_task_pricing(
         record["rows"].append(index)
 
     models: dict[str, dict[str, Any]] = {}
-    exempt_resolutions: list[str] = []
     for (model, resolution), record in sorted(
         records.items(), key=lambda item: (item[0][0], resolution_sort_key(item[0][1]))
     ):
@@ -253,9 +205,6 @@ def build_task_pricing(
         }
         if reference != no_reference:
             tier["reference_video_unit_price"] = json_number(reference)
-        if record["group_ratio_policy"] == "none":
-            tier["group_ratio_policy"] = "none"
-            exempt_resolutions.append(f"{model}/{resolution}")
         model_config = models.setdefault(model, {"unit": "second", "by_resolution": {}})
         model_config["by_resolution"][resolution] = tier
 
@@ -263,7 +212,6 @@ def build_task_pricing(
         "models": sorted(models),
         "resolution_tiers": len(records),
         "source_rows": len(rows),
-        "exempt_resolutions": exempt_resolutions,
     }
 
 
@@ -306,24 +254,12 @@ def build_plan(
     billing_mode = parse_json_map(
         options.get("billing_setting.billing_mode"), "billing_setting.billing_mode"
     )
-    group_ratio = parse_json_map(options.get("GroupRatio"), "GroupRatio")
-    usable_groups = parse_json_map(options.get("UserUsableGroups"), "UserUsableGroups")
-
     for model, config in imported_task_pricing.items():
         task_pricing[model] = config
         billing_mode[model] = "task_pricing"
-    for group_name, ratio in GROUPS.items():
-        group_ratio[group_name] = json_number(ratio)
-        usable_groups.setdefault(
-            group_name,
-            f"{group_name}（Seedance {int(ratio * 100)}档）",
-        )
-
     next_values = {
         "billing_setting.task_pricing": canonical_json(task_pricing),
         "billing_setting.billing_mode": canonical_json(billing_mode),
-        "GroupRatio": canonical_json(group_ratio),
-        "UserUsableGroups": canonical_json(usable_groups),
     }
     previous_values = {
         key: str(options.get(key) or "{}")
@@ -333,7 +269,6 @@ def build_plan(
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "summary": {
             **summary,
-            "groups": {name: json_number(ratio) for name, ratio in GROUPS.items()},
         },
         "updates": [{"key": key, "value": next_values[key]} for key in UPDATE_ORDER],
         "rollback": [
@@ -456,14 +391,12 @@ def print_summary(summary: dict[str, Any], rmb_per_usd: Decimal) -> None:
     print(f"CSV 数据行：{summary['source_rows']}")
     print(f"人民币/USD：{rmb_per_usd}")
     print("价格口径：对比原生价按人民币/秒直接导入，不按计费单位换算")
-    print("Seedance 专用折扣分组：" + ", ".join(f"{name}={ratio}" for name, ratio in GROUPS.items()))
-    if summary["exempt_resolutions"]:
-        print("保持原价：" + ", ".join(summary["exempt_resolutions"]))
+    print("分组与会员倍率：保持线上配置，不从 CSV 导入")
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="从 Seedance 零售价 CSV 一键导入任务价格矩阵和 Seedance 专用 VIP-T1、VIP1-VIP5 折扣分组"
+        description="从 Seedance 零售价 CSV 导入任务基础价格矩阵"
     )
     parser.add_argument("csv_file", type=Path, help="零售价 CSV 文件")
     parser.add_argument("--base-url", required=True, help="NewAPI 地址，例如 https://api.example.com")
@@ -514,7 +447,7 @@ def main() -> int:
 
     backup_path = apply_plan(client, plan, args.backup_dir)
     print(f"导入成功，回滚备份：{backup_path.resolve()}")
-    print("请确认 AIPDD 渠道已启用 VIP-T1、VIP1、VIP2、VIP3、VIP4、VIP5 分组；这些折扣只作用于 Seedance。")
+    print("会员折扣与分组倍率未被修改。")
     return 0
 
 

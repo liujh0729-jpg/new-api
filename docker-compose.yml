@@ -42,6 +42,7 @@ services:
       - AIPDD_CATALOG_SYNC_ON_BOOT=${AIPDD_CATALOG_SYNC_ON_BOOT:-true}
       - AIPDD_CATALOG_SYNC_INTERVAL_MINUTES=${AIPDD_CATALOG_SYNC_INTERVAL_MINUTES:-5}
       - AIPDD_CATALOG_SYNC_TIMEOUT_SECONDS=${AIPDD_CATALOG_SYNC_TIMEOUT_SECONDS:-10}
+      - AIPDD_CHANNEL_OVERWRITE_ON_BOOT=${AIPDD_CHANNEL_OVERWRITE_ON_BOOT:-false}
       - TZ=Asia/Shanghai
       - ERROR_LOG_ENABLED=true # 是否启用错误日志记录 (Whether to enable error log recording)
       - BATCH_UPDATE_ENABLED=true  # 是否启用批量更新 (Whether to enable batch update)

@@ -215,7 +215,7 @@ func executeVirtualCharacterCleanupJob(job *model.VirtualCharacterCleanupJob) er
 	defer cancel()
 	switch job.TargetType {
 	case "aipdd_asset":
-		storage, err := NewAIPDDVirtualCharacterStorage()
+		storage, err := NewAIPDDVirtualCharacterStorageForChannel(job.AIPDDChannelID)
 		if err != nil {
 			return err
 		}
@@ -223,9 +223,17 @@ func executeVirtualCharacterCleanupJob(job *model.VirtualCharacterCleanupJob) er
 		if err != nil {
 			return errors.New("invalid AIPDD asset cleanup id")
 		}
-		return storage.DeleteDigitalAsset(ctx, id)
+		if err := storage.DeleteDigitalAsset(ctx, id); err != nil {
+			return err
+		}
+		if job.CharacterID > 0 {
+			return model.DB.Model(&model.VirtualCharacter{}).
+				Where("id = ? AND a_ip_dd_asset_id = ?", job.CharacterID, id).
+				Update("a_ip_dd_asset_id", 0).Error
+		}
+		return nil
 	case "aipdd_file":
-		storage, err := NewAIPDDVirtualCharacterStorage()
+		storage, err := NewAIPDDVirtualCharacterStorageForChannel(job.AIPDDChannelID)
 		if err != nil {
 			return err
 		}
@@ -386,10 +394,26 @@ func enqueueVirtualCharacterProviderCleanup(item *model.VirtualCharacter, now ti
 			return err
 		}
 	}
+	if item.AIPDDAssetID > 0 {
+		if err := model.CreateVirtualCharacterCleanupJob(&model.VirtualCharacterCleanupJob{
+			CharacterID: item.ID, ProviderAccountID: item.ProviderAccountID, AIPDDChannelID: item.AIPDDChannelID,
+			TargetType: "aipdd_asset", TargetID: strconv.FormatInt(item.AIPDDAssetID, 10), Status: model.VirtualCharacterCleanupPending, NextAttemptAt: now.Unix(),
+		}); err != nil {
+			return err
+		}
+	}
 	if strings.TrimSpace(item.StagingFileID) != "" {
 		if err := model.CreateVirtualCharacterCleanupJob(&model.VirtualCharacterCleanupJob{
-			CharacterID: item.ID, ProviderAccountID: item.ProviderAccountID,
+			CharacterID: item.ID, ProviderAccountID: item.ProviderAccountID, AIPDDChannelID: item.AIPDDChannelID,
 			TargetType: "aipdd_file", TargetID: item.StagingFileID, Status: model.VirtualCharacterCleanupPending, NextAttemptAt: now.Unix(),
+		}); err != nil {
+			return err
+		}
+	}
+	if legacyFileID := strings.TrimSpace(item.AIPDDFileID); legacyFileID != "" && legacyFileID != strings.TrimSpace(item.StagingFileID) {
+		if err := model.CreateVirtualCharacterCleanupJob(&model.VirtualCharacterCleanupJob{
+			CharacterID: item.ID, ProviderAccountID: item.ProviderAccountID, AIPDDChannelID: item.AIPDDChannelID,
+			TargetType: "aipdd_file", TargetID: legacyFileID, Status: model.VirtualCharacterCleanupPending, NextAttemptAt: now.Unix(),
 		}); err != nil {
 			return err
 		}

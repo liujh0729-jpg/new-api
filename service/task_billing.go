@@ -53,6 +53,7 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo) {
 		other["model_ratio"] = info.PriceData.ModelRatio
 	}
 	other["group_ratio"] = info.PriceData.GroupRatioInfo.GroupRatio
+	appendMembershipInfo(info, other)
 	if quote := info.TaskPricingQuote; quote != nil {
 		other["group_ratio"] = quote.GroupRatio
 		other["billing_mode"] = "task_pricing"
@@ -198,6 +199,27 @@ func taskBillingOther(task *model.Task) map[string]interface{} {
 			other["model_ratio"] = bc.ModelRatio
 		}
 		other["group_ratio"] = bc.GroupRatio
+		membershipPPM := bc.MembershipMultiplierPPM
+		if membershipPPM <= 0 {
+			membershipPPM = model.MembershipMultiplierScale
+		}
+		appliedMemberPPM := bc.AppliedMemberPPM
+		if appliedMemberPPM <= 0 {
+			appliedMemberPPM = membershipPPM
+		}
+		other["membership_level_id"] = bc.MembershipLevelId
+		if bc.MembershipCode != "" {
+			other["membership_code"] = bc.MembershipCode
+		}
+		other["membership_multiplier_ppm"] = membershipPPM
+		other["membership_multiplier"] = float64(membershipPPM) / float64(model.MembershipMultiplierScale)
+		other["applied_membership_multiplier_ppm"] = appliedMemberPPM
+		other["applied_membership_multiplier"] = float64(appliedMemberPPM) / float64(model.MembershipMultiplierScale)
+		other["effective_multiplier"] = bc.GroupRatio * float64(appliedMemberPPM) / float64(model.MembershipMultiplierScale)
+		if bc.MembershipExempt {
+			other["membership_exempt"] = true
+			other["membership_exempt_reason"] = bc.MembershipExemptReason
+		}
 		if bc.BillingMode != "" {
 			other["billing_mode"] = bc.BillingMode
 			other["billing_unit"] = bc.BillingUnit
@@ -363,26 +385,43 @@ func RecalculateTaskQuotaByTokens(ctx context.Context, task *model.Task, totalTo
 
 	modelName := taskModelName(task)
 
-	// 获取模型价格和倍率
-	modelRatio, hasRatioSetting, _ := ratio_setting.GetModelRatio(modelName)
+	// New tasks freeze all commercial multipliers at acceptance. Legacy tasks
+	// without a billing context retain the previous live-settings fallback.
+	modelRatio := 0.0
+	groupRatio := 0.0
+	membershipRatio := 1.0
+	hasFrozenBilling := false
+	if bc := task.PrivateData.BillingContext; bc != nil {
+		hasFrozenBilling = true
+		modelRatio = bc.ModelRatio
+		groupRatio = bc.GroupRatio
+		if bc.AppliedMemberPPM > 0 {
+			membershipRatio = float64(bc.AppliedMemberPPM) / float64(model.MembershipMultiplierScale)
+		}
+	}
+	hasRatioSetting := modelRatio > 0
+	if !hasFrozenBilling {
+		modelRatio, hasRatioSetting, _ = ratio_setting.GetModelRatio(modelName)
+	}
 	// 只有配置了倍率(非固定价格)时才按 token 重新计费
 	if !hasRatioSetting || modelRatio <= 0 {
 		return
 	}
 
-	// 获取用户和组的倍率信息
-	group := task.Group
-	if group == "" {
-		user, err := model.GetUserById(task.UserId, false)
-		if err == nil {
-			group = user.Group
+	if !hasFrozenBilling {
+		// 获取用户和组的倍率信息，仅供旧任务兼容。
+		group := task.Group
+		if group == "" {
+			user, err := model.GetUserById(task.UserId, false)
+			if err == nil {
+				group = user.Group
+			}
 		}
+		if group == "" {
+			return
+		}
+		groupRatio, _ = ratio_setting.ResolveModelGroupRatio(modelName, group, group)
 	}
-	if group == "" {
-		return
-	}
-
-	finalGroupRatio, _ := ratio_setting.ResolveModelGroupRatio(modelName, group, group)
 
 	// 计算 OtherRatios 乘积（视频折扣、时长等）
 	otherMultiplier := 1.0
@@ -395,8 +434,8 @@ func RecalculateTaskQuotaByTokens(ctx context.Context, task *model.Task, totalTo
 	}
 
 	// 计算实际应扣费额度: totalTokens * modelRatio * groupRatio * otherMultiplier
-	actualQuota := int(float64(totalTokens) * modelRatio * finalGroupRatio * otherMultiplier)
+	actualQuota := int(float64(totalTokens) * modelRatio * groupRatio * membershipRatio * otherMultiplier)
 
-	reason := fmt.Sprintf("token重算：tokens=%d, modelRatio=%.2f, groupRatio=%.2f, otherMultiplier=%.4f", totalTokens, modelRatio, finalGroupRatio, otherMultiplier)
+	reason := fmt.Sprintf("token重算：tokens=%d, modelRatio=%.2f, groupRatio=%.2f, membershipRatio=%.6f, otherMultiplier=%.4f", totalTokens, modelRatio, groupRatio, membershipRatio, otherMultiplier)
 	RecalculateTaskQuota(ctx, task, actualQuota, reason)
 }

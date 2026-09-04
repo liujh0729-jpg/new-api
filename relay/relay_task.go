@@ -105,7 +105,7 @@ func quoteCatalogSeedancePricing(
 	if unitPriceUSD <= 0 || math.IsNaN(quotaValue) || math.IsInf(quotaValue, 0) || quotaValue < 0 {
 		return billing_setting.TaskPricingQuote{}, billing_setting.ErrInvalidTaskPricing
 	}
-	return billing_setting.TaskPricingQuote{
+	quote := billing_setting.TaskPricingQuote{
 		Unit:              billing_setting.TaskPricingUnitSecond,
 		Variant:           variant,
 		UnitPriceUSD:      unitPriceUSD,
@@ -116,7 +116,8 @@ func quoteCatalogSeedancePricing(
 		Quota:             billingexpr.QuotaRound(quotaValue),
 		HasReferenceVideo: facts.HasReferenceVideo,
 		Resolution:        resolution,
-	}, nil
+	}
+	return quote, nil
 }
 
 var upstreamAccountIDPatterns = []*regexp.Regexp{
@@ -453,13 +454,16 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		info.PriceData.UsePrice = true
 		info.PriceData.Quota = quote.Quota
 		info.PriceData.GroupRatioInfo.GroupRatio = quote.GroupRatio
+		info.MembershipRatioInfo = membershipRatioInfoFromTaskQuote(*quote, info.MembershipRatioInfo)
+		info.PriceData.MembershipRatioInfo = info.MembershipRatioInfo
 		info.PriceData.FreeModel = quote.GroupRatio == 0
 	} else if useCatalogSeedancePricing {
 		groupRatioInfo := helper.HandleGroupRatio(c, info)
 		info.PriceData = types.PriceData{
-			UsePrice:       true,
-			FreeModel:      groupRatioInfo.GroupRatio == 0,
-			GroupRatioInfo: groupRatioInfo,
+			UsePrice:            true,
+			FreeModel:           groupRatioInfo.GroupRatio == 0,
+			GroupRatioInfo:      groupRatioInfo,
+			MembershipRatioInfo: info.MembershipRatioInfo.Normalized(),
 		}
 	} else {
 		priceData, err := helper.ModelPriceHelperPerCall(c, info)
@@ -505,12 +509,16 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 					info.PriceData.GroupRatioInfo.GroupRatio,
 					common.QuotaPerUnit,
 				)
+				if quoteErr == nil {
+					resolved = billing_setting.ApplyMembershipToTaskPricingQuote(resolved, info.MembershipRatioInfo, info.OriginModelName, common.QuotaPerUnit)
+				}
 			} else {
-				resolved, quoteErr = billing_setting.QuoteTaskPricing(
+				resolved, quoteErr = billing_setting.QuoteTaskPricingWithMembership(
 					info.OriginModelName,
 					facts.Quantity,
 					facts.Resolution,
 					info.PriceData.GroupRatioInfo.GroupRatio,
+					info.MembershipRatioInfo,
 					common.QuotaPerUnit,
 					facts.HasReferenceVideo,
 				)
@@ -536,6 +544,8 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		// as the price and request facts so a concurrent settings change cannot
 		// alter the task's retail charge or audit snapshot mid-request.
 		info.PriceData.GroupRatioInfo.GroupRatio = quote.GroupRatio
+		info.MembershipRatioInfo = membershipRatioInfoFromTaskQuote(*quote, info.MembershipRatioInfo)
+		info.PriceData.MembershipRatioInfo = info.MembershipRatioInfo
 		info.PriceData.FreeModel = quote.GroupRatio == 0
 		info.PriceData.OtherRatios = map[string]float64{
 			"seconds":             quote.Quantity,
@@ -684,6 +694,19 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		result.AIPDDExecution = provider.AIPDDTaskSnapshot(info)
 	}
 	return result, nil
+}
+
+func membershipRatioInfoFromTaskQuote(quote billing_setting.TaskPricingQuote, fallback types.MembershipRatioInfo) types.MembershipRatioInfo {
+	info := fallback.Normalized()
+	if quote.MembershipCode != "" {
+		info.LevelId = quote.MembershipLevelId
+		info.Code = quote.MembershipCode
+		info.ConfiguredMultiplierPPM = quote.MembershipMultiplierPPM
+		info.AppliedMultiplierPPM = quote.AppliedMemberPPM
+		info.Exempt = quote.MembershipExempt
+		info.ExemptionReason = quote.MembershipExemptReason
+	}
+	return info.Normalized()
 }
 
 func deferredIndependentSeedanceResult(info *relaycommon.RelayInfo, platform constant.TaskPlatform, quota int, upstreamTaskID string, taskData []byte) (*TaskSubmitResult, *dto.TaskError) {

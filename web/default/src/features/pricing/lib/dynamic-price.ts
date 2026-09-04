@@ -27,6 +27,7 @@ import {
   type BillingVar,
   type ParsedTier,
 } from './billing-expr'
+import { getMembershipMultiplier, getViewerGroupRatio } from './price'
 
 type DynamicPriceOptions = {
   tokenUnit: TokenUnit
@@ -65,19 +66,7 @@ export function isDynamicPricingModel(model: PricingModel): boolean {
 }
 
 export function getDynamicDisplayGroupRatio(model: PricingModel): number {
-  const groups = Array.isArray(model.enable_groups) ? model.enable_groups : []
-  const ratios = model.group_ratio || {}
-  if (groups.length === 0) return 1
-
-  let minRatio = Number.POSITIVE_INFINITY
-  for (const group of groups) {
-    const ratio = ratios[group]
-    if (ratio !== undefined && ratio < minRatio) {
-      minRatio = ratio
-    }
-  }
-
-  return minRatio === Number.POSITIVE_INFINITY ? 1 : minRatio
+  return getViewerGroupRatio(model) * getMembershipMultiplier(model)
 }
 
 function applyRechargeRate(

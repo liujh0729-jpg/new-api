@@ -6,6 +6,35 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestSeedanceCatalogCodeGeneratedWhenOmitted(t *testing.T) {
+	require.NoError(t, DB.AutoMigrate(&SeedanceBaseModel{}, &SeedanceAdminAudit{}))
+	require.NoError(t, DB.Exec("DELETE FROM seedance_base_models").Error)
+	require.NoError(t, DB.Exec("DELETE FROM seedance_admin_audits").Error)
+	t.Cleanup(func() {
+		_ = DB.Exec("DELETE FROM seedance_base_models").Error
+		_ = DB.Exec("DELETE FROM seedance_admin_audits").Error
+	})
+
+	item := &SeedanceBaseModel{
+		DisplayName:     "Seedance 2.0 Fast",
+		ProviderModelID: "doubao-seedance-2-0-fast",
+		CostMatrixJSON:  "[]",
+		Enabled:         true,
+	}
+	require.NoError(t, SaveSeedanceBaseModel(item, 100))
+	require.Regexp(t, `^base-[0-9a-f-]{36}$`, item.Code)
+	require.Regexp(t, `^enhancement-[0-9a-f-]{36}$`, ensureSeedanceCatalogCode("", "enhancement"))
+
+	firstID := item.ID
+	originalCode := item.Code
+	item.Code = ""
+	item.DisplayName = "Seedance 2.0 Fast Updated"
+	require.NoError(t, SaveSeedanceBaseModel(item, 100))
+	require.Equal(t, originalCode, item.Code)
+	require.NotEqual(t, firstID, item.ID)
+	require.Equal(t, 2, item.Revision)
+}
+
 func TestSeedanceBaseModelCostChangeCreatesImmutableRevision(t *testing.T) {
 	require.NoError(t, DB.AutoMigrate(&SeedanceBaseModel{}, &SeedanceAdminAudit{}))
 	require.NoError(t, DB.Exec("DELETE FROM seedance_base_models").Error)

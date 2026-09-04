@@ -561,9 +561,6 @@ function BaseTable({
           <TableRow key={item.id}>
             <TableCell>
               <div className='font-medium'>{item.display_name}</div>
-              <div className='text-muted-foreground font-mono text-xs'>
-                {item.code}
-              </div>
             </TableCell>
             <TableCell className='font-mono text-xs'>
               {item.provider_model_id}
@@ -624,9 +621,6 @@ function EnhancementTable({
           <TableRow key={item.id}>
             <TableCell>
               <div className='font-medium'>{item.display_name}</div>
-              <div className='text-muted-foreground font-mono text-xs'>
-                {item.code}
-              </div>
             </TableCell>
             <TableCell>{providerName(item.provider_id)}</TableCell>
             <TableCell>
@@ -1177,7 +1171,6 @@ function BaseEditor({
     }
     onSave({
       id: item?.id,
-      code: value(data, 'code'),
       display_name: value(data, 'display_name'),
       provider_model_id: value(data, 'provider_model_id'),
       cost_matrix: costMatrix,
@@ -1195,14 +1188,6 @@ function BaseEditor({
         '预计成本仅用于账单同步前的利润估算；火山账单同步后以实际成本为准。'
       )}
     >
-      <Field label={t('内部代码')}>
-        <Input
-          name='code'
-          defaultValue={item?.code}
-          required
-          readOnly={Boolean(item)}
-        />
-      </Field>
       <Field label={t('显示名称')}>
         <Input name='display_name' defaultValue={item?.display_name} required />
       </Field>
@@ -1278,7 +1263,6 @@ function EnhancementEditor({
     }
     onSave({
       id: item?.id,
-      code: value(data, 'code'),
       display_name: value(data, 'display_name'),
       provider_id: providerId,
       service_code: isMediaKit
@@ -1307,14 +1291,6 @@ function EnhancementEditor({
         '输出 FPS 使用售卖模型的固定值；预计成本仅用于账单同步前的利润估算。'
       )}
     >
-      <Field label={t('内部代码')}>
-        <Input
-          name='code'
-          defaultValue={item?.code}
-          required
-          readOnly={Boolean(item)}
-        />
-      </Field>
       <Field label={t('显示名称')}>
         <Input name='display_name' defaultValue={item?.display_name} required />
       </Field>
@@ -1369,9 +1345,6 @@ function EnhancementEditor({
           <div className='text-sm font-medium'>
             {t('火山 AI MediaKit 参数')}
           </div>
-          <Field label={t('服务代码')} hint={t('由系统固定，无需填写。')}>
-            <Input value={MEDIAKIT_SERVICE_CODE} readOnly />
-          </Field>
           <div className='grid grid-cols-2 gap-3'>
             <Field label={t('目标分辨率')}>
               <ResolutionSelect
@@ -1889,19 +1862,35 @@ function RuntimeEditor({
             </Button>
             <div className='flex flex-wrap gap-2'>
               {overview.credentials.map((credential) => (
-                <Button
-                  type='button'
+                <div
                   key={credential.id}
-                  variant='outline'
-                  size='sm'
-                  onClick={() =>
-                    onSave(() =>
-                      validateSeedanceCredential(channelId, credential.id)
-                    )
-                  }
+                  className='flex items-center gap-2 rounded-lg border px-2.5 py-1.5'
                 >
-                  #{credential.id} · v{credential.version} · {credential.status}
-                </Button>
+                  <span className='text-sm font-medium'>
+                    #{credential.id} · v{credential.version}
+                  </span>
+                  <Badge
+                    variant={
+                      credential.status === 'ACTIVE' ? 'default' : 'secondary'
+                    }
+                  >
+                    {credential.status}
+                  </Badge>
+                  <Button
+                    type='button'
+                    variant='outline'
+                    size='xs'
+                    disabled={pending}
+                    onClick={() =>
+                      onSave(() =>
+                        validateSeedanceCredential(channelId, credential.id)
+                      )
+                    }
+                  >
+                    <RefreshCw />
+                    {t('重新验证')}
+                  </Button>
+                </div>
               ))}
             </div>
           </form>
@@ -1948,9 +1937,6 @@ function RuntimeEditor({
                   hint={t('火山直连地址由系统固定。')}
                 >
                   <Input value={MEDIAKIT_BASE_URL} readOnly />
-                </Field>
-                <Field label={t('服务代码')} hint={t('服务代码由系统固定。')}>
-                  <Input value={MEDIAKIT_SERVICE_CODE} readOnly />
                 </Field>
                 <Field label={t('MediaKit API Key')}>
                   <Input name='mediakit_api_key' type='password' required />

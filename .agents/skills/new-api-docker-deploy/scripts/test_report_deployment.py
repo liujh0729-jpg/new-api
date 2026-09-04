@@ -47,8 +47,7 @@ def deployment_payload(status: str = "running") -> dict:
         "run": run,
         "decisions": {
             "aipddChannelOverwrite": False,
-            "aipddPriceOverwrite": False,
-            "vipGroupSynchronization": False,
+            "aipddPriceOverwrite": True,
         },
     }
 

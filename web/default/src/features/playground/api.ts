@@ -35,6 +35,10 @@ export interface ReferenceMediaUploadResult {
   url: string
   filename?: string
   media_type?: string
+  asset_id?: number
+  file_id?: string
+  channel_id?: number
+  expires_at?: string
 }
 
 function isWebUrl(url: string): boolean {
@@ -204,6 +208,22 @@ export async function uploadReferenceMedia(
     media_type:
       typeof responseData?.media_type === 'string'
         ? responseData.media_type
+        : undefined,
+    asset_id:
+      typeof responseData?.asset_id === 'number'
+        ? responseData.asset_id
+        : undefined,
+    file_id:
+      typeof responseData?.file_id === 'string'
+        ? responseData.file_id
+        : undefined,
+    channel_id:
+      typeof responseData?.channel_id === 'number'
+        ? responseData.channel_id
+        : undefined,
+    expires_at:
+      typeof responseData?.expires_at === 'string'
+        ? responseData.expires_at
         : undefined,
   }
 }

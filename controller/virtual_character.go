@@ -174,19 +174,19 @@ func UploadVirtualCharacter(c *gin.Context) {
 		virtualCharacterError(c, http.StatusBadGateway, "upload_failed", uploadErr.Error())
 		return
 	}
-	if err := model.MarkVirtualCharacterStorage(item.ID, uploaded.FileID, 0); err != nil {
+	if err := model.MarkVirtualCharacterStorage(item.ID, uploaded.FileID, 0, storage.ChannelID()); err != nil {
 		cleanupAIPDDVirtualCharacter(storage, 0, uploaded.FileID)
 		_ = model.BeginVirtualCharacterDelete(item, err.Error())
 		virtualCharacterError(c, http.StatusInternalServerError, "persist_upload_failed", err.Error())
 		return
 	}
-	asset, err := storage.CreateDigitalAsset(c.Request.Context(), metadata.Name, uploaded.FileID, header.Size)
+	asset, err := storage.CreateDigitalAsset(c.Request.Context(), metadata.Name, "image", uploaded.FileID, header.Size)
 	if err != nil {
 		_ = model.BeginVirtualCharacterDelete(item, err.Error())
 		virtualCharacterError(c, http.StatusBadGateway, "asset_create_failed", err.Error())
 		return
 	}
-	if err := model.MarkVirtualCharacterStorage(item.ID, uploaded.FileID, asset.ID); err != nil {
+	if err := model.MarkVirtualCharacterStorage(item.ID, uploaded.FileID, asset.ID, storage.ChannelID()); err != nil {
 		cleanupAIPDDVirtualCharacter(storage, asset.ID, uploaded.FileID)
 		_ = model.BeginVirtualCharacterDelete(item, err.Error())
 		virtualCharacterError(c, http.StatusInternalServerError, "persist_asset_failed", err.Error())

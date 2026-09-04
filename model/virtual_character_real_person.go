@@ -302,7 +302,14 @@ func MarkRealPersonVirtualCharacterAwaitingAssetUpload(characterID int64) error 
 	})
 }
 
-func AttachRealPersonVirtualCharacterImage(characterID int64, providerAssetID, stagingFileID, mimeType string, fileSize int64) error {
+func AttachRealPersonVirtualCharacterImage(
+	characterID int64,
+	providerAssetID, stagingFileID string,
+	aipddAssetID int64,
+	aipddChannelID int,
+	mimeType string,
+	fileSize int64,
+) error {
 	providerAssetID = strings.TrimPrefix(strings.TrimSpace(providerAssetID), "asset://")
 	if characterID <= 0 || providerAssetID == "" {
 		return errors.New("invalid real-person character asset")
@@ -328,6 +335,7 @@ func AttachRealPersonVirtualCharacterImage(characterID int64, providerAssetID, s
 		}
 		if err := tx.Model(&character).Updates(map[string]any{
 			"provider_asset_id": providerAssetID, "staging_file_id": strings.TrimSpace(stagingFileID),
+			"a_ip_dd_asset_id": aipddAssetID, "aipdd_channel_id": aipddChannelID,
 			"asset_type": VirtualCharacterAssetTypeImage, "mime_type": strings.TrimSpace(mimeType), "file_size": fileSize,
 			"cover_url": virtualCharacterPreviewPath(characterID), "status": VirtualCharacterStatusCreating,
 			"asset_poll_attempts": 0, "asset_next_poll_at": now, "last_error": "", "updated_at": now,

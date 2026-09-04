@@ -30,6 +30,7 @@ import {
   ShieldAlert,
   Link2,
   CreditCard,
+  Award,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -43,6 +44,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { ConfirmDialog } from '@/components/confirm-dialog'
+import { UserMembershipDialog } from '@/features/membership/components/user-membership-dialog'
 import { UserSubscriptionsDialog } from '@/features/subscriptions/components/dialogs/user-subscriptions-dialog'
 import { manageUser, resetUserPasskey, resetUserTwoFA } from '../api'
 import {
@@ -68,6 +70,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
   const [resetTwoFAOpen, setResetTwoFAOpen] = useState(false)
   const [bindingDialogOpen, setBindingDialogOpen] = useState(false)
   const [subscriptionsDialogOpen, setSubscriptionsDialogOpen] = useState(false)
+  const [membershipDialogOpen, setMembershipDialogOpen] = useState(false)
 
   const handleEdit = () => {
     setCurrentRow(user)
@@ -199,6 +202,18 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
           <DropdownMenuItem
             onSelect={(event) => {
               event.preventDefault()
+              setMembershipDialogOpen(true)
+            }}
+          >
+            {t('Manage Membership')}
+            <DropdownMenuShortcut>
+              <Award size={16} />
+            </DropdownMenuShortcut>
+          </DropdownMenuItem>
+
+          <DropdownMenuItem
+            onSelect={(event) => {
+              event.preventDefault()
               setBindingDialogOpen(true)
             }}
           >
@@ -291,6 +306,13 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
       <UserSubscriptionsDialog
         open={subscriptionsDialogOpen}
         onOpenChange={setSubscriptionsDialogOpen}
+        user={{ id: user.id, username: user.username }}
+        onSuccess={triggerRefresh}
+      />
+
+      <UserMembershipDialog
+        open={membershipDialogOpen}
+        onOpenChange={setMembershipDialogOpen}
         user={{ id: user.id, username: user.username }}
         onSuccess={triggerRefresh}
       />

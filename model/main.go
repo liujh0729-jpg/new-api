@@ -266,7 +266,6 @@ func migrateDB() error {
 		&PasskeyCredential{},
 		&Option{},
 		&Redemption{},
-		&Material{},
 		&VirtualCharacter{},
 		&VirtualCharacterUserLimit{},
 		&VirtualCharacterTask{},
@@ -294,6 +293,8 @@ func migrateDB() error {
 		&SubscriptionOrder{},
 		&UserSubscription{},
 		&SubscriptionPreConsumeRecord{},
+		&MembershipLevel{},
+		&UserMembership{},
 		&CustomOAuthProvider{},
 		&UserOAuthBinding{},
 		&PerfMetric{},
@@ -321,7 +322,7 @@ func migrateDB() error {
 	if err != nil {
 		return err
 	}
-	if err := EnsureMaterialSourceTypeDefault(); err != nil {
+	if err := EnsureDefaultMembershipLevel(); err != nil {
 		return err
 	}
 	if err := BackfillSeedanceProviderAdapterType(); err != nil {
@@ -377,7 +378,6 @@ func migrateDBFast() error {
 		{&PasskeyCredential{}, "PasskeyCredential"},
 		{&Option{}, "Option"},
 		{&Redemption{}, "Redemption"},
-		{&Material{}, "Material"},
 		{&VirtualCharacter{}, "VirtualCharacter"},
 		{&VirtualCharacterUserLimit{}, "VirtualCharacterUserLimit"},
 		{&VirtualCharacterTask{}, "VirtualCharacterTask"},
@@ -405,6 +405,8 @@ func migrateDBFast() error {
 		{&SubscriptionOrder{}, "SubscriptionOrder"},
 		{&UserSubscription{}, "UserSubscription"},
 		{&SubscriptionPreConsumeRecord{}, "SubscriptionPreConsumeRecord"},
+		{&MembershipLevel{}, "MembershipLevel"},
+		{&UserMembership{}, "UserMembership"},
 		{&CustomOAuthProvider{}, "CustomOAuthProvider"},
 		{&UserOAuthBinding{}, "UserOAuthBinding"},
 		{&PerfMetric{}, "PerfMetric"},
@@ -461,7 +463,7 @@ func migrateDBFast() error {
 			return err
 		}
 	}
-	if err := EnsureMaterialSourceTypeDefault(); err != nil {
+	if err := EnsureDefaultMembershipLevel(); err != nil {
 		return err
 	}
 	if err := BackfillSeedanceProviderAdapterType(); err != nil {

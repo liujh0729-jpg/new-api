@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestAttachModelGroupRatiosShowsVIPDiscountOnlyForSeedance(t *testing.T) {
+func TestAttachModelGroupRatiosUsesGlobalGroupDiscountForAllModels(t *testing.T) {
 	groupRatioSnapshot := ratio_setting.GroupRatio2JSONString()
 	t.Cleanup(func() {
 		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(groupRatioSnapshot))
@@ -22,7 +22,7 @@ func TestAttachModelGroupRatiosShowsVIPDiscountOnlyForSeedance(t *testing.T) {
 
 	attachModelGroupRatios(pricing, "default", map[string]float64{"default": 1, "VIP1": 0.78})
 
-	require.Equal(t, map[string]float64{"default": 1, "VIP1": 1}, pricing[0].GroupRatio)
+	require.Equal(t, map[string]float64{"default": 1, "VIP1": 0.78}, pricing[0].GroupRatio)
 	require.Equal(t, map[string]float64{"default": 1, "VIP1": 0.78}, pricing[1].GroupRatio)
 }
 
@@ -30,4 +30,10 @@ func TestDiscountedSeedanceSaleUsesTheSameVIPRatioAsTheQuote(t *testing.T) {
 	sale, err := discountedSeedanceSaleMicroRMB(8_000_000, 0.78)
 	require.NoError(t, err)
 	require.Equal(t, int64(6_240_000), sale)
+}
+
+func TestPricingUsableGroupsKeepsAnonymousViewerOnDefault(t *testing.T) {
+	groups := pricingUsableGroups("", false)
+	require.Len(t, groups, 1)
+	require.Contains(t, groups, "default")
 }

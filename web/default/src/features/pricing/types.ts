@@ -28,6 +28,19 @@ export type PricingVendor = {
   website?: string
 }
 
+export type PricingMembership = {
+  grant_id: number
+  level_id: number
+  code: string
+  display_name: string
+  multiplier_ppm: number
+  rank: number
+  starts_at: number
+  ends_at: number
+  resolved_at: number
+  fallback_normal: boolean
+}
+
 export type ReferenceVideoPolicy = 'same' | 'custom' | 'disabled'
 export type TaskPricingGroupRatioPolicy = 'global' | 'none'
 
@@ -76,6 +89,10 @@ export type PricingModel = {
   supported_endpoint_types?: string[]
   key?: string
   group_ratio?: Record<string, number>
+  /** Explicit group used for the primary "your price" calculation. */
+  viewer_group?: string
+  /** Membership resolved for the current viewer; NORMAL for anonymous users. */
+  viewer_membership?: PricingMembership
   /** Billing mode (e.g. "tiered_expr") used to flag dynamic pricing */
   billing_mode?: string
   /** Raw expression describing dynamic / tiered billing */
@@ -130,9 +147,12 @@ export type PricingData = {
   data: PricingModel[]
   vendors: PricingVendor[]
   group_ratio: Record<string, number>
-  usable_group: Record<string, { desc: string; ratio: number }>
+  usable_group: Record<string, string>
   supported_endpoint: Record<string, string>
   auto_groups: string[]
+  current_group: string
+  group_locked: boolean
+  membership: PricingMembership
 }
 
 export type TokenUnit = 'M' | 'K'

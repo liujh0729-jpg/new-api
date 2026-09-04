@@ -51,8 +51,7 @@ func HandleGroupRatio(ctx *gin.Context, relayInfo *relaycommon.RelayInfo) types.
 		relayInfo.UsingGroup = autoGroup.(string)
 	}
 
-	// Resolve model-aware group pricing. Fixed VIP-T1 and VIP1-VIP5 discounts apply only
-	// to Seedance; other custom group policies retain their existing behavior.
+	// Group pricing is global and independent from the user's membership.
 	groupRatio, hasSpecialRatio := ratio_setting.ResolveModelGroupRatio(
 		relayInfo.OriginModelName,
 		relayInfo.UserGroup,
@@ -74,6 +73,8 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 	modelPrice, usePrice := ratio_setting.GetModelPrice(info.OriginModelName, false)
 
 	groupRatioInfo := HandleGroupRatio(c, info)
+	membershipRatioInfo := info.MembershipRatioInfo.Normalized()
+	info.MembershipRatioInfo = membershipRatioInfo
 
 	// Check if this model uses tiered_expr billing
 	if billing_setting.GetBillingMode(info.OriginModelName) == billing_setting.BillingModeTieredExpr {
@@ -82,10 +83,11 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 	if !usePrice && aipddcatalog.IsExplicitFreeModel(info.OriginModelName) {
 		if _, hasLocalRatio, _ := ratio_setting.GetModelRatio(info.OriginModelName); !hasLocalRatio {
 			priceData := types.PriceData{
-				FreeModel:      true,
-				ModelPrice:     0,
-				UsePrice:       true,
-				GroupRatioInfo: groupRatioInfo,
+				FreeModel:           true,
+				ModelPrice:          0,
+				UsePrice:            true,
+				GroupRatioInfo:      groupRatioInfo,
+				MembershipRatioInfo: membershipRatioInfo,
 			}
 			info.PriceData = priceData
 			return priceData, nil
@@ -126,13 +128,13 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 		imageRatio, _ = ratio_setting.GetImageRatio(info.OriginModelName)
 		audioRatio = ratio_setting.GetAudioRatio(info.OriginModelName)
 		audioCompletionRatio = ratio_setting.GetAudioCompletionRatio(info.OriginModelName)
-		ratio := modelRatio * groupRatioInfo.GroupRatio
+		ratio := modelRatio * groupRatioInfo.GroupRatio * membershipRatioInfo.AppliedMultiplier()
 		preConsumedQuota = int(float64(preConsumedTokens) * ratio)
 	} else {
 		if meta.ImagePriceRatio != 0 {
 			modelPrice = modelPrice * meta.ImagePriceRatio
 		}
-		preConsumedQuota = int(modelPrice * common.QuotaPerUnit * groupRatioInfo.GroupRatio)
+		preConsumedQuota = int(modelPrice * common.QuotaPerUnit * groupRatioInfo.GroupRatio * membershipRatioInfo.AppliedMultiplier())
 	}
 
 	// check if free model pre-consume is disabled
@@ -160,6 +162,7 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 		ModelRatio:           modelRatio,
 		CompletionRatio:      completionRatio,
 		GroupRatioInfo:       groupRatioInfo,
+		MembershipRatioInfo:  membershipRatioInfo,
 		UsePrice:             usePrice,
 		CacheRatio:           cacheRatio,
 		ImageRatio:           imageRatio,
@@ -181,6 +184,8 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 // ModelPriceHelperPerCall 按次/按量计费的 PriceHelper (MJ、Task)
 func ModelPriceHelperPerCall(c *gin.Context, info *relaycommon.RelayInfo) (types.PriceData, error) {
 	groupRatioInfo := HandleGroupRatio(c, info)
+	membershipRatioInfo := info.MembershipRatioInfo.Normalized()
+	info.MembershipRatioInfo = membershipRatioInfo
 	billingMode := billing_setting.GetBillingMode(info.OriginModelName)
 	if billingMode == billing_setting.BillingModeTaskPricing {
 		pricing, ok := billing_setting.GetTaskPricing(info.OriginModelName)
@@ -191,10 +196,11 @@ func ModelPriceHelperPerCall(c *gin.Context, info *relaycommon.RelayInfo) (types
 			return types.PriceData{}, fmt.Errorf("model %s task pricing is invalid: %w", info.OriginModelName, err)
 		}
 		return types.PriceData{
-			FreeModel:      groupRatioInfo.GroupRatio == 0,
-			ModelPrice:     pricing.NoReferenceVideoUnitPrice,
-			UsePrice:       true,
-			GroupRatioInfo: groupRatioInfo,
+			FreeModel:           groupRatioInfo.GroupRatio == 0,
+			ModelPrice:          pricing.NoReferenceVideoUnitPrice,
+			UsePrice:            true,
+			GroupRatioInfo:      groupRatioInfo,
+			MembershipRatioInfo: membershipRatioInfo,
 		}, nil
 	}
 	if constant.IsAIPDDTaskPricingModel(info.OriginModelName) ||
@@ -226,7 +232,7 @@ func ModelPriceHelperPerCall(c *gin.Context, info *relaycommon.RelayInfo) (types
 	freeModel := false
 
 	if usePrice {
-		quota = int(modelPrice * common.QuotaPerUnit * groupRatioInfo.GroupRatio)
+		quota = int(modelPrice * common.QuotaPerUnit * groupRatioInfo.GroupRatio * membershipRatioInfo.AppliedMultiplier())
 		if !operation_setting.GetQuotaSetting().EnableFreeModelPreConsume {
 			if groupRatioInfo.GroupRatio == 0 || modelPrice == 0 {
 				quota = 0
@@ -235,7 +241,7 @@ func ModelPriceHelperPerCall(c *gin.Context, info *relaycommon.RelayInfo) (types
 		}
 	} else {
 		// 按量计费：以模型倍率的一半作为预扣额度
-		quota = int(modelRatio / 2 * common.QuotaPerUnit * groupRatioInfo.GroupRatio)
+		quota = int(modelRatio / 2 * common.QuotaPerUnit * groupRatioInfo.GroupRatio * membershipRatioInfo.AppliedMultiplier())
 		modelPrice = -1
 		if !operation_setting.GetQuotaSetting().EnableFreeModelPreConsume {
 			if groupRatioInfo.GroupRatio == 0 || modelRatio == 0 {
@@ -246,12 +252,13 @@ func ModelPriceHelperPerCall(c *gin.Context, info *relaycommon.RelayInfo) (types
 	}
 
 	priceData := types.PriceData{
-		FreeModel:      freeModel,
-		ModelPrice:     modelPrice,
-		ModelRatio:     modelRatio,
-		UsePrice:       usePrice,
-		Quota:          quota,
-		GroupRatioInfo: groupRatioInfo,
+		FreeModel:           freeModel,
+		ModelPrice:          modelPrice,
+		ModelRatio:          modelRatio,
+		UsePrice:            usePrice,
+		Quota:               quota,
+		GroupRatioInfo:      groupRatioInfo,
+		MembershipRatioInfo: membershipRatioInfo,
 	}
 	return priceData, nil
 }
@@ -295,6 +302,8 @@ func HasModelBillingConfig(modelName string) bool {
 }
 
 func modelPriceHelperTiered(c *gin.Context, info *relaycommon.RelayInfo, promptTokens int, meta *types.TokenCountMeta, groupRatioInfo types.GroupRatioInfo) (types.PriceData, error) {
+	membershipRatioInfo := info.MembershipRatioInfo.Normalized()
+	info.MembershipRatioInfo = membershipRatioInfo
 	exprStr, ok := billing_setting.GetBillingExpr(info.OriginModelName)
 	if !ok {
 		return types.PriceData{}, fmt.Errorf("model %s is configured as tiered_expr but has no billing expression", info.OriginModelName)
@@ -321,7 +330,7 @@ func modelPriceHelperTiered(c *gin.Context, info *relaycommon.RelayInfo, promptT
 
 	// Expression coefficients are $/1M tokens prices; convert to quota the same way per-call billing does.
 	quotaBeforeGroup := rawCost / 1_000_000 * common.QuotaPerUnit
-	preConsumedQuota := billingexpr.QuotaRound(quotaBeforeGroup * groupRatioInfo.GroupRatio)
+	preConsumedQuota := billingexpr.QuotaRound(quotaBeforeGroup * groupRatioInfo.GroupRatio * membershipRatioInfo.AppliedMultiplier())
 
 	freeModel := false
 	if !operation_setting.GetQuotaSetting().EnableFreeModelPreConsume {
@@ -333,26 +342,33 @@ func modelPriceHelperTiered(c *gin.Context, info *relaycommon.RelayInfo, promptT
 
 	exprHash := billingexpr.ExprHashString(exprStr)
 	snapshot := &billingexpr.BillingSnapshot{
-		BillingMode:               billing_setting.BillingModeTieredExpr,
-		ModelName:                 info.OriginModelName,
-		ExprString:                exprStr,
-		ExprHash:                  exprHash,
-		GroupRatio:                groupRatioInfo.GroupRatio,
-		EstimatedPromptTokens:     promptTokens,
-		EstimatedCompletionTokens: estimatedCompletionTokens,
-		EstimatedQuotaBeforeGroup: quotaBeforeGroup,
-		EstimatedQuotaAfterGroup:  preConsumedQuota,
-		EstimatedTier:             trace.MatchedTier,
-		QuotaPerUnit:              common.QuotaPerUnit,
-		ExprVersion:               billingexpr.ExprVersion(exprStr),
+		BillingMode:                billing_setting.BillingModeTieredExpr,
+		ModelName:                  info.OriginModelName,
+		ExprString:                 exprStr,
+		ExprHash:                   exprHash,
+		GroupRatio:                 groupRatioInfo.GroupRatio,
+		MembershipLevelID:          membershipRatioInfo.LevelId,
+		MembershipCode:             membershipRatioInfo.Code,
+		MembershipMultiplierPPM:    membershipRatioInfo.ConfiguredMultiplierPPM,
+		AppliedMemberMultiplierPPM: membershipRatioInfo.AppliedMultiplierPPM,
+		MembershipExempt:           membershipRatioInfo.Exempt,
+		MembershipExemptReason:     membershipRatioInfo.ExemptionReason,
+		EstimatedPromptTokens:      promptTokens,
+		EstimatedCompletionTokens:  estimatedCompletionTokens,
+		EstimatedQuotaBeforeGroup:  quotaBeforeGroup,
+		EstimatedQuotaAfterGroup:   preConsumedQuota,
+		EstimatedTier:              trace.MatchedTier,
+		QuotaPerUnit:               common.QuotaPerUnit,
+		ExprVersion:                billingexpr.ExprVersion(exprStr),
 	}
 	info.TieredBillingSnapshot = snapshot
 	info.BillingRequestInput = &requestInput
 
 	priceData := types.PriceData{
-		FreeModel:         freeModel,
-		GroupRatioInfo:    groupRatioInfo,
-		QuotaToPreConsume: preConsumedQuota,
+		FreeModel:           freeModel,
+		GroupRatioInfo:      groupRatioInfo,
+		MembershipRatioInfo: membershipRatioInfo,
+		QuotaToPreConsume:   preConsumedQuota,
 	}
 
 	if common.DebugEnabled {

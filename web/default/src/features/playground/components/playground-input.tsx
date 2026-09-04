@@ -30,7 +30,6 @@ import {
   Settings2Icon,
   VideoIcon,
   ClockIcon,
-  AtSignIcon,
   RectangleHorizontalIcon,
   MonitorIcon,
 } from 'lucide-react'
@@ -97,7 +96,6 @@ import type {
   ThinkingMode,
 } from '../types'
 import { LTXStartEndPanel } from './ltx-start-end-panel'
-import { MaterialSelectorDialog } from './material-selector-dialog'
 import { MinimaxH3FirstLastFramePanel } from './minimax-h3-first-last-frame-panel'
 import {
   MinimaxH3AttachmentPolicy,
@@ -314,7 +312,6 @@ export function PlaygroundInput({
 }: PlaygroundInputProps) {
   const { t } = useTranslation()
   const [text, setText] = useState('')
-  const [isMaterialSelectorOpen, setIsMaterialSelectorOpen] = useState(false)
   const [isPreparingReferences, setIsPreparingReferences] = useState(false)
   const isImageGenerationMode = mode === 'image'
   const isImageToImageMode = mode === 'image_to_image'
@@ -411,21 +408,6 @@ export function PlaygroundInput({
     !isLTX23StartEnd &&
     !isMinimaxH3FirstLast &&
     !isMinimaxH3TextToVideo
-  const showMaterialButton =
-    isReferenceImageMode ||
-    (isVideoMode &&
-      !isLTX23StartEnd &&
-      !isMinimaxH3FirstLast &&
-      !isMinimaxH3TextToVideo)
-  const minimaxH3MaterialTypes =
-    minimaxH3Spec?.kind === 'auto' ||
-    minimaxH3Spec?.kind === 'multimodal-to-video' ||
-    minimaxH3Spec?.kind === 'image-audio-lipsync'
-      ? (['image', 'audio'] as Array<'image' | 'audio'>)
-      : undefined
-  const minimaxH3FixedMaterialType =
-    minimaxH3Spec?.kind === 'reference-to-video' ? 'image' : undefined
-
   let promptPlaceholder = t('Ask anything')
   if (isImageEditMode) {
     promptPlaceholder = t('Describe how to edit the attached images')
@@ -495,10 +477,6 @@ export function PlaygroundInput({
     }
     setText('')
     return result
-  }
-
-  const handleInsertReferenceMarker = () => {
-    setIsMaterialSelectorOpen(true)
   }
 
   const handleModelChange = (value: string) => {
@@ -1045,21 +1023,6 @@ export function PlaygroundInput({
                 </DropdownMenu>
               </>
             )}
-
-            {showMaterialButton && (
-              <PromptInputButton
-                className='border font-medium'
-                disabled={controlsDisabled}
-                onClick={handleInsertReferenceMarker}
-                type='button'
-                variant='outline'
-              >
-                <AtSignIcon size={16} />
-                <span className='sr-only'>
-                  {t('Select reference material')}
-                </span>
-              </PromptInputButton>
-            )}
           </PromptInputTools>
 
           <div className='flex items-center gap-1.5 md:gap-2'>
@@ -1101,19 +1064,6 @@ export function PlaygroundInput({
             )}
           </div>
         </PromptInputFooter>
-
-        {mode !== 'chat' &&
-          !isLTX23StartEnd &&
-          !isMinimaxH3FirstLast &&
-          !isMinimaxH3TextToVideo && (
-            <MaterialSelectorDialog
-              allowedTypes={minimaxH3MaterialTypes}
-              fixedType={minimaxH3FixedMaterialType}
-              open={isMaterialSelectorOpen}
-              onOpenChange={setIsMaterialSelectorOpen}
-              mode={isImageMode ? 'image' : 'video'}
-            />
-          )}
       </PromptInput>
     </div>
   )

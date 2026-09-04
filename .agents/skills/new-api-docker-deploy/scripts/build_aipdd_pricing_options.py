@@ -10,7 +10,6 @@ from __future__ import annotations
 import argparse
 import json
 import math
-import re
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
@@ -118,11 +117,15 @@ def decimal_value(
     return number
 
 
-def is_seedance_25_model_name(value: Any) -> bool:
-    if not isinstance(value, str):
-        return False
-    parts = [part for part in re.split(r"[\s._-]+", value.strip().casefold()) if part]
-    return any(parts[index : index + 3] == ["seedance", "2", "5"] for index in range(len(parts) - 2))
+def is_seedance_model_name(value: Any) -> bool:
+    return isinstance(value, str) and "seedance" in value.strip().casefold()
+
+
+def is_seedance_capability(capability: dict[str, Any]) -> bool:
+    return (
+        str(capability.get("adapterCode", "")).strip().casefold() == "seedance"
+        or is_seedance_model_name(capability.get("id"))
+    )
 
 
 def json_number(value: Decimal) -> int | float:
@@ -135,7 +138,12 @@ def json_number(value: Decimal) -> int | float:
 
 
 def decimal_text(value: Decimal) -> str:
-    text = format(value.normalize(), "f")
+    # Billing expressions are evaluated as ordinary floating-point numbers.
+    # Round through the same JSON-number representation used by ModelPrice so
+    # repeating Decimal divisions do not leak tails such as 0.3999999999999.
+    text = str(json_number(value))
+    if "e" in text.casefold():
+        text = format(Decimal(text), "f")
     return "0" if text in {"", "-0"} else text
 
 
@@ -161,96 +169,6 @@ def normalize_resolution(value: Any, capability_id: str) -> str:
     if len(resolution) > 128:
         raise ValueError(f"{capability_id}/{resolution}: resolution key exceeds 128 characters")
     return resolution
-
-
-def resolution_task_pricing(
-    capability: dict[str, Any],
-    usd_per_awcoin: Decimal,
-) -> dict[str, Any]:
-    model_name = str(capability.get("id", "")).strip()
-    pricing = capability.get("pricing")
-    if not isinstance(pricing, dict) or not isinstance(pricing.get("byResolution"), dict):
-        raise ValueError(f"{capability.get('id')}: per-second pricing matrix is missing")
-    if (
-        str(pricing.get("pricingModel", "")).strip().lower() != "per_second"
-        or str(pricing.get("currency", "")).strip().lower() != "awcoin"
-        or pricing.get("enabled") is not True
-    ):
-        raise ValueError(f"{capability.get('id')}: invalid per-second pricing metadata")
-    pricing_basis = str(pricing.get("pricingBasis", "")).strip().lower()
-    if pricing_basis != "display":
-        raise ValueError(
-            f"{capability.get('id')}: pricingBasis must be 'display'"
-        )
-    if not pricing["byResolution"]:
-        raise ValueError(f"{capability.get('id')}: per-second pricing matrix is empty")
-
-    by_resolution: dict[str, dict[str, Any]] = {}
-    for raw_resolution, item in pricing["byResolution"].items():
-        resolution = normalize_resolution(raw_resolution, str(capability.get("id")))
-        if resolution in by_resolution:
-            raise ValueError(
-                f"{capability.get('id')}/{resolution}: duplicate resolution after normalization"
-            )
-        if not isinstance(item, dict):
-            raise ValueError(f"{capability.get('id')}/{resolution}: pricing must be an object")
-        target_resolution = normalize_resolution(
-            item.get("targetResolution", ""), str(capability.get("id"))
-        )
-        if target_resolution != resolution:
-            raise ValueError(
-                f"{capability.get('id')}/{resolution}: targetResolution must match the resolution key"
-            )
-        decimal_value(
-            item.get("defaultDurationSeconds"),
-            f"{capability.get('id')}/{resolution}.defaultDurationSeconds",
-            positive=True,
-            allowed_values=(Decimal("-1"),) if is_seedance_25_model_name(model_name) else (),
-        )
-        decimal_value(
-            item.get("defaultFramesPerSecond"),
-            f"{capability.get('id')}/{resolution}.defaultFramesPerSecond",
-            positive=True,
-        )
-        # AIPDD still publishes platform display/settlement prices; New API sale
-        # prices must come from suggested retail (对比原生价 / MSRP).
-        decimal_value(
-            item.get("displayAmountAwcoinPerSecond"),
-            f"{capability.get('id')}/{resolution}.displayAmountAwcoinPerSecond",
-            positive=True,
-        )
-        decimal_value(
-            item.get("displayVideoInputAwcoinPerSecond"),
-            f"{capability.get('id')}/{resolution}.displayVideoInputAwcoinPerSecond",
-            positive=True,
-        )
-        no_reference_rate = decimal_value(
-            item.get("suggestedRetailAwcoinPerSecond"),
-            f"{capability.get('id')}/{resolution}.suggestedRetailAwcoinPerSecond",
-            positive=True,
-        )
-        video_rate = decimal_value(
-            item.get("suggestedRetailVideoInputAwcoinPerSecond"),
-            f"{capability.get('id')}/{resolution}.suggestedRetailVideoInputAwcoinPerSecond",
-            positive=True,
-        )
-        no_reference_price = no_reference_rate * usd_per_awcoin
-        reference_price = video_rate * usd_per_awcoin
-        policy = "same" if reference_price == no_reference_price else "custom"
-        tier = {
-            "no_reference_video_unit_price": json_number(no_reference_price),
-            "reference_video_policy": policy,
-        }
-        if policy == "custom":
-            tier["reference_video_unit_price"] = json_number(reference_price)
-        if resolution == "480p":
-            tier["group_ratio_policy"] = "none"
-        by_resolution[resolution] = tier
-
-    return {
-        "unit": "second",
-        "by_resolution": by_resolution,
-    }
 
 
 def duration_task_pricing(
@@ -376,14 +294,46 @@ def rmb_anchored_usd_per_awcoin(catalog: dict[str, Any], current: dict[str, Any]
 
 
 def build_updates(
-    catalog: dict[str, Any], current: dict[str, Any], previous_models: set[str]
+    catalog: dict[str, Any],
+    current: dict[str, Any],
+    previous_models: set[str],
+    current_models: set[str] | None = None,
 ) -> dict[str, Any]:
     # RMB-anchored conversion: do not use catalog usdPerAwcoin (≈1/6.75), which
     # would diverge from site display when USDExchangeRate is 7.3.
     usd_per_awcoin = rmb_anchored_usd_per_awcoin(catalog, current)
 
-    capabilities = catalog["capabilities"]
-    llm_models = catalog["models"]
+    capabilities: list[dict[str, Any]] = []
+    for capability in catalog["capabilities"]:
+        if not isinstance(capability, dict):
+            raise ValueError("catalog capability must be an object")
+        model_name = str(capability.get("id", "")).strip()
+        if is_seedance_capability(capability):
+            continue
+        capabilities.append(capability)
+
+    llm_models: list[dict[str, Any]] = []
+    for item in catalog["models"]:
+        if not isinstance(item, dict):
+            raise ValueError("catalog model must be an object")
+        model_name = str(item.get("id", "")).strip()
+        if is_seedance_model_name(model_name):
+            continue
+        llm_models.append(item)
+
+    previous_models = {
+        name for name in previous_models if not is_seedance_model_name(name)
+    }
+    if current_models is not None:
+        current_models = {
+            name for name in current_models if not is_seedance_model_name(name)
+        }
+        capabilities = [
+            item for item in capabilities if str(item.get("id", "")).strip() in current_models
+        ]
+        llm_models = [
+            item for item in llm_models if str(item.get("id", "")).strip() in current_models
+        ]
     current_ids = {
         str(item.get("id", "")).strip()
         for item in capabilities + llm_models
@@ -391,6 +341,9 @@ def build_updates(
     }
     if len(current_ids) != len(capabilities) + len(llm_models):
         raise ValueError("catalog contains an empty or duplicate model id")
+    if current_models is not None and current_ids != current_models:
+        missing = sorted(current_models - current_ids)
+        raise ValueError(f"managed AIPDD channel models missing from catalog: {missing}")
     managed = previous_models | current_ids
 
     maps = {key: parse_map(current.get(key), key) for key in OPTION_KEYS}
@@ -417,20 +370,11 @@ def build_updates(
     llm_names: list[str] = []
 
     for capability in capabilities:
-        if not isinstance(capability, dict):
-            raise ValueError("catalog capability must be an object")
         model_name = str(capability.get("id", "")).strip()
         pricing = capability.get("pricing")
         if not isinstance(pricing, dict):
             raise ValueError(f"{model_name}: pricing is missing")
         pricing_model = str(pricing.get("pricingModel", "")).strip().lower()
-        adapter_code = str(capability.get("adapterCode", "")).strip().lower()
-        if adapter_code == "seedance":
-            task_pricing = resolution_task_pricing(capability, usd_per_awcoin)
-            maps["billing_setting.task_pricing"][model_name] = task_pricing
-            maps["billing_setting.billing_mode"][model_name] = "task_pricing"
-            task_models.append(model_name)
-            continue
         if is_token_market_duration_capability(capability):
             if capability.get("available") is False:
                 builtin_removed_models.append(model_name)
@@ -444,8 +388,8 @@ def build_updates(
             continue
         if pricing_model == "per_second":
             raise ValueError(
-                f"{model_name}: per-second pricing is supported only for Seedance "
-                "or token_market_media"
+                f"{model_name}: AIPDD per-second pricing is supported only for "
+                "token_market_media"
             )
         if pricing_model == "per_unit":
             task_pricing = duration_task_pricing(capability, usd_per_awcoin)
@@ -461,8 +405,6 @@ def build_updates(
         per_call_models.append(model_name)
 
     for item in llm_models:
-        if not isinstance(item, dict):
-            raise ValueError("catalog model must be an object")
         model_name = str(item.get("id", "")).strip()
         pricing = item.get("pricing")
         if not isinstance(pricing, dict):
@@ -518,8 +460,8 @@ def build_updates(
             "builtin_synced_task_pricing_models": sorted(builtin_task_models),
             "builtin_sync_removed_models": sorted(builtin_removed_models),
             "tiered_expr_models": sorted(llm_names),
-            "task_pricing_contract": "Only Seedance by_resolution matrix pricing requires suggested retail prices for New API sale; Seedance still requires AIPDD display settlement fields, accepts only the -1 auto-duration sentinel for Seedance 2.5 model names, fixes 480p group ratio at 1, and rejects legacy catalog pricing. Eligible token_market_media/per_second models do not require suggestedRetail fields: their display-price task_pricing and billing_mode must already exist from New API built-in catalog sync and are preserved without changing their values. per_unit/second tasks use flat USD/second task pricing; manually rebuilt AIPDD prices convert as AWCoin × rmbPerAwcoin ÷ site USDExchangeRate; no legacy ModelPrice fallback",
-            "task_pricing_policy": "RMB-anchored manual pricing: Seedance uses per-resolution suggested retail with group_ratio_policy=none for 480p, per-unit duration uses chargeConfig, and catalog usdPerAwcoin is unused. Token Market per-second models remain owned by built-in display-price sync and are validated/preserved instead of rebuilt",
+            "task_pricing_contract": "Eligible token_market_media/per_second models keep the display-price task_pricing and billing_mode written by New API built-in catalog sync. per_unit/second tasks use flat USD/second task pricing; manually rebuilt AIPDD prices convert as AWCoin × rmbPerAwcoin ÷ site USDExchangeRate; no legacy ModelPrice fallback is used",
+            "task_pricing_policy": "RMB-anchored AIPDD pricing: per-unit duration uses chargeConfig, catalog usdPerAwcoin is unused, and Token Market per-second models remain owned by built-in display-price sync",
             "price_conversion": "rmb_anchored",
         },
     }
@@ -530,6 +472,7 @@ def main() -> int:
     parser.add_argument("--catalog", type=Path, required=True)
     parser.add_argument("--options", type=Path, required=True)
     parser.add_argument("--managed-models", type=Path, required=True)
+    parser.add_argument("--current-models", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
 
@@ -537,6 +480,7 @@ def main() -> int:
         catalog_object(load_json(args.catalog)),
         option_values(load_json(args.options)),
         managed_model_names(load_json(args.managed_models)),
+        managed_model_names(load_json(args.current_models)) if args.current_models else None,
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with args.output.open("w", encoding="utf-8", newline="\n") as handle:

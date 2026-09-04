@@ -31,6 +31,7 @@ import {
   login,
   makeRunId,
   materializeCase,
+  membershipMultiplierFor,
   pageItems,
   parseArgs,
   parseLogOther,
@@ -145,7 +146,7 @@ function validateConfig() {
     throw new Error('Refusing credentials over plain HTTP. Pass --allow-http only for a trusted server.');
   }
   if (config.groups.join(',') !== 'default,VIP1') {
-    throw new Error('--groups must be exactly default,VIP1 for this audit.');
+    throw new Error('--groups must be exactly default,VIP1 as membership cohorts for this audit.');
   }
   if (!(config.maxCostUsd > 0)) {
     throw new Error('--max-cost-usd must be positive.');
@@ -210,10 +211,16 @@ async function runDryRun(positiveCases) {
   };
   try {
     if (quotaPerUnit > 0) {
-      const pricingByGroup = { default: pricing, VIP1: pricing };
+      const pricingByGroup = {
+        default: pricing,
+        VIP1: {
+          ...pricing,
+          membership: { code: 'VIP1', multiplier_ppm: 800_000 },
+        },
+      };
       const costPlan = buildCostPlan(positiveCases, pricingByGroup, quotaPerUnit, config.maxCostUsd);
       output.projected_cost_usd = costPlan.totalUsd;
-      output.note = 'Public pricing group ratios were used. The real run recalculates after both group accounts log in.';
+      output.note = 'Dry-run assumes VIP1 uses a 0.8 membership multiplier. The real run uses the configured VIP1 level.';
     }
   } catch (error) {
     output.projected_cost_unavailable = error.message;
@@ -285,8 +292,15 @@ async function runFullTest() {
     run.environment.catalogGeneratedAt = catalog?.generatedAt || '';
     verifyPricingCoverage(adminPricing);
 
+    const vipLevel = await ensureAuditMembershipLevel(adminSession);
     for (const group of config.groups) {
-      const account = await createTestAccount(adminSession, adminPassword, runId, group);
+      const account = await createTestAccount(
+        adminSession,
+        adminPassword,
+        runId,
+        group,
+        group === 'VIP1' ? vipLevel : null,
+      );
       run.accounts.push(account);
     }
     const pricingByGroup = {};
@@ -294,7 +308,11 @@ async function runFullTest() {
       const pricingResponse = await apiSuccess(account.session, 'GET', '/api/pricing');
       pricingByGroup[account.group] = pricingResponse.data;
       account.pricingVersion = pricingResponse.data?.pricing_version || '';
-      account.advertisedGroupRatio = groupRatioFor(pricingResponse.data, account.group);
+      account.advertisedGroupRatio = groupRatioFor(
+        pricingResponse.data,
+        pricingResponse.data?.current_group || 'default',
+      );
+      account.advertisedMembershipMultiplier = membershipMultiplierFor(pricingResponse.data);
     }
     const positiveCases = buildPositiveCases({
       imageUrl: config.imageUrl,
@@ -353,7 +371,9 @@ async function runFullTest() {
       account.startQuota = Number(self.quota);
       account.startUsedQuota = Number(self.used_quota);
       console.log(
-        'Prepared ' + account.username + ' group=' + account.group +
+        'Prepared ' + account.username + ' cohort=' + account.group +
+        ' actualGroup=' + account.actualGroup +
+        ' membership=' + account.membershipCode +
         ' quota=$' + (account.startQuota / quotaPerUnit).toFixed(6),
       );
     }
@@ -477,7 +497,7 @@ function findAccount(run, group) {
   return account;
 }
 
-async function createTestAccount(adminSession, adminPassword, runId, group) {
+async function createTestAccount(adminSession, adminPassword, runId, group, membershipLevel) {
   const username = accountUsername(runId, group);
   const password = deriveAccountPassword(adminPassword, username);
   console.log('Creating test account ' + username + ' for ' + group + '...');
@@ -496,12 +516,28 @@ async function createTestAccount(adminSession, adminPassword, runId, group) {
       username: user.username,
       display_name: user.display_name || username,
       role: 1,
-      group,
+      group: 'default',
       remark: 'Automated Seedance audit ' + runId,
       password: '',
     },
   });
   const userLogin = await login(config.baseUrl, username, password);
+  let membershipGrantId = 0;
+  if (membershipLevel) {
+    const grantResponse = await apiSuccess(adminSession, 'POST', '/api/membership/admin/grants', {
+      body: {
+        user_id: user.id,
+        membership_level_id: membershipLevel.id,
+        starts_at: 0,
+        ends_at: 0,
+        note: 'Automated Seedance audit ' + runId,
+      },
+    });
+    membershipGrantId = Number(grantResponse.data?.data?.id || 0);
+    if (!membershipGrantId) {
+      throw new Error('VIP1 membership grant was not returned for ' + username + '.');
+    }
+  }
   const tokenName = 'seedance-' + runId + '-' + group.toLowerCase();
   await apiSuccess(userLogin.session, 'POST', '/api/token/', {
     body: {
@@ -529,6 +565,9 @@ async function createTestAccount(adminSession, adminPassword, runId, group) {
     id: user.id,
     username,
     group,
+    actualGroup: 'default',
+    membershipCode: membershipLevel?.code || 'NORMAL',
+    membershipGrantId,
     role: 1,
     status: 1,
     password,
@@ -539,6 +578,33 @@ async function createTestAccount(adminSession, adminPassword, runId, group) {
     tokenDeleted: false,
     disabled: false,
   };
+}
+
+async function ensureAuditMembershipLevel(adminSession) {
+  const response = await apiSuccess(
+    adminSession,
+    'GET',
+    '/api/membership/admin/levels?include_archived=true',
+  );
+  const levels = Array.isArray(response.data?.data) ? response.data.data : [];
+  let level = levels.find((item) => String(item.code).toUpperCase() === 'VIP1');
+  if (!level) {
+    const created = await apiSuccess(adminSession, 'POST', '/api/membership/admin/levels', {
+      body: {
+        code: 'VIP1',
+        display_name: 'VIP1',
+        multiplier_ppm: 800_000,
+        rank: 10,
+        sort_order: 10,
+        enabled: true,
+      },
+    });
+    level = created.data?.data;
+  }
+  if (!level?.id || !level.enabled || Number(level.archived_at) !== 0) {
+    throw new Error('VIP1 membership level must exist and be enabled for the Seedance audit.');
+  }
+  return level;
 }
 
 async function findUser(adminSession, username) {
@@ -679,12 +745,14 @@ async function runNegativeCase(
   result.prompt = extractPrompt(testCase.body);
   console.log('[' + testCase.id + '] negative: ' + testCase.description);
   if (testCase.providerProbe) {
-    const entry = findPricingEntry(pricingByGroup[testCase.group], testCase.model);
+    const pricing = pricingByGroup[testCase.group];
+    const entry = findPricingEntry(pricing, testCase.model);
     result.billing.expectedProbe = computeQuote(
       entry,
-      groupRatioFor(pricingByGroup[testCase.group], testCase.group),
+      groupRatioFor(pricing, pricing?.current_group || 'default'),
       { ...testCase, referenceVideo: false },
       quotaPerUnit,
+      membershipMultiplierFor(pricing),
     );
     if (totalAccountSpend(run, quotaPerUnit) + result.billing.expectedProbe.saleUsd > config.maxCostUsd) {
       return blockedResult(testCase, 'audio-only probe could exceed hard cap', result);
@@ -877,6 +945,9 @@ async function fillBilling(result, account, before, after, quotaPerUnit, submitt
       quantity: Number(other.quantity),
       saleUsd: Number(other.sale_usd),
       groupRatio: Number(other.group_ratio),
+      membershipMultiplier: Number(other.membership_multiplier),
+      appliedMembershipMultiplier: Number(other.applied_membership_multiplier),
+      membershipExempt: Boolean(other.membership_exempt),
       hasReferenceVideo: Boolean(other.has_reference_video),
       resolution: other.resolution,
     } : null,
@@ -900,7 +971,11 @@ function billingMatches(billing, quotaPerUnit) {
   return Math.abs(billing.log.saleUsd - billing.expected.saleUsd) <= tolerance &&
     Math.abs(billing.taskQuotaUsd - billing.expected.saleUsd) <= tolerance &&
     billing.log.variant === billing.expected.variant &&
-    Math.abs(billing.log.groupRatio - billing.expected.groupRatio) <= 1e-9;
+    Math.abs(billing.log.groupRatio - billing.expected.groupRatio) <= 1e-9 &&
+    Math.abs(
+      billing.log.appliedMembershipMultiplier -
+      billing.expected.appliedMembershipMultiplier,
+    ) <= 1e-9;
 }
 
 async function collectArtifacts(result, artifactDir, reportDir) {
@@ -980,6 +1055,18 @@ async function cleanupAccounts(adminSession, accounts, runId) {
       account.tokenDeleteError = sanitizeDeep(error.message);
     }
     try {
+      if (account.membershipGrantId) {
+        await apiSuccess(
+          adminSession,
+          'DELETE',
+          '/api/membership/admin/grants/' + account.membershipGrantId,
+        );
+      }
+      account.membershipRevoked = true;
+    } catch (error) {
+      account.membershipRevokeError = sanitizeDeep(error.message);
+    }
+    try {
       await apiSuccess(adminSession, 'POST', '/api/user/manage', {
         body: { id: account.id, action: 'disable', value: 0, mode: '' },
       });
@@ -998,6 +1085,29 @@ async function deleteRunTokens(session, runId) {
   }
 }
 
+async function revokeTestMemberships(adminSession, userId, runId) {
+  const response = await apiSuccess(
+    adminSession,
+    'GET',
+    '/api/membership/admin/users/' + userId,
+  );
+  const grants = Array.isArray(response.data?.data?.grants)
+    ? response.data.data.grants
+    : [];
+  const testGrants = grants.filter(
+    (grant) => grant.status === 'active' &&
+      String(grant.note || '').includes('Automated Seedance audit ' + runId),
+  );
+  for (const grant of testGrants) {
+    await apiSuccess(
+      adminSession,
+      'DELETE',
+      '/api/membership/admin/grants/' + grant.id,
+    );
+  }
+  return testGrants.length;
+}
+
 async function cleanupPreviousRun(runId) {
   if (!/^sd\d{12}[0-9a-f]{4}$/i.test(runId)) {
     throw new Error('Invalid cleanup run id. Expected the sdYYMMDDHHMMSSxxxx format.');
@@ -1014,7 +1124,14 @@ async function cleanupPreviousRun(runId) {
       summary.push({ username, group, found: false, error: sanitizeDeep(error.message) });
       continue;
     }
-    const item = { username, group, found: true, tokenDeleted: false, disabled: false };
+    const item = {
+      username,
+      group,
+      found: true,
+      tokenDeleted: false,
+      membershipRevoked: false,
+      disabled: false,
+    };
     try {
       if (Number(user.status) !== 1) {
         await apiSuccess(adminLogin.session, 'POST', '/api/user/manage', {
@@ -1029,6 +1146,16 @@ async function cleanupPreviousRun(runId) {
       item.tokenDeleteError = sanitizeDeep(error.message);
     }
     try {
+      item.revokedMembershipGrants = await revokeTestMemberships(
+        adminLogin.session,
+        user.id,
+        runId,
+      );
+      item.membershipRevoked = true;
+    } catch (error) {
+      item.membershipRevokeError = sanitizeDeep(error.message);
+    }
+    try {
       await apiSuccess(adminLogin.session, 'POST', '/api/user/manage', {
         body: { id: user.id, action: 'disable', value: 0, mode: '' },
       });
@@ -1039,7 +1166,9 @@ async function cleanupPreviousRun(runId) {
     summary.push(item);
   }
   console.log(JSON.stringify(summary, null, 2));
-  if (summary.some((item) => item.found && (!item.tokenDeleted || !item.disabled))) {
+  if (summary.some((item) => item.found && (
+    !item.tokenDeleted || !item.membershipRevoked || !item.disabled
+  ))) {
     process.exitCode = 1;
   }
 }
@@ -1205,7 +1334,9 @@ function finalizeRun(run) {
     (item) => (item.modalities || []).join('+') || 'validation-only',
   );
   addAssertions(run, quotaPerUnit);
-  const cleanupPass = run.accounts.every((account) => account.tokenDeleted && account.disabled);
+  const cleanupPass = run.accounts.every(
+    (account) => account.tokenDeleted && account.membershipRevoked && account.disabled,
+  );
   run.summary.positivePassed = run.results.filter((item) => item.id.startsWith('C') && item.pass).length;
   run.summary.positiveTotal = run.results.filter((item) => item.id.startsWith('C')).length;
   run.summary.negativePassed = run.results.filter((item) => item.id.startsWith('N') && item.pass).length;
@@ -1254,15 +1385,17 @@ function addAssertions(run, quotaPerUnit) {
     const pairRatio = c07?.billing?.log?.saleUsd > 0
       ? c14?.billing?.log?.saleUsd / c07.billing.log.saleUsd
       : NaN;
-    const expectedVipRatio = c14?.billing?.expected?.groupRatio;
+    const expectedVipRatio = c14?.billing?.expected?.appliedMembershipMultiplier;
     run.assertions.push({
-      name: 'default/VIP1 相同请求倍率',
+      name: 'NORMAL/VIP1 相同请求会员倍率',
       pass: Number.isFinite(pairRatio) && Math.abs(pairRatio - expectedVipRatio) <= 0.000002,
       detail: '实测=' + finite(pairRatio) + '，预期=' + finite(expectedVipRatio),
     });
-    const ratios480 = [c02, c06].map((item) => item?.billing?.log?.groupRatio);
+    const ratios480 = [c02, c06].map(
+      (item) => item?.billing?.log?.appliedMembershipMultiplier,
+    );
     run.assertions.push({
-      name: '480p 原价策略',
+      name: 'AP Seedance 480p 会员折扣豁免',
       pass: ratios480.length === 2 && ratios480.every((value) => value === 1),
       detail: 'C02=' + finite(ratios480[0]) + ', C06=' + finite(ratios480[1]),
     });
@@ -1295,9 +1428,12 @@ function addAssertions(run, quotaPerUnit) {
   }
   run.assertions.push({
     name: '测试账号与令牌清理',
-    pass: run.accounts.length >= 2 && run.accounts.every((account) => account.tokenDeleted && account.disabled),
+    pass: run.accounts.length >= 2 && run.accounts.every(
+      (account) => account.tokenDeleted && account.membershipRevoked && account.disabled,
+    ),
     detail: run.accounts.map((account) =>
       account.username + '：令牌已删除=' + Boolean(account.tokenDeleted) +
+      '，会员已撤销=' + Boolean(account.membershipRevoked) +
       '，账号已停用=' + Boolean(account.disabled),
     ).join('; '),
   });
@@ -1409,7 +1545,7 @@ async function hiddenPrompt(label) {
 
 function printUsage() {
   console.log([
-    'Seedance 双分组全量测试与费用审计',
+    'Seedance 双会员档位全量测试与费用审计',
     '',
     '真实运行：',
     '  node bin/seedance-full-test.mjs --base-url http://14.103.100.4:6070 --allow-http',
@@ -1428,7 +1564,7 @@ function printUsage() {
     '',
     '选项：',
     '  --admin-username root          管理员用户名（密码不接受命令行参数）',
-    '  --groups default,VIP1          固定审计分组',
+    '  --groups default,VIP1          固定会员审计档位（实际分组均为 default）',
     '  --callback-url URL             可选的公网回调接收地址',
     '  --service-tier default         能力探测值；传入空值可省略',
     '  --max-cost-usd 20              费用硬上限；超过 30 美元将被拒绝',

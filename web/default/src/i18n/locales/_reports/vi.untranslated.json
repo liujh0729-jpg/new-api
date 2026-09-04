@@ -1,4 +1,11 @@
 {
+  "{{users}} users and {{tokens}} tokens will move to the default group.": "{{users}} users and {{tokens}} tokens will move to the default group.",
+  "Applies after the group ratio": "Applies after the group ratio",
+  "Download a retail-price template or current config, then import a CSV to update per-second base prices. Group and membership ratios remain unchanged.": "Download a retail-price template or current config, then import a CSV to update per-second base prices. Group and membership ratios remain unchanged.",
+  "Manage independent membership levels and global billing discounts.": "Manage independent membership levels and global billing discounts.",
+  "Multiplier 0.8 means the user pays 80% of the grouped price.": "Multiplier 0.8 means the user pays 80% of the grouped price.",
+  "This operation moves legacy VIP users and tokens to the default group and creates equivalent membership grants. Historical logs are preserved.": "This operation moves legacy VIP users and tokens to the default group and creates equivalent membership grants. Historical logs are preserved.",
+  "This will overwrite task base pricing and billing mode for models in the CSV. Group and membership ratios will not be changed.": "This will overwrite task base pricing and billing mode for models in the CSV. Group and membership ratios will not be changed.",
   "Base input and output token prices for this tier.": "Base input and output token prices for this tier.",
   "Choose a Seedance model available to your account. The selected material is sent as an asset:// reference.": "Choose a Seedance model available to your account. The selected material is sent as an asset:// reference.",
   "Describe how 视频1 should be used as the motion or scene reference": "Describe how 视频1 should be used as the motion or scene reference",

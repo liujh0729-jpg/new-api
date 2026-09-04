@@ -37,18 +37,31 @@ type TraceResult struct {
 // BillingSnapshot captures the billing rule state frozen at pre-consume time.
 // It is fully serializable and contains no compiled program pointers.
 type BillingSnapshot struct {
-	BillingMode               string  `json:"billing_mode"`
-	ModelName                 string  `json:"model_name"`
-	ExprString                string  `json:"expr_string"`
-	ExprHash                  string  `json:"expr_hash"`
-	GroupRatio                float64 `json:"group_ratio"`
-	EstimatedPromptTokens     int     `json:"estimated_prompt_tokens"`
-	EstimatedCompletionTokens int     `json:"estimated_completion_tokens"`
-	EstimatedQuotaBeforeGroup float64 `json:"estimated_quota_before_group"`
-	EstimatedQuotaAfterGroup  int     `json:"estimated_quota_after_group"`
-	EstimatedTier             string  `json:"estimated_tier"`
-	QuotaPerUnit              float64 `json:"quota_per_unit"`
-	ExprVersion               int     `json:"expr_version"`
+	BillingMode                string  `json:"billing_mode"`
+	ModelName                  string  `json:"model_name"`
+	ExprString                 string  `json:"expr_string"`
+	ExprHash                   string  `json:"expr_hash"`
+	GroupRatio                 float64 `json:"group_ratio"`
+	MembershipLevelID          int     `json:"membership_level_id,omitempty"`
+	MembershipCode             string  `json:"membership_code,omitempty"`
+	MembershipMultiplierPPM    int64   `json:"membership_multiplier_ppm,omitempty"`
+	AppliedMemberMultiplierPPM int64   `json:"applied_membership_multiplier_ppm,omitempty"`
+	MembershipExempt           bool    `json:"membership_exempt,omitempty"`
+	MembershipExemptReason     string  `json:"membership_exempt_reason,omitempty"`
+	EstimatedPromptTokens      int     `json:"estimated_prompt_tokens"`
+	EstimatedCompletionTokens  int     `json:"estimated_completion_tokens"`
+	EstimatedQuotaBeforeGroup  float64 `json:"estimated_quota_before_group"`
+	EstimatedQuotaAfterGroup   int     `json:"estimated_quota_after_group"`
+	EstimatedTier              string  `json:"estimated_tier"`
+	QuotaPerUnit               float64 `json:"quota_per_unit"`
+	ExprVersion                int     `json:"expr_version"`
+}
+
+func (snapshot *BillingSnapshot) AppliedMembershipMultiplier() float64 {
+	if snapshot == nil || snapshot.AppliedMemberMultiplierPPM <= 0 || snapshot.AppliedMemberMultiplierPPM > 1_000_000 {
+		return 1
+	}
+	return float64(snapshot.AppliedMemberMultiplierPPM) / 1_000_000
 }
 
 // TieredResult holds everything needed after running tiered settlement.

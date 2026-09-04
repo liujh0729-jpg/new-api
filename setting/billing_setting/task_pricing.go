@@ -11,6 +11,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
+	"github.com/QuantumNous/new-api/types"
 )
 
 const (
@@ -22,7 +23,6 @@ const (
 	ReferenceVideoPolicyDisabled = "disabled"
 	TaskPricingGroupRatioGlobal  = "global"
 	TaskPricingGroupRatioNone    = "none"
-	taskPricingNativeResolution  = "480p"
 
 	TaskPricingVariantNoReferenceVideo = "no_reference_video"
 	TaskPricingVariantReferenceVideo   = "reference_video"
@@ -60,20 +60,26 @@ type TaskPricingConfig struct {
 }
 
 // TaskPricingQuote is an immutable result of selecting a local task-pricing
-// variant. BaseUSD is the price before applying the group ratio; SaleUSD is
-// the final local sale price after the group ratio. Quota applies quotaPerUnit
-// to SaleUSD and is rounded exactly once.
+// variant. BaseUSD is the price before applying commercial multipliers;
+// SaleUSD is the final local sale price after group and membership multipliers.
+// Quota applies quotaPerUnit to SaleUSD and is rounded exactly once.
 type TaskPricingQuote struct {
-	Unit              string  `json:"unit"`
-	Variant           string  `json:"variant"`
-	UnitPriceUSD      float64 `json:"unit_price_usd"`
-	Quantity          float64 `json:"quantity"`
-	GroupRatio        float64 `json:"group_ratio"`
-	BaseUSD           float64 `json:"base_usd"`
-	SaleUSD           float64 `json:"sale_usd"`
-	Quota             int     `json:"quota"`
-	HasReferenceVideo bool    `json:"has_reference_video"`
-	Resolution        string  `json:"resolution,omitempty"`
+	Unit                    string  `json:"unit"`
+	Variant                 string  `json:"variant"`
+	UnitPriceUSD            float64 `json:"unit_price_usd"`
+	Quantity                float64 `json:"quantity"`
+	GroupRatio              float64 `json:"group_ratio"`
+	MembershipLevelId       int     `json:"membership_level_id,omitempty"`
+	MembershipCode          string  `json:"membership_code,omitempty"`
+	MembershipMultiplierPPM int64   `json:"membership_multiplier_ppm,omitempty"`
+	AppliedMemberPPM        int64   `json:"applied_membership_multiplier_ppm,omitempty"`
+	MembershipExempt        bool    `json:"membership_exempt,omitempty"`
+	MembershipExemptReason  string  `json:"membership_exempt_reason,omitempty"`
+	BaseUSD                 float64 `json:"base_usd"`
+	SaleUSD                 float64 `json:"sale_usd"`
+	Quota                   int     `json:"quota"`
+	HasReferenceVideo       bool    `json:"has_reference_video"`
+	Resolution              string  `json:"resolution,omitempty"`
 }
 
 type taskPricingState struct {
@@ -466,10 +472,10 @@ func QuoteTaskPricing(
 	if !isFinitePositive(baseUSD) {
 		return TaskPricingQuote{}, fmt.Errorf("%w: calculated sale USD is not finite and positive", ErrInvalidTaskPricing)
 	}
+	// Group pricing is a global commercial multiplier. Legacy task-pricing
+	// group_ratio_policy values remain readable for configuration compatibility,
+	// but no longer create model-parameter exceptions.
 	appliedGroupRatio := groupRatio
-	if effectiveTaskPricingGroupRatioPolicy(canonicalResolution, tier.GroupRatioPolicy) == TaskPricingGroupRatioNone {
-		appliedGroupRatio = 1
-	}
 	saleUSD := baseUSD * appliedGroupRatio
 	if !isFiniteNonNegative(saleUSD) {
 		return TaskPricingQuote{}, fmt.Errorf("%w: calculated sale USD is invalid", ErrInvalidTaskPricing)
@@ -496,19 +502,41 @@ func QuoteTaskPricing(
 	}, nil
 }
 
-// effectiveTaskPricingGroupRatioPolicy keeps 480p at its native retail price
-// when an existing configuration does not yet carry an explicit policy. An
-// administrator can still opt 480p back into the selected group multiplier by
-// setting group_ratio_policy to "global". Other resolutions retain the legacy
-// default of using the selected group multiplier.
-func effectiveTaskPricingGroupRatioPolicy(resolution, configuredPolicy string) string {
-	if configuredPolicy != "" {
-		return configuredPolicy
+// ApplyMembershipToTaskPricingQuote converts a group-priced quote into the
+// immutable final retail quote. It is shared by configured task pricing,
+// catalog pricing, and the independent Seedance channel.
+func ApplyMembershipToTaskPricingQuote(
+	quote TaskPricingQuote,
+	membership types.MembershipRatioInfo,
+	originModelName string,
+	quotaPerUnit float64,
+) TaskPricingQuote {
+	membership = types.ApplyMembershipPricingPolicy(membership, originModelName, quote.Resolution)
+	quote.MembershipLevelId = membership.LevelId
+	quote.MembershipCode = membership.Code
+	quote.MembershipMultiplierPPM = membership.ConfiguredMultiplierPPM
+	quote.AppliedMemberPPM = membership.AppliedMultiplierPPM
+	quote.MembershipExempt = membership.Exempt
+	quote.MembershipExemptReason = membership.ExemptionReason
+	quote.SaleUSD = quote.BaseUSD * quote.GroupRatio * membership.AppliedMultiplier()
+	quote.Quota = billingexpr.QuotaRound(quote.SaleUSD * quotaPerUnit)
+	return quote
+}
+
+func QuoteTaskPricingWithMembership(
+	model string,
+	quantity float64,
+	resolution string,
+	groupRatio float64,
+	membership types.MembershipRatioInfo,
+	quotaPerUnit float64,
+	hasReferenceVideo bool,
+) (TaskPricingQuote, error) {
+	quote, err := QuoteTaskPricing(model, quantity, resolution, groupRatio, quotaPerUnit, hasReferenceVideo)
+	if err != nil {
+		return TaskPricingQuote{}, err
 	}
-	if resolution == taskPricingNativeResolution {
-		return TaskPricingGroupRatioNone
-	}
-	return TaskPricingGroupRatioGlobal
+	return ApplyMembershipToTaskPricingQuote(quote, membership, model, quotaPerUnit), nil
 }
 
 func isFinitePositive(value float64) bool {

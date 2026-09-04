@@ -130,6 +130,16 @@ export interface LogOtherData {
   model_price?: number
   group_ratio?: number
   user_group_ratio?: number
+  membership_level_id?: number
+  membership_code?: string
+  membership_name?: string
+  membership_multiplier_ppm?: number
+  membership_multiplier?: number
+  applied_membership_multiplier_ppm?: number
+  applied_membership_multiplier?: number
+  membership_ends_at?: number
+  membership_exempt?: boolean
+  membership_exempt_reason?: string
   cache_ratio?: number
   cache_creation_ratio?: number
   cache_creation_ratio_5m?: number

@@ -48,7 +48,7 @@ import { Route as AuthenticatedRedemptionCodesIndexRouteImport } from './routes/
 import { Route as AuthenticatedProfileIndexRouteImport } from './routes/_authenticated/profile/index'
 import { Route as AuthenticatedPlaygroundIndexRouteImport } from './routes/_authenticated/playground/index'
 import { Route as AuthenticatedModelsIndexRouteImport } from './routes/_authenticated/models/index'
-import { Route as AuthenticatedMaterialsIndexRouteImport } from './routes/_authenticated/materials/index'
+import { Route as AuthenticatedMembershipIndexRouteImport } from './routes/_authenticated/membership/index'
 import { Route as AuthenticatedKeysIndexRouteImport } from './routes/_authenticated/keys/index'
 import { Route as AuthenticatedDashboardIndexRouteImport } from './routes/_authenticated/dashboard/index'
 import { Route as AuthenticatedCharactersIndexRouteImport } from './routes/_authenticated/characters/index'
@@ -279,10 +279,10 @@ const AuthenticatedModelsIndexRoute =
     path: '/models/',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
-const AuthenticatedMaterialsIndexRoute =
-  AuthenticatedMaterialsIndexRouteImport.update({
-    id: '/materials/',
-    path: '/materials/',
+const AuthenticatedMembershipIndexRoute =
+  AuthenticatedMembershipIndexRouteImport.update({
+    id: '/membership/',
+    path: '/membership/',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
 const AuthenticatedKeysIndexRoute = AuthenticatedKeysIndexRouteImport.update({
@@ -470,7 +470,7 @@ export interface FileRoutesByFullPath {
   '/characters/': typeof AuthenticatedCharactersIndexRoute
   '/dashboard/': typeof AuthenticatedDashboardIndexRoute
   '/keys/': typeof AuthenticatedKeysIndexRoute
-  '/materials/': typeof AuthenticatedMaterialsIndexRoute
+  '/membership/': typeof AuthenticatedMembershipIndexRoute
   '/models/': typeof AuthenticatedModelsIndexRoute
   '/playground/': typeof AuthenticatedPlaygroundIndexRoute
   '/profile/': typeof AuthenticatedProfileIndexRoute
@@ -534,7 +534,7 @@ export interface FileRoutesByTo {
   '/characters': typeof AuthenticatedCharactersIndexRoute
   '/dashboard': typeof AuthenticatedDashboardIndexRoute
   '/keys': typeof AuthenticatedKeysIndexRoute
-  '/materials': typeof AuthenticatedMaterialsIndexRoute
+  '/membership': typeof AuthenticatedMembershipIndexRoute
   '/models': typeof AuthenticatedModelsIndexRoute
   '/playground': typeof AuthenticatedPlaygroundIndexRoute
   '/profile': typeof AuthenticatedProfileIndexRoute
@@ -602,7 +602,7 @@ export interface FileRoutesById {
   '/_authenticated/characters/': typeof AuthenticatedCharactersIndexRoute
   '/_authenticated/dashboard/': typeof AuthenticatedDashboardIndexRoute
   '/_authenticated/keys/': typeof AuthenticatedKeysIndexRoute
-  '/_authenticated/materials/': typeof AuthenticatedMaterialsIndexRoute
+  '/_authenticated/membership/': typeof AuthenticatedMembershipIndexRoute
   '/_authenticated/models/': typeof AuthenticatedModelsIndexRoute
   '/_authenticated/playground/': typeof AuthenticatedPlaygroundIndexRoute
   '/_authenticated/profile/': typeof AuthenticatedProfileIndexRoute
@@ -669,7 +669,7 @@ export interface FileRouteTypes {
     | '/characters/'
     | '/dashboard/'
     | '/keys/'
-    | '/materials/'
+    | '/membership/'
     | '/models/'
     | '/playground/'
     | '/profile/'
@@ -733,7 +733,7 @@ export interface FileRouteTypes {
     | '/characters'
     | '/dashboard'
     | '/keys'
-    | '/materials'
+    | '/membership'
     | '/models'
     | '/playground'
     | '/profile'
@@ -800,7 +800,7 @@ export interface FileRouteTypes {
     | '/_authenticated/characters/'
     | '/_authenticated/dashboard/'
     | '/_authenticated/keys/'
-    | '/_authenticated/materials/'
+    | '/_authenticated/membership/'
     | '/_authenticated/models/'
     | '/_authenticated/playground/'
     | '/_authenticated/profile/'
@@ -1126,11 +1126,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedModelsIndexRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
-    '/_authenticated/materials/': {
-      id: '/_authenticated/materials/'
-      path: '/materials'
-      fullPath: '/materials/'
-      preLoaderRoute: typeof AuthenticatedMaterialsIndexRouteImport
+    '/_authenticated/membership/': {
+      id: '/_authenticated/membership/'
+      path: '/membership'
+      fullPath: '/membership/'
+      preLoaderRoute: typeof AuthenticatedMembershipIndexRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/keys/': {
@@ -1407,7 +1407,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedCharactersIndexRoute: typeof AuthenticatedCharactersIndexRoute
   AuthenticatedDashboardIndexRoute: typeof AuthenticatedDashboardIndexRoute
   AuthenticatedKeysIndexRoute: typeof AuthenticatedKeysIndexRoute
-  AuthenticatedMaterialsIndexRoute: typeof AuthenticatedMaterialsIndexRoute
+  AuthenticatedMembershipIndexRoute: typeof AuthenticatedMembershipIndexRoute
   AuthenticatedModelsIndexRoute: typeof AuthenticatedModelsIndexRoute
   AuthenticatedPlaygroundIndexRoute: typeof AuthenticatedPlaygroundIndexRoute
   AuthenticatedProfileIndexRoute: typeof AuthenticatedProfileIndexRoute
@@ -1435,7 +1435,7 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedCharactersIndexRoute: AuthenticatedCharactersIndexRoute,
   AuthenticatedDashboardIndexRoute: AuthenticatedDashboardIndexRoute,
   AuthenticatedKeysIndexRoute: AuthenticatedKeysIndexRoute,
-  AuthenticatedMaterialsIndexRoute: AuthenticatedMaterialsIndexRoute,
+  AuthenticatedMembershipIndexRoute: AuthenticatedMembershipIndexRoute,
   AuthenticatedModelsIndexRoute: AuthenticatedModelsIndexRoute,
   AuthenticatedPlaygroundIndexRoute: AuthenticatedPlaygroundIndexRoute,
   AuthenticatedProfileIndexRoute: AuthenticatedProfileIndexRoute,

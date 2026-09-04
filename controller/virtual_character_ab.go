@@ -34,8 +34,11 @@ const (
 
 type virtualCharacterStagingStorage interface {
 	UploadPrivateFile(ctx context.Context, filename string, reader io.Reader) (*service.AIPDDStoredFile, error)
+	CreateDigitalAsset(ctx context.Context, name, assetType, fileID string, fileSize int64) (*service.AIPDDDigitalAsset, error)
 	SignFile(ctx context.Context, fileID string) (*service.AIPDDSignedURL, error)
+	DeleteDigitalAsset(ctx context.Context, assetID int64) error
 	DeleteFile(ctx context.Context, fileID string) error
+	ChannelID() int
 }
 
 // newVirtualCharacterStagingStorage is overridable in tests.
@@ -562,6 +565,15 @@ func stageAndCreateVirtualCharacterImage(
 	if err != nil {
 		return &virtualCharacterImageCreateError{Status: http.StatusBadGateway, Code: "staging_upload_failed", Message: err.Error()}
 	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		name = strings.TrimSuffix(filepath.Base(header.Filename), filepath.Ext(header.Filename))
+	}
+	fileSize := stored.Size
+	if fileSize <= 0 {
+		fileSize = header.Size
+	}
+	var digitalAssetID int64
 	cleanupStaging := true
 	defer func() {
 		if !cleanupStaging {
@@ -572,19 +584,29 @@ func stageAndCreateVirtualCharacterImage(
 		// cleanup job rather than leaking an orphan file.
 		cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancelCleanup()
+		if digitalAssetID > 0 {
+			if err := storage.DeleteDigitalAsset(cleanupCtx, digitalAssetID); err != nil {
+				_ = model.CreateVirtualCharacterCleanupJob(&model.VirtualCharacterCleanupJob{
+					CharacterID: character.ID, ProviderAccountID: account.ID, AIPDDChannelID: storage.ChannelID(),
+					TargetType: "aipdd_asset", TargetID: strconv.FormatInt(digitalAssetID, 10),
+				})
+			}
+		}
 		if err := storage.DeleteFile(cleanupCtx, stored.FileID); err != nil {
 			_ = model.CreateVirtualCharacterCleanupJob(&model.VirtualCharacterCleanupJob{
-				CharacterID: character.ID, ProviderAccountID: account.ID, TargetType: "aipdd_file", TargetID: stored.FileID,
+				CharacterID: character.ID, ProviderAccountID: account.ID, AIPDDChannelID: storage.ChannelID(),
+				TargetType: "aipdd_file", TargetID: stored.FileID,
 			})
 		}
 	}()
+	digitalAsset, err := storage.CreateDigitalAsset(ctx, name, assetType, stored.FileID, fileSize)
+	if err != nil {
+		return &virtualCharacterImageCreateError{Status: http.StatusBadGateway, Code: "digital_asset_create_failed", Message: err.Error()}
+	}
+	digitalAssetID = digitalAsset.ID
 	signed, err := storage.SignFile(ctx, stored.FileID)
 	if err != nil {
 		return &virtualCharacterImageCreateError{Status: http.StatusBadGateway, Code: "staging_sign_failed", Message: err.Error()}
-	}
-	name = strings.TrimSpace(name)
-	if name == "" {
-		name = strings.TrimSuffix(filepath.Base(header.Filename), filepath.Ext(header.Filename))
 	}
 	providerAssetID, err := client.CreateAsset(ctx, character.ProviderGroupID, signed.URL, assetType, name, account.ProjectName)
 	if err != nil {
@@ -592,9 +614,13 @@ func stageAndCreateVirtualCharacterImage(
 	}
 	var attachErr error
 	if character.SourceType == model.VirtualCharacterSourceVolcRealPerson {
-		attachErr = model.AttachRealPersonVirtualCharacterImage(character.ID, providerAssetID, stored.FileID, mimeType, header.Size)
+		attachErr = model.AttachRealPersonVirtualCharacterImage(
+			character.ID, providerAssetID, stored.FileID, digitalAsset.ID, storage.ChannelID(), mimeType, fileSize,
+		)
 	} else {
-		attachErr = model.AttachVirtualCharacterImage(character.ID, providerAssetID, stored.FileID, mimeType, assetType, header.Size)
+		attachErr = model.AttachVirtualCharacterImage(
+			character.ID, providerAssetID, stored.FileID, digitalAsset.ID, storage.ChannelID(), mimeType, assetType, fileSize,
+		)
 	}
 	if attachErr != nil {
 		_ = model.CreateVirtualCharacterCleanupJob(&model.VirtualCharacterCleanupJob{

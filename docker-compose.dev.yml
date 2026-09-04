@@ -36,7 +36,6 @@ services:
       - AIPDD_CATALOG_SYNC_TIMEOUT_SECONDS=${AIPDD_CATALOG_SYNC_TIMEOUT_SECONDS:-10}
       - TZ=Asia/Shanghai
       - BATCH_UPDATE_ENABLED=true
-      - MATERIAL_PUBLIC_BASE_URL=http://127.0.0.1:6070
     depends_on:
       redis:
         condition: service_started

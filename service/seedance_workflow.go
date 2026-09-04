@@ -333,6 +333,12 @@ func normalizeEnhancementStatus(value string) string {
 type seedancePricingSnapshot struct {
 	PricingVersion                  string  `json:"pricing_version"`
 	GroupRatio                      float64 `json:"group_ratio"`
+	MembershipLevelID               int     `json:"membership_level_id"`
+	MembershipCode                  string  `json:"membership_code"`
+	MembershipMultiplierPPM         int64   `json:"membership_multiplier_ppm"`
+	AppliedMemberMultiplierPPM      int64   `json:"applied_membership_multiplier_ppm"`
+	MembershipExempt                bool    `json:"membership_exempt"`
+	MembershipExemptReason          string  `json:"membership_exempt_reason"`
 	BaseUnitCostMicroRMB            int64   `json:"base_unit_cost_micro_rmb"`
 	SuperResolutionUnitCostMicroRMB int64   `json:"super_resolution_unit_cost_micro_rmb"`
 	EnhancementRequired             bool    `json:"enhancement_required"`
@@ -356,6 +362,12 @@ func parseSeedancePricingSnapshot(order *model.SeedanceOrder) (*seedancePricingS
 	}
 	if snapshot.ProviderID <= 0 || strings.TrimSpace(snapshot.ServiceCode) == "" || strings.TrimSpace(snapshot.PricingVersion) == "" {
 		return nil, errors.New("Seedance pricing snapshot is incomplete")
+	}
+	if snapshot.MembershipMultiplierPPM <= 0 {
+		snapshot.MembershipMultiplierPPM = model.MembershipMultiplierScale
+	}
+	if snapshot.AppliedMemberMultiplierPPM <= 0 {
+		snapshot.AppliedMemberMultiplierPPM = snapshot.MembershipMultiplierPPM
 	}
 	return &snapshot, nil
 }
@@ -826,10 +838,15 @@ func settleSeedanceOrderForActualDuration(order *model.SeedanceOrder, snapshot *
 		return err
 	}
 	groupRatio := snapshot.GroupRatio
-	if groupRatio <= 0 {
+	if groupRatio < 0 {
 		groupRatio = 1
 	}
-	discountedSale := float64(saleBeforeDiscount) * groupRatio
+	appliedMemberPPM := snapshot.AppliedMemberMultiplierPPM
+	if appliedMemberPPM <= 0 || appliedMemberPPM > model.MembershipMultiplierScale {
+		appliedMemberPPM = model.MembershipMultiplierScale
+	}
+	membershipRatio := float64(appliedMemberPPM) / float64(model.MembershipMultiplierScale)
+	discountedSale := float64(saleBeforeDiscount) * groupRatio * membershipRatio
 	if math.IsNaN(discountedSale) || math.IsInf(discountedSale, 0) || discountedSale < 0 || discountedSale > math.MaxInt64 {
 		return errors.New("Seedance discounted sale is outside the supported range")
 	}

@@ -383,7 +383,11 @@ func (a *TaskAdaptor) AdjustBillingOnComplete(task *model.Task, taskResult *rela
 		billing.QuotaPerUnit <= 0 || billing.GroupRatio < 0 {
 		return 0
 	}
-	quota := billing.UnitPriceUSD * taskResult.Duration * billing.GroupRatio * billing.QuotaPerUnit
+	membershipRatio := 1.0
+	if billing.AppliedMemberPPM > 0 {
+		membershipRatio = float64(billing.AppliedMemberPPM) / float64(model.MembershipMultiplierScale)
+	}
+	quota := billing.UnitPriceUSD * taskResult.Duration * billing.GroupRatio * membershipRatio * billing.QuotaPerUnit
 	if math.IsNaN(quota) || math.IsInf(quota, 0) || quota <= 0 || quota > float64(int(^uint(0)>>1)) {
 		return 0
 	}

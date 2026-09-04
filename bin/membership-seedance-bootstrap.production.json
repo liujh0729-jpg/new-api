@@ -1,0 +1,457 @@
+{
+  "schema_version": 1,
+  "snapshot": {
+    "name": "production-2026-09-05",
+    "pricing_namespace": "prod-20260905",
+    "cost_source": "https://app.aipdd.work/#/cn/admin/model-offerings（2026-09-05 管理页读取）",
+    "sale_source": "AIPDD 展示模型建议零售价（2026-09-05 管理页读取）",
+    "currency": "CNY",
+    "unit": "micro_RMB_per_second",
+    "notes": [
+      "收录生产 AIPDD 当前启用的 Seedance 2.0 与 Seedance 2.5 展示规格。",
+      "NewAPI 面向用户的售价采用 AIPDD 建议零售价；AIPDD 标准售价是下游站点结算价，不作为公开售价。",
+      "总成本拆分为 Ark 生成基础成本和火山 AI MediaKit 处理链路成本，二者之和严格等于生产 AIPDD 总成本。",
+      "480p→480p 仍执行 MediaKit standard 画质增强；AP Seedance 480p 按现有计费规则不叠加会员折扣。"
+    ]
+  },
+  "membership_levels": [
+    {
+      "code": "VIP-T1",
+      "display_name": "VIP-T1（7.3折）",
+      "multiplier_ppm": 730000,
+      "rank": 600,
+      "sort_order": 5,
+      "enabled": true
+    },
+    {
+      "code": "VIP1",
+      "display_name": "VIP1（7.8折）",
+      "multiplier_ppm": 780000,
+      "rank": 500,
+      "sort_order": 10,
+      "enabled": true
+    },
+    {
+      "code": "VIP2",
+      "display_name": "VIP2（8.0折）",
+      "multiplier_ppm": 800000,
+      "rank": 400,
+      "sort_order": 20,
+      "enabled": true
+    },
+    {
+      "code": "VIP3",
+      "display_name": "VIP3（8.5折）",
+      "multiplier_ppm": 850000,
+      "rank": 300,
+      "sort_order": 30,
+      "enabled": true
+    },
+    {
+      "code": "VIP4",
+      "display_name": "VIP4（9.0折）",
+      "multiplier_ppm": 900000,
+      "rank": 200,
+      "sort_order": 40,
+      "enabled": true
+    },
+    {
+      "code": "VIP5",
+      "display_name": "VIP5（9.5折）",
+      "multiplier_ppm": 950000,
+      "rank": 100,
+      "sort_order": 50,
+      "enabled": true
+    }
+  ],
+  "provider": {
+    "provider_type": "DIRECT_EXTERNAL",
+    "adapter_type": "VOLCENGINE_MEDIAKIT",
+    "display_name": "火山 AI MediaKit 标准画质",
+    "service_endpoint": "https://mediakit.cn-beijing.volces.com",
+    "service_code": "volcengine_ai_mediakit_quality_enhance",
+    "capabilities": {},
+    "status": "ACTIVE",
+    "timeout_policy": {
+      "timeout_seconds": 7200
+    },
+    "retry_policy": {
+      "mode": "SAME_ATTEMPT_UNKNOWN_ONLY"
+    },
+    "fallback_policy": {
+      "mode": "NONE"
+    }
+  },
+  "base_models": [
+    {
+      "code": "seedance-2.0-vip-prod",
+      "display_name": "seedance-2-0",
+      "provider_model_id": "doubao-seedance-2-0",
+      "enabled": true,
+      "cost_matrix": [
+        {
+          "source_resolution": "480p",
+          "has_reference_video": false,
+          "cost_micro_rmb_per_second": 462000
+        },
+        {
+          "source_resolution": "480p",
+          "has_reference_video": true,
+          "cost_micro_rmb_per_second": 624000
+        },
+        {
+          "source_resolution": "720p",
+          "has_reference_video": false,
+          "cost_micro_rmb_per_second": 994000
+        },
+        {
+          "source_resolution": "720p",
+          "has_reference_video": true,
+          "cost_micro_rmb_per_second": 1340000
+        },
+        {
+          "source_resolution": "1080p",
+          "has_reference_video": false,
+          "cost_micro_rmb_per_second": 2478000
+        },
+        {
+          "source_resolution": "1080p",
+          "has_reference_video": true,
+          "cost_micro_rmb_per_second": 3340000
+        }
+      ]
+    },
+    {
+      "code": "seedance-2.0-standard-prod",
+      "display_name": "seedance-2-0-fast",
+      "provider_model_id": "doubao-seedance-2-0-fast",
+      "enabled": true,
+      "cost_matrix": [
+        {
+          "source_resolution": "480p",
+          "has_reference_video": false,
+          "cost_micro_rmb_per_second": 372000
+        },
+        {
+          "source_resolution": "480p",
+          "has_reference_video": true,
+          "cost_micro_rmb_per_second": 500000
+        }
+      ]
+    },
+    {
+      "code": "seedance-2.0-light-prod",
+      "display_name": "seedance-2-0-mini",
+      "provider_model_id": "doubao-seedance-2-0-mini",
+      "enabled": true,
+      "cost_matrix": [
+        {
+          "source_resolution": "480p",
+          "has_reference_video": false,
+          "cost_micro_rmb_per_second": 232000
+        },
+        {
+          "source_resolution": "480p",
+          "has_reference_video": true,
+          "cost_micro_rmb_per_second": 350000
+        }
+      ]
+    },
+    {
+      "code": "seedance-2.5-standard-prod",
+      "display_name": "seedance-2-5",
+      "provider_model_id": "doubao-seedance-2-5",
+      "enabled": true,
+      "cost_matrix": [
+        {
+          "source_resolution": "480p",
+          "has_reference_video": false,
+          "cost_micro_rmb_per_second": 672000
+        },
+        {
+          "source_resolution": "480p",
+          "has_reference_video": true,
+          "cost_micro_rmb_per_second": 2018000
+        },
+        {
+          "source_resolution": "720p",
+          "has_reference_video": false,
+          "cost_micro_rmb_per_second": 1512000
+        },
+        {
+          "source_resolution": "720p",
+          "has_reference_video": true,
+          "cost_micro_rmb_per_second": 4536000
+        }
+      ]
+    }
+  ],
+  "retired_base_model_codes": [
+    "seedance-2.0-value-1080p-prod",
+    "seedance-2.0-value-4k-prod"
+  ],
+  "enhancement_models": [
+    {
+      "code": "mediakit-standard-480p-prod",
+      "display_name": "MediaKit 标准画质 480p",
+      "service_code": "volcengine_ai_mediakit_quality_enhance",
+      "quality_tier": "standard",
+      "specification": {
+        "scene": "aigc",
+        "resolution": "480p",
+        "tool_version": "standard"
+      },
+      "specification_version": "prod-20260905-v1",
+      "enabled": true,
+      "cost_matrix": [
+        {
+          "target_resolution": "480p",
+          "fps_bucket": "LE_30",
+          "cost_micro_rmb_per_second": 30000
+        },
+        {
+          "target_resolution": "480p",
+          "fps_bucket": "GT_30",
+          "cost_micro_rmb_per_second": 60000
+        }
+      ]
+    },
+    {
+      "code": "mediakit-standard-720p-prod",
+      "display_name": "MediaKit 标准画质 720p",
+      "service_code": "volcengine_ai_mediakit_quality_enhance",
+      "quality_tier": "standard",
+      "specification": {
+        "scene": "aigc",
+        "resolution": "720p",
+        "tool_version": "standard"
+      },
+      "specification_version": "prod-20260905-v1",
+      "enabled": true,
+      "cost_matrix": [
+        {
+          "target_resolution": "720p",
+          "fps_bucket": "LE_30",
+          "cost_micro_rmb_per_second": 30000
+        },
+        {
+          "target_resolution": "720p",
+          "fps_bucket": "GT_30",
+          "cost_micro_rmb_per_second": 60000
+        }
+      ]
+    },
+    {
+      "code": "mediakit-standard-1080p-prod",
+      "display_name": "MediaKit 标准画质 1080p",
+      "service_code": "volcengine_ai_mediakit_quality_enhance",
+      "quality_tier": "standard",
+      "specification": {
+        "scene": "aigc",
+        "resolution": "1080p",
+        "tool_version": "standard"
+      },
+      "specification_version": "prod-20260905-v1",
+      "enabled": true,
+      "cost_matrix": [
+        {
+          "target_resolution": "1080p",
+          "fps_bucket": "LE_30",
+          "cost_micro_rmb_per_second": 60000
+        },
+        {
+          "target_resolution": "1080p",
+          "fps_bucket": "GT_30",
+          "cost_micro_rmb_per_second": 120000
+        }
+      ]
+    },
+    {
+      "code": "mediakit-standard-4k-prod",
+      "display_name": "MediaKit 标准画质 4K",
+      "service_code": "volcengine_ai_mediakit_quality_enhance",
+      "quality_tier": "standard",
+      "specification": {
+        "scene": "aigc",
+        "resolution": "4k",
+        "tool_version": "standard"
+      },
+      "specification_version": "prod-20260905-v1",
+      "enabled": true,
+      "cost_matrix": [
+        {
+          "target_resolution": "4k",
+          "fps_bucket": "LE_30",
+          "cost_micro_rmb_per_second": 240000
+        },
+        {
+          "target_resolution": "4k",
+          "fps_bucket": "GT_30",
+          "cost_micro_rmb_per_second": 480000
+        }
+      ]
+    }
+  ],
+  "retired_enhancement_model_codes": [
+    "mediakit-value-1080p-prod",
+    "mediakit-value-4k-prod"
+  ],
+  "offerings": [
+    {
+      "display_name": "AP Seedance-2.0 VIP 480p",
+      "base_model_code": "seedance-2.0-vip-prod",
+      "enhancement_model_code": "mediakit-standard-480p-prod",
+      "source_resolution": "480p",
+      "target_resolution": "480p",
+      "output_fps": 24,
+      "no_reference_unit_price_micro_rmb": 600000,
+      "reference_unit_price_micro_rmb": 800000,
+      "expected_no_reference_total_cost_micro_rmb": 492000,
+      "expected_reference_total_cost_micro_rmb": 654000
+    },
+    {
+      "display_name": "AP Seedance-2.0 VIP 720p",
+      "base_model_code": "seedance-2.0-vip-prod",
+      "enhancement_model_code": "mediakit-standard-720p-prod",
+      "source_resolution": "480p",
+      "target_resolution": "720p",
+      "output_fps": 24,
+      "no_reference_unit_price_micro_rmb": 994000,
+      "reference_unit_price_micro_rmb": 1340000,
+      "expected_no_reference_total_cost_micro_rmb": 492000,
+      "expected_reference_total_cost_micro_rmb": 654000
+    },
+    {
+      "display_name": "AP Seedance-2.0 VIP 1080p",
+      "base_model_code": "seedance-2.0-vip-prod",
+      "enhancement_model_code": "mediakit-standard-1080p-prod",
+      "source_resolution": "720p",
+      "target_resolution": "1080p",
+      "output_fps": 24,
+      "no_reference_unit_price_micro_rmb": 2478000,
+      "reference_unit_price_micro_rmb": 3340000,
+      "expected_no_reference_total_cost_micro_rmb": 1054000,
+      "expected_reference_total_cost_micro_rmb": 1400000
+    },
+    {
+      "display_name": "AP Seedance-2.0 VIP 4K",
+      "base_model_code": "seedance-2.0-vip-prod",
+      "enhancement_model_code": "mediakit-standard-4k-prod",
+      "source_resolution": "1080p",
+      "target_resolution": "4k",
+      "output_fps": 24,
+      "no_reference_unit_price_micro_rmb": 5054000,
+      "reference_unit_price_micro_rmb": 7000000,
+      "expected_no_reference_total_cost_micro_rmb": 2718000,
+      "expected_reference_total_cost_micro_rmb": 3580000
+    },
+    {
+      "display_name": "AP Seedance-2.0 标准版 480p",
+      "base_model_code": "seedance-2.0-standard-prod",
+      "enhancement_model_code": "mediakit-standard-480p-prod",
+      "source_resolution": "480p",
+      "target_resolution": "480p",
+      "output_fps": 24,
+      "no_reference_unit_price_micro_rmb": 460000,
+      "reference_unit_price_micro_rmb": 600000,
+      "expected_no_reference_total_cost_micro_rmb": 402000,
+      "expected_reference_total_cost_micro_rmb": 530000
+    },
+    {
+      "display_name": "AP Seedance-2.0 标准版 720p",
+      "base_model_code": "seedance-2.0-standard-prod",
+      "enhancement_model_code": "mediakit-standard-720p-prod",
+      "source_resolution": "480p",
+      "target_resolution": "720p",
+      "output_fps": 24,
+      "no_reference_unit_price_micro_rmb": 800000,
+      "reference_unit_price_micro_rmb": 1050000,
+      "expected_no_reference_total_cost_micro_rmb": 402000,
+      "expected_reference_total_cost_micro_rmb": 530000
+    },
+    {
+      "display_name": "AP Seedance-2.0 轻量版 480p",
+      "base_model_code": "seedance-2.0-light-prod",
+      "enhancement_model_code": "mediakit-standard-480p-prod",
+      "source_resolution": "480p",
+      "target_resolution": "480p",
+      "output_fps": 24,
+      "no_reference_unit_price_micro_rmb": 320000,
+      "reference_unit_price_micro_rmb": 440000,
+      "expected_no_reference_total_cost_micro_rmb": 262000,
+      "expected_reference_total_cost_micro_rmb": 380000
+    },
+    {
+      "display_name": "AP Seedance-2.0 轻量版 720p",
+      "base_model_code": "seedance-2.0-light-prod",
+      "enhancement_model_code": "mediakit-standard-720p-prod",
+      "source_resolution": "480p",
+      "target_resolution": "720p",
+      "output_fps": 24,
+      "no_reference_unit_price_micro_rmb": 496000,
+      "reference_unit_price_micro_rmb": 700000,
+      "expected_no_reference_total_cost_micro_rmb": 262000,
+      "expected_reference_total_cost_micro_rmb": 380000
+    },
+    {
+      "display_name": "AP Seedance-2.0 高性价比 1080p",
+      "base_model_code": "seedance-2.0-standard-prod",
+      "enhancement_model_code": "mediakit-standard-1080p-prod",
+      "source_resolution": "480p",
+      "target_resolution": "1080p",
+      "output_fps": 24,
+      "no_reference_unit_price_micro_rmb": 1600000,
+      "reference_unit_price_micro_rmb": 2100000,
+      "expected_no_reference_total_cost_micro_rmb": 432000,
+      "expected_reference_total_cost_micro_rmb": 560000
+    },
+    {
+      "display_name": "AP Seedance-2.0 高性价比 4K",
+      "base_model_code": "seedance-2.0-standard-prod",
+      "enhancement_model_code": "mediakit-standard-4k-prod",
+      "source_resolution": "480p",
+      "target_resolution": "4k",
+      "output_fps": 24,
+      "no_reference_unit_price_micro_rmb": 3200000,
+      "reference_unit_price_micro_rmb": 4200000,
+      "expected_no_reference_total_cost_micro_rmb": 612000,
+      "expected_reference_total_cost_micro_rmb": 740000
+    },
+    {
+      "display_name": "AP Seedance-2.5 标准版 480p",
+      "base_model_code": "seedance-2.5-standard-prod",
+      "enhancement_model_code": null,
+      "source_resolution": "480p",
+      "target_resolution": "480p",
+      "output_fps": 24,
+      "no_reference_unit_price_micro_rmb": 686000,
+      "reference_unit_price_micro_rmb": 2058000,
+      "expected_no_reference_total_cost_micro_rmb": 672000,
+      "expected_reference_total_cost_micro_rmb": 2018000
+    },
+    {
+      "display_name": "AP Seedance-2.5 标准版 720p",
+      "base_model_code": "seedance-2.5-standard-prod",
+      "enhancement_model_code": "mediakit-standard-720p-prod",
+      "source_resolution": "480p",
+      "target_resolution": "720p",
+      "output_fps": 24,
+      "no_reference_unit_price_micro_rmb": 1512000,
+      "reference_unit_price_micro_rmb": 4536000,
+      "expected_no_reference_total_cost_micro_rmb": 702000,
+      "expected_reference_total_cost_micro_rmb": 2048000
+    },
+    {
+      "display_name": "AP Seedance-2.5 标准版 1080p",
+      "base_model_code": "seedance-2.5-standard-prod",
+      "enhancement_model_code": "mediakit-standard-1080p-prod",
+      "source_resolution": "720p",
+      "target_resolution": "1080p",
+      "output_fps": 24,
+      "no_reference_unit_price_micro_rmb": 3742000,
+      "reference_unit_price_micro_rmb": 11178000,
+      "expected_no_reference_total_cost_micro_rmb": 1572000,
+      "expected_reference_total_cost_micro_rmb": 4596000
+    }
+  ]
+}

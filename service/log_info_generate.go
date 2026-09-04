@@ -143,6 +143,7 @@ func appendBillingInfo(relayInfo *relaycommon.RelayInfo, other map[string]interf
 		return
 	}
 	appendPreConsumedQuota(relayInfo, other)
+	appendMembershipInfo(relayInfo, other)
 	// billing_source: "wallet" or "subscription"
 	if relayInfo.BillingSource != "" {
 		other["billing_source"] = relayInfo.BillingSource
@@ -190,6 +191,32 @@ func appendBillingInfo(relayInfo *relaycommon.RelayInfo, other map[string]interf
 		}
 		// Wallet quota is not deducted when billed from subscription.
 		other["wallet_quota_deducted"] = 0
+	}
+}
+
+func appendMembershipInfo(relayInfo *relaycommon.RelayInfo, other map[string]interface{}) {
+	if relayInfo == nil || other == nil {
+		return
+	}
+	membership := relayInfo.PriceData.MembershipRatioInfo
+	if membership.Code == "" {
+		membership = relayInfo.MembershipRatioInfo
+	}
+	membership = membership.Normalized()
+	other["membership_level_id"] = membership.LevelId
+	other["membership_code"] = membership.Code
+	other["membership_name"] = membership.DisplayName
+	other["membership_multiplier_ppm"] = membership.ConfiguredMultiplierPPM
+	other["membership_multiplier"] = membership.ConfiguredMultiplier()
+	other["applied_membership_multiplier_ppm"] = membership.AppliedMultiplierPPM
+	other["applied_membership_multiplier"] = membership.AppliedMultiplier()
+	other["effective_multiplier"] = relayInfo.PriceData.GroupRatioInfo.GroupRatio * membership.AppliedMultiplier()
+	if membership.EndsAt > 0 {
+		other["membership_ends_at"] = membership.EndsAt
+	}
+	if membership.Exempt {
+		other["membership_exempt"] = true
+		other["membership_exempt_reason"] = membership.ExemptionReason
 	}
 }
 
@@ -286,6 +313,7 @@ func GenerateMjOtherInfo(relayInfo *relaycommon.RelayInfo, priceData types.Price
 	}
 	appendRequestPath(nil, relayInfo, other)
 	appendPreConsumedQuota(relayInfo, other)
+	appendMembershipInfo(relayInfo, other)
 	return other
 }
 

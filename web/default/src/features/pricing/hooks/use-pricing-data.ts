@@ -18,15 +18,17 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { useAuthStore } from '@/stores/auth-store'
 import { useStatus } from '@/hooks/use-status'
 import { getPricing, normalizePricingModelsToUSD } from '../api'
 import { isValidTaskPricing } from '../lib/model-helpers'
 
 export function usePricingData() {
   const { status } = useStatus()
+  const userId = useAuthStore((state) => state.auth.user?.id ?? 0)
 
   const { data, isLoading, error, refetch } = useQuery({
-    queryKey: ['pricing'],
+    queryKey: ['pricing', userId],
     queryFn: getPricing,
     staleTime: 5 * 60 * 1000,
   })
@@ -68,6 +70,8 @@ export function usePricingData() {
           vendor_description: vendor?.description,
           vendor_website: vendor?.website,
           group_ratio: model.group_ratio ?? data.group_ratio,
+          viewer_group: data.current_group || 'default',
+          viewer_membership: data.membership,
         }
       })
   }, [data])
@@ -79,6 +83,9 @@ export function usePricingData() {
     usableGroup: data?.usable_group ?? {},
     endpointMap: data?.supported_endpoint ?? {},
     autoGroups: data?.auto_groups ?? [],
+    currentGroup: data?.current_group || 'default',
+    groupLocked: data?.group_locked ?? true,
+    membership: data?.membership,
     isLoading,
     error,
     refetch,

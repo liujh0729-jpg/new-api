@@ -453,7 +453,8 @@ func TestBeginVirtualCharacterGroupDeleteQueuesImageFileBeforeGroup(t *testing.T
 	character := &VirtualCharacter{
 		UserID: 88, Slot: &slot, Scope: VirtualCharacterScopePrivate,
 		SourceType: VirtualCharacterSourceVolcAIGC, Status: VirtualCharacterStatusActive,
-		ProviderAccountID: 5, ProviderGroupID: "group-delete", ProviderAssetID: "image-delete", StagingFileID: "file-delete",
+		ProviderAccountID: 5, ProviderGroupID: "group-delete", ProviderAssetID: "image-delete",
+		AIPDDAssetID: 701, AIPDDChannelID: 9, StagingFileID: "file-delete",
 	}
 	require.NoError(t, DB.Create(character).Error)
 	require.NoError(t, BeginVirtualCharacterGroupDelete(character.ID, character.UserID))
@@ -464,16 +465,21 @@ func TestBeginVirtualCharacterGroupDeleteQueuesImageFileBeforeGroup(t *testing.T
 	require.Nil(t, refreshed.Slot)
 	var jobs []VirtualCharacterCleanupJob
 	require.NoError(t, DB.Where("character_id = ?", character.ID).Order("id ASC").Find(&jobs).Error)
-	require.Len(t, jobs, 3)
+	require.Len(t, jobs, 4)
 	require.Equal(t, "volc_asset", jobs[0].TargetType)
-	require.Equal(t, "aipdd_file", jobs[1].TargetType)
-	require.Equal(t, "volc_group", jobs[2].TargetType)
-	pending, err := HasIncompleteVirtualCharacterCleanupJobs(character.ID, jobs[2].ID)
+	require.Equal(t, "aipdd_asset", jobs[1].TargetType)
+	require.Equal(t, "701", jobs[1].TargetID)
+	require.Equal(t, 9, jobs[1].AIPDDChannelID)
+	require.Equal(t, "aipdd_file", jobs[2].TargetType)
+	require.Equal(t, 9, jobs[2].AIPDDChannelID)
+	require.Equal(t, "volc_group", jobs[3].TargetType)
+	pending, err := HasIncompleteVirtualCharacterCleanupJobs(character.ID, jobs[3].ID)
 	require.NoError(t, err)
 	require.True(t, pending)
 	require.NoError(t, CompleteVirtualCharacterCleanupJob(jobs[0].ID))
 	require.NoError(t, CompleteVirtualCharacterCleanupJob(jobs[1].ID))
-	pending, err = HasIncompleteVirtualCharacterCleanupJobs(character.ID, jobs[2].ID)
+	require.NoError(t, CompleteVirtualCharacterCleanupJob(jobs[2].ID))
+	pending, err = HasIncompleteVirtualCharacterCleanupJobs(character.ID, jobs[3].ID)
 	require.NoError(t, err)
 	require.False(t, pending)
 }
@@ -484,7 +490,8 @@ func TestDiscardFailedAIGCVirtualCharacterUploadHidesEmptyCharacterAndQueuesClea
 	character := &VirtualCharacter{
 		UserID: 90, Slot: &slot, Scope: VirtualCharacterScopePrivate,
 		SourceType: VirtualCharacterSourceVolcAIGC, Status: VirtualCharacterStatusCreating,
-		ProviderAccountID: 5, ProviderGroupID: "group-failed", ProviderAssetID: "asset-failed", StagingFileID: "file-failed",
+		ProviderAccountID: 5, ProviderGroupID: "group-failed", ProviderAssetID: "asset-failed",
+		AIPDDAssetID: 702, AIPDDChannelID: 10, StagingFileID: "file-failed",
 	}
 	require.NoError(t, DB.Create(character).Error)
 	require.NoError(t, DiscardFailedAIGCVirtualCharacterUpload(character.ID, "", "素材上传失败"))
@@ -499,12 +506,13 @@ func TestDiscardFailedAIGCVirtualCharacterUploadHidesEmptyCharacterAndQueuesClea
 
 	var jobs []VirtualCharacterCleanupJob
 	require.NoError(t, DB.Where("character_id = ?", character.ID).Find(&jobs).Error)
-	require.Len(t, jobs, 3)
+	require.Len(t, jobs, 4)
 	targets := make(map[string]string, len(jobs))
 	for _, job := range jobs {
 		targets[job.TargetType] = job.TargetID
 	}
 	require.Equal(t, "asset-failed", targets["volc_asset"])
+	require.Equal(t, "702", targets["aipdd_asset"])
 	require.Equal(t, "file-failed", targets["aipdd_file"])
 	require.Equal(t, "group-failed", targets["volc_group"])
 

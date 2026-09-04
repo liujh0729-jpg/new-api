@@ -167,6 +167,9 @@ type RelayInfo struct {
 	ParamOverrideAudit                    []string
 
 	PriceData types.PriceData
+	// MembershipRatioInfo is frozen when the request is accepted. PriceData
+	// copies it so every billing path and log uses the same tier snapshot.
+	MembershipRatioInfo types.MembershipRatioInfo
 
 	// TieredBillingSnapshot is a frozen snapshot of tiered billing rules
 	// captured at pre-consume time. Non-nil only when billing mode is "tiered_expr".

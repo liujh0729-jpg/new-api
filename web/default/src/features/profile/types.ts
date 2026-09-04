@@ -81,6 +81,21 @@ export interface UserProfile {
   telegram_id?: string
   /** LinuxDO ID (OAuth) */
   linux_do_id?: string
+  /** Independently resolved membership discount. */
+  membership?: MembershipSnapshot
+}
+
+export interface MembershipSnapshot {
+  grant_id: number
+  level_id: number
+  code: string
+  display_name: string
+  multiplier_ppm: number
+  rank: number
+  starts_at: number
+  ends_at: number
+  resolved_at: number
+  fallback_normal: boolean
 }
 
 /**

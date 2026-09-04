@@ -87,7 +87,6 @@ DEPLOYMENT_NESTED_FIELDS = {
     "decisions": {
         "aipddChannelOverwrite",
         "aipddPriceOverwrite",
-        "vipGroupSynchronization",
     },
     "aipdd": {
         "catalogRevision",
@@ -96,10 +95,7 @@ DEPLOYMENT_NESTED_FIELDS = {
         "tieredExpressionModelCount",
         "taskPricingModelCount",
         "taskPricingVerifiedCount",
-        "seedanceResolutionPricingValid",
         "perUnitSecondPricingValid",
-        "vipChangedChannelCount",
-        "vipSynchronizationNoop",
     },
     "verification": {
         "applicationHealthy",

@@ -287,15 +287,31 @@ func (s *stubVolcAssetClient) GetAssetGroup(context.Context, string, string) (*s
 	return nil, errors.New("not implemented")
 }
 
-type stubVirtualCharacterStagingStorage struct{}
+type stubVirtualCharacterStagingStorage struct {
+	lastDigitalAssetType string
+	deletedAssetIDs      []int64
+	deletedFileIDs       []string
+}
 
 func (s *stubVirtualCharacterStagingStorage) UploadPrivateFile(context.Context, string, io.Reader) (*service.AIPDDStoredFile, error) {
-	return &service.AIPDDStoredFile{FileID: "file-staging-1"}, nil
+	return &service.AIPDDStoredFile{FileID: "file-staging-1", Size: 17}, nil
+}
+func (s *stubVirtualCharacterStagingStorage) CreateDigitalAsset(_ context.Context, _ string, assetType, _ string, _ int64) (*service.AIPDDDigitalAsset, error) {
+	s.lastDigitalAssetType = assetType
+	return &service.AIPDDDigitalAsset{ID: 88}, nil
 }
 func (s *stubVirtualCharacterStagingStorage) SignFile(context.Context, string) (*service.AIPDDSignedURL, error) {
 	return &service.AIPDDSignedURL{FileID: "file-staging-1", URL: "https://example.com/signed.png"}, nil
 }
-func (s *stubVirtualCharacterStagingStorage) DeleteFile(context.Context, string) error { return nil }
+func (s *stubVirtualCharacterStagingStorage) DeleteDigitalAsset(_ context.Context, assetID int64) error {
+	s.deletedAssetIDs = append(s.deletedAssetIDs, assetID)
+	return nil
+}
+func (s *stubVirtualCharacterStagingStorage) DeleteFile(_ context.Context, fileID string) error {
+	s.deletedFileIDs = append(s.deletedFileIDs, fileID)
+	return nil
+}
+func (s *stubVirtualCharacterStagingStorage) ChannelID() int { return 42 }
 
 func newCreateVirtualCharacterMultipartRequest(t *testing.T, fields map[string]string, filename, contentType string, content []byte) *http.Request {
 	t.Helper()
@@ -335,8 +351,9 @@ func TestCreateVirtualCharacterRequiresComplianceAndRollsBackOnGroupFailure(t *t
 	common.CryptoSecret = strings.Repeat("s", 32)
 	common.CryptoSecretConfigured = true
 	common.OptionMap = map[string]string{"VirtualCharacterLimit": "2"}
+	staging := &stubVirtualCharacterStagingStorage{}
 	newVirtualCharacterStagingStorage = func() (virtualCharacterStagingStorage, error) {
-		return &stubVirtualCharacterStagingStorage{}, nil
+		return staging, nil
 	}
 	t.Cleanup(func() {
 		common.CryptoSecret = previousSecret
@@ -392,6 +409,8 @@ func TestCreateVirtualCharacterRequiresComplianceAndRollsBackOnGroupFailure(t *t
 	require.Equal(t, model.VirtualCharacterStatusDeleting, assetFailed.Status)
 	require.Nil(t, assetFailed.Slot)
 	require.True(t, assetFailed.DeletedAt.Valid)
+	require.Contains(t, staging.deletedAssetIDs, int64(88))
+	require.Contains(t, staging.deletedFileIDs, "file-staging-1")
 	var cleanupJobs int64
 	require.NoError(t, db.Model(&model.VirtualCharacterCleanupJob{}).Where("target_type = ? AND target_id = ?", "volc_group", "group-ok").Count(&cleanupJobs).Error)
 	require.Equal(t, int64(1), cleanupJobs)
@@ -411,6 +430,8 @@ func TestCreateVirtualCharacterRequiresComplianceAndRollsBackOnGroupFailure(t *t
 	require.Equal(t, "group-ok-2", creating.ProviderGroupID)
 	require.Equal(t, "asset-primary-1", creating.ProviderAssetID)
 	require.Equal(t, "file-staging-1", creating.StagingFileID)
+	require.EqualValues(t, 88, creating.AIPDDAssetID)
+	require.Equal(t, 42, creating.AIPDDChannelID)
 	require.Equal(t, "image/png", creating.MimeType)
 	require.Equal(t, model.VirtualCharacterAssetTypeImage, creating.AssetType)
 	require.NotNil(t, creating.Slot)
@@ -428,8 +449,9 @@ func TestCreateVirtualCharacterUploadsVideoAndAudioAssets(t *testing.T) {
 	common.CryptoSecret = strings.Repeat("s", 32)
 	common.CryptoSecretConfigured = true
 	common.OptionMap = map[string]string{"VirtualCharacterAccountAssetCap": "50"}
+	staging := &stubVirtualCharacterStagingStorage{}
 	newVirtualCharacterStagingStorage = func() (virtualCharacterStagingStorage, error) {
-		return &stubVirtualCharacterStagingStorage{}, nil
+		return staging, nil
 	}
 	stub := &stubVolcAssetClient{createGroupID: "group-media", createAssetID: "asset-video-1"}
 	newVolcAssetClientForVirtualCharacters = func(*model.VirtualCharacterProviderAccount) (service.VolcAssetClient, error) {
@@ -459,6 +481,7 @@ func TestCreateVirtualCharacterUploadsVideoAndAudioAssets(t *testing.T) {
 	}, "clip.mp4", "video/mp4", []byte("mp4-bytes")))
 	require.Equal(t, http.StatusCreated, videoRecorder.Code, videoRecorder.Body.String())
 	require.Equal(t, model.VirtualCharacterAssetTypeVideo, stub.lastAssetType)
+	require.Equal(t, model.VirtualCharacterAssetTypeVideo, staging.lastDigitalAssetType)
 	var video model.VirtualCharacter
 	require.NoError(t, db.Where("user_id = ? AND name = ?", 81, "Clip").First(&video).Error)
 	require.Equal(t, model.VirtualCharacterAssetTypeVideo, video.AssetType)
@@ -470,6 +493,7 @@ func TestCreateVirtualCharacterUploadsVideoAndAudioAssets(t *testing.T) {
 	}, "voice.mp3", "audio/mpeg", []byte("mp3-bytes")))
 	require.Equal(t, http.StatusCreated, audioRecorder.Code, audioRecorder.Body.String())
 	require.Equal(t, model.VirtualCharacterAssetTypeAudio, stub.lastAssetType)
+	require.Equal(t, model.VirtualCharacterAssetTypeAudio, staging.lastDigitalAssetType)
 	var audio model.VirtualCharacter
 	require.NoError(t, db.Where("user_id = ? AND name = ?", 81, "Voice").First(&audio).Error)
 	require.Equal(t, model.VirtualCharacterAssetTypeAudio, audio.AssetType)
@@ -541,6 +565,8 @@ func TestUploadRealPersonVirtualCharacterAssetCreatesSelectedProviderAsset(t *te
 	require.NoError(t, db.First(&stored, character.ID).Error)
 	require.Equal(t, "real-asset-1", stored.ProviderAssetID)
 	require.Equal(t, "file-staging-1", stored.StagingFileID)
+	require.EqualValues(t, 88, stored.AIPDDAssetID)
+	require.Equal(t, 42, stored.AIPDDChannelID)
 	require.Equal(t, model.VirtualCharacterStatusCreating, stored.Status)
 	require.Greater(t, stored.AssetNextPollAt, int64(0))
 	authorization, err := model.GetVirtualCharacterAuthorization(character.ID)

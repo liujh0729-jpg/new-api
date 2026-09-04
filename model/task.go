@@ -134,22 +134,28 @@ type AIPDDTaskExecutionSnapshot struct {
 
 // TaskBillingContext 记录任务提交时的计费参数，以便轮询阶段可以重新计算额度。
 type TaskBillingContext struct {
-	ModelPrice        float64            `json:"model_price,omitempty"`       // 模型单价
-	GroupRatio        float64            `json:"group_ratio,omitempty"`       // 分组倍率
-	ModelRatio        float64            `json:"model_ratio,omitempty"`       // 模型倍率
-	OtherRatios       map[string]float64 `json:"other_ratios,omitempty"`      // 附加倍率（时长、分辨率等）
-	OriginModelName   string             `json:"origin_model_name,omitempty"` // 模型名称，必须为OriginModelName
-	PerCallBilling    bool               `json:"per_call_billing,omitempty"`  // 按次计费：跳过轮询阶段的差额结算
-	BillingMode       string             `json:"billing_mode,omitempty"`
-	BillingUnit       string             `json:"billing_unit,omitempty"`
-	PricingVariant    string             `json:"pricing_variant,omitempty"`
-	UnitPriceUSD      float64            `json:"unit_price_usd,omitempty"`
-	Quantity          float64            `json:"quantity,omitempty"`
-	SaleUSD           float64            `json:"sale_usd,omitempty"`
-	HasReferenceVideo bool               `json:"has_reference_video,omitempty"`
-	Resolution        string             `json:"resolution,omitempty"`
-	QuotaPerUnit      float64            `json:"quota_per_unit,omitempty"`
-	USDExchangeRate   float64            `json:"usd_exchange_rate,omitempty"`
+	ModelPrice              float64            `json:"model_price,omitempty"` // 模型单价
+	GroupRatio              float64            `json:"group_ratio,omitempty"` // 分组倍率
+	MembershipLevelId       int                `json:"membership_level_id,omitempty"`
+	MembershipCode          string             `json:"membership_code,omitempty"`
+	MembershipMultiplierPPM int64              `json:"membership_multiplier_ppm,omitempty"`
+	AppliedMemberPPM        int64              `json:"applied_membership_multiplier_ppm,omitempty"`
+	MembershipExempt        bool               `json:"membership_exempt,omitempty"`
+	MembershipExemptReason  string             `json:"membership_exempt_reason,omitempty"`
+	ModelRatio              float64            `json:"model_ratio,omitempty"`       // 模型倍率
+	OtherRatios             map[string]float64 `json:"other_ratios,omitempty"`      // 附加倍率（时长、分辨率等）
+	OriginModelName         string             `json:"origin_model_name,omitempty"` // 模型名称，必须为OriginModelName
+	PerCallBilling          bool               `json:"per_call_billing,omitempty"`  // 按次计费：跳过轮询阶段的差额结算
+	BillingMode             string             `json:"billing_mode,omitempty"`
+	BillingUnit             string             `json:"billing_unit,omitempty"`
+	PricingVariant          string             `json:"pricing_variant,omitempty"`
+	UnitPriceUSD            float64            `json:"unit_price_usd,omitempty"`
+	Quantity                float64            `json:"quantity,omitempty"`
+	SaleUSD                 float64            `json:"sale_usd,omitempty"`
+	HasReferenceVideo       bool               `json:"has_reference_video,omitempty"`
+	Resolution              string             `json:"resolution,omitempty"`
+	QuotaPerUnit            float64            `json:"quota_per_unit,omitempty"`
+	USDExchangeRate         float64            `json:"usd_exchange_rate,omitempty"`
 }
 
 // GetQuotaCNY returns the task quota's CNY equivalent using the billing-time

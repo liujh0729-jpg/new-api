@@ -23,37 +23,17 @@ const (
 	taskPricingCSVMaxBytes       = 8 << 20
 )
 
-var taskPricingCSVFixedGroups = []struct {
-	Name  string
-	Ratio decimal.Decimal
-}{
-	{Name: "VIP-T1", Ratio: decimal.RequireFromString("0.73")},
-	{Name: "VIP1", Ratio: decimal.RequireFromString("0.78")},
-	{Name: "VIP2", Ratio: decimal.RequireFromString("0.80")},
-	{Name: "VIP3", Ratio: decimal.RequireFromString("0.85")},
-	{Name: "VIP4", Ratio: decimal.RequireFromString("0.90")},
-	{Name: "VIP5", Ratio: decimal.RequireFromString("0.95")},
-}
-
 var taskPricingCSVRequiredColumns = []string{
 	"平台模型",
 	"输出规格",
 	"能力类型",
 	"计费单位",
 	"对比原生价",
-	"VIP-T1",
-	"VIP1",
-	"VIP2",
-	"VIP3",
-	"VIP4",
-	"VIP5",
 }
 
 var taskPricingCSVUpdateOrder = []string{
 	"billing_setting.task_pricing",
 	"billing_setting.billing_mode",
-	"GroupRatio",
-	"UserUsableGroups",
 }
 
 // TaskPricingCSVError is a user-facing CSV import/export failure.
@@ -71,12 +51,10 @@ func csvFail(format string, args ...any) error {
 
 // TaskPricingCSVSummary summarizes a parsed retail pricing CSV.
 type TaskPricingCSVSummary struct {
-	Models            []string       `json:"models"`
-	ResolutionTiers   int            `json:"resolution_tiers"`
-	SourceRows        int            `json:"source_rows"`
-	ExemptResolutions []string       `json:"exempt_resolutions"`
-	Groups            map[string]any `json:"groups,omitempty"`
-	RMBPerUSD         string         `json:"rmb_per_usd,omitempty"`
+	Models          []string `json:"models"`
+	ResolutionTiers int      `json:"resolution_tiers"`
+	SourceRows      int      `json:"source_rows"`
+	RMBPerUSD       string   `json:"rmb_per_usd,omitempty"`
 }
 
 // TaskPricingCSVOptionUpdate is one option write/rollback entry.
@@ -104,9 +82,7 @@ const (
 )
 
 type tierRecord struct {
-	groupRatioPolicy string
-	pricesRMB        map[videoVariantKind]decimal.Decimal
-	rows             []int
+	pricesRMB map[videoVariantKind]decimal.Decimal
 }
 
 // EmptyTaskPricingCSVTemplate returns a UTF-8 BOM CSV template with headers and
@@ -122,7 +98,6 @@ func EmptyTaskPricingCSVTemplate() []byte {
 		"不含视频",
 		taskPricingCSVBillingUnit,
 		"3",
-		"1", "1", "1", "1", "1", "1",
 	})
 	_ = writer.Write([]string{
 		"Example Model",
@@ -130,7 +105,6 @@ func EmptyTaskPricingCSVTemplate() []byte {
 		"输入含视频",
 		taskPricingCSVBillingUnit,
 		"4",
-		"1", "1", "1", "1", "1", "1",
 	})
 	_ = writer.Write([]string{
 		"Example Flat Model",
@@ -138,7 +112,6 @@ func EmptyTaskPricingCSVTemplate() []byte {
 		"不含视频",
 		taskPricingCSVBillingUnit,
 		"2",
-		"0.73", "0.78", "0.80", "0.85", "0.90", "0.95",
 	})
 	_ = writer.Write([]string{
 		"Example Flat Model",
@@ -146,7 +119,6 @@ func EmptyTaskPricingCSVTemplate() []byte {
 		"输入含视频",
 		taskPricingCSVBillingUnit,
 		"2",
-		"0.73", "0.78", "0.80", "0.85", "0.90", "0.95",
 	})
 	writer.Flush()
 	return buf.Bytes()
@@ -269,43 +241,6 @@ func BuildTaskPricingFromRows(rows []taskPricingCSVRow, rmbPerUSD decimal.Decima
 			}
 		}
 
-		sourceRatios := make(map[string]decimal.Decimal, len(taskPricingCSVFixedGroups))
-		for _, group := range taskPricingCSVFixedGroups {
-			ratio, err := decimalValue(row[group.Name], fmt.Sprintf("第 %d 行%s", rowNumber, group.Name), false)
-			if err != nil {
-				return nil, TaskPricingCSVSummary{}, err
-			}
-			sourceRatios[group.Name] = ratio
-		}
-		keepsNative := true
-		usesFixed := true
-		for _, group := range taskPricingCSVFixedGroups {
-			if !sourceRatios[group.Name].Equal(decimal.NewFromInt(1)) {
-				keepsNative = false
-			}
-			if !sourceRatios[group.Name].Equal(group.Ratio) {
-				usesFixed = false
-			}
-		}
-		if !keepsNative && !usesFixed {
-			expectedParts := make([]string, 0, len(taskPricingCSVFixedGroups))
-			actualParts := make([]string, 0, len(taskPricingCSVFixedGroups))
-			for _, group := range taskPricingCSVFixedGroups {
-				expectedParts = append(expectedParts, fmt.Sprintf("%s=%s", group.Name, group.Ratio.String()))
-				actualParts = append(actualParts, fmt.Sprintf("%s=%s", group.Name, sourceRatios[group.Name].String()))
-			}
-			return nil, TaskPricingCSVSummary{}, csvFail(
-				"第 %d 行：VIP 分组倍率必须全部为 1，或严格为 %s；实际为 %s",
-				rowNumber,
-				strings.Join(expectedParts, ", "),
-				strings.Join(actualParts, ", "),
-			)
-		}
-		groupRatioPolicy := TaskPricingGroupRatioGlobal
-		if keepsNative {
-			groupRatioPolicy = TaskPricingGroupRatioNone
-		}
-
 		key := model + "\x00" + resolution
 		if flat {
 			key = model + "\x00" + taskPricingCSVFlatResolution
@@ -313,18 +248,8 @@ func BuildTaskPricingFromRows(rows []taskPricingCSVRow, rmbPerUSD decimal.Decima
 		}
 		record := records[key]
 		if record == nil {
-			record = &tierRecord{
-				groupRatioPolicy: groupRatioPolicy,
-				pricesRMB:        make(map[videoVariantKind]decimal.Decimal),
-			}
+			record = &tierRecord{pricesRMB: make(map[videoVariantKind]decimal.Decimal)}
 			records[key] = record
-		}
-		if record.groupRatioPolicy != groupRatioPolicy {
-			label := resolution
-			if flat {
-				label = taskPricingCSVFlatResolution
-			}
-			return nil, TaskPricingCSVSummary{}, csvFail("%s/%s 的含视频和不含视频行对分组豁免定义不一致", model, label)
 		}
 		if _, exists := record.pricesRMB[variant]; exists {
 			return nil, TaskPricingCSVSummary{}, csvFail("%s/%s 存在重复的%s行", model, resolution, videoVariantLabel(variant))
@@ -334,7 +259,6 @@ func BuildTaskPricingFromRows(rows []taskPricingCSVRow, rmbPerUSD decimal.Decima
 		} else {
 			record.pricesRMB[variant] = decimal.Zero
 		}
-		record.rows = append(record.rows, rowNumber)
 	}
 
 	type keyedRecord struct {
@@ -363,7 +287,6 @@ func BuildTaskPricingFromRows(rows []taskPricingCSVRow, rmbPerUSD decimal.Decima
 	})
 
 	models := make(map[string]TaskPricingConfig)
-	exempt := make([]string, 0)
 	for _, item := range ordered {
 		prices := item.record.pricesRMB
 		_, hasNoRef := prices[videoVariantNoReference]
@@ -402,11 +325,6 @@ func BuildTaskPricingFromRows(rows []taskPricingCSVRow, rmbPerUSD decimal.Decima
 				tier.ReferenceVideoUnitPrice = decimalToFloat(reference)
 			}
 		}
-		if item.record.groupRatioPolicy == TaskPricingGroupRatioNone {
-			tier.GroupRatioPolicy = TaskPricingGroupRatioNone
-			exempt = append(exempt, item.model+"/"+item.resolution)
-		}
-
 		cfg := models[item.model]
 		if item.flat {
 			if cfg.ByResolution != nil {
@@ -420,7 +338,6 @@ func BuildTaskPricingFromRows(rows []taskPricingCSVRow, rmbPerUSD decimal.Decima
 				NoReferenceVideoUnitPrice: tier.NoReferenceVideoUnitPrice,
 				ReferenceVideoPolicy:      tier.ReferenceVideoPolicy,
 				ReferenceVideoUnitPrice:   tier.ReferenceVideoUnitPrice,
-				GroupRatioPolicy:          tier.GroupRatioPolicy,
 			}
 			models[item.model] = cfg
 			continue
@@ -450,10 +367,9 @@ func BuildTaskPricingFromRows(rows []taskPricingCSVRow, rmbPerUSD decimal.Decima
 	sort.Strings(modelNames)
 
 	return models, TaskPricingCSVSummary{
-		Models:            modelNames,
-		ResolutionTiers:   len(records),
-		SourceRows:        len(rows),
-		ExemptResolutions: exempt,
+		Models:          modelNames,
+		ResolutionTiers: len(records),
+		SourceRows:      len(rows),
 	}, nil
 }
 
@@ -467,26 +383,10 @@ func BuildTaskPricingImportPlan(options map[string]string, imported map[string]T
 	if err != nil {
 		return nil, err
 	}
-	groupRatio, err := parseOptionNumberMap(options["GroupRatio"], "GroupRatio")
-	if err != nil {
-		return nil, err
-	}
-	usableGroups, err := parseOptionStringMap(options["UserUsableGroups"], "UserUsableGroups")
-	if err != nil {
-		return nil, err
-	}
-
 	for model, cfg := range imported {
 		taskPricing[model] = cfg
 		billingMode[model] = "task_pricing"
 	}
-	for _, group := range taskPricingCSVFixedGroups {
-		groupRatio[group.Name] = decimalToJSONNumber(group.Ratio)
-		if _, exists := usableGroups[group.Name]; !exists {
-			usableGroups[group.Name] = fmt.Sprintf("%s（Seedance %d档）", group.Name, group.Ratio.Mul(decimal.NewFromInt(100)).IntPart())
-		}
-	}
-
 	taskPricingJSON, err := marshalCanonicalJSON(taskPricing)
 	if err != nil {
 		return nil, csvFail("序列化 task_pricing 失败：%v", err)
@@ -498,20 +398,9 @@ func BuildTaskPricingImportPlan(options map[string]string, imported map[string]T
 	if err != nil {
 		return nil, csvFail("序列化 billing_mode 失败：%v", err)
 	}
-	groupRatioJSON, err := marshalCanonicalJSON(groupRatio)
-	if err != nil {
-		return nil, csvFail("序列化 GroupRatio 失败：%v", err)
-	}
-	usableGroupsJSON, err := marshalCanonicalJSON(usableGroups)
-	if err != nil {
-		return nil, csvFail("序列化 UserUsableGroups 失败：%v", err)
-	}
-
 	nextValues := map[string]string{
 		"billing_setting.task_pricing": taskPricingJSON,
 		"billing_setting.billing_mode": billingModeJSON,
-		"GroupRatio":                   groupRatioJSON,
-		"UserUsableGroups":             usableGroupsJSON,
 	}
 	previousValues := make(map[string]string, len(taskPricingCSVUpdateOrder))
 	for _, key := range taskPricingCSVUpdateOrder {
@@ -521,12 +410,6 @@ func BuildTaskPricingImportPlan(options map[string]string, imported map[string]T
 		}
 		previousValues[key] = value
 	}
-
-	groups := make(map[string]any, len(taskPricingCSVFixedGroups))
-	for _, group := range taskPricingCSVFixedGroups {
-		groups[group.Name] = decimalToJSONNumber(group.Ratio)
-	}
-	summary.Groups = groups
 
 	updates := make([]TaskPricingCSVOptionUpdate, 0, len(taskPricingCSVUpdateOrder))
 	for _, key := range taskPricingCSVUpdateOrder {
@@ -593,69 +476,53 @@ func ExportTaskPricingCSV(configs map[string]TaskPricingConfig, rmbPerUSD decima
 }
 
 func writeExportedTierRows(writer *csv.Writer, model, resolution string, tier TaskPricingTier, rmbPerUSD decimal.Decimal) error {
-	vipValues := fixedVIPCSVValues(tier.GroupRatioPolicy == TaskPricingGroupRatioNone)
 	noRefRMB := floatToRMBString(tier.NoReferenceVideoUnitPrice, rmbPerUSD)
-	if err := writer.Write(append([]string{
+	if err := writer.Write([]string{
 		model,
 		resolution,
 		"不含视频",
 		taskPricingCSVBillingUnit,
 		noRefRMB,
-	}, vipValues...)); err != nil {
+	}); err != nil {
 		return csvFail("写入 CSV 行失败：%v", err)
 	}
 
 	switch tier.ReferenceVideoPolicy {
 	case ReferenceVideoPolicyDisabled:
-		if err := writer.Write(append([]string{
+		if err := writer.Write([]string{
 			model,
 			resolution,
 			"禁用参考视频",
 			taskPricingCSVBillingUnit,
 			"0",
-		}, vipValues...)); err != nil {
+		}); err != nil {
 			return csvFail("写入 CSV 行失败：%v", err)
 		}
 	case ReferenceVideoPolicySame:
-		if err := writer.Write(append([]string{
+		if err := writer.Write([]string{
 			model,
 			resolution,
 			"输入含视频",
 			taskPricingCSVBillingUnit,
 			noRefRMB,
-		}, vipValues...)); err != nil {
+		}); err != nil {
 			return csvFail("写入 CSV 行失败：%v", err)
 		}
 	case ReferenceVideoPolicyCustom:
 		refRMB := floatToRMBString(tier.ReferenceVideoUnitPrice, rmbPerUSD)
-		if err := writer.Write(append([]string{
+		if err := writer.Write([]string{
 			model,
 			resolution,
 			"输入含视频",
 			taskPricingCSVBillingUnit,
 			refRMB,
-		}, vipValues...)); err != nil {
+		}); err != nil {
 			return csvFail("写入 CSV 行失败：%v", err)
 		}
 	default:
 		return csvFail("模型 %s/%s 的 reference_video_policy 无效：%s", model, resolution, tier.ReferenceVideoPolicy)
 	}
 	return nil
-}
-
-func fixedVIPCSVValues(exempt bool) []string {
-	if exempt {
-		values := make([]string, len(taskPricingCSVFixedGroups))
-		for i := range values {
-			values[i] = "1"
-		}
-		return values
-	}
-	values := make([]string, 0, len(taskPricingCSVFixedGroups))
-	for _, group := range taskPricingCSVFixedGroups {
-		values = append(values, group.Ratio.StringFixed(2))
-	}
-	return values
 }
 
 func floatToRMBString(usd float64, rmbPerUSD decimal.Decimal) string {

@@ -18,6 +18,14 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { PublicLayout } from '@/components/layout'
 import { PageTransition } from '@/components/page-transition'
 import {
@@ -47,10 +55,43 @@ export function Pricing() {
     usableGroup,
     endpointMap,
     autoGroups,
+    currentGroup,
+    groupLocked,
+    membership,
     isLoading,
     priceRate,
     usdExchangeRate,
   } = usePricingData()
+
+  const availableGroups = useMemo(
+    () =>
+      Object.keys(usableGroup || {}).filter(
+        (g) => !EXCLUDED_GROUPS.includes(g)
+      ),
+    [usableGroup]
+  )
+  const [requestedPricingGroup, setPricingGroup] = useState('')
+  const preferredGroup = currentGroup || 'default'
+  const canUsePreferred =
+    groupLocked ||
+    availableGroups.length === 0 ||
+    availableGroups.includes(preferredGroup)
+  const fallbackGroup = canUsePreferred
+    ? preferredGroup
+    : (availableGroups[0] ?? preferredGroup)
+  const allowedGroups = groupLocked ? [preferredGroup] : availableGroups
+  const pricingGroup = allowedGroups.includes(requestedPricingGroup)
+    ? requestedPricingGroup
+    : fallbackGroup
+
+  const pricedModels = useMemo(
+    () =>
+      (models || []).map((model) => ({
+        ...model,
+        viewer_group: pricingGroup || currentGroup || 'default',
+      })),
+    [currentGroup, models, pricingGroup]
+  )
 
   const {
     searchInput,
@@ -79,7 +120,7 @@ export function Pricing() {
     availableTags,
     clearFilters,
     clearSearch,
-  } = useFilters(models || [])
+  } = useFilters(pricedModels)
 
   const handleModelClick = useCallback((modelName: string) => {
     setSelectedModelName(modelName)
@@ -88,19 +129,11 @@ export function Pricing() {
   const selectedModel = useMemo(
     () =>
       selectedModelName
-        ? (models || []).find(
+        ? pricedModels.find(
             (model) => model.model_name === selectedModelName
           ) || null
         : null,
-    [models, selectedModelName]
-  )
-
-  const availableGroups = useMemo(
-    () =>
-      Object.keys(usableGroup || {}).filter(
-        (g) => !EXCLUDED_GROUPS.includes(g)
-      ),
-    [usableGroup]
+    [pricedModels, selectedModelName]
   )
 
   const handleClearAll = useCallback(() => {
@@ -190,6 +223,49 @@ export function Pricing() {
                 'Discover curated AI models, compare pricing and capabilities, and choose the right model for every scenario.'
               )}
             </p>
+            <div className='bg-background/70 mx-auto mt-4 flex max-w-2xl flex-col items-center justify-center gap-2 rounded-xl border px-3 py-2.5 text-sm shadow-sm backdrop-blur sm:flex-row sm:gap-4'>
+              <span className='text-muted-foreground'>
+                {t('Your price')} = {t('Base price')} × {t('Group ratio')} ×{' '}
+                {t('Membership ratio')}
+              </span>
+              <span className='font-medium'>
+                {membership?.display_name || t('Normal user')} ·{' '}
+                {t('{{discount}} discount', {
+                  discount: Number(
+                    (
+                      (membership?.multiplier_ppm ?? 1_000_000) / 100_000
+                    ).toFixed(2)
+                  ),
+                })}
+              </span>
+              {!groupLocked && availableGroups.length > 1 ? (
+                <Select
+                  items={availableGroups.map((group) => ({
+                    value: group,
+                    label: group,
+                  }))}
+                  value={pricingGroup || currentGroup || 'default'}
+                  onValueChange={(value) => setPricingGroup(value ?? '')}
+                >
+                  <SelectTrigger size='sm' className='min-w-32'>
+                    <SelectValue placeholder={t('Pricing group')} />
+                  </SelectTrigger>
+                  <SelectContent alignItemWithTrigger={false}>
+                    <SelectGroup>
+                      {availableGroups.map((group) => (
+                        <SelectItem key={group} value={group}>
+                          {group}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              ) : (
+                <span className='text-muted-foreground font-mono text-xs'>
+                  {t('Group')}: {pricingGroup || currentGroup || 'default'}
+                </span>
+              )}
+            </div>
             <SearchBar
               value={searchInput}
               onChange={setSearchInput}
@@ -217,7 +293,7 @@ export function Pricing() {
               groups={availableGroups}
               groupRatios={groupRatio}
               tags={availableTags}
-              models={models || []}
+              models={pricedModels}
               hasActiveFilters={hasActiveFilters}
               onClearFilters={clearFilters}
               className='hover-scrollbar sticky top-4 hidden max-h-[calc(100dvh-2rem)] self-start overflow-y-auto xl:block'
@@ -249,7 +325,7 @@ export function Pricing() {
                 groups={availableGroups}
                 groupRatios={groupRatio}
                 tags={availableTags}
-                models={models || []}
+                models={pricedModels}
                 hasActiveFilters={hasActiveFilters}
                 activeFilterCount={activeFilterCount}
                 onClearFilters={clearFilters}

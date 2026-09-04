@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -68,6 +69,14 @@ type SeedanceEnhancementCostEntry struct {
 
 func normalizeSeedanceCatalogCode(value string) string {
 	return strings.ToLower(strings.TrimSpace(value))
+}
+
+func ensureSeedanceCatalogCode(value string, prefix string) string {
+	value = normalizeSeedanceCatalogCode(value)
+	if value != "" {
+		return value
+	}
+	return prefix + "-" + uuid.NewString()
 }
 
 func NormalizeSeedanceResolution(value string) (string, error) {
@@ -274,6 +283,17 @@ func seedanceEnhancementSnapshotChanged(before, after *SeedanceEnhancementModel)
 }
 
 func SaveSeedanceBaseModel(item *SeedanceBaseModel, actorUserID int) error {
+	if item != nil {
+		if item.ID == 0 {
+			item.Code = ensureSeedanceCatalogCode(item.Code, "base")
+		} else if strings.TrimSpace(item.Code) == "" {
+			var existing SeedanceBaseModel
+			if err := DB.Select("code").First(&existing, item.ID).Error; err != nil {
+				return err
+			}
+			item.Code = existing.Code
+		}
+	}
 	if err := validateSeedanceBaseModel(item); err != nil {
 		return err
 	}
@@ -338,6 +358,17 @@ func SaveSeedanceBaseModel(item *SeedanceBaseModel, actorUserID int) error {
 }
 
 func SaveSeedanceEnhancementModel(item *SeedanceEnhancementModel, actorUserID int) error {
+	if item != nil {
+		if item.ID == 0 {
+			item.Code = ensureSeedanceCatalogCode(item.Code, "enhancement")
+		} else if strings.TrimSpace(item.Code) == "" {
+			var existing SeedanceEnhancementModel
+			if err := DB.Select("code").First(&existing, item.ID).Error; err != nil {
+				return err
+			}
+			item.Code = existing.Code
+		}
+	}
 	if err := validateSeedanceEnhancementModel(item); err != nil {
 		return err
 	}

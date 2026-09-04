@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	settingconfig "github.com/QuantumNous/new-api/setting/config"
+	"github.com/QuantumNous/new-api/types"
 )
 
 func validTaskPricing(policy string) TaskPricingConfig {
@@ -347,7 +348,7 @@ func TestQuoteTaskPricingSelectsResolutionTier(t *testing.T) {
 	if err != nil {
 		t.Fatalf("QuoteTaskPricing(matrix) error = %v", err)
 	}
-	if quote.Resolution != "480p" || quote.UnitPriceUSD != 0.06 || quote.GroupRatio != 1 || quote.Quota != 150_000 {
+	if quote.Resolution != "480p" || quote.UnitPriceUSD != 0.06 || quote.GroupRatio != 1.5 || quote.Quota != 225_000 {
 		t.Fatalf("matrix quote = %#v", quote)
 	}
 
@@ -362,7 +363,7 @@ func TestQuoteTaskPricingSelectsResolutionTier(t *testing.T) {
 	}
 }
 
-func TestQuoteTaskPricingKeeps480pNativeByDefault(t *testing.T) {
+func TestQuoteTaskPricingAppliesGroupRatioTo480pByDefault(t *testing.T) {
 	cfg := validMatrixTaskPricing()
 	installTaskPricingForTest(t, map[string]TaskPricingConfig{"matrix": cfg})
 
@@ -370,7 +371,7 @@ func TestQuoteTaskPricingKeeps480pNativeByDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("QuoteTaskPricing(native resolution) error = %v", err)
 	}
-	if nativeQuote.GroupRatio != 1 || nativeQuote.BaseUSD != 0.2 || nativeQuote.SaleUSD != 0.2 || nativeQuote.Quota != 100_000 {
+	if nativeQuote.GroupRatio != 0.78 || nativeQuote.BaseUSD != 0.2 || nativeQuote.SaleUSD != nativeQuote.BaseUSD*0.78 || nativeQuote.Quota != 78_000 {
 		t.Fatalf("native resolution quote = %#v", nativeQuote)
 	}
 
@@ -399,7 +400,7 @@ func TestQuoteTaskPricingExplicitGlobalPolicyDiscounts480p(t *testing.T) {
 	}
 }
 
-func TestQuoteTaskPricingExplicitNoneKeepsAnyResolutionNative(t *testing.T) {
+func TestQuoteTaskPricingLegacyNonePolicyNoLongerSkipsGlobalGroupRatio(t *testing.T) {
 	cfg := validMatrixTaskPricing()
 	tier := cfg.ByResolution["720p"]
 	tier.GroupRatioPolicy = TaskPricingGroupRatioNone
@@ -410,12 +411,12 @@ func TestQuoteTaskPricingExplicitNoneKeepsAnyResolutionNative(t *testing.T) {
 	if err != nil {
 		t.Fatalf("QuoteTaskPricing(explicit none 720p) error = %v", err)
 	}
-	if quote.GroupRatio != 1 || quote.SaleUSD != quote.BaseUSD {
+	if quote.GroupRatio != 0.78 || quote.SaleUSD != quote.BaseUSD*0.78 {
 		t.Fatalf("explicit none 720p quote = %#v", quote)
 	}
 }
 
-func TestQuoteLegacyTaskPricingKeeps480pNativeByDefault(t *testing.T) {
+func TestQuoteLegacyTaskPricingAppliesGroupRatioTo480p(t *testing.T) {
 	installTaskPricingForTest(t, map[string]TaskPricingConfig{
 		"legacy": validTaskPricing(ReferenceVideoPolicySame),
 	})
@@ -424,7 +425,7 @@ func TestQuoteLegacyTaskPricingKeeps480pNativeByDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("QuoteTaskPricing(legacy 480p) error = %v", err)
 	}
-	if quote.GroupRatio != 1 || quote.SaleUSD != quote.BaseUSD {
+	if quote.GroupRatio != 0.78 || quote.SaleUSD != quote.BaseUSD*0.78 {
 		t.Fatalf("legacy 480p quote = %#v", quote)
 	}
 }
@@ -440,6 +441,49 @@ func TestQuoteTaskPricingAllowsZeroGroupRatio(t *testing.T) {
 	}
 	if quote.GroupRatio != 0 || quote.BaseUSD != 0.6 || quote.SaleUSD != 0 || quote.Quota != 0 {
 		t.Fatalf("zero-ratio quote = %#v", quote)
+	}
+}
+
+func TestQuoteTaskPricingWithMembershipAppliesAfterGroup(t *testing.T) {
+	installTaskPricingForTest(t, map[string]TaskPricingConfig{
+		"video-model": validTaskPricing(ReferenceVideoPolicySame),
+	})
+
+	quote, err := QuoteTaskPricingWithMembership(
+		"video-model", 5, "720p", 1.25,
+		types.MembershipRatioInfo{Code: "VIP1", ConfiguredMultiplierPPM: 800_000},
+		500_000, false,
+	)
+	if err != nil {
+		t.Fatalf("QuoteTaskPricingWithMembership() error = %v", err)
+	}
+	if quote.BaseUSD != 0.6 || quote.GroupRatio != 1.25 || math.Abs(quote.SaleUSD-0.6*1.25*0.8) > 1e-12 || quote.Quota != 300_000 {
+		t.Fatalf("membership quote = %#v", quote)
+	}
+	if quote.MembershipMultiplierPPM != 800_000 || quote.AppliedMemberPPM != 800_000 || quote.MembershipExempt {
+		t.Fatalf("membership snapshot = %#v", quote)
+	}
+}
+
+func TestQuoteTaskPricingWithMembershipExemptsOnlyAPSeedance480p(t *testing.T) {
+	cfg := validMatrixTaskPricing()
+	installTaskPricingForTest(t, map[string]TaskPricingConfig{"AP_Seedance-Pro": cfg})
+	membership := types.MembershipRatioInfo{Code: "VIP1", ConfiguredMultiplierPPM: 800_000}
+
+	quote480, err := QuoteTaskPricingWithMembership("AP_Seedance-Pro", 5, "480P", 1.25, membership, 500_000, false)
+	if err != nil {
+		t.Fatalf("QuoteTaskPricingWithMembership(480p) error = %v", err)
+	}
+	if quote480.SaleUSD != quote480.BaseUSD*1.25 || quote480.AppliedMemberPPM != 1_000_000 || !quote480.MembershipExempt || quote480.MembershipExemptReason != "ap_seedance_480p" {
+		t.Fatalf("480p exemption quote = %#v", quote480)
+	}
+
+	quote720, err := QuoteTaskPricingWithMembership("AP_Seedance-Pro", 5, "720p", 1.25, membership, 500_000, false)
+	if err != nil {
+		t.Fatalf("QuoteTaskPricingWithMembership(720p) error = %v", err)
+	}
+	if math.Abs(quote720.SaleUSD-quote720.BaseUSD*1.25*0.8) > 1e-12 || quote720.AppliedMemberPPM != 800_000 || quote720.MembershipExempt {
+		t.Fatalf("720p quote = %#v", quote720)
 	}
 }
 

@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useRef, useState } from 'react'
-import { ImageIcon, LibraryIcon, UploadIcon, XIcon } from 'lucide-react'
+import { ImageIcon, UploadIcon, XIcon } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
@@ -34,8 +34,6 @@ import {
   type PromptInputPreparedFile,
   usePromptInputAttachments,
 } from '@/components/ai-elements/prompt-input'
-import type { Material } from '@/features/materials/types'
-import { MaterialSelectorDialog } from './material-selector-dialog'
 
 interface MinimaxH3FirstLastFramePanelProps {
   disabled?: boolean
@@ -63,7 +61,6 @@ export function MinimaxH3FirstLastFramePanel(
   const attachments = usePromptInputAttachments()
   const inputRef = useRef<HTMLInputElement>(null)
   const uploadRoleRef = useRef<FrameRole>('first_frame')
-  const [materialRole, setMaterialRole] = useState<FrameRole | null>(null)
   const [preparing, setPreparing] = useState(false)
   const controlsDisabled = props.disabled || preparing
 
@@ -101,16 +98,6 @@ export function MinimaxH3FirstLastFramePanel(
       props.onPreparingChange(false)
       if (inputRef.current) inputRef.current.value = ''
     }
-  }
-
-  const handleMaterialSelect = (material: Material) => {
-    if (!materialRole) return
-    replaceFrame(materialRole, {
-      url: material.url,
-      mediaType: material.mime_type,
-      filename: material.file_name || material.name,
-    })
-    setMaterialRole(null)
   }
 
   const renderFrame = (role: FrameRole, label: string) => {
@@ -167,16 +154,6 @@ export function MinimaxH3FirstLastFramePanel(
               <UploadIcon />
               {frame ? t('Replace') : t('Upload')}
             </Button>
-            <Button
-              disabled={controlsDisabled}
-              onClick={() => setMaterialRole(role)}
-              size='sm'
-              type='button'
-              variant='outline'
-            >
-              <LibraryIcon />
-              {t('Select Material')}
-            </Button>
           </div>
         </CardContent>
       </Card>
@@ -196,15 +173,6 @@ export function MinimaxH3FirstLastFramePanel(
         onChange={(event) => void handleFile(event.target.files?.[0])}
         ref={inputRef}
         type='file'
-      />
-      <MaterialSelectorDialog
-        fixedType='image'
-        mode='video'
-        onOpenChange={(open) => {
-          if (!open) setMaterialRole(null)
-        }}
-        onSelect={handleMaterialSelect}
-        open={materialRole !== null}
       />
     </>
   )
