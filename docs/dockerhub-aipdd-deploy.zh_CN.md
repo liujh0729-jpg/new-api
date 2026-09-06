@@ -6,7 +6,7 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| New API 公网镜像地址 | `crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest` |
+| New API 公网镜像地址 | `crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/ap-new-api-community:latest` |
 | PostgreSQL 公网镜像地址 | `crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/postgres:15` |
 | Redis 公网镜像地址 | `crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/redis:latest` |
 | 当前 New API 镜像 digest | `sha256:d1c68946c722eefe52866bdb53a69116ee36b0adffa88e73b8d9527aee4b6f2f` |
@@ -17,13 +17,13 @@
 
 ```bash
 docker login crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com
-docker pull crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest
+docker pull crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/ap-new-api-community:latest
 ```
 
 如需按 digest 固定版本：
 
 ```bash
-docker pull crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd@sha256:d1c68946c722eefe52866bdb53a69116ee36b0adffa88e73b8d9527aee4b6f2f
+docker pull crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/ap-new-api-community@sha256:d1c68946c722eefe52866bdb53a69116ee36b0adffa88e73b8d9527aee4b6f2f
 ```
 
 ## 版本发布与更新规则
@@ -35,8 +35,8 @@ docker pull crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new
 ```bash
 docker login crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com
 docker build --platform linux/amd64 \
-  -t crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest .
-docker push crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest
+  -t crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/ap-new-api-community:latest .
+docker push crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/ap-new-api-community:latest
 ```
 
 如果 PostgreSQL 或 Redis 版本变化，也必须把对应版本同步到上面记录的 ACR 公网地址，并同步修改 Compose 文件。部署服务器只执行 `docker compose pull` 和 `docker compose up -d`，不要使用 `--build`。
@@ -85,7 +85,7 @@ version: "3.4"
 
 services:
   new-api:
-    image: crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest
+    image: crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/ap-new-api-community:latest
     container_name: new-api
     restart: always
     command: --log-dir /app/logs
@@ -181,7 +181,7 @@ docker run -d \
   -e TZ=Asia/Shanghai \
   -e AIPDD_API_KEY="change-this-aipdd-api-key" \
   -e SESSION_SECRET="change-this-random-session-secret" \
-  crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest
+  crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/ap-new-api-community:latest
 ```
 
 查看日志：
@@ -206,7 +206,7 @@ docker image prune -f
 
 ```bash
 docker login crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com
-docker pull crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest
+docker pull crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/ap-new-api-community:latest
 docker stop new-api
 docker rm new-api
 
@@ -218,7 +218,7 @@ docker run -d \
   -e TZ=Asia/Shanghai \
   -e AIPDD_API_KEY="change-this-aipdd-api-key" \
   -e SESSION_SECRET="change-this-random-session-secret" \
-  crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest
+  crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/ap-new-api-community:latest
 ```
 
 ## AIPDD 渠道如何添加

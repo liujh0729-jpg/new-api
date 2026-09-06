@@ -55,7 +55,7 @@ openssl rand -hex 32
 当前使用的三个 ACR 公网镜像地址：
 
 ~~~text
-crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest
+crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/ap-new-api-community:latest
 crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/postgres:15
 crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/redis:latest
 ~~~
@@ -92,7 +92,7 @@ CRYPTO_SECRET=请替换为固定随机字符串
 ~~~yaml
 services:
   new-api:
-    image: crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest
+    image: crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/ap-new-api-community:latest
     container_name: new-api
     restart: unless-stopped
     command: --log-dir /app/logs
@@ -212,8 +212,8 @@ export CRYPTO_SECRET='请替换为固定随机字符串'
 ~~~bash
 docker login crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com
 docker build --platform linux/amd64 \
-  -t crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest .
-docker push crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest
+  -t crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/ap-new-api-community:latest .
+docker push crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/ap-new-api-community:latest
 ~~~
 
 然后在部署服务器更新：
@@ -233,7 +233,7 @@ docker compose up -d
 mkdir -p /opt/new-api/data /opt/new-api/logs
 cd /opt/new-api
 docker login crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com
-docker pull crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest
+docker pull crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/ap-new-api-community:latest
 
 docker run -d \
   --name new-api \
@@ -245,7 +245,7 @@ docker run -d \
   -e SESSION_SECRET='请替换为固定随机字符串' \
   -e CRYPTO_SECRET='请替换为固定随机字符串' \
   -e AIPDD_API_KEY='请替换为AIPDD上游Key' \
-  crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest
+  crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/ap-new-api-community:latest
 ~~~
 
 SQLite 数据库和本地素材会保存在 /opt/new-api/data。/data 挂载是必须的，否则删除容器后数据可能丢失。
@@ -396,8 +396,8 @@ docker image prune -f
 git pull
 docker login crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com
 docker build --platform linux/amd64 \
-  -t crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest .
-docker push crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest
+  -t crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/ap-new-api-community:latest .
+docker push crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/ap-new-api-community:latest
 ~~~
 
 如果需要回滚，切换到上一个 Git 提交或镜像标签，再重新启动。

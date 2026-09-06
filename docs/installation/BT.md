@@ -57,7 +57,7 @@
 version: '3'
 services:
   new-api:
-    image: crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest
+    image: crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/ap-new-api-community:latest
     container_name: new-api
     restart: always
     ports:
@@ -128,7 +128,7 @@ volumes:
 ```bash
 # 登录并拉取 ACR 最新镜像
 docker login crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com
-docker pull crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/new-api-aipdd:latest
+docker pull crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/ap-new-api-community:latest
 
 # 重启容器
 docker-compose down && docker-compose up -d

@@ -129,7 +129,7 @@ function Set-TempEnv {
 
 $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $Registry = First-NonEmpty @($Registry) "crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com"
-$Image = First-NonEmpty @($Image) "$Registry/aipdd/new-api-aipdd"
+$Image = First-NonEmpty @($Image) "$Registry/aipdd/ap-new-api-community"
 $AcrUsername = First-NonEmpty @($AcrUsername) "issay"
 $Tag = First-NonEmpty @($Tag) (Get-Date -Format "yyyyMMdd-HHmmss")
 $ServerHost = First-NonEmpty @($ServerHost) "118.178.32.102"
