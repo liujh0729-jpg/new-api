@@ -659,7 +659,7 @@
         "tags": ["Seedance"],
         "summary": "查询视频任务（Seedance官方协议）",
         "operationId": "getSeedanceTask",
-        "description": "官方兼容查询。成功状态为 `succeeded`，视频地址在 `content.video_url`，时长在顶层 `duration`。\n\n状态：`queued`、`running`、`succeeded`、`failed`、`cancelled`。`usage` 可选，形状为 Seedance 官方字段。",
+        "description": "官方兼容查询。成功状态为 `succeeded`，视频地址在 `content.video_url`，时长在顶层 `duration`。视频地址由本站提供，下载时使用相同的 API Token；任务扩展信息仅返回公开字段。\n\n状态：`queued`、`running`、`succeeded`、`failed`、`cancelled`。`usage` 为可选的 token 用量信息，在任务成功且用量可用时返回。",
         "security": [{ "BearerAuth": [] }],
         "parameters": [
           { "name": "task_id", "in": "path", "required": true, "schema": { "type": "string" }, "description": "创建时返回的公开任务 ID" }
@@ -1565,7 +1565,7 @@
           "id": { "type": "string" },
           "model": { "type": "string" },
           "status": { "type": "string", "enum": ["queued", "running", "succeeded", "failed", "cancelled"] },
-          "duration": { "type": "number", "description": "秒。优先上游实际时长" },
+          "duration": { "type": "number", "description": "秒。实际生成时长" },
           "resolution": { "type": "string" },
           "output_format": { "type": "string", "enum": ["mp4", "mov"] },
           "content": {

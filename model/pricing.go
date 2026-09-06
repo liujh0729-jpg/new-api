@@ -9,6 +9,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/pkg/seedancepublic"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
@@ -75,6 +76,12 @@ func GetPricing() []Pricing {
 	cloned := make([]Pricing, len(pricingMap))
 	for index, pricing := range pricingMap {
 		cloned[index] = pricing
+		if seedancepublic.IsModel(pricing.ModelName) {
+			cloned[index].Description = seedancepublic.Text(pricing.Description, "视频生成模型")
+			cloned[index].Tags = seedancepublic.Text(pricing.Tags, "视频生成")
+			cloned[index].Icon = seedancepublic.Text(pricing.Icon, "")
+			cloned[index].OwnerBy = seedancepublic.Text(pricing.OwnerBy, "")
+		}
 		cloned[index].EnableGroup = append([]string(nil), pricing.EnableGroup...)
 		if pricing.GroupRatio != nil {
 			cloned[index].GroupRatio = make(map[string]float64, len(pricing.GroupRatio))
@@ -95,7 +102,14 @@ func GetPricing() []Pricing {
 			cloned[index].TaskPricing = &taskPricing
 		}
 	}
-	return cloned
+	publicPrices := cloned[:0]
+	for _, p := range cloned {
+		if seedancepublic.IsModel(p.ModelName) && seedancepublic.Internal(p.ModelName) {
+			continue
+		}
+		publicPrices = append(publicPrices, p)
+	}
+	return publicPrices
 }
 
 func GetTaskPricingResolutions(modelName string) []string {
@@ -421,7 +435,14 @@ func GetVendors() []PricingVendor {
 	updatePricingLock.Lock()
 	defer updatePricingLock.Unlock()
 	refreshPricingLocked()
-	return append([]PricingVendor(nil), vendorsList...)
+	vendors := append([]PricingVendor(nil), vendorsList...)
+	for i := range vendors {
+		vendors[i].Name = seedancepublic.Text(vendors[i].Name, "视频模型")
+		vendors[i].Description = seedancepublic.Text(vendors[i].Description, "")
+		vendors[i].Icon = seedancepublic.Text(vendors[i].Icon, "")
+		vendors[i].Website = seedancepublic.Text(vendors[i].Website, "")
+	}
+	return vendors
 }
 
 func GetModelSupportEndpointTypes(model string) []constant.EndpointType {

@@ -2,6 +2,7 @@ package common
 
 import (
 	"fmt"
+	"github.com/QuantumNous/new-api/pkg/seedancepublic"
 	"regexp"
 	"strconv"
 	"strings"
@@ -204,7 +205,7 @@ func NormalizeAIPDDTaskError(
 
 // NormalizeUpstreamTaskError translates documented Seedance error codes into
 // actionable Chinese messages. It also masks errors from internal
-// super-resolution/upscaling stages so implementation details are not exposed.
+// private processing stages so implementation details are not exposed.
 func NormalizeUpstreamTaskError(code, message, param, requestID string) PublicUpstreamTaskError {
 	code = strings.TrimSpace(code)
 	message = strings.TrimSpace(message)
@@ -251,11 +252,11 @@ func NormalizeUpstreamTaskError(code, message, param, requestID string) PublicUp
 }
 
 // IsSuperResolutionTaskError reports whether an error exposes an internal
-// super-resolution/upscaling model or processing stage.
+// private model or processing stage.
 func IsSuperResolutionTaskError(values ...string) bool {
 	joined := strings.ToLower(strings.Join(values, " "))
 	compact := strings.NewReplacer("-", "", "_", "", ".", "", " ", "").Replace(joined)
-	return strings.Contains(compact, "seedvr") ||
+	return seedancepublic.Internal(joined) || strings.Contains(compact, "seedvr") ||
 		strings.Contains(compact, "superresolution") ||
 		strings.Contains(compact, "upscale") ||
 		strings.Contains(compact, "upscaler") ||

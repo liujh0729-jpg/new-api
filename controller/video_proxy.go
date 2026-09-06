@@ -40,9 +40,10 @@ type videoProxyFailure struct {
 }
 
 type videoContentTarget struct {
-	URL     string
-	Headers http.Header
-	Proxy   string
+	URL         string
+	Headers     http.Header
+	Proxy       string
+	PublicVideo bool
 }
 
 func newVideoProxyFailure(status int, errType string, message string) *videoProxyFailure {
@@ -111,6 +112,9 @@ func serveTaskVideoContent(c *gin.Context, taskID string, userID int) *videoProx
 		return newVideoProxyFailure(http.StatusBadGateway, "server_error", "Failed to fetch video content")
 	}
 
+	if target.PublicVideo {
+		c.Header("Cache-Control", "private, no-store")
+	}
 	if strings.HasPrefix(target.URL, "data:") {
 		if err := writeVideoDataURL(c, taskID, target.URL); err != nil {
 			logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to decode video data URL for task %s: %s", taskID, err.Error()))
@@ -165,6 +169,9 @@ func resolveTaskVideoContentTarget(ctx context.Context, task *model.Task) (*vide
 	default:
 		// Video URL is stored in PrivateData.ResultURL (fallback to FailReason for old data)
 		videoURL = task.GetResultURL()
+		if model.IsSeedanceTask(task) {
+			videoURL = model.SeedanceVideoURL(task)
+		}
 	}
 
 	videoURL = strings.TrimSpace(videoURL)
@@ -174,9 +181,10 @@ func resolveTaskVideoContentTarget(ctx context.Context, task *model.Task) (*vide
 	}
 
 	return &videoContentTarget{
-		URL:     videoURL,
-		Headers: headers,
-		Proxy:   channel.GetSetting().Proxy,
+		URL:         videoURL,
+		Headers:     headers,
+		Proxy:       channel.GetSetting().Proxy,
+		PublicVideo: model.IsSeedanceTask(task),
 	}, nil
 }
 
@@ -190,7 +198,7 @@ func streamVideoContentTarget(c *gin.Context, taskID string, target *videoConten
 	fetchSetting := system_setting.GetFetchSetting()
 	if err := common.ValidateURLWithFetchSetting(target.URL, fetchSetting.EnableSSRFProtection, fetchSetting.AllowPrivateIp, fetchSetting.DomainFilterMode, fetchSetting.IpFilterMode, fetchSetting.DomainList, fetchSetting.IpList, fetchSetting.AllowedPorts, fetchSetting.ApplyIPFilterForDomain); err != nil {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Video URL blocked for task %s: %v", taskID, err))
-		return newVideoProxyFailure(http.StatusForbidden, "server_error", fmt.Sprintf("request blocked: %v", err))
+		return newVideoProxyFailure(http.StatusForbidden, "server_error", "Failed to fetch video content")
 	}
 
 	requestCtx, cancel := context.WithTimeout(c.Request.Context(), 60*time.Second)
@@ -216,19 +224,26 @@ func streamVideoContentTarget(c *gin.Context, taskID string, target *videoConten
 			fmt.Sprintf("Upstream service returned status %d", resp.StatusCode))
 	}
 
-	for key, values := range resp.Header {
-		for _, value := range values {
-			c.Writer.Header().Add(key, value)
-		}
+	copyPublicVideoHeaders(c.Writer.Header(), resp.Header)
+	contentType, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type"))
+	setVideoProxyContentHeaders(c, taskID, target.URL, contentType)
+	if target.PublicVideo {
+		c.Header("Cache-Control", "private, no-store")
 	}
-
-	setVideoProxyContentHeaders(c, taskID, target.URL, resp.Header.Get("Content-Type"))
 	setDefaultVideoProxyCacheControl(c)
 	c.Writer.WriteHeader(resp.StatusCode)
 	if _, err = io.Copy(c.Writer, resp.Body); err != nil {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to stream video content: %s", err.Error()))
 	}
 	return nil
+}
+
+func copyPublicVideoHeaders(dst, src http.Header) {
+	for _, key := range []string{"Accept-Ranges", "Content-Length", "Content-Range", "Last-Modified"} {
+		for _, value := range src.Values(key) {
+			dst.Add(key, value)
+		}
+	}
 }
 
 func copyHeaderValues(dst http.Header, src http.Header) {
@@ -301,7 +316,7 @@ func normalizeVideoContentType(contentType, videoURL string) string {
 		mediaType = parsed
 	}
 	if mediaType != "" && !strings.EqualFold(mediaType, "application/octet-stream") {
-		return contentType
+		return mediaType
 	}
 	if inferred := videoContentTypeFromURL(videoURL); inferred != "" {
 		return inferred

@@ -141,7 +141,8 @@ func TestSeedanceOfficialFetchReturnsTopLevelTaskAndEnforcesOwnership(t *testing
 	require.Equal(t, "task_direct_doubao", directResponse["id"])
 	require.Equal(t, "succeeded", directResponse["status"])
 	require.Equal(t, "doubao-seedance-2-5-260628", directResponse["model"])
-	require.Equal(t, "https://cdn.example.com/direct.mp4", directResponse["content"].(map[string]any)["video_url"])
+	require.Equal(t, model.PublicTaskVideoURL(directTask), directResponse["content"].(map[string]any)["video_url"])
+	require.NotContains(t, string(directBody), "cdn.example.com")
 	require.NotContains(t, directResponse, "task_id")
 	require.NotContains(t, directResponse, "object")
 }

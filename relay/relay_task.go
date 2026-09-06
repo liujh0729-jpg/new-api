@@ -20,6 +20,7 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
+	"github.com/QuantumNous/new-api/pkg/seedancepublic"
 	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -763,6 +764,20 @@ func taskFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *dt
 		)
 		return
 	}
+	if model.IsSeedanceTask(originTask) && (isOpenAIVideoAPI || isSeedanceOfficialAPI) {
+		defer func() {
+			if taskResp != nil || len(respBody) == 0 {
+				return
+			}
+			cleaned, cleanErr := model.PublicSeedanceResponse(originTask, respBody, isOpenAIVideoAPI)
+			if cleanErr != nil {
+				respBody = nil
+				taskResp = service.TaskErrorWrapperLocal(errors.New("Failed to read video task"), "task_response_failed", http.StatusInternalServerError)
+				return
+			}
+			respBody = cleaned
+		}()
+	}
 	mediaInfo := resolveTaskMediaInfo(originTask, c.Request.URL.Path)
 
 	// Gemini/Vertex/AIPDD 支持实时查询：用户 fetch 时直接从上游拉取最新状态
@@ -980,6 +995,15 @@ func buildTaskFetchData(task *model.Task, taskInfo *relaycommon.TaskInfo, rawBod
 		}
 	}
 
+	if model.IsSeedanceTask(task) {
+		output = nil
+		if publicURL := model.PublicTaskVideoURL(task); publicURL != "" {
+			output = []string{publicURL}
+		}
+		if message, ok := taskError.(string); ok {
+			taskError = seedancepublic.ErrorText(message, task.PrivateData.Key)
+		}
+	}
 	resultURL := ""
 	if task.Status == model.TaskStatusSuccess && len(output) > 0 {
 		resultURL = output[0]
@@ -1276,7 +1300,7 @@ func mapTaskStatusToSimple(status model.TaskStatus) string {
 	}
 }
 
-func TaskModel2Dto(task *model.Task) *dto.TaskDto {
+func TaskModel2Dto(task *model.Task, administrative ...bool) *dto.TaskDto {
 	output := extractTaskOutputURLs(task)
 	mediaInfo := resolveTaskMediaInfo(task, "")
 	failReason := task.FailReason
@@ -1315,7 +1339,9 @@ func TaskModel2Dto(task *model.Task) *dto.TaskDto {
 			}
 		}
 	}
-	taskData = sanitizePublicTaskData(taskData)
+	if !model.IsSeedanceTask(task) {
+		taskData = sanitizePublicTaskData(taskData)
+	}
 	resultURL := ""
 	if task.Status == model.TaskStatusSuccess {
 		resultURL = task.GetResultURL()
@@ -1328,7 +1354,7 @@ func TaskModel2Dto(task *model.Task) *dto.TaskDto {
 		}
 	}
 	quotaCNY := task.GetQuotaCNY()
-	return &dto.TaskDto{
+	result := &dto.TaskDto{
 		ID:               task.ID,
 		CreatedAt:        task.CreatedAt,
 		UpdatedAt:        task.UpdatedAt,
@@ -1359,6 +1385,25 @@ func TaskModel2Dto(task *model.Task) *dto.TaskDto {
 		OutputModalities: mediaInfo.OutputModalities,
 		Data:             taskData,
 	}
+	if model.IsSeedanceTask(task) && !(len(administrative) > 0 && administrative[0]) {
+		result.Platform, result.ChannelId = "", 0
+		result.Properties = model.Properties{OriginModelName: seedancepublic.Text(task.Properties.OriginModelName, "video")}
+		result.FailReason = ""
+		if task.Status == model.TaskStatusFailure {
+			result.FailReason = seedancepublic.ErrorText(failReason, task.PrivateData.Key)
+		}
+		result.ResultURL = model.PublicTaskVideoURL(task)
+		result.Output, result.Metadata = nil, nil
+		if result.ResultURL != "" {
+			result.Output = []string{result.ResultURL}
+			result.Metadata = map[string]any{"url": result.ResultURL, "urls": result.Output}
+		}
+		result.Data, _ = model.PublicSeedanceResponse(task, taskData, false)
+		if len(result.Data) == 0 {
+			result.Data = json.RawMessage(`{}`)
+		}
+	}
+	return result
 }
 
 var publicTaskPrivateMoneyFields = map[string]struct{}{

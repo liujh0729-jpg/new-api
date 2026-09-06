@@ -29,7 +29,7 @@
 6. Asset 为 `Processing`、`Creating`、`Pending` 或 `Queued` 时继续异步轮询；变为 `Active` 后激活角色；明确失败、拒绝、撤回或删除时阻断角色并记录 `last_error`。
 7. 后续每次生成都使用唯一 `ProviderAssetID`，而不是 Group ID。Group ID 只用于归属、一致性和生命周期反查。真人图片完成或终止审核后，私有临时文件进入清理队列。
 
-角色库中的火山 AK/SK、区域和 Project 用于 Assets 控制面。管理员无需再单独创建或绑定 `DoubaoVideo` 通道；角色视频会自动使用现有 AIPDD Seedance 渠道，保留 AIPDD 的公开档位、计费和增强链路，再由 AIPDD 映射到官方 Ark Seedance 模型。AIPDD 内部 Ark 凭证必须与角色资产属于同一火山账号和 Project，确保 `asset://` 可见。
+角色库中的火山 AK/SK、区域和 Project 用于 Assets 控制面。管理员无需再单独创建或绑定 `DoubaoVideo` 通道；角色视频会自动使用现有 AIPDD Seedance 渠道，使用已配置的公开档位和计费设置。AIPDD 内部 Ark 凭证必须与角色资产属于同一火山账号和 Project，确保 `asset://` 可见。
 
 ## 3. 本地模型与状态
 

@@ -9,6 +9,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/pkg/seedancepublic"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/types"
 
@@ -113,6 +114,13 @@ func formatUserLogs(logs []*Log, startIdx int) {
 			delete(otherMap, "admin_info")
 			// delete(otherMap, "reject_reason")
 			delete(otherMap, "stream_status")
+		}
+		if seedancepublic.IsModel(logs[i].ModelName) {
+			logs[i].Content = seedancepublic.ErrorText(logs[i].Content)
+			logs[i].ModelName = seedancepublic.Text(logs[i].ModelName, "video")
+			if otherMap != nil {
+				otherMap, _ = seedancepublic.Clean(otherMap).(map[string]any)
+			}
 		}
 		logs[i].Other = common.MapToJsonStr(otherMap)
 		logs[i].Id = startIdx + i + 1

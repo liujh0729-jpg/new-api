@@ -10,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/aipddcatalog"
+	"github.com/QuantumNous/new-api/pkg/seedancepublic"
 	"github.com/QuantumNous/new-api/relay"
 	"github.com/QuantumNous/new-api/relay/channel/ai360"
 	"github.com/QuantumNous/new-api/relay/channel/lingyiwanwu"
@@ -269,6 +270,17 @@ func ListModels(c *gin.Context, modelType int) {
 	// does not affect /api/models/, RetrieveModel, or request routing.
 	userOpenAiModels = filterHiddenAIPDDModelsFromV1List(userOpenAiModels)
 
+	publicModels := userOpenAiModels[:0]
+	for _, item := range userOpenAiModels {
+		if seedancepublic.IsModel(item.Id) && seedancepublic.Internal(item.Id) {
+			continue
+		}
+		if seedancepublic.IsModel(item.Id) {
+			item.OwnedBy = seedancepublic.Text(item.OwnedBy, "custom")
+		}
+		publicModels = append(publicModels, item)
+	}
+	userOpenAiModels = publicModels
 	switch modelType {
 	case constant.ChannelTypeAnthropic:
 		useranthropicModels := make([]dto.AnthropicModel, len(userOpenAiModels))
@@ -280,11 +292,15 @@ func ListModels(c *gin.Context, modelType int) {
 				Type:        "model",
 			}
 		}
+		firstID, lastID := "", ""
+		if len(useranthropicModels) > 0 {
+			firstID, lastID = useranthropicModels[0].ID, useranthropicModels[len(useranthropicModels)-1].ID
+		}
 		c.JSON(200, gin.H{
 			"data":     useranthropicModels,
-			"first_id": useranthropicModels[0].ID,
+			"first_id": firstID,
 			"has_more": false,
-			"last_id":  useranthropicModels[len(useranthropicModels)-1].ID,
+			"last_id":  lastID,
 		})
 	case constant.ChannelTypeGemini:
 		userGeminiModels := make([]dto.GeminiModel, len(userOpenAiModels))

@@ -737,7 +737,7 @@ func respondTaskError(c *gin.Context, taskErr *dto.TaskError) {
 }
 
 // normalizePublicTaskError applies documented Seedance messages at the final
-// response boundary and prevents internal super-resolution model details from
+// response boundary and prevents private model details from
 // leaking even if an upstream adapter did not normalize them earlier.
 func normalizePublicTaskError(taskErr *dto.TaskError) bool {
 	if taskErr == nil {
