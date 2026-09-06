@@ -80,7 +80,7 @@
 | `CRYPTO_SECRET` | 使用 Redis 或多机部署时必须 | 固定加密密钥，避免共享缓存/跨实例数据无法解密。 |
 | `REDIS_CONN_STRING` | 多机部署、共享缓存或任务轮询推荐 | Redis 连接字符串；单机可先使用内存缓存。 |
 
-AIPDD 模型调用参数与请求示例请参考 [Apifox 公开接口文档](https://s.apifox.cn/fea0b520-e6d9-489c-ae5e-109391c771dd/9376375m0)。
+AIPDD 模型调用参数与请求示例请参考 [公开 OpenAPI 契约](docs/openapi/public.json)。
 
 
 ### 使用 Docker Compose（推荐）

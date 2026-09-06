@@ -21,7 +21,7 @@ import { useTranslation } from 'react-i18next'
 import { PublicLayout } from '@/components/layout'
 
 const PUBLIC_DOCS_URL =
-  'https://s.apifox.cn/fea0b520-e6d9-489c-ae5e-109391c771dd/9376375m0'
+  'https://github.com/liujh0729-jpg/new-api/blob/main/docs/openapi/public.json'
 
 export function Docs() {
   const { t } = useTranslation()

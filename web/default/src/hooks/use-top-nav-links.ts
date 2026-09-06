@@ -40,7 +40,7 @@ const DEFAULT_HEADER_NAV_MODULES = {
 
 const INTERNAL_DOCS_PATH = '/docs'
 const DEFAULT_DOCS_LINK =
-  'https://s.apifox.cn/fea0b520-e6d9-489c-ae5e-109391c771dd/9376375m0'
+  'https://github.com/liujh0729-jpg/new-api/blob/main/docs/openapi/public.json'
 const LEGACY_DEFAULT_DOCS_LINKS = new Set([
   'https://docs.newapi.pro',
   'https://docs.newapi.pro/',

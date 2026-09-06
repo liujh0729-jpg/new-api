@@ -130,7 +130,7 @@
 | `CRYPTO_SECRET` | 使用 Redis 或多機部署時必須 | 固定加密密鑰，避免共享快取/跨實例資料無法解密。 |
 | `REDIS_CONN_STRING` | 多機部署、共享快取或任務輪詢推薦 | Redis 連接字串；單機可先使用記憶體快取。 |
 
-AIPDD 模型調用參數與請求範例請參考 [Apifox 公開介面文件](https://s.apifox.cn/fea0b520-e6d9-489c-ae5e-109391c771dd/9376375m0)。
+AIPDD 模型調用參數與請求範例請參考 [公開 OpenAPI 契約](docs/openapi/public.json)。
 
 
 ### 使用 Docker Compose（推薦）

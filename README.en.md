@@ -125,7 +125,7 @@
 | `CRYPTO_SECRET` | Redis or multi-instance deployment | Fixed encryption secret so shared cache/cross-instance data can be decrypted. |
 | `REDIS_CONN_STRING` | Multi-instance deployment, shared cache, or task polling | Redis connection string; single-instance deployments can start with memory cache. |
 
-For AIPDD model parameters and request examples, see the [public Apifox API documentation](https://s.apifox.cn/fea0b520-e6d9-489c-ae5e-109391c771dd/9376375m0).
+For AIPDD model parameters and request examples, see the [public OpenAPI contract](docs/openapi/public.json).
 
 
 ### Using Docker Compose (Recommended)

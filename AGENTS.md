@@ -135,15 +135,9 @@ For request structs that are parsed from client JSON and then re-marshaled to up
 
 When working on tiered/dynamic billing (expression-based pricing), you MUST read `pkg/billingexpr/expr.md` first. It documents the design philosophy, expression language (variables, functions, examples), full system architecture (editor → storage → pre-consume → settlement → log display), token normalization rules (`p`/`c` auto-exclusion), quota conversion, and expression versioning. All code changes to the billing expression system must follow the patterns described in that document.
 
-### Rule 8: Public API docs live in Apifox
+### Rule 8: Public API contract
 
-The public user-facing docs are the Apifox URL in `docs/apifox/project.json` (`publicDocsUrl`). Do not treat Markdown field tables as the source of truth.
-
-When a public user API changes (especially Seedance paths, request/response fields, errors, or examples):
-
-1. Update `docs/openapi/public.json` first. `docs/openapi/relay.json` is the full relay catalog and is not the public docs source.
-2. Sync Apifox with `.\bin\sync-apifox.ps1`. If `projectId` is still `0`, stop and tell the user to fill `.apifox/settings.json` and `docs/apifox/project.json`.
-3. Do not create or maintain separate Markdown copies of the public API field tables. Keep the contract in `docs/openapi/public.json` and the Apifox-only supplemental sources under `docs/apifox/`.
-4. Official `apifox-mcp-server` is read-only. Writes go through Apifox CLI. Never commit `APIFOX_ACCESS_TOKEN`.
-
-Setup notes: `docs/apifox/README.md`.
+The public API contract for this repository is `docs/openapi/public.json`.
+Update it when public request/response fields, errors, or examples change.
+`docs/openapi/relay.json` is the complete relay catalog, not the public contract.
+Keep public documentation free of internal processing details and credentials.
