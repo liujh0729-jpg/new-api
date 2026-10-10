@@ -67,6 +67,7 @@ const (
 	aipddCatalogSyncTimeoutSecondsEnvName = "AIPDD_CATALOG_SYNC_TIMEOUT_SECONDS"
 	aipddChannelOverwriteOnBootEnvName    = "AIPDD_CHANNEL_OVERWRITE_ON_BOOT"
 	aipddEnvChannelName                   = "AIPDD"
+	aipddAPIKeyOptionKey                  = "AIPDDApiKey"
 )
 
 type ChannelInfo struct {
@@ -318,6 +319,116 @@ func getAIPDDKeyFromEnv() string {
 	return strings.TrimSpace(os.Getenv(aipddAPIKeyEnvName))
 }
 
+// ResolveAIPDDCatalogKey returns the upstream credential used by catalog and
+// pricing sync. The database is the source of truth: the managed AIPDD channel key
+// first, then the key the setup wizard saved. AIPDD_API_KEY stays only as a
+// first-boot fallback for container images, because an operator who enters the key
+// in the UI must not also have to set an environment variable for prices to sync.
+func ResolveAIPDDCatalogKey() string {
+	if key := aipddManagedChannelKey(); key != "" {
+		warnAIPDDEnvKeyConflict(key)
+		return key
+	}
+	if key := aipddWizardStoredKey(); key != "" {
+		warnAIPDDEnvKeyConflict(key)
+		return key
+	}
+	return getAIPDDKeyFromEnv()
+}
+
+// aipddEnvKeyConflictWarned keeps the notice to one line per process. Operators
+// rotating credentials through compose will set AIPDD_API_KEY and see nothing
+// happen once the key lives in the database, so the shadowing must be stated.
+var aipddEnvKeyConflictWarned sync.Once
+
+func warnAIPDDEnvKeyConflict(storedKey string) {
+	envKey := getAIPDDKeyFromEnv()
+	if envKey == "" || envKey == storedKey {
+		return
+	}
+	aipddEnvKeyConflictWarned.Do(func() {
+		common.SysLog(fmt.Sprintf(
+			"AIPDD_API_KEY (%d chars) is set but ignored because the database already stores an AIPDD API key (%d chars); rotate the key on the AIPDD channel or in the setup wizard",
+			len(envKey), len(strings.TrimSpace(storedKey))))
+	})
+}
+
+func aipddManagedChannel() *Channel {
+	if DB == nil {
+		return nil
+	}
+	var channels []Channel
+	if err := DB.Where("type = ?", constant.ChannelTypeAIPDD).Order("id asc").Find(&channels).Error; err != nil {
+		return nil
+	}
+	return selectAIPDDEnvChannel(channels)
+}
+
+func aipddManagedChannelKey() string {
+	channel := aipddManagedChannel()
+	if channel == nil {
+		return ""
+	}
+	// GetKeys is a pure split of the stored pool, so reading the credential here
+	// cannot rotate the channel's polling index the way GetNextEnabledKey would.
+	for _, key := range channel.GetKeys() {
+		if trimmed := strings.TrimSpace(key); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+// ResolveAIPDDBaseURL returns the AIPDD origin the catalog and character syncs
+// read from, in the same database-first order as the API key: the managed
+// channel's own base URL, then AIPDD_BASE_URL, then the built-in default. A
+// deployment that never edits the channel keeps resolving the built-in default,
+// so the behaviour is unchanged until an operator points the channel elsewhere.
+func ResolveAIPDDBaseURL() string {
+	if baseURL := aipddManagedChannelBaseURL(); baseURL != "" {
+		warnAIPDDEnvBaseURLConflict(baseURL)
+		return baseURL
+	}
+	return getAIPDDBaseURLFromEnv()
+}
+
+func aipddManagedChannelBaseURL() string {
+	channel := aipddManagedChannel()
+	if channel == nil || channel.BaseURL == nil {
+		return ""
+	}
+	baseURL := strings.TrimSpace(*channel.BaseURL)
+	if baseURL == "" {
+		return ""
+	}
+	return strings.TrimRight(baseURL, "/")
+}
+
+var aipddEnvBaseURLConflictWarned sync.Once
+
+func warnAIPDDEnvBaseURLConflict(storedBaseURL string) {
+	envBaseURL := strings.TrimRight(strings.TrimSpace(os.Getenv(aipddBaseURLEnvName)), "/")
+	if envBaseURL == "" || envBaseURL == storedBaseURL {
+		return
+	}
+	aipddEnvBaseURLConflictWarned.Do(func() {
+		common.SysLog(fmt.Sprintf(
+			"%s is set to %q but ignored because the AIPDD channel stores %q; change the base URL on the channel to point AIPDD sync elsewhere",
+			aipddBaseURLEnvName, envBaseURL, storedBaseURL))
+	})
+}
+
+func aipddWizardStoredKey() string {
+	if DB == nil {
+		return ""
+	}
+	raw, err := loadAIPDDOptionValueTx(DB, aipddAPIKeyOptionKey)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(raw)
+}
+
 func getAIPDDBaseURLFromEnv() string {
 	baseURL := strings.TrimSpace(os.Getenv(aipddBaseURLEnvName))
 	if baseURL == "" {
@@ -336,7 +447,7 @@ func isAIPDDChannelOverwriteFromEnv() bool {
 
 func validateAIPDDBootstrapKey(key string) error {
 	if strings.TrimSpace(key) == "" && isAIPDDKeyRequiredFromEnv() {
-		return fmt.Errorf("%s is required; set it before starting the container so AIPDD models can be bootstrapped", aipddAPIKeyEnvName)
+		return fmt.Errorf("an AIPDD API key is required; enter it in the setup wizard, save it on the AIPDD channel, or set AIPDD_API_KEY before starting the container so AIPDD models can be bootstrapped")
 	}
 	return nil
 }
@@ -397,7 +508,7 @@ func ensureAIPDDChannelMetadataDefaults(channel *Channel) (bool, error) {
 	return true, nil
 }
 
-func ensureAIPDDChannelFromEnv(channels []Channel, key string) ([]Channel, bool, error) {
+func ensureAIPDDChannelFromStoredKey(channels []Channel, key string) ([]Channel, bool, error) {
 	if strings.TrimSpace(key) == "" {
 		return channels, false, nil
 	}
@@ -418,7 +529,7 @@ func ensureAIPDDChannelFromEnv(channels []Channel, key string) ([]Channel, bool,
 		if err := channel.Insert(); err != nil {
 			return channels, false, err
 		}
-		common.SysLog("AIPDD channel created from AIPDD_API_KEY")
+		common.SysLog("AIPDD channel created from stored AIPDD API key")
 		return append(channels, *channel), true, nil
 	}
 
@@ -427,7 +538,10 @@ func ensureAIPDDChannelFromEnv(channels []Channel, key string) ([]Channel, bool,
 		updates["name"] = aipddEnvChannelName
 		channel.Name = aipddEnvChannelName
 	}
-	if channel.Key != key {
+	// The channel key is edited in the UI and is authoritative: the boot key is only
+	// a placeholder for a channel that has none, and the resolved credential can be
+	// a single line of a multi-key pool, so writing it back would destroy the pool.
+	if strings.TrimSpace(channel.Key) == "" && strings.TrimSpace(key) != "" {
 		updates["key"] = key
 		channel.Key = key
 	}
@@ -466,9 +580,9 @@ func ensureAIPDDChannelFromEnv(channels []Channel, key string) ([]Channel, bool,
 		return channels, false, err
 	}
 	if overwriteFromEnv {
-		common.SysLog("AIPDD channel overwritten from AIPDD_API_KEY")
+		common.SysLog("AIPDD channel overwritten from stored AIPDD API key")
 	} else {
-		common.SysLog("AIPDD channel synced from AIPDD_API_KEY")
+		common.SysLog("AIPDD channel synced from stored AIPDD API key")
 	}
 	return channels, true, nil
 }
@@ -480,16 +594,16 @@ func EnsureAIPDDChannelDefaults() error {
 	}
 
 	changed := false
-	envKey := getAIPDDKeyFromEnv()
-	if err := validateAIPDDBootstrapKey(envKey); err != nil {
+	storedKey := ResolveAIPDDCatalogKey()
+	if err := validateAIPDDBootstrapKey(storedKey); err != nil {
 		return err
 	}
-	updatedChannels, envChanged, err := ensureAIPDDChannelFromEnv(channels, envKey)
+	updatedChannels, keyChanged, err := ensureAIPDDChannelFromStoredKey(channels, storedKey)
 	if err != nil {
 		return err
 	}
 	channels = updatedChannels
-	changed = changed || envChanged
+	changed = changed || keyChanged
 
 	for i := range channels {
 		channel := &channels[i]
@@ -504,6 +618,22 @@ func EnsureAIPDDChannelDefaults() error {
 		InvalidatePricingCache()
 	}
 	return nil
+}
+
+// channelHasKeyPool reports whether a stored channel key holds more than one
+// credential, which is how the channel UI stores a key pool.
+func channelHasKeyPool(storedKey string) bool {
+	seen := 0
+	for _, line := range strings.Split(storedKey, "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		seen++
+		if seen > 1 {
+			return true
+		}
+	}
+	return false
 }
 
 // EnsureAIPDDChannelWithKey creates or updates the AIPDD channel using a
@@ -540,7 +670,12 @@ func EnsureAIPDDChannelWithKey(key, baseURL string) error {
 	}
 
 	updates := map[string]interface{}{}
-	if channel.Key != key {
+	// The channel key is edited in the channel UI and may hold a newline-separated
+	// key pool, while the wizard only carries one credential. Writing it over a
+	// pool would silently delete every other key, so a pool is left alone.
+	if channelHasKeyPool(channel.Key) {
+		common.SysLog("AIPDD channel already stores a key pool; the setup wizard key was not written")
+	} else if channel.Key != key {
 		updates["key"] = key
 	}
 	if channel.BaseURL == nil || strings.TrimSpace(*channel.BaseURL) == "" || *channel.BaseURL != baseURL {

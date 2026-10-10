@@ -48,7 +48,7 @@ openssl rand -hex 32
 - SESSION_SECRET 变化会导致现有登录会话失效。
 - CRYPTO_SECRET 变化可能导致已保存的加密配置、共享缓存或多节点数据无法解密。
 
-如果使用 AIPDD 内置任务模型，还需要准备 AIPDD_API_KEY。容器启动后会根据该 Key 自动创建或同步名为 AIPDD 的渠道和模型目录。
+如果使用 AIPDD 内置任务模型，还需要提供 AIPDD 上游 API Key。**密钥与上游地址都以数据库为准**：密钥依次取 AIPDD 渠道、首次设置向导里保存的值、本环境变量，上游地址依次取渠道的 `base_url`、`AIPDD_BASE_URL`、内置默认 `https://api.aipdd.work`；模型目录与默认定价同步都从这里取值，运行期改渠道配置即刻生效，不必重启。`AIPDD_API_KEY` 只作为容器首次启动的兜底预置项，运行期不再必填。
 
 ## 3. 阿里云 ACR 镜像部署（推荐）
 
@@ -269,12 +269,13 @@ AIPDD_CHANNEL_OVERWRITE_ON_BOOT=false
 | REDIS_CONN_STRING | Redis 连接字符串；多实例、共享缓存和任务轮询建议启用 |
 | SESSION_SECRET | 会话密钥；生产环境必须固定 |
 | CRYPTO_SECRET | 加密密钥；使用 Redis 或多实例时必须固定并保持一致 |
-| AIPDD_API_KEY | AIPDD 上游 API Key；使用 AIPDD 内置任务模型时必填 |
-| AIPDD_BASE_URL | AIPDD 上游地址，默认 https://api.aipdd.work |
-| AIPDD_CATALOG_SYNC_ON_BOOT | 是否在启动时同步 AIPDD 模型目录 |
-| AIPDD_CATALOG_SYNC_INTERVAL_MINUTES | AIPDD 模型目录定时同步间隔（分钟），默认 5；设为 0 禁用 |
+| AIPDD_API_KEY | AIPDD 上游 API Key 的兜底值；密钥以数据库为准（AIPDD 渠道 → 首次设置向导 → 本变量），运行期改渠道密钥无需重启 |
+| AIPDD_BASE_URL | AIPDD 上游地址的兜底值，同样以数据库为准（渠道自身的 base_url → 本变量 → 内置默认 https://api.aipdd.work） |
+| AIPDD_CATALOG_SYNC_ON_BOOT | 是否在启动时同步 AIPDD 模型目录；不设置时只要配了密钥就同步 |
+| AIPDD_CATALOG_SYNC_INTERVAL_MINUTES | AIPDD 模型目录定时同步间隔（分钟），默认 5；设为 0 禁用。定时任务始终启动，每一拍自行判断是否已有密钥，所以向导里后补的密钥不用等重启 |
 | AIPDD_CATALOG_SYNC_TIMEOUT_SECONDS | 单次 AIPDD 模型目录同步超时（秒），默认 10 |
 | AIPDD_CHANNEL_OVERWRITE_ON_BOOT | 是否允许启动同步覆盖 AIPDD 渠道配置；手动维护渠道时可设为 false |
+| AIPDD_PRICING_MARKUP | AIPDD 默认定价的零售毛利倍率，默认 1.10（批发价上加 10%）；作用于目录同步写入的文本模型分档表达式与任务模型价格，填 1 即平价销售 |
 | MATERIAL_PUBLIC_BASE_URL | 本地素材的公网访问地址；异步任务或文件上传时按部署域名配置 |
 | ERROR_LOG_ENABLED | 是否记录错误日志 |
 | BATCH_UPDATE_ENABLED | 是否启用批量更新 |
@@ -402,6 +403,20 @@ docker push crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/ap-
 
 如果需要回滚，切换到上一个 Git 提交或镜像标签，再重新启动。
 
+### 8.3 渠道故障告警
+
+本部署**不自动禁用渠道**：全局开关 `AutomaticDisableChannelEnabled` 默认关闭，且 AIPDD 渠道的 `auto_ban` 已置为 `0`。原因是只有单条 AIPDD 渠道，一旦被自动禁用，`default` 分组下没有任何备份渠道，整站会直接不可用；恢复还依赖人工或渠道测试任务。
+
+代价是坏渠道不会被系统摘掉，因此 NewAPI 增加了独立于该开关的告警：当某次上游错误已达到「本应自动禁用」的标准（默认命中 401、`channel:` 类错误、或命中禁用关键字）却没有禁用渠道时，会写一条系统日志并向 root 用户发送通知，同一渠道 10 分钟内只通知一次。
+
+告警要有出口才会送达：root 用户需要配置通知方式（邮箱需同时配置 SMTP，或在用户设置里填 Webhook / Bark / Gotify）。未配置时只会落到服务器日志，形如：
+
+~~~text
+[SYS] 通道「AIPDD」（#1）错误已达禁用标准，但未自动禁用，原因：status_code=401, invalid api key
+~~~
+
+如果日后新增第二条渠道做互备，可以重新打开自动禁用；届时建议同时确认 `AutomaticDisableStatusCodeRanges` 是否要包含 5xx——默认只含 401，上游 503（号池耗尽）不会触发禁用。
+
 ## 9. 备份和恢复
 
 ### 9.1 PostgreSQL
@@ -445,12 +460,19 @@ ls -la .env docker-compose.yml
 docker compose config
 ~~~
 
-### 10.2 日志提示 AIPDD_API_KEY is required
+### 10.2 日志提示 an AIPDD API key is required
 
-当前镜像启用了 AIPDD 引导检查。处理方式：
+只有显式要求密钥的部署（`AIPDD_BOOTSTRAP_REQUIRED=true`）才会在缺少密钥时报错，实际日志文案是：
 
-1. 在 .env 中填写有效的 AIPDD_API_KEY，然后执行 docker compose up -d。
-2. 如果不使用 AIPDD，设置 AIPDD_BOOTSTRAP_REQUIRED=false 和 AIPDD_CATALOG_SYNC_ON_BOOT=false。
+~~~text
+an AIPDD API key is required; enter it in the setup wizard, save it on the AIPDD channel, or set AIPDD_API_KEY before starting the container so AIPDD models can be bootstrapped
+~~~
+
+处理方式（按密钥的解析顺序，数据库优先）：
+
+1. 已完成首次设置的话，直接在名为 AIPDD 的渠道里保存密钥，或在首次设置向导里填写——保存即生效，不必重启容器。
+2. 首次启动前就想预置，则在 .env 中填写 AIPDD_API_KEY，再执行 docker compose up -d。
+3. 如果不使用 AIPDD，设置 AIPDD_BOOTSTRAP_REQUIRED=false 和 AIPDD_CATALOG_SYNC_ON_BOOT=false。
 
 ### 10.3 端口 3000 已被占用
 
@@ -492,7 +514,7 @@ docker compose config --volumes
 - [ ] SESSION_SECRET 和 CRYPTO_SECRET 已设置为固定随机值。
 - [ ] PostgreSQL / SQLite 数据已挂载或使用持久化卷。
 - [ ] Redis 和数据库密码已修改，且没有暴露到公网。
-- [ ] AIPDD_API_KEY 已配置，或已明确关闭 AIPDD 引导。
+- [ ] AIPDD 密钥已配置（AIPDD 渠道、首次设置向导或 AIPDD_API_KEY 任一即可），或已明确关闭 AIPDD 引导。
 - [ ] 已通过 /api/status 检查应用健康状态。
 - [ ] 已完成首次管理员初始化。
 - [ ] 生产环境已配置 HTTPS 和反向代理。

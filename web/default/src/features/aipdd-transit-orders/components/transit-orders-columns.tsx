@@ -50,10 +50,7 @@ export function useTransitOrdersColumns(): ColumnDef<AIPDDTransitOrder>[] {
       accessorKey: 'platform_order_id',
       meta: { label: t('Platform Order ID'), mobileTitle: true },
       header: ({ column }) => (
-        <DataTableColumnHeader
-          column={column}
-          title={t('Platform Order ID')}
-        />
+        <DataTableColumnHeader column={column} title={t('Platform Order ID')} />
       ),
       cell: ({ row }) => (
         <div className='max-w-[240px] font-mono text-xs'>
@@ -104,10 +101,7 @@ export function useTransitOrdersColumns(): ColumnDef<AIPDDTransitOrder>[] {
       id: 'channel',
       meta: { label: t('AIPDD Channel'), mobileHidden: true },
       header: ({ column }) => (
-        <DataTableColumnHeader
-          column={column}
-          title={t('AIPDD Channel')}
-        />
+        <DataTableColumnHeader column={column} title={t('AIPDD Channel')} />
       ),
       cell: ({ row }) => {
         const name = row.original.channel_name?.trim()
@@ -174,31 +168,42 @@ export function useTransitOrdersColumns(): ColumnDef<AIPDDTransitOrder>[] {
       ),
     },
     {
-      id: 'source_charge',
-      meta: { label: t('AIPDD Source Cost') },
+      id: 'cost_estimate',
+      meta: { label: t('Cost Estimate') },
       header: ({ column }) => (
-        <DataTableColumnHeader
-          column={column}
-          title={t('AIPDD Source Cost')}
-        />
+        <DataTableColumnHeader column={column} title={t('Cost Estimate')} />
       ),
       cell: ({ row }) => {
-        if (
-          row.original.source_charge_awcoin == null ||
-          row.original.source_charge_rmb == null
-        ) {
+        const settledAWCoin = row.original.source_charge_awcoin
+        const settledRMB = row.original.source_charge_rmb
+        if (settledAWCoin != null && settledRMB != null) {
           return (
-            <div className='text-muted-foreground text-sm'>
-              {t('Pending Settlement')}
+            <div className='text-sm'>
+              <div>{formatAWCoin(settledAWCoin)}</div>
+              <div className='text-muted-foreground text-xs'>
+                {formatRMB(settledRMB)}
+              </div>
+              <Badge variant='outline' className='mt-1 text-xs'>
+                {t('Actual')}
+              </Badge>
+            </div>
+          )
+        }
+        const estimatedAWCoin = row.original.estimated_source_awcoin
+        const estimatedRMB = row.original.estimated_source_rmb
+        if (estimatedAWCoin != null && estimatedRMB != null) {
+          return (
+            <div className='text-sm'>
+              <div>{formatAWCoin(estimatedAWCoin)}</div>
+              <div className='text-muted-foreground text-xs'>
+                {formatRMB(estimatedRMB)}
+              </div>
             </div>
           )
         }
         return (
-          <div className='text-sm'>
-            <div>{formatAWCoin(row.original.source_charge_awcoin)}</div>
-            <div className='text-muted-foreground text-xs'>
-              {formatRMB(row.original.source_charge_rmb)}
-            </div>
+          <div className='text-muted-foreground text-sm'>
+            {t('No cost estimate')}
           </div>
         )
       },
@@ -207,10 +212,7 @@ export function useTransitOrdersColumns(): ColumnDef<AIPDDTransitOrder>[] {
       accessorKey: 'created_at',
       meta: { label: t('Created At'), mobileHidden: true },
       header: ({ column }) => (
-        <DataTableColumnHeader
-          column={column}
-          title={t('Created At')}
-        />
+        <DataTableColumnHeader column={column} title={t('Created At')} />
       ),
       cell: ({ row }) => (
         <div className='text-sm whitespace-nowrap'>
@@ -222,10 +224,7 @@ export function useTransitOrdersColumns(): ColumnDef<AIPDDTransitOrder>[] {
       accessorKey: 'settled_at',
       meta: { label: t('Settled At'), mobileHidden: true },
       header: ({ column }) => (
-        <DataTableColumnHeader
-          column={column}
-          title={t('Settled At')}
-        />
+        <DataTableColumnHeader column={column} title={t('Settled At')} />
       ),
       cell: ({ row }) => (
         <div className='text-sm whitespace-nowrap'>

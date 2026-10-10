@@ -1,6 +1,7 @@
 {
   "[{\"ChatGPT\":\"https://chat.openai.com\"},{\"Lobe Chat\":\"https://chat-preview.lobehub.com/?settings={...}\"}]": "[{\"ChatGPT\":\"https://chat.openai.com\"},{\"Lobe Chat\":\"https://chat-preview.lobehub.com/?settings={...}\"}]",
   "[{\"name\":\"支付宝\",\"type\":\"alipay\",\"color\":\"#1677FF\"}]": "[{\"name\":\"Alipay\",\"type\":\"alipay\",\"color\":\"#1677FF\"}]",
+  "{{count}} commit mới trên GitHub": "{{count}} commit mới trên GitHub",
   "{{used}} of {{limit}} materials": "{{used}} of {{limit}} materials",
   "/status/": "/status/",
   "/your/endpoint": "/your/endpoint",

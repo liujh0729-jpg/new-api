@@ -33,9 +33,14 @@ type AIPDDTransitOrder struct {
 	CustomerChargeRMBMic int64  `json:"customer_charge_rmb_mic" gorm:"bigint;default:0"`
 	SourceChargeAWCoin   *int64 `json:"source_charge_awcoin" gorm:"column:source_charge_awcoin;bigint"`
 	SourceChargeRMBMic   *int64 `json:"source_charge_rmb_mic" gorm:"bigint"`
-	CreatedAt            int64  `json:"created_at" gorm:"bigint;index"`
-	SettledAt            *int64 `json:"settled_at" gorm:"bigint;index"`
-	UpdatedAt            int64  `json:"updated_at" gorm:"bigint"`
+	// EstimatedSource* hold the reverse-derived cost from the AIPDD published
+	// price list. They stay NULL when no price basis exists and are never
+	// overwritten by a real settlement, which lives in SourceCharge*.
+	EstimatedSourceAWCoin *int64 `json:"estimated_source_awcoin" gorm:"column:estimated_source_awcoin;bigint"`
+	EstimatedSourceRMBMic *int64 `json:"estimated_source_rmb_mic" gorm:"column:estimated_source_rmb_mic;bigint"`
+	CreatedAt             int64  `json:"created_at" gorm:"bigint;index"`
+	SettledAt             *int64 `json:"settled_at" gorm:"bigint;index"`
+	UpdatedAt             int64  `json:"updated_at" gorm:"bigint"`
 }
 
 func (AIPDDTransitOrder) TableName() string { return "aipdd_transit_order" }
@@ -68,20 +73,29 @@ func EnsureAIPDDTransitOrder(
 			"user_id": userID, "token_id": tokenID, "channel_id": channelID,
 			"channel_key_index": channelKeyIndex, "model": modelName,
 			"status": AIPDDTransitPending, "source_charge_awcoin": nil,
-			"source_charge_rmb_mic": nil, "settled_at": nil, "updated_at": now,
+			"source_charge_rmb_mic": nil, "estimated_source_awcoin": nil,
+			"estimated_source_rmb_mic": nil, "settled_at": nil, "updated_at": now,
 		}).Error
 }
 
+// RecordAIPDDTransitLocalSettlement writes the NewAPI-side charge of one attempt.
+// The estimated source cost is optional: a nil pair leaves whatever estimate the
+// row already holds untouched.
 func RecordAIPDDTransitLocalSettlement(
 	platformOrderID string,
 	quota, rmbMic int64,
 	status string,
+	estimatedSourceAWCoin, estimatedSourceRMBMic *int64,
 ) error {
 	now := time.Now().Unix()
 	updates := map[string]any{
 		"customer_charge_quota":   quota,
 		"customer_charge_rmb_mic": rmbMic,
 		"updated_at":              now,
+	}
+	if estimatedSourceAWCoin != nil && estimatedSourceRMBMic != nil {
+		updates["estimated_source_awcoin"] = *estimatedSourceAWCoin
+		updates["estimated_source_rmb_mic"] = *estimatedSourceRMBMic
 	}
 	switch status {
 	case "NOT_CHARGED":
@@ -137,23 +151,25 @@ type AIPDDTransitOrderQuery struct {
 // AIPDDTransitOrderItem is the admin-facing list row. Missing user/token/channel
 // associations still return the order IDs; source charges stay null until settled.
 type AIPDDTransitOrderItem struct {
-	PlatformOrderID     string   `json:"platform_order_id"`
-	LatestAttemptID     string   `json:"latest_attempt_id"`
-	UserID              int      `json:"user_id"`
-	Username            string   `json:"username"`
-	TokenID             int      `json:"token_id"`
-	TokenName           string   `json:"token_name"`
-	ChannelID           int      `json:"channel_id"`
-	ChannelName         string   `json:"channel_name"`
-	ChannelKeyIndex     int      `json:"channel_key_index"`
-	Model               string   `json:"model"`
-	Status              string   `json:"status"`
-	CustomerChargeQuota int64    `json:"customer_charge_quota"`
-	CustomerChargeRMB   float64  `json:"customer_charge_rmb"`
-	SourceChargeAWCoin  *int64   `json:"source_charge_awcoin"`
-	SourceChargeRMB     *float64 `json:"source_charge_rmb"`
-	CreatedAt           int64    `json:"created_at"`
-	SettledAt           *int64   `json:"settled_at"`
+	PlatformOrderID       string   `json:"platform_order_id"`
+	LatestAttemptID       string   `json:"latest_attempt_id"`
+	UserID                int      `json:"user_id"`
+	Username              string   `json:"username"`
+	TokenID               int      `json:"token_id"`
+	TokenName             string   `json:"token_name"`
+	ChannelID             int      `json:"channel_id"`
+	ChannelName           string   `json:"channel_name"`
+	ChannelKeyIndex       int      `json:"channel_key_index"`
+	Model                 string   `json:"model"`
+	Status                string   `json:"status"`
+	CustomerChargeQuota   int64    `json:"customer_charge_quota"`
+	CustomerChargeRMB     float64  `json:"customer_charge_rmb"`
+	SourceChargeAWCoin    *int64   `json:"source_charge_awcoin"`
+	SourceChargeRMB       *float64 `json:"source_charge_rmb"`
+	EstimatedSourceAWCoin *int64   `json:"estimated_source_awcoin"`
+	EstimatedSourceRMB    *float64 `json:"estimated_source_rmb"`
+	CreatedAt             int64    `json:"created_at"`
+	SettledAt             *int64   `json:"settled_at"`
 }
 
 func applyAIPDDTransitOrderFilters(tx *gorm.DB, query AIPDDTransitOrderQuery) *gorm.DB {
@@ -289,6 +305,14 @@ func GetAIPDDTransitOrders(query AIPDDTransitOrderQuery) ([]*AIPDDTransitOrderIt
 		if order.SourceChargeRMBMic != nil {
 			rmb := float64(*order.SourceChargeRMBMic) / 1_000_000
 			item.SourceChargeRMB = &rmb
+		}
+		if order.EstimatedSourceAWCoin != nil {
+			aw := *order.EstimatedSourceAWCoin
+			item.EstimatedSourceAWCoin = &aw
+		}
+		if order.EstimatedSourceRMBMic != nil {
+			rmb := float64(*order.EstimatedSourceRMBMic) / 1_000_000
+			item.EstimatedSourceRMB = &rmb
 		}
 		items = append(items, item)
 	}

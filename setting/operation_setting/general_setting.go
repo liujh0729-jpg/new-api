@@ -27,7 +27,7 @@ var generalSetting = GeneralSetting{
 	DocsLink:                   "https://github.com/liujh0729-jpg/new-api/blob/main/docs/openapi/public.json",
 	PingIntervalEnabled:        false,
 	PingIntervalSeconds:        60,
-	QuotaDisplayType:           QuotaDisplayTypeUSD,
+	QuotaDisplayType:           QuotaDisplayTypeCNY,
 	CustomCurrencySymbol:       "¤",
 	CustomCurrencyExchangeRate: 1.0,
 }

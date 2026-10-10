@@ -79,7 +79,6 @@ export const SIDEBAR_MODULES_DEFAULT: SidebarModulesAdminConfig = {
     channel: true,
     models: true,
     redemption: true,
-    aipdd_transit_orders: true,
     user: true,
     setting: true,
     subscription: true,

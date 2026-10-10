@@ -18,7 +18,7 @@ const (
 // StartAIPDDCatalogSyncTask periodically reconciles the managed NewAPI channel
 // with AIPDD's revisioned atomic catalog. A non-positive interval disables it.
 func StartAIPDDCatalogSyncTask() {
-	if !common.IsMasterNode || !model.IsAIPDDCatalogEnvironmentConfigured() {
+	if !common.IsMasterNode {
 		return
 	}
 	minutes := common.GetEnvOrDefault(aipddCatalogSyncIntervalMinutesEnv, defaultAIPDDCatalogSyncMinutes)
@@ -29,6 +29,12 @@ func StartAIPDDCatalogSyncTask() {
 		ticker := time.NewTicker(time.Duration(minutes) * time.Minute)
 		defer ticker.Stop()
 		for range ticker.C {
+			// Checked every tick rather than once here: the key is usually saved
+			// after boot through the setup wizard or the channel editor, and a
+			// start-time check would leave those installs never syncing.
+			if !model.IsAIPDDCatalogKeyConfigured() {
+				continue
+			}
 			runAIPDDCatalogSync()
 		}
 	}()
@@ -41,7 +47,7 @@ func runAIPDDCatalogSync() {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSeconds)*time.Second)
 	defer cancel()
-	result, err := model.SyncAIPDDCatalogFromEnvironment(ctx)
+	result, err := model.SyncAIPDDCatalogFromStoredKey(ctx)
 	if err != nil {
 		common.SysError("periodic AIPDD catalog sync failed: " + err.Error())
 		return

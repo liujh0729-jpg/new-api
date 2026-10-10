@@ -91,7 +91,7 @@ func TestHasModelBillingConfigRejectsSeedanceAdapterWithoutCatalogPrice(t *testi
 	require.False(t, HasModelBillingConfig(modelName), "legacy ModelPrice must not enable an unpriced Seedance task model")
 }
 
-func TestAIPDDDoesNotAcceptUnsetRatioAsLocalPricing(t *testing.T) {
+func TestAIPDDUsesOneXDefaultRatioWithoutLocalPricing(t *testing.T) {
 	modelPriceSnapshot := ratio_setting.ModelPrice2JSONString()
 	modelRatioSnapshot := ratio_setting.ModelRatio2JSONString()
 	t.Cleanup(func() {
@@ -112,8 +112,11 @@ func TestAIPDDDoesNotAcceptUnsetRatioAsLocalPricing(t *testing.T) {
 		ChannelMeta:     &relaycommon.ChannelMeta{ChannelType: constant.ChannelTypeAIPDD},
 	}
 
-	_, err := ModelPriceHelperPerCall(ctx, info)
-	require.Error(t, err)
+	priceData, err := ModelPriceHelperPerCall(ctx, info)
+	require.NoError(t, err)
+	require.False(t, priceData.UsePrice)
+	require.Equal(t, float64(1), priceData.ModelRatio)
+	require.False(t, priceData.FreeModel)
 }
 
 func TestExplicitAIPDDFreeModelIsListableAndFreeWithoutLocalPricing(t *testing.T) {

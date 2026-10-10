@@ -643,6 +643,40 @@ func (catalog AtomicCatalog) ModelMetadata() []constant.AIPDDModelMeta {
 	return metas
 }
 
+// TokenPrices publishes the upstream per-million token list prices the transit
+// order cost estimate bills against. Models without a token price (media and
+// task capabilities) are left out; a missing cache tier falls back to the prompt
+// tier so cached input is never priced at zero.
+func (catalog AtomicCatalog) TokenPrices() []constant.AIPDDModelTokenPrice {
+	prices := make([]constant.AIPDDModelTokenPrice, 0, len(catalog.Models))
+	for _, model := range catalog.Models {
+		pricing := model.Pricing
+		if !pricing.Enabled || !strings.EqualFold(strings.TrimSpace(pricing.PricingModel), "per_token") ||
+			!strings.EqualFold(strings.TrimSpace(pricing.Currency), "awcoin") {
+			continue
+		}
+		if !finitePositivePrice(pricing.PromptPerMillion) && !finitePositivePrice(pricing.CompletionPerMillion) {
+			continue
+		}
+		cacheRead := pricing.PromptPerMillion
+		if pricing.CacheReadPerMillion != nil && *pricing.CacheReadPerMillion >= 0 {
+			cacheRead = *pricing.CacheReadPerMillion
+		}
+		prices = append(prices, constant.AIPDDModelTokenPrice{
+			ModelName:            strings.TrimSpace(model.ID),
+			PromptPerMillion:     pricing.PromptPerMillion,
+			CompletionPerMillion: pricing.CompletionPerMillion,
+			CacheReadPerMillion:  cacheRead,
+			CacheWritePerMillion: pricing.PromptPerMillion,
+		})
+	}
+	return prices
+}
+
+func finitePositivePrice(value float64) bool {
+	return value > 0 && !math.IsNaN(value) && !math.IsInf(value, 0)
+}
+
 // ModelEndpointTypes returns the client endpoints for every catalog model,
 // covering both task capabilities and protocol-based models.
 func (catalog AtomicCatalog) ModelEndpointTypes() map[string][]constant.EndpointType {

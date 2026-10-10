@@ -35,7 +35,6 @@ import {
   Settings,
   Image as ImageIcon,
   UserRoundCog,
-  ScrollText,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { WORKSPACE_IDS } from '@/components/layout/lib/workspace-registry'
@@ -146,11 +145,6 @@ export function useSidebarData(): SidebarData {
             title: t('Redemption Codes'),
             url: '/redemption-codes',
             icon: Ticket,
-          },
-          {
-            title: t('AIPDD Order Records'),
-            url: '/aipdd-transit-orders',
-            icon: ScrollText,
           },
           {
             title: t('Subscription Management'),

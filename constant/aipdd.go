@@ -144,6 +144,24 @@ type AIPDDModelMeta struct {
 
 var aipddModelMetaByID = map[string]AIPDDModelMeta{}
 
+// AIPDDModelTokenPrice is the upstream list price of a token-bearing model, in
+// AWCoin per million tokens. It is the cost basis for the transit order cost
+// estimate; NewAPI's own retail ratios are deliberately not used there.
+type AIPDDModelTokenPrice struct {
+	ModelName            string
+	PromptPerMillion     float64
+	CompletionPerMillion float64
+	CacheReadPerMillion  float64
+	CacheWritePerMillion float64
+}
+
+var aipddTokenPriceByModel = map[string]AIPDDModelTokenPrice{}
+
+// aipddRMBPerAWCoin is the exchange rate the upstream publishes beside its
+// price list. Cost estimates must use it rather than NewAPI's own USD rate,
+// because the two are not derived from each other.
+var aipddRMBPerAWCoin float64
+
 var aipddCapabilityByAlias = buildAIPDDCapabilityByAlias(AIPDDCapabilities)
 
 var aipddCapabilitiesLock sync.RWMutex
@@ -344,6 +362,54 @@ func GetAIPDDModelMeta(modelName string) (AIPDDModelMeta, bool) {
 	meta, ok := aipddModelMetaByID[strings.ToLower(strings.TrimSpace(modelName))]
 	meta.Protocols = append([]string(nil), meta.Protocols...)
 	return meta, ok
+}
+
+// SetAIPDDTokenPrices publishes the upstream token price table and the AWCoin
+// exchange rate of the catalog they came from. An empty table clears the cost
+// estimate basis instead of keeping prices of a superseded revision.
+func SetAIPDDTokenPrices(prices []AIPDDModelTokenPrice, rmbPerAWCoin float64) {
+	index := make(map[string]AIPDDModelTokenPrice, len(prices))
+	for _, price := range prices {
+		price.ModelName = strings.TrimSpace(price.ModelName)
+		if price.ModelName == "" || IsAIPDDExcludedModel(price.ModelName) {
+			continue
+		}
+		key := strings.ToLower(price.ModelName)
+		if _, exists := index[key]; exists {
+			continue
+		}
+		index[key] = price
+	}
+	aipddCapabilitiesLock.Lock()
+	defer aipddCapabilitiesLock.Unlock()
+	aipddTokenPriceByModel = index
+	if rmbPerAWCoin > 0 {
+		aipddRMBPerAWCoin = rmbPerAWCoin
+	}
+}
+
+func GetAIPDDTokenPrice(modelName string) (AIPDDModelTokenPrice, bool) {
+	aipddCapabilitiesLock.RLock()
+	defer aipddCapabilitiesLock.RUnlock()
+	price, ok := aipddTokenPriceByModel[strings.ToLower(strings.TrimSpace(modelName))]
+	return price, ok
+}
+
+// GetAIPDDRMBPerAWCoin returns the published AWCoin->RMB rate, or zero when no
+// catalog has been applied yet.
+func GetAIPDDRMBPerAWCoin() float64 {
+	aipddCapabilitiesLock.RLock()
+	defer aipddCapabilitiesLock.RUnlock()
+	return aipddRMBPerAWCoin
+}
+
+// ResetAIPDDTokenPrices clears the cost estimate basis, used when AIPDD is
+// disabled or a catalog without token prices takes over.
+func ResetAIPDDTokenPrices() {
+	aipddCapabilitiesLock.Lock()
+	defer aipddCapabilitiesLock.Unlock()
+	aipddTokenPriceByModel = map[string]AIPDDModelTokenPrice{}
+	aipddRMBPerAWCoin = 0
 }
 
 func GetAIPDDModelList() []string {

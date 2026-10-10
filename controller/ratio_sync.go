@@ -143,6 +143,15 @@ func stripTaskPricingSyncModels(data map[string]any) {
 }
 
 func aipddCatalogRatioData(catalog aipddcatalog.AtomicCatalog) map[string]any {
+	pinned, err := model.AIPDDPinnedModelSet()
+	if err != nil {
+		common.SysLog("failed to read AIPDD pinned prices, offering all catalog candidates: " + err.Error())
+		pinned = map[string]bool{}
+	}
+	return aipddCatalogRatioDataPinned(catalog, pinned)
+}
+
+func aipddCatalogRatioDataPinned(catalog aipddcatalog.AtomicCatalog, pinned map[string]bool) map[string]any {
 	prices := make(map[string]float64)
 	modes := make(map[string]string)
 	exprs := make(map[string]string)
@@ -154,38 +163,29 @@ func aipddCatalogRatioData(catalog aipddcatalog.AtomicCatalog) map[string]any {
 			strings.EqualFold(strings.TrimSpace(capability.Pricing.PricingModel), "per_second") {
 			continue
 		}
+		if pinned[strings.TrimSpace(capability.ID)] {
+			continue
+		}
 		if priceUSD := aipddCatalogTaskPriceUSD(catalog, capability); priceUSD > 0 {
 			prices[capability.ID] = priceUSD
 		}
 	}
 	for _, modelItem := range catalog.Models {
-		if modelItem.Pricing.Free {
+		// Share the provisioning builder so the candidates offered here are the
+		// prices the catalog sync already wrote. A second conversion path would
+		// let an administrator apply a parity price and erase the margin.
+		if !model.IsAIPDDRetailTokenModel(modelItem) {
 			continue
 		}
-		promptUSD := modelItem.Pricing.PromptPerMillion * catalog.AWCoinRate.USDPerAWCoin
-		completionUSD := modelItem.Pricing.CompletionPerMillion * catalog.AWCoinRate.USDPerAWCoin
+		if pinned[strings.TrimSpace(modelItem.ID)] {
+			continue
+		}
+		expr, err := model.AIPDDLLMRetailExpr(catalog, modelItem)
+		if err != nil {
+			continue
+		}
 		modes[modelItem.ID] = billing_setting.BillingModeTieredExpr
-		promptPrice := strconv.FormatFloat(promptUSD, 'f', -1, 64)
-		completionPrice := strconv.FormatFloat(completionUSD, 'f', -1, 64)
-		// Schema v1 catalogs did not expose separate cache prices. Omitting
-		// cache variables preserves their historical semantics: cached input
-		// remains in p and is charged at the ordinary prompt price.
-		if modelItem.Pricing.CacheReadPerMillion == nil || modelItem.Pricing.CacheWritePerMillion == nil {
-			exprs[modelItem.ID] = fmt.Sprintf(
-				"tier(\"aipdd\", p * %s + c * %s)",
-				promptPrice,
-				completionPrice)
-			continue
-		}
-		cacheReadUSD := *modelItem.Pricing.CacheReadPerMillion * catalog.AWCoinRate.USDPerAWCoin
-		cacheWriteUSD := *modelItem.Pricing.CacheWritePerMillion * catalog.AWCoinRate.USDPerAWCoin
-		exprs[modelItem.ID] = fmt.Sprintf(
-			"tier(\"aipdd\", p * %s + c * %s + cr * %s + cc * %s + cc1h * %s)",
-			promptPrice,
-			completionPrice,
-			strconv.FormatFloat(cacheReadUSD, 'f', -1, 64),
-			strconv.FormatFloat(cacheWriteUSD, 'f', -1, 64),
-			strconv.FormatFloat(cacheWriteUSD, 'f', -1, 64))
+		exprs[modelItem.ID] = expr
 	}
 	data := make(map[string]any)
 	if len(prices) > 0 {
@@ -208,11 +208,12 @@ func aipddCatalogTaskPriceUSD(catalog aipddcatalog.AtomicCatalog, capability aip
 	displayPrice := strings.EqualFold(basis, "display") ||
 		(basis == "" && strings.EqualFold(strings.TrimSpace(capability.AdapterCode), "token_market_media") &&
 			strings.EqualFold(strings.TrimSpace(pricing.PricingModel), "per_call"))
+	markup := model.AIPDDRetailMarkup()
 	if displayPrice &&
 		catalog.AWCoinRate.RMBPerAWCoin > 0 && operation_setting.USDExchangeRate > 0 {
-		return awcoin * catalog.AWCoinRate.RMBPerAWCoin / operation_setting.USDExchangeRate
+		return awcoin * catalog.AWCoinRate.RMBPerAWCoin * markup / operation_setting.USDExchangeRate
 	}
-	return awcoin * catalog.AWCoinRate.USDPerAWCoin
+	return awcoin * catalog.AWCoinRate.USDPerAWCoin * markup
 }
 
 func asFloat64(value any) (float64, bool) {

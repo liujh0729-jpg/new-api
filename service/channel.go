@@ -3,6 +3,8 @@ package service
 import (
 	"fmt"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
@@ -46,6 +48,13 @@ func ShouldDisableChannel(err *types.NewAPIError) bool {
 	if !common.AutomaticDisableChannelEnabled {
 		return false
 	}
+	return WouldDisableChannel(err)
+}
+
+// WouldDisableChannel reports whether an error is severe enough that a channel would be
+// auto-disabled if disabling were on. The global switch is deliberately not consulted, so
+// deployments that keep auto-disabling off still learn that a channel is broken.
+func WouldDisableChannel(err *types.NewAPIError) bool {
 	if err == nil {
 		return false
 	}
@@ -62,6 +71,37 @@ func ShouldDisableChannel(err *types.NewAPIError) bool {
 	lowerMessage := strings.ToLower(err.Error())
 	search, _ := AcSearch(lowerMessage, operation_setting.AutomaticDisableKeywords, true)
 	return search
+}
+
+var channelFailureAlerts sync.Map
+
+const channelFailureAlertWindow = 10 * time.Minute
+
+// shouldAlertChannel keeps one broken channel from turning the alert into per-request
+// spam; the underlying notification limiter rejects rather than defers.
+func shouldAlertChannel(channelId int) bool {
+	last, ok := channelFailureAlerts.Load(channelId)
+	if ok && time.Since(last.(time.Time)) < channelFailureAlertWindow {
+		return false
+	}
+	channelFailureAlerts.Store(channelId, time.Now())
+	return true
+}
+
+// AlertChannelPersistentFailure tells the root user that a channel keeps failing badly
+// enough to be disabled while nothing is disabling it. Without this, turning auto-disable
+// off removes the only alert path, and a broken upstream fails silently.
+func AlertChannelPersistentFailure(channelError types.ChannelError, reason string) {
+	if !shouldAlertChannel(channelError.ChannelId) {
+		return
+	}
+	common.SysLog(fmt.Sprintf("通道「%s」（#%d）错误已达禁用标准，但未自动禁用，原因：%s",
+		channelError.ChannelName, channelError.ChannelId, reason))
+
+	subject := fmt.Sprintf("通道「%s」（#%d）持续报错（未自动禁用）", channelError.ChannelName, channelError.ChannelId)
+	content := fmt.Sprintf("通道「%s」（#%d）的错误已达到自动禁用标准，但本部署未自动禁用它，请人工确认上游是否可用。原因：%s",
+		channelError.ChannelName, channelError.ChannelId, reason)
+	NotifyRootUser(formatNotifyType(channelError.ChannelId, common.ChannelStatusAutoDisabled), subject, content)
 }
 
 func ShouldEnableChannel(newAPIError *types.NewAPIError, status int) bool {

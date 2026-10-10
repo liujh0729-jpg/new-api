@@ -124,13 +124,15 @@
 
 | Paramètre | Obligatoire lorsque | Description |
 |------|---------------------|-------------|
-| `AIPDD_API_KEY` | Utilisation des modèles de tâches AIPDD intégrés | Clé API AIPDD amont. Inscrivez-vous sur [app.aipdd.work](https://app.aipdd.work) pour l'obtenir. Si elle est définie, le système crée ou synchronise automatiquement le canal `AIPDD` avec l'URL par défaut `https://api.aipdd.work`, et envoie la clé comme `X-API-Key`. |
+| `AIPDD_API_KEY` | Facultatif, repli au démarrage | Clé API AIPDD amont, à obtenir sur [app.aipdd.work](https://app.aipdd.work) ; elle est envoyée comme `X-API-Key`. **La base de données primer** : la clé du canal `AIPDD` d'abord, puis celle enregistrée dans l'assistant d'installation, ensuite cette variable — la modifier dans l'éditeur de canal prend effet sans redémarrage. Lorsqu'une clé existe, le canal `AIPDD` est créé ou synchronisé automatiquement. |
+| `AIPDD_BASE_URL` | Facultatif | Origine AIPDD, résolue de la même façon : d'abord l'URL propre au canal, puis cette variable, enfin l'URL intégrée `https://api.aipdd.work`. |
+| `AIPDD_PRICING_MARKUP` | Facultatif | Marge appliquée aux prix par défaut issus de la synchronisation du catalogue, `1.10` par défaut (10 % au-dessus du prix de gros AIPDD) ; `1` revend à prix coûtant. |
 | `SQL_DSN` | Utilisation de MySQL/PostgreSQL | Chaine de connexion à la base de données ; laissez vide pour SQLite par défaut, mais montez `/data` pour persister les données. |
 | `SESSION_SECRET` | Production ou déploiement multi-instance | Secret de session fixe pour stabiliser l'état de connexion après redémarrage ou sur plusieurs instances. |
 | `CRYPTO_SECRET` | Redis ou déploiement multi-instance | Secret de chiffrement fixe pour déchiffrer les données partagées entre cache et instances. |
 | `REDIS_CONN_STRING` | Multi-instance, cache partagé ou interrogation des tâches | Chaine de connexion Redis ; une instance unique peut commencer avec le cache mémoire. |
 
-Pour les paramètres et exemples de requête des modèles AIPDD, consultez la [spécification OpenAPI publique](docs/openapi/public.json).
+Pour les paramètres et exemples de requête des modèles AIPDD, consultez la [spécification OpenAPI publique](docs/openapi/public.json). Les prix par défaut sont écrits par la synchronisation du catalogue selon « prix de gros × marge » ; pour figer le prix d'un modèle, cliquez sur l'action d'épinglage dans « Paramètres système → Tarification » (stocké dans `AIPDDPinnedModels`), les synchronisations suivantes le laisseront intact.
 
 
 ### Utilisation de Docker Compose (recommandé)

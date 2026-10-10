@@ -88,6 +88,10 @@ func TestPreviousAIPDDCatalogModelsUsesManagedChannelForLegacySnapshot(t *testin
 
 func TestApplyAIPDDCatalogReplacesOnlyManagedAIPDDData(t *testing.T) {
 	truncateTables(t)
+	t.Setenv("AIPDD_PRICING_MARKUP", "1.1")
+	previousExchangeRate := operation_setting.USDExchangeRate
+	operation_setting.USDExchangeRate = 8
+	t.Cleanup(func() { operation_setting.USDExchangeRate = previousExchangeRate })
 	t.Cleanup(func() {
 		constant.ResetAIPDDCapabilities()
 		constant.ResetAIPDDOpenAIModels()
@@ -107,7 +111,8 @@ func TestApplyAIPDDCatalogReplacesOnlyManagedAIPDDData(t *testing.T) {
 	first := aipddTestCatalog("revision-1", "task-old", "llm-old")
 	firstResult, err := applyAIPDDCatalog(first, "https://aipdd.example", "sk-test")
 	require.NoError(t, err)
-	require.Zero(t, firstResult.UpdatedPrices)
+	// The per-token model now gets a default retail price from the catalog.
+	require.Equal(t, 1, firstResult.UpdatedPrices)
 	var firstManaged Channel
 	require.NoError(t, DB.Where("type = ? AND name = ?", constant.ChannelTypeAIPDD, "AIPDD").First(&firstManaged).Error)
 	require.Equal(t, "default", firstManaged.Group)
@@ -144,7 +149,7 @@ func TestApplyAIPDDCatalogReplacesOnlyManagedAIPDDData(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 2, result.AddedModels)
 	require.Equal(t, 2, result.RemovedModels)
-	require.Zero(t, result.UpdatedPrices)
+	require.Equal(t, 1, result.UpdatedPrices, "only the new per-token model is priced")
 
 	var staleModels, staleAbilities int64
 	require.NoError(t, DB.Unscoped().Model(&Model{}).Where("model_name IN ?", []string{"task-old", "llm-old"}).Count(&staleModels).Error)
@@ -157,11 +162,18 @@ func TestApplyAIPDDCatalogReplacesOnlyManagedAIPDDData(t *testing.T) {
 	require.Equal(t, "llm-new,task-new", managed.Models)
 	require.Equal(t, "default,VIP1,VIP2,VIP3,VIP4,VIP5", managed.Group)
 
-	for key, expected := range localPricing {
+	for _, key := range []string{"ModelPrice", "ModelRatio", "billing_setting.task_pricing"} {
 		var option Option
 		require.NoError(t, DB.Where("key = ?", key).First(&option).Error)
-		require.JSONEq(t, expected, option.Value, key)
+		require.JSONEq(t, localPricing[key], option.Value, key)
 	}
+	// The models this catalog no longer lists keep their administrator-set
+	// pricing; only the newly published per-token model gains a default price.
+	var modeOption, exprOption Option
+	require.NoError(t, DB.Where("key = ?", aipddBillingModeOptionKey).First(&modeOption).Error)
+	require.JSONEq(t, `{"task-old":"task_pricing","llm-old":"tiered_expr","unrelated-model":"ratio","llm-new":"tiered_expr"}`, modeOption.Value)
+	require.NoError(t, DB.Where("key = ?", aipddBillingExprOptionKey).First(&exprOption).Error)
+	require.JSONEq(t, `{"llm-old":"tier(\"local\", p * 1 + c * 2)","llm-new":"tier(\"aipdd\", p * 0.013750000000000002 + c * 0.04125)"}`, exprOption.Value)
 	price, ok := ratio_setting.GetModelPrice("task-old", false)
 	require.True(t, ok)
 	require.Equal(t, 1.25, price)
@@ -203,19 +215,23 @@ func TestApplyAIPDDCatalogDoesNotCreateSeedancePricingOptions(t *testing.T) {
 
 	result, err := applyAIPDDCatalog(catalog, "https://aipdd.example", "sk-test")
 	require.NoError(t, err)
-	require.Zero(t, result.UpdatedPrices)
+	require.Equal(t, 1, result.UpdatedPrices, "the Seedance duration price must not become a retail price")
 
 	for _, key := range []string{
 		"ModelPrice",
 		"ModelRatio",
-		"billing_setting.billing_mode",
-		"billing_setting.billing_expr",
 		"billing_setting.task_pricing",
 	} {
 		var count int64
 		require.NoError(t, DB.Model(&Option{}).Where("key = ?", key).Count(&count).Error)
 		require.Zero(t, count, key)
 	}
+	var modes map[string]string
+	var modeOption Option
+	require.NoError(t, DB.Where("key = ?", aipddBillingModeOptionKey).First(&modeOption).Error)
+	require.NoError(t, common.UnmarshalJsonStr(modeOption.Value, &modes))
+	require.NotContains(t, modes, "AP Seedance", "Seedance retail pricing stays administrator-managed")
+	require.Equal(t, billing_setting.BillingModeTieredExpr, modes["llm-model"])
 
 	capability, ok := constant.GetAIPDDCapability("AP Seedance")
 	require.True(t, ok)
@@ -231,6 +247,7 @@ func TestApplyAIPDDCatalogImportsTokenMarketDisplayPrices(t *testing.T) {
 		aipddcatalog.ResetV1ModelsListHidden()
 	})
 	preserveAIPDDPricingRuntime(t)
+	t.Setenv("AIPDD_PRICING_MARKUP", "1.1")
 	previousExchangeRate := operation_setting.USDExchangeRate
 	operation_setting.USDExchangeRate = 8
 	t.Cleanup(func() { operation_setting.USDExchangeRate = previousExchangeRate })
@@ -273,20 +290,20 @@ func TestApplyAIPDDCatalogImportsTokenMarketDisplayPrices(t *testing.T) {
 
 	result, err := applyAIPDDCatalog(catalog, "https://aipdd.example", "sk-test")
 	require.NoError(t, err)
-	require.Equal(t, 1, result.UpdatedPrices)
+	require.Equal(t, 2, result.UpdatedPrices)
 	require.Equal(t, billing_setting.BillingModeTaskPricing,
 		billing_setting.GetBillingMode("ap-minimax-h3-text-to-video"))
 
 	config, ok := billing_setting.GetTaskPricing("ap-minimax-h3-text-to-video")
 	require.True(t, ok)
 	require.Equal(t, billing_setting.TaskPricingUnitSecond, config.Unit)
-	require.InDelta(t, 0.01125, config.ByResolution["480p"].NoReferenceVideoUnitPrice, 1e-12)
+	require.InDelta(t, 0.012375, config.ByResolution["480p"].NoReferenceVideoUnitPrice, 1e-12)
 	require.Equal(t, billing_setting.ReferenceVideoPolicySame,
 		config.ByResolution["480p"].ReferenceVideoPolicy)
-	require.InDelta(t, 0.015, config.ByResolution["768p"].NoReferenceVideoUnitPrice, 1e-12)
+	require.InDelta(t, 0.0165, config.ByResolution["768p"].NoReferenceVideoUnitPrice, 1e-12)
 	require.Equal(t, billing_setting.ReferenceVideoPolicyCustom,
 		config.ByResolution["768p"].ReferenceVideoPolicy)
-	require.InDelta(t, 0.01875, config.ByResolution["768p"].ReferenceVideoUnitPrice, 1e-12)
+	require.InDelta(t, 0.020625, config.ByResolution["768p"].ReferenceVideoUnitPrice, 1e-12)
 	pricingVisible := false
 	for _, item := range GetPricing() {
 		if item.ModelName != "ap-minimax-h3-text-to-video" {
@@ -329,6 +346,7 @@ func TestApplyAIPDDCatalogImportsTokenMarketPerCallDisplayPrices(t *testing.T) {
 		aipddcatalog.ResetV1ModelsListHidden()
 	})
 	preserveAIPDDPricingRuntime(t)
+	t.Setenv("AIPDD_PRICING_MARKUP", "1.1")
 	previousExchangeRate := operation_setting.USDExchangeRate
 	operation_setting.USDExchangeRate = 8
 	t.Cleanup(func() { operation_setting.USDExchangeRate = previousExchangeRate })
@@ -370,11 +388,11 @@ func TestApplyAIPDDCatalogImportsTokenMarketPerCallDisplayPrices(t *testing.T) {
 
 	result, err := applyAIPDDCatalog(catalog, "https://aipdd.example", "sk-test")
 	require.NoError(t, err)
-	require.Equal(t, 2, result.UpdatedPrices)
+	require.Equal(t, 3, result.UpdatedPrices)
 
 	price, ok := ratio_setting.GetModelPrice("fixed-image", false)
 	require.True(t, ok)
-	require.InDelta(t, 0.125, price, 1e-12)
+	require.InDelta(t, 0.1375, price, 1e-12)
 	_, ok = ratio_setting.GetModelPrice("disabled-image", false)
 	require.False(t, ok)
 	unrelatedPrice, ok := ratio_setting.GetModelPrice("unrelated-model", false)
@@ -388,7 +406,7 @@ func TestApplyAIPDDCatalogImportsTokenMarketPerCallDisplayPrices(t *testing.T) {
 	pricing, ok := findPricingForTest(GetPricing(), "fixed-image")
 	require.True(t, ok)
 	require.Equal(t, 1, pricing.QuotaType)
-	require.InDelta(t, 0.125, pricing.ModelPrice, 1e-12)
+	require.InDelta(t, 0.1375, pricing.ModelPrice, 1e-12)
 
 	second, err := applyAIPDDCatalog(catalog, "https://aipdd.example", "sk-test")
 	require.NoError(t, err)

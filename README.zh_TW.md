@@ -124,13 +124,15 @@
 
 | 參數 | 何時必須 | 說明 |
 |------|----------|------|
-| `AIPDD_API_KEY` | 使用 AIPDD 內建任務模型時必須 | AIPDD 上游 API Key，請先到 [app.aipdd.work](https://app.aipdd.work) 註冊取得。設定後會自動建立或同步名為 `AIPDD` 的渠道，預設地址為 `https://api.aipdd.work`，密鑰會作為 `X-API-Key` 發送。 |
+| `AIPDD_API_KEY` | 選填，僅作為首次啟動的兜底 | AIPDD 上游 API Key，請先到 [app.aipdd.work](https://app.aipdd.work) 註冊取得，會作為 `X-API-Key` 發送。**密鑰以資料庫為準**：優先取名為 `AIPDD` 的渠道密鑰，其次是首次設定向導裡保存的密鑰，最後才是本環境變數；執行期在渠道頁改密鑰即刻生效，無需重啟。有密鑰時會自動建立或同步名為 `AIPDD` 的渠道。 |
+| `AIPDD_BASE_URL` | 選填 | AIPDD 上游位址，同樣以資料庫為準：渠道自身的位址優先，其次本變數，最後內建預設 `https://api.aipdd.work`。 |
+| `AIPDD_PRICING_MARKUP` | 選填 | 目錄同步寫入的預設零售價毛利倍率，預設 `1.10`（AIPDD 批發價上加 10%），填 `1` 為平價銷售。 |
 | `SQL_DSN` | 使用 MySQL/PostgreSQL 時必須 | 資料庫連接字串；使用預設 SQLite 時可不填，但必須掛載 `/data` 保存資料。 |
 | `SESSION_SECRET` | 生產或多機部署必須 | 固定會話密鑰，避免重啟或多實例下登入狀態不一致。 |
 | `CRYPTO_SECRET` | 使用 Redis 或多機部署時必須 | 固定加密密鑰，避免共享快取/跨實例資料無法解密。 |
 | `REDIS_CONN_STRING` | 多機部署、共享快取或任務輪詢推薦 | Redis 連接字串；單機可先使用記憶體快取。 |
 
-AIPDD 模型調用參數與請求範例請參考 [公開 OpenAPI 契約](docs/openapi/public.json)。
+AIPDD 模型調用參數與請求範例請參考 [公開 OpenAPI 契約](docs/openapi/public.json)。預設定價由目錄同步按「批發價 × 毛利倍率」寫入；若某個模型要以人工價為準，在「系統設定 → 定價」裡點該模型的釘價按鈕（存為 `AIPDDPinnedModels`），後續同步會跳過它。
 
 
 ### 使用 Docker Compose（推薦）

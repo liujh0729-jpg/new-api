@@ -3,8 +3,8 @@
 # Quick Start:
 #   1. export POSTGRES_PASSWORD='change-this-postgres-password'
 #   2. export REDIS_PASSWORD='change-this-redis-password'
-#   3. export AIPDD_API_KEY='change-this-site-api-key'
-#   4. export AIPDD_INSTANCE_ID='registered-site-instance-uuid'
+#   3. export AIPDD_API_KEY='change-this-site-api-key'   # 可选：仅容器首次启动预置用；正式口径是在设置向导/渠道里填，密钥存数据库
+#   4. export AIPDD_INSTANCE_ID='registered-site-instance-uuid'   # 可选：仅对账需要，不设也能中转
 #   5. export SESSION_SECRET='change-this-random-session-secret'
 #   6. export CRYPTO_SECRET="$(openssl rand -hex 32)"  # Keep this value permanently
 #   7. docker compose up -d
@@ -36,12 +36,13 @@ services:
       - SQL_DSN=postgresql://root:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/new-api
 #      - SQL_DSN=root:${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD}@tcp(mysql:3306)/new-api  # Point to the mysql service, uncomment if using MySQL
       - REDIS_CONN_STRING=redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD}@redis:6379
-      - AIPDD_API_KEY=${AIPDD_API_KEY:?set AIPDD_API_KEY}
+      - AIPDD_API_KEY=${AIPDD_API_KEY:-}
       - AIPDD_BASE_URL=${AIPDD_BASE_URL:-}
-      - AIPDD_INSTANCE_ID=${AIPDD_INSTANCE_ID:?set AIPDD_INSTANCE_ID to the registered site UUID}
+      - AIPDD_INSTANCE_ID=${AIPDD_INSTANCE_ID:-}
       - AIPDD_CATALOG_SYNC_ON_BOOT=${AIPDD_CATALOG_SYNC_ON_BOOT:-true}
       - AIPDD_CATALOG_SYNC_INTERVAL_MINUTES=${AIPDD_CATALOG_SYNC_INTERVAL_MINUTES:-5}
       - AIPDD_CATALOG_SYNC_TIMEOUT_SECONDS=${AIPDD_CATALOG_SYNC_TIMEOUT_SECONDS:-10}
+      - AIPDD_PRICING_MARKUP=${AIPDD_PRICING_MARKUP:-1.10}
       - TZ=Asia/Shanghai
       - ERROR_LOG_ENABLED=true # 是否启用错误日志记录 (Whether to enable error log recording)
       - BATCH_UPDATE_ENABLED=true  # 是否启用批量更新 (Whether to enable batch update)

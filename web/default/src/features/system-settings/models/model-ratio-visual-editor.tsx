@@ -35,7 +35,7 @@ import {
   useReactTable,
 } from '@tanstack/react-table'
 import { useMediaQuery } from '@/hooks'
-import { Copy, Pencil, Plus, Trash2 } from 'lucide-react'
+import { Copy, Pencil, Pin, PinOff, Plus, Trash2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { useSystemConfigStore } from '@/stores/system-config-store'
@@ -62,6 +62,8 @@ import {
   splitBillingExprAndRequestRules,
 } from '@/features/pricing/lib/billing-expr'
 import type { TaskPricing } from '@/features/pricing/types'
+import { useSystemOptions } from '../hooks/use-system-options'
+import { useUpdateOption } from '../hooks/use-update-option'
 import { safeJsonParse } from '../utils/json-parser'
 import {
   ModelPricingEditorPanel,
@@ -111,6 +113,10 @@ type ModelRow = {
 }
 
 const STORAGE_KEY = 'model-ratio-column-visibility'
+
+// Managed by the backend model (AIPDDPinnedModels): the AIPDD catalog sync
+// neither writes nor deletes the price of a pinned model.
+const PINNED_MODELS_OPTION_KEY = 'AIPDDPinnedModels'
 
 const hasValue = (value?: number | string) =>
   value !== undefined && value !== ''
@@ -675,6 +681,40 @@ export const ModelRatioVisualEditor = memo(
       ]
     )
 
+    const { data: systemOptions } = useSystemOptions()
+    const updateOption = useUpdateOption()
+    const pinnedModels = useMemo(() => {
+      const raw = systemOptions?.data?.find(
+        (option) => option.key === PINNED_MODELS_OPTION_KEY
+      )?.value
+      const names = safeJsonParse<string[]>(raw ?? '[]', {
+        fallback: [],
+        silent: true,
+      })
+      if (!Array.isArray(names)) return new Set<string>()
+      return new Set(
+        names
+          .filter((name) => typeof name === 'string' && name.trim() !== '')
+          .map((name) => name.trim())
+      )
+    }, [systemOptions])
+
+    const handleTogglePin = useCallback(
+      (name: string) => {
+        const next = new Set(pinnedModels)
+        if (next.has(name)) {
+          next.delete(name)
+        } else {
+          next.add(name)
+        }
+        updateOption.mutate({
+          key: PINNED_MODELS_OPTION_KEY,
+          value: JSON.stringify([...next].sort()),
+        })
+      },
+      [pinnedModels, updateOption]
+    )
+
     const columns = useMemo<ColumnDef<ModelRow>[]>(() => {
       void currency
       return [
@@ -733,6 +773,13 @@ export const ModelRatioVisualEditor = memo(
                   copyable={false}
                 />
               )}
+              {pinnedModels.has(row.original.name) && (
+                <StatusBadge
+                  label={t('Pinned price')}
+                  variant='warning'
+                  copyable={false}
+                />
+              )}
             </div>
           ),
           enableHiding: false,
@@ -776,28 +823,43 @@ export const ModelRatioVisualEditor = memo(
         },
         {
           id: 'actions',
-          cell: ({ row }) => (
-            <div className='flex justify-end gap-2'>
-              <Button
-                variant='ghost'
-                size='sm'
-                onClick={() => handleEdit(row.original)}
-              >
-                <Pencil />
-              </Button>
-              <Button
-                variant='ghost'
-                size='sm'
-                onClick={() => handleDelete(row.original.name)}
-              >
-                <Trash2 />
-              </Button>
-            </div>
-          ),
+          cell: ({ row }) => {
+            const isPinned = pinnedModels.has(row.original.name)
+            return (
+              <div className='flex justify-end gap-2'>
+                <Button
+                  variant='ghost'
+                  size='sm'
+                  title={t(
+                    isPinned
+                      ? 'AIPDD price sync will not change this model price'
+                      : 'Pin this model price so AIPDD sync keeps it'
+                  )}
+                  onClick={() => handleTogglePin(row.original.name)}
+                >
+                  {isPinned ? <PinOff /> : <Pin />}
+                </Button>
+                <Button
+                  variant='ghost'
+                  size='sm'
+                  onClick={() => handleEdit(row.original)}
+                >
+                  <Pencil />
+                </Button>
+                <Button
+                  variant='ghost'
+                  size='sm'
+                  onClick={() => handleDelete(row.original.name)}
+                >
+                  <Trash2 />
+                </Button>
+              </div>
+            )
+          },
           enableHiding: false,
         },
       ]
-    }, [currency, handleEdit, handleDelete, t])
+    }, [currency, handleEdit, handleDelete, handleTogglePin, pinnedModels, t])
 
     const table = useReactTable({
       data: models,

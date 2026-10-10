@@ -3,6 +3,7 @@ package model
 import (
 	"testing"
 
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/pkg/aipddcatalog"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -54,6 +55,7 @@ func aipddASRCatalog(revision string) aipddcatalog.AtomicCatalog {
 func TestSyncAIPDDSynchronousPerSecondPricing(t *testing.T) {
 	truncateTables(t)
 	preserveAIPDDPricingRuntime(t)
+	t.Setenv("AIPDD_PRICING_MARKUP", "1.1")
 	originalRate := operation_setting.USDExchangeRate
 	operation_setting.USDExchangeRate = 2
 	t.Cleanup(func() { operation_setting.USDExchangeRate = originalRate })
@@ -67,11 +69,12 @@ func TestSyncAIPDDSynchronousPerSecondPricing(t *testing.T) {
 
 	pricing, err := loadAIPDDTaskPricingTx(DB)
 	require.NoError(t, err)
-	// 100 awcoin/s at 0.0001 RMB per awcoin over 2 RMB per USD.
+	// 100 awcoin/s at 0.0001 RMB per awcoin over 2 RMB per USD, plus the 10%
+	// default retail margin.
 	asr, ok := pricing["ap-funasr"]
 	require.True(t, ok, "the synchronous ASR model must be imported")
 	require.Equal(t, billing_setting.TaskPricingUnitSecond, asr.Unit)
-	require.InDelta(t, 0.005, asr.NoReferenceVideoUnitPrice, 1e-9)
+	require.InDelta(t, 0.0055, asr.NoReferenceVideoUnitPrice, 1e-9)
 	require.Nil(t, asr.ByResolution, "a synchronous call has no resolution to tier by")
 
 	require.NotContains(t, pricing, "ap-ltx-2.5", "task models keep their own pricing pipeline")
@@ -95,12 +98,13 @@ func TestSyncAIPDDSynchronousPerSecondPricing(t *testing.T) {
 	require.Equal(t, 1, updated)
 	pricing, err = loadAIPDDTaskPricingTx(DB)
 	require.NoError(t, err)
-	require.InDelta(t, 0.006, pricing["ap-funasr"].NoReferenceVideoUnitPrice, 1e-9)
+	require.InDelta(t, 0.0066, pricing["ap-funasr"].NoReferenceVideoUnitPrice, 1e-9)
 }
 
 func TestSyncAIPDDAsyncPerSecondPricing(t *testing.T) {
 	truncateTables(t)
 	preserveAIPDDPricingRuntime(t)
+	t.Setenv("AIPDD_PRICING_MARKUP", "1.1")
 	originalRate := operation_setting.USDExchangeRate
 	operation_setting.USDExchangeRate = 2
 	t.Cleanup(func() { operation_setting.USDExchangeRate = originalRate })
@@ -114,11 +118,12 @@ func TestSyncAIPDDAsyncPerSecondPricing(t *testing.T) {
 
 	pricing, err := loadAIPDDTaskPricingTx(DB)
 	require.NoError(t, err)
-	// 600 awcoin/s at 0.0001 RMB per awcoin over 2 RMB per USD.
+	// 600 awcoin/s at 0.0001 RMB per awcoin over 2 RMB per USD, plus the 10%
+	// default retail margin.
 	ltx, ok := pricing["ap-ltx-2.5"]
 	require.True(t, ok, "the async video model must be imported")
 	require.Equal(t, billing_setting.TaskPricingUnitSecond, ltx.Unit)
-	require.InDelta(t, 0.03, ltx.NoReferenceVideoUnitPrice, 1e-9)
+	require.InDelta(t, 0.033, ltx.NoReferenceVideoUnitPrice, 1e-9)
 
 	require.NotContains(t, pricing, "ap-funasr", "synchronous models belong to the sync importer")
 	require.NotContains(t, pricing, "ap-indextts-2")
@@ -141,7 +146,7 @@ func TestSyncAIPDDAsyncPerSecondPricing(t *testing.T) {
 	require.Equal(t, 1, updated)
 	pricing, err = loadAIPDDTaskPricingTx(DB)
 	require.NoError(t, err)
-	require.InDelta(t, 0.036, pricing["ap-ltx-2.5"].NoReferenceVideoUnitPrice, 1e-9)
+	require.InDelta(t, 0.0396, pricing["ap-ltx-2.5"].NoReferenceVideoUnitPrice, 1e-9)
 }
 
 func TestSyncAIPDDSynchronousPerSecondPricingWithoutSynchronousModels(t *testing.T) {
@@ -171,4 +176,76 @@ func TestSyncAIPDDSynchronousPerSecondPricingRequiresUsableExchangeRate(t *testi
 	pricing, err := loadAIPDDTaskPricingTx(DB)
 	require.NoError(t, err)
 	require.Empty(t, pricing)
+}
+
+// aipddTokenMarketCatalog publishes a correctly tiered video model next to one
+// whose upstream display price is missing, the shape a broken catalog row takes.
+func aipddTokenMarketCatalog(revision string) aipddcatalog.AtomicCatalog {
+	return aipddcatalog.AtomicCatalog{
+		SchemaVersion: 2,
+		Revision:      revision,
+		AWCoinRate: aipddcatalog.AtomicAWCoinRate{
+			RMBPerAWCoin: 0.01, USDPerAWCoin: 0.0015, UpdatedAt: "2026-10-01T00:00:00",
+		},
+		Capabilities: []aipddcatalog.AtomicCapability{
+			{
+				ID: "ap-seedance-1-pro", Code: "ap-seedance-1-pro", Name: "AP Seedance",
+				AdapterCode: "token_market_media", EndpointType: "video-generations",
+				TaskKind: "text_to_video", Available: aipddcatalog.BoolPtr(true),
+				Execution: aipddcatalog.AtomicExecution{Protocol: "shared_task", Path: "/shared-tasks/tasks"},
+				Pricing: aipddcatalog.AtomicPricing{
+					PricingModel: "per_second", Currency: "awcoin", PricingBasis: "display", Enabled: true,
+					ByResolution: map[string]constant.AIPDDSeedanceResolutionPricing{
+						"720p":  {TargetResolution: "720p", DisplayAmountAWCoinPerSecond: aipddRetailFloatPtr(100)},
+						"1080p": {TargetResolution: "1080p", DisplayAmountAWCoinPerSecond: aipddRetailFloatPtr(200)},
+					},
+				},
+			},
+			{
+				ID: "ap-broken-tier", Code: "ap-broken-tier", Name: "AP Broken Tier",
+				AdapterCode: "token_market_media", EndpointType: "video-generations",
+				TaskKind: "text_to_video", Available: aipddcatalog.BoolPtr(true),
+				Execution: aipddcatalog.AtomicExecution{Protocol: "shared_task", Path: "/shared-tasks/tasks"},
+				Pricing: aipddcatalog.AtomicPricing{
+					PricingModel: "per_second", Currency: "awcoin", PricingBasis: "display", Enabled: true,
+					ByResolution: map[string]constant.AIPDDSeedanceResolutionPricing{
+						// The upstream published this tier without a display price.
+						"4k": {TargetResolution: "4k"},
+					},
+				},
+			},
+		},
+	}
+}
+
+func TestSyncAIPDDTokenMarketTaskPricingTxSkipsUnusableCapability(t *testing.T) {
+	truncateTables(t)
+	preserveAIPDDPricingRuntime(t)
+	t.Setenv("AIPDD_PRICING_MARKUP", "1.1")
+	originalRate := operation_setting.USDExchangeRate
+	operation_setting.USDExchangeRate = 2
+	t.Cleanup(func() { operation_setting.USDExchangeRate = originalRate })
+
+	// One malformed model row must not cost the gateway the prices of every
+	// other model in the same catalog revision.
+	updated, _, err := syncAIPDDTokenMarketTaskPricingTx(DB, aipddTokenMarketCatalog("revision-1"))
+	require.NoError(t, err)
+	require.Equal(t, 1, updated)
+
+	pricing, err := loadAIPDDTaskPricingTx(DB)
+	require.NoError(t, err)
+	require.NotContains(t, pricing, "ap-broken-tier", "an unusable display price is skipped, not provisioned")
+
+	seedance, ok := pricing["ap-seedance-1-pro"]
+	require.True(t, ok, "the healthy model must still be imported")
+	require.Equal(t, billing_setting.TaskPricingUnitSecond, seedance.Unit)
+	require.Len(t, seedance.ByResolution, 2)
+	// 100 awcoin/s at 0.01 RMB per awcoin over 2 RMB per USD, plus the 10% margin.
+	require.InDelta(t, 0.55, seedance.ByResolution["720p"].NoReferenceVideoUnitPrice, 1e-9)
+	require.InDelta(t, 1.1, seedance.ByResolution["1080p"].NoReferenceVideoUnitPrice, 1e-9)
+
+	modes, err := loadAIPDDBillingModesTx(DB)
+	require.NoError(t, err)
+	require.Equal(t, billing_setting.BillingModeTaskPricing, modes["ap-seedance-1-pro"])
+	require.NotContains(t, modes, "ap-broken-tier")
 }

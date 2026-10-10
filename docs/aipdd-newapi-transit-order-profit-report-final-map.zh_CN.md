@@ -345,8 +345,9 @@ stateDiagram-v2
 ### 14.1 NewAPI
 
 - 新增单表 `aipdd_transit_order`，只保存统一订单、本地客户归属、本地扣费、AIPDD 售价积分/人民币、创建与结算时间。
-- OpenAI Chat、Seedance、Shared Task 创建请求发送 `X-AIPDD-Instance-ID`、`X-AIPDD-Order-ID`、`X-AIPDD-Attempt-ID`，并附带仅含数字的 NewAPI 用户/Token 审计头。
-- `AIPDD_INSTANCE_ID` 必须固定为手工登记站点的 `externalInstanceId`；禁止再从 API Key 派生，Key 轮换时 Instance 与历史订单身份保持不变。
+- OpenAI Chat、Seedance、Shared Task 创建请求发送 `X-AIPDD-Instance-ID`、`X-AIPDD-Order-ID`、`X-AIPDD-Attempt-ID`，并附带仅含数字的 NewAPI 用户/Token 审计头；未登记站点身份时这类头**一个都不发**，避免上游因未知 Instance 拒绝算力。
+- `AIPDD_INSTANCE_ID` 固定为手工登记站点的 `externalInstanceId`；禁止再从 API Key 派生，Key 轮换时 Instance 与历史订单身份保持不变。
+- 该变量未配置时**不阻断中转，也不再跳过本地账务**：NewAPI 记录一次告警，仍然建单、仍然记录客户扣费与成本预估，只是不向上游发送任何 `X-AIPDD-*` 订单头、也不读取 settlement（无站点身份时上游按设计返回 400/403）。对账页面此时有订单与预估，仅「实际源头成本」为空。详见第 18 节。
 - multi-key 渠道记录本次实际选中的 Key 槽位，不再跳过订单。
 - 异步任务从终态响应读取售价；Chat 通过单订单接口做有限直接重试。
 - 删除旧复杂财务模型、worker、事件同步 API、XLSX 导出和管理页面，并移除 Excelize 依赖。
@@ -436,11 +437,11 @@ NewAPI 已提供简版 AIPDD 中转订单记录页面；该页面只展示 NewAP
 
 ### 16.1 范围
 
-- 管理员专用页面路径：`/aipdd-transit-orders`（侧边栏名称：AIPDD 订单记录）。
+- 管理员专用页面路径：`/aipdd-transit-orders`（2026-10-10 起已从侧边栏菜单移除，仅管理员直接输入 URL 可访问；路由有 `ROLE.ADMIN` 守卫）。
 - 管理员查询接口：`GET /api/aipdd-transit-orders`（`middleware.AdminAuth()`）。
 - 只查询本地表 `aipdd_transit_order`，不恢复旧 finance worker、movement、event、cursor、inbox/outbox、XLSX 或复杂对账系统。
 - 页面支持创建时间范围、统一订单号、用户 ID、Token ID、渠道 ID、模型、状态过滤，以及分页、刷新和清空筛选。
-- 空的源头成本字段显示为“待结算”，不显示为 0。
+- 空的源头成本字段显示为“待结算”，不显示为 0。（2026-10-10 起该列改为“成本预估”，见第 17 节）
 
 ### 16.2 金额口径
 
@@ -458,3 +459,140 @@ NewAPI 已提供简版 AIPDD 中转订单记录页面；该页面只展示 NewAP
 - `GET /api/aipdd-transit-orders` 在管理员登录后返回本地库现有 **11** 条订单（SETTLED 5、REFUNDED 3、FAILED 2、PENDING 1）。
 - `source_charge_*` 为 NULL 的订单在接口中返回 `null`，前端展示为“待结算”。
 - `go test ./...` 与 `web/default` 的 `bun run typecheck` / `bun run build` 均通过。
+
+## 17. 2026-10-10 成本预估：没有站点结算也能反推源头成本
+
+第 16 节的 `source_charge_*` 只有在 AIPDD 侧完成交付站点绑定后才回传；未绑定的部署里 settlement 请求返回 403，订单记录页的成本列永远是“待结算”，无法做任何毛利判断。为此新增**成本预估**：用 AIPDD 公开发布的价目表（catalog 售价 + 官方 `rmbPerAwcoin` 汇率）乘以本单实际计量消耗，反推 NewAPI 这一单在 AIPDD 侧的应付成本。
+
+### 17.1 存储与口径
+
+| 列 | 含义 | 写入时机 |
+|---|---|---|
+| `source_charge_awcoin` / `source_charge_rmb_mic` | AIPDD 结算回执的**实际**源头成本 | 仅 settlement 拉回后 |
+| `estimated_source_awcoin` / `estimated_source_rmb_mic` | 按公开价目表**反推**的成本预估 | 本地扣费成功（`CHARGED` 且 quota>0）时 |
+
+- 预估与实际分列存放：真实结算**永不覆盖**预估，预估也**永不覆盖**实际。
+- 只有成功扣费的订单才产生预估；`NOT_CHARGED` / `REFUNDED` / 上游失败的单不写预估（无消耗证据就不猜）。
+- 换渠道重试重开同一订单时，预估与实际一并置 NULL，避免留下上一次尝试的成本痕迹。
+- 价目来源是 `activateAIPDDCatalog` 在 catalog 同步/快照恢复时发布的运行时价表；没有价表或模型不在价表内时预估留空，账务链路降级放行，不影响中转。
+
+### 17.2 反推方式
+
+- **按 token 计费模型**：`prompt/cached/completion` 分别乘公开档位单价（cached 走 cache-read 档，不重复计入 prompt 档），除以 1,000,000 得 AWcoin，再乘 `rmbPerAwcoin` 得人民币微元。
+- **按量计费模型（张/秒/次）**：单价取 catalog 能力价（视频按秒价按分辨率取档，缺分辨率时取已发布最便宜档），数量优先用请求时冻结的计量数量；没有冻结数量时用「本地扣费 quota ÷（本地零售单价 × QuotaPerUnit × 分组倍率）」把计费数量反除回来——数量在分子分母同时出现，因此时长类订单同样可估。
+- 模型名优先取上游模型名（映射部署下价目表按 AIPDD 模型 ID 定价），回退客户请求模型名。
+
+### 17.3 前端
+
+订单记录页成本列改名为**成本预估**：有实际结算时显示实际值并打「实际」标记；否则显示预估值；两者都没有时显示「无预估」（不再把 NULL 显示成 0，也不再把未结算笼统写成待结算）。
+
+### 17.4 本机验收（2026-10-10）
+
+- 隔离副本库 + 本地假上游跑通真实中转链路：`ap-glm-5.2`，usage `prompt=800 / cached=200 / completion=500`，catalog 单价 `prompt 80000、completion 280000、cache-read 20000` AWcoin/百万，`rmbPerAwcoin=0.0001`。
+- 落库结果：`estimated_source_awcoin=192`、`estimated_source_rmb_mic=19200`（手算 600×80000 + 500×280000 + 200×20000 = 192,000,000 ÷ 1e6 = 192 AWcoin，即 ¥0.0192），`source_charge_*` 保持 NULL（该 Key 未绑站点，结算拉不回）。
+- 同单 `customer_charge_quota=1300`、`customer_charge_rmb_mic=18980`（¥0.01898）→ 售价低于反推成本，说明该模型的本地倍率需要在定价页复核。
+- `go test ./service/... ./model/... ./controller/... ./constant/... ./pkg/aipddcatalog/...`、`bun run typecheck`、`bun run build`、`go build -o main.exe .` 全部通过；上游返回失败时订单记为 `FAILED` 且不写预估（无消耗证据就不猜）。
+
+## 18. 2026-10-10 长期不绑定交付站点：预估成为唯一成本口径
+
+### 18.1 决策
+
+本部署**不准备**在 AIPDD 侧把 API Key 绑定到交付站点，因此永远拿不到 `externalInstanceId`，`AIPDD_INSTANCE_ID` 会长期保持未配置。对 `https://api.aipdd.work` 做只读/最小消耗探测（2026-10-10，`ap-glm-5.2`，`max_tokens=1`）实测：
+
+| 请求 | 结果 |
+|---|---|
+| Chat 不带头之外的账务信息 | `HTTP 200`，正常返回内容 |
+| Chat 只带未登记的 `X-AIPDD-Instance-ID` | `HTTP 400`，`"X-AIPDD-Order-ID is required"` |
+| Chat 带完整 `X-AIPDD-Instance-ID/Order-ID/Attempt-ID`（未登记身份） | `HTTP 403`，`"The API key is not bound to a delivery site"` —— **算力被拒**，不只是账务 |
+| settlement 接口不带 `X-AIPDD-Instance-ID` | `HTTP 400`，`"X-AIPDD-Instance-ID is required for finance accounting"` |
+| settlement 接口带未登记 UUID | `HTTP 403`，同上 |
+
+结论：账务头一旦发出就必须配一个 AIPDD 认识的身份，否则连算力一起被 403 拒掉；因此未绑定站点的部署**一个 `X-AIPDD-*` 头都不能发**。同时 `source_charge_*`（实际源头成本）在本部署永久为空，成本口径只能依靠第 17 节的**反推预估**。
+
+### 18.2 改造（解耦预估与站点身份）
+
+改造前预估被卡在站点身份之后：建单要求 UUID 格式的 `AIPDD_INSTANCE_ID`，未配置就不建单，于是预估列在生产上永远是空的——新功能是死代码。改造后：
+
+- `resolveAIPDDFinanceInstanceID`：未配置返回空串且**不报错**（受支持的稳态）；只有格式非法（非 UUID）才返回 error，并降级为「无站点身份」而不是「无账务」。
+- `PrepareAIPDDFinanceAttempt`：无论有无站点身份都建单、都保留 `info.AIPDDFinance`（`InstanceID` 为空），告警仍只打一次。
+- 两个上游出口（`relay/channel/openai/adaptor.go` 的 `setAIPDDFinanceHeaders`、`relay/channel/task/aipdd/adaptor.go` 的 `BuildRequestHeader`）：`InstanceID` 为空时**一个 `X-AIPDD-*` 头都不发**，避免未登记身份把算力一起拒掉。
+- `fetchAndApplyAIPDDTransitSettlement`：无站点身份直接返回，不再消耗 4 次退避重试去撞必定 400/403 的端点。
+
+### 18.3 该状态下的账面
+
+| 字段 | 是否有值 | 说明 |
+|---|---|---|
+| `instance_id` | 空串 | 按设计，非缺陷 |
+| `customer_charge_quota` / `customer_charge_rmb_mic` | 有 | 本地真实扣费 |
+| `estimated_source_awcoin` / `estimated_source_rmb_mic` | 有（模型在价目表内时） | 唯一成本信号 |
+| `source_charge_awcoin` / `source_charge_rmb_mic` | 永久 NULL | 无站点绑定，结算拉不回 |
+
+利润分析只能按「本地扣费 − 反推预估」计算，且预估值依赖 catalog 公开价目表；catalog 里缺该模型时该单预估留空，页面显示「无预估」。
+
+### 18.4 验收
+
+- `TestPrepareAIPDDFinanceAttemptWithoutSiteIdentityStillKeepsLedger`：无站点身份 → 订单行存在、状态 `PENDING`、`instance_id` 为空、`info.AIPDDFinance` 保留。
+- `TestRecordAIPDDFinanceSettlementWritesEstimateWithoutSiteIdentity`：无站点身份 → 预估落库（220 AWcoin / 22000 微元），`source_charge_*` 保持 NULL，状态仍为 `PENDING`。
+- `TestSetupRequestHeaderOmitsFinanceHeadersWithoutSiteIdentity`：空 `InstanceID` → 五个 `X-AIPDD-*` 头全部不出现，`X-API-Key` 正常。
+- `TestResolveAIPDDFinanceInstanceIDEmptyWhenUnconfigured` / `...RejectsMalformedOverride`：未配置＝空串无 error；非法值＝报 `must be a UUID` 并降级。
+- `go test ./service/... ./model/... ./relay/channel/openai/... ./relay/channel/task/aipdd/...` 全部通过，`gofmt -l` 无输出。
+
+## 19. 2026-10-10 默认定价：按 catalog 批发价加 10% 毛利
+
+### 19.1 问题
+
+在第 18 节的稳态下，预估成本是唯一成本信号，而本部署的**售价**当时是这样形成的：
+
+- 文本模型（catalog `models`）本地没有任何价格配置——既没有 `ModelRatio` 也没有 `billing_setting.billing_expr` 行，于是命中「未配置价格的模型默认 1 倍率」（第 17 节调整后的默认值）。1 倍率约合 `¥14.6/1M`（`QuotaPerUnit=500000`、`USDExchangeRate=7.3`），而 `ap-glm-5.2` 的输出批发价是 `¥28/1M`、`ap-qwen3.8-max` 是 `¥36/1M`：**卖得越多亏得越多**。
+- 任务模型（catalog `capabilities`）由导入器按批发价原样写入（倍率 1.0），毛利恒为 0。
+
+因此需要一条把「批发价 → 默认零售价」的规则固化进目录同步的路径，而不是靠管理员手工逐个填价。
+
+### 19.2 口径
+
+- 唯一乘数：`model.AIPDDRetailMarkup()`，取环境变量 `AIPDD_PRICING_MARKUP`，默认 **1.10**（即加 10% 毛利）。填 `1` 为平价、`0.9` 为亏本销售——**不纠正**，因为亏本是运营决策，偷偷改回去会显示与实际扣费不符的价格。非法值（空、非数字、`<=0`、NaN/Inf）回落默认并打一条 `SysLog`。
+- 换算一律走人民币：`零售USD = 批发AWcoin × rmbPerAwcoin × markup ÷ USDExchangeRate`。catalog 自带的 `usdPerAwcoin` 是过时参考价，**不使用**，这样对外人民币价正好等于批发人民币价 × 1.1，不随上游参考汇率漂移。
+- 文本模型用 `tiered_expr`（分档表达式）而不是 `ModelRatio`：批发价中 cacheRead/cacheWrite 与 prompt 各不相同（例如 `ap-qwen3.8-max` 的 cacheWrite `¥15/1M` ≠ prompt `¥12/1M`，`ap-deepseek-v4-flash` 的 cacheRead 只有 `¥0.1/1M`），单一倍率无法表达，只有表达式能保留每一类 token 的独立价。系数单位是 **USD/百万 token**。
+- 图片的 2K/4K 分档是相对价（`AIPDDImagePricing.RatioFor`），基础 `ModelPrice` 加了毛利后各档自动等比放大，无需单独处理。
+
+### 19.3 落点
+
+| 路径 | 文件 | 作用 |
+|---|---|---|
+| 乘数与表达式构造 | `model/aipdd_retail_pricing.go` | `AIPDDRetailMarkup`、`aipddRetailUSD`、`AIPDDLLMRetailExpr`、`IsAIPDDRetailTokenModel` |
+| 文本模型导入器 | `model/aipdd_catalog_llm_pricing.go` | `syncAIPDDLLMTokenPricingTx` 写 `billing_setting.billing_mode`/`billing_expr` |
+| 任务模型导入器 ×4 | `model/aipdd_catalog_task_pricing.go` | 按次固定价、共享适配器按次、同步按秒、异步按秒（含 by_resolution）全部应用乘数 |
+| 同步编排 | `model/aipdd_catalog_sync.go` | 文本导入器在任务导入之后运行，避免同一目录版本给任务模型发 token 表达式；提交后一并激活 `billing_expr` |
+| 后台「同步上游定价」预览 | `controller/ratio_sync.go` | 复用同一个 `AIPDDLLMRetailExpr`/`AIPDDRetailMarkup`，保证预览候选价＝已写入价，管理员点应用不会把毛利抹平 |
+
+目录不再提供某个模型的购买资格（`available=false`、`free=true`、改成按次计费）时，导入器会**回收**它自己写过的行：删掉表达式，且仅当模式是 `tiered_expr` 时删掉模式；管理员手工设的其它模式保留。目录里不存在的模型永不受影响。
+
+### 19.4 默认零售价（当前 catalog revision `37cdcae4`，`rmbPerAwcoin=0.0001`）
+
+| 模型 | 批发（¥/1M） | 零售（¥/1M） |
+|---|---|---|
+| `ap-chat-3.8-flash` | 入 1.2 / 出 7 | 入 1.32 / 出 7.7 |
+| `ap-glm-5.3-flash` | 入 0.4 / 出 1.4 | 入 0.44 / 出 1.54 |
+| `ap-deepseek-v4-flash` | 入 3 / 出 9 / 缓存读 0.1 / 缓存写 3 | 入 3.3 / 出 9.9 / 缓存读 0.11 / 缓存写 3.3 |
+| `ap-deepseek-v4-pro` | 入 9 / 出 27 / 缓存读 0.3 / 缓存写 9 | 入 9.9 / 出 29.7 / 缓存读 0.33 / 缓存写 9.9 |
+| `ap-glm-5.2`、`ap-glm-5.3` | 入 8 / 出 28 / 缓存读 2 / 缓存写 8 | 入 8.8 / 出 30.8 / 缓存读 2.2 / 缓存写 8.8 |
+| `ap-qwen3.8-max` | 入 12 / 出 36 / 缓存读 12 / 缓存写 15 | 入 13.2 / 出 39.6 / 缓存读 13.2 / 缓存写 16.5 |
+| `ap-qwen3-embedding:0.6b` | 入 0.03 | 入 0.033（无输出价，表达式 `c * 0`） |
+
+任务侧：图片按次批发 `¥0.2 → 零售 ¥0.22`，其余各档按同样 1.1 放大（批发 ¥0.4→¥0.44、¥0.24→¥0.264、¥0.3→¥0.33、¥0.15→¥0.165、¥0.5→¥0.55）；`ap-indextts-2` `¥0.1 → ¥0.11`/次；`ap-funasr` `¥0.01 → ¥0.011`/秒；`ap-minimax-h3` 768p `¥0.12 → ¥0.132`/秒（480p ¥0.09→¥0.099、1080p ¥0.15→¥0.165）。
+
+### 19.5 验收
+
+- `model/aipdd_retail_pricing_test.go`：默认 1.10 / 环境覆盖 / 非法值回落；`IsAIPDDRetailTokenModel` 五种排除条件；表达式含 cache 变量、schema v1 不含 cache 变量、embedding `c * 0`；汇率或 awcoin 价不可用时报错。
+- `model/aipdd_catalog_llm_pricing_test.go`：首次导入写 2 个模型且保留管理员已有价；重复导入 0 变更；批发价变动被检出；下架/免费模型回收行（`tiered_expr` 模式删除、`ratio` 模式保留）；`markup=1` 时系数恰为平价。
+- `model/aipdd_catalog_sync_test.go`、`model/aipdd_catalog_task_pricing_test.go`、`model/aipdd_production_catalog_sync_test.go`（真实目录 8 类 fixture，逐模型断言系数）、`model/channel_env_test.go`（启动即定价）、`controller/ratio_sync_aipdd_test.go`（预览候选价含毛利）全部通过。
+- `go test ./model/... ./controller/... ./service/... ./setting/... ./pkg/... ./relay/... ./dto/...` 全绿。
+- 生产待验：重启后触发一次目录同步，核对 `options` 中 `billing_setting.billing_expr` 与 `billing_setting.task_pricing`，再发一次真实中转请求，比对 `customer_charge_rmb_mic` 与 `estimated_source_rmb_mic` 的比值 ≈ 1.1。
+
+### 19.6 注意
+
+- 目录同步只在**价格变化**时写库；改 `AIPDD_PRICING_MARKUP` 后需要再触发一次同步（或重启）才会按新倍率重算。
+- 手动在定价页改过的模型会被下一次目录同步覆盖回「批发 × 倍率」——catalog 是价格来源。要让某个人工价说了算，在「系统设置 → 定价」点该模型的钉价按钮（写入 `options` 的 `AIPDDPinnedModels`，一个模型名数组）：5 个价格导入器与上游同步预览都会跳过钉住的模型，既不覆写也不回收，取消钉价后下一次同步自动接管。整体停用同步仍可把 `AIPDD_CATALOG_SYNC_INTERVAL_MINUTES` 设为 0。
+- 单个模型的价格异常（批发价为 0、缓存价缺失、分辨率档位重复等）只跳过该模型并每个 revision 打一条日志，其余模型照常定价；只有汇率基准不可用、合并后的价格表校验失败、序列化或写库失败才会让整个目录同步回滚。
+- 毛利只在 catalog 收录的模型上生效。未收录模型（当前 `jev`）既无批发价也无零售价，走默认 1 倍率，属于亏损区间。
+

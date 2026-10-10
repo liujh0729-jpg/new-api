@@ -880,7 +880,7 @@ func AdminSyncVirtualCharacterCatalogFromAIPDD(c *gin.Context) {
 		message := err.Error()
 		status := http.StatusBadGateway
 		code := "catalog_sync_failed"
-		if strings.Contains(message, "AIPDD_API_KEY") {
+		if strings.Contains(message, "AIPDD API key is not configured") || strings.Contains(message, "AIPDD_API_KEY") {
 			status = http.StatusServiceUnavailable
 			code = "aipdd_key_missing"
 		} else if strings.Contains(message, "not enabled") || strings.Contains(message, "disabled") {

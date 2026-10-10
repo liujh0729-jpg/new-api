@@ -29,7 +29,7 @@ export function AIPDDTransitOrdersPage() {
       </SectionPageLayout.Title>
       <SectionPageLayout.Description>
         {t(
-          'View NewAPI customer charges and AIPDD source costs for transit orders. AIPDD internal cost and profit are not shown.'
+          'View NewAPI customer charges and the estimated AIPDD source cost for transit orders. AIPDD internal cost and profit are not shown.'
         )}
       </SectionPageLayout.Description>
       <SectionPageLayout.Content>

@@ -135,7 +135,7 @@ export function isCurrencyDisplayType(
 
 export function parseCurrencyDisplayType(
   value: unknown,
-  fallback: CurrencyDisplayType = 'USD'
+  fallback: CurrencyDisplayType = 'CNY'
 ): CurrencyDisplayType {
   return isCurrencyDisplayType(value) ? value : fallback
 }

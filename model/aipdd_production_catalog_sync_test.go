@@ -26,10 +26,13 @@ const (
 	aipddFixtureRMBPerAWCoin    = 0.0001
 	aipddFixtureUSDExchangeRate = 7.3
 	aipddFixturePriceTolerance  = 1e-12
+	// The catalog sync provisions retail prices, not cost parity, so every
+	// expected price below carries the default gross margin.
+	aipddFixtureRetailMarkup = 1.1
 )
 
 func aipddFixtureUSD(awcoin float64) float64 {
-	return awcoin * aipddFixtureRMBPerAWCoin / aipddFixtureUSDExchangeRate
+	return awcoin * aipddFixtureRMBPerAWCoin * aipddFixtureRetailMarkup / aipddFixtureUSDExchangeRate
 }
 
 func loadAIPDDProductionFixture(t *testing.T) ([]byte, aipddcatalog.AtomicCatalog) {
@@ -56,6 +59,7 @@ func aipddProductionCatalogServer(t *testing.T, rawFixture []byte) *httptest.Ser
 
 func aipddProductionFixtureCleanup(t *testing.T) {
 	t.Helper()
+	t.Setenv("AIPDD_PRICING_MARKUP", "1.1")
 	previousExchangeRate := operation_setting.USDExchangeRate
 	operation_setting.USDExchangeRate = aipddFixtureUSDExchangeRate
 	t.Cleanup(func() {
@@ -224,7 +228,7 @@ func TestSyncAIPDDCatalogFromProductionFixtureImportsEveryPublishedPrice(t *test
 	// on the unknown-model token ratio, which undercharges a 10000-awcoin edit.
 	editPrice, found := ratio_setting.GetModelPrice("ap-qwen-image-edit", false)
 	require.True(t, found, "token_market_shared per-call prices must be imported")
-	require.InDelta(t, 0.136986301369863, editPrice, 1e-12)
+	require.InDelta(t, aipddFixtureUSD(10000), editPrice, 1e-12)
 
 	var storedPrices map[string]float64
 	var priceOption Option
@@ -252,11 +256,33 @@ func TestSyncAIPDDCatalogFromProductionFixtureImportsEveryPublishedPrice(t *test
 		require.Equal(t, billing_setting.ReferenceVideoPolicySame, tier.ReferenceVideoPolicy, resolution)
 	}
 
-	// The catalog never writes local token ratios: per-token prices reach the
-	// gateway through the upstream ratio sync, not through these options.
+	// The catalog never writes local token ratios: per-token prices are
+	// provisioned as billing expressions instead, so a model cannot silently
+	// fall back to the neutral ratio and sell output below wholesale.
 	var ratioCount int64
 	require.NoError(t, DB.Model(&Option{}).Where("key = ?", "ModelRatio").Count(&ratioCount).Error)
 	require.Zero(t, ratioCount)
+
+	appliedModes, err := loadAIPDDBillingModesTx(DB)
+	require.NoError(t, err)
+	appliedExprs, err := loadAIPDDBillingExprsTx(DB)
+	require.NoError(t, err)
+	require.Len(t, appliedExprs, len(catalog.Models))
+	for _, modelItem := range catalog.Models {
+		require.Equal(t, billing_setting.BillingModeTieredExpr, appliedModes[modelItem.ID], modelItem.ID)
+		expr, found := appliedExprs[modelItem.ID]
+		require.True(t, found, modelItem.ID)
+		require.Contains(t, expr, "p * "+formatRetailPrice(aipddFixtureUSD(modelItem.Pricing.PromptPerMillion)), modelItem.ID)
+		require.Contains(t, expr, "c * "+formatRetailPrice(aipddFixtureUSD(modelItem.Pricing.CompletionPerMillion)), modelItem.ID)
+		require.Contains(t, expr, "cr * "+formatRetailPrice(aipddFixtureUSD(*modelItem.Pricing.CacheReadPerMillion)), modelItem.ID)
+	}
+	// ap-glm-5.2 publishes 80000/280000/20000 AWcoin per million tokens, which is
+	// ¥8 input and ¥28 output per million at cost. A single "1" ratio would sell
+	// both at ¥14.6 per million: profitable on input, a loss on every output token.
+	require.Equal(t,
+		"tier(\"aipdd\", p * 1.2054794520547947 + c * 4.219178082191782"+
+			" + cr * 0.30136986301369867 + cc * 1.2054794520547947 + cc1h * 1.2054794520547947)",
+		appliedExprs["ap-glm-5.2"])
 
 	// Display: every available model is priced, and the unavailable upstream
 	// model (ap-ltx-2.5) is hidden from /v1/models and from the pricing page.

@@ -10,7 +10,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// The retail margin and the exchange rate are both inputs to the previewed
+// prices, so every case pins them instead of inheriting machine state.
+func aipddRatioTestDataEnv(t *testing.T) {
+	t.Setenv("AIPDD_PRICING_MARKUP", "1.1")
+	previousExchangeRate := operation_setting.USDExchangeRate
+	operation_setting.USDExchangeRate = 7.3
+	t.Cleanup(func() { operation_setting.USDExchangeRate = previousExchangeRate })
+}
+
 func TestAIPDDCatalogRatioDataSkipsPerSecondTaskPrices(t *testing.T) {
+	aipddRatioTestDataEnv(t)
 	displayAmount := 40.0
 	displayVideoAmount := 60.0
 	cacheRead := 0.0
@@ -30,7 +40,7 @@ func TestAIPDDCatalogRatioDataSkipsPerSecondTaskPrices(t *testing.T) {
 	require.Greater(t, aipddcatalog.TaskAWCoinPrice(seedancePricing), float64(0))
 
 	catalog := aipddcatalog.AtomicCatalog{
-		AWCoinRate: aipddcatalog.AtomicAWCoinRate{USDPerAWCoin: 0.01},
+		AWCoinRate: aipddcatalog.AtomicAWCoinRate{RMBPerAWCoin: 0.073, USDPerAWCoin: 0.01},
 		Capabilities: []aipddcatalog.AtomicCapability{
 			{
 				ID: "AP Seedance", AdapterCode: "seedance",
@@ -45,7 +55,7 @@ func TestAIPDDCatalogRatioDataSkipsPerSecondTaskPrices(t *testing.T) {
 			},
 		},
 		Models: []aipddcatalog.AtomicModel{{
-			ID: "aipdd-llm",
+			ID: "aipdd-llm", Available: true,
 			Pricing: aipddcatalog.AtomicPricing{
 				PricingModel: "per_token", Currency: "awcoin", Enabled: true,
 				PromptPerMillion: 10, CompletionPerMillion: 30,
@@ -58,20 +68,21 @@ func TestAIPDDCatalogRatioDataSkipsPerSecondTaskPrices(t *testing.T) {
 	prices, ok := data["model_price"].(map[string]any)
 	require.True(t, ok)
 	require.NotContains(t, prices, "AP Seedance")
-	require.InDelta(t, 1, prices["per-call-task"], 0.0000001)
+	require.InDelta(t, 1.1, prices["per-call-task"], 1e-12)
 
 	modes, ok := data[billing_setting.BillingModeField].(map[string]string)
 	require.True(t, ok)
 	require.Equal(t, billing_setting.BillingModeTieredExpr, modes["aipdd-llm"])
 	exprs, ok := data[billing_setting.BillingExprField].(map[string]string)
 	require.True(t, ok)
-	require.Equal(t, `tier("aipdd", p * 0.1 + c * 0.3 + cr * 0 + cc * 0 + cc1h * 0)`, exprs["aipdd-llm"])
+	require.Equal(t, `tier("aipdd", p * 0.11000000000000001 + c * 0.33 + cr * 0 + cc * 0 + cc1h * 0)`, exprs["aipdd-llm"])
 }
 
 func TestAIPDDCatalogRatioDataAnchorsDisplayPerCallPriceToRMB(t *testing.T) {
 	previousExchangeRate := operation_setting.USDExchangeRate
 	operation_setting.USDExchangeRate = 8
 	t.Cleanup(func() { operation_setting.USDExchangeRate = previousExchangeRate })
+	t.Setenv("AIPDD_PRICING_MARKUP", "1.1")
 
 	catalog := aipddcatalog.AtomicCatalog{
 		AWCoinRate: aipddcatalog.AtomicAWCoinRate{
@@ -93,16 +104,17 @@ func TestAIPDDCatalogRatioDataAnchorsDisplayPerCallPriceToRMB(t *testing.T) {
 	data := aipddCatalogRatioData(catalog)
 	prices, ok := data["model_price"].(map[string]any)
 	require.True(t, ok)
-	require.InDelta(t, 0.125, prices["display-per-call-image"], 1e-12)
+	require.InDelta(t, 0.1375, prices["display-per-call-image"], 1e-12)
 }
 
 func TestAIPDDCatalogRatioDataUsesCacheAwareExpressionWhenPricesArePresent(t *testing.T) {
+	aipddRatioTestDataEnv(t)
 	cacheRead := 2.0
 	cacheWrite := 12.5
 	catalog := aipddcatalog.AtomicCatalog{
-		AWCoinRate: aipddcatalog.AtomicAWCoinRate{USDPerAWCoin: 0.01},
+		AWCoinRate: aipddcatalog.AtomicAWCoinRate{RMBPerAWCoin: 0.073, USDPerAWCoin: 0.01},
 		Models: []aipddcatalog.AtomicModel{{
-			ID: "market/cache-aware",
+			ID: "market/cache-aware", Available: true,
 			Pricing: aipddcatalog.AtomicPricing{
 				PricingModel: "per_token", Currency: "awcoin", Enabled: true,
 				PromptPerMillion: 10, CompletionPerMillion: 30,
@@ -115,17 +127,18 @@ func TestAIPDDCatalogRatioDataUsesCacheAwareExpressionWhenPricesArePresent(t *te
 	exprs := data[billing_setting.BillingExprField].(map[string]string)
 	require.Equal(
 		t,
-		`tier("aipdd", p * 0.1 + c * 0.3 + cr * 0.02 + cc * 0.125 + cc1h * 0.125)`,
+		`tier("aipdd", p * 0.11000000000000001 + c * 0.33 + cr * 0.022 + cc * 0.1375 + cc1h * 0.1375)`,
 		exprs["market/cache-aware"])
 }
 
 func TestAIPDDCatalogRatioDataSkipsFreeModel(t *testing.T) {
+	aipddRatioTestDataEnv(t)
 	zero := 0.0
 	catalog := aipddcatalog.AtomicCatalog{
 		SchemaVersion: 2,
-		AWCoinRate:    aipddcatalog.AtomicAWCoinRate{USDPerAWCoin: 0.01},
+		AWCoinRate:    aipddcatalog.AtomicAWCoinRate{RMBPerAWCoin: 0.073, USDPerAWCoin: 0.01},
 		Models: []aipddcatalog.AtomicModel{{
-			ID: "free-deepseek-v4-flash",
+			ID: "free-deepseek-v4-flash", Available: true,
 			Pricing: aipddcatalog.AtomicPricing{
 				PricingModel: "per_token", Currency: "awcoin", Enabled: true, Free: true,
 				CacheReadPerMillion: &zero, CacheWritePerMillion: &zero,
@@ -138,12 +151,34 @@ func TestAIPDDCatalogRatioDataSkipsFreeModel(t *testing.T) {
 	require.NotContains(t, data, billing_setting.BillingExprField)
 }
 
+func TestAIPDDCatalogRatioDataSkipsUnavailableModel(t *testing.T) {
+	aipddRatioTestDataEnv(t)
+	zero := 0.0
+	catalog := aipddcatalog.AtomicCatalog{
+		SchemaVersion: 2,
+		AWCoinRate:    aipddcatalog.AtomicAWCoinRate{RMBPerAWCoin: 0.073, USDPerAWCoin: 0.01},
+		Models: []aipddcatalog.AtomicModel{{
+			ID: "retired-model",
+			Pricing: aipddcatalog.AtomicPricing{
+				PricingModel: "per_token", Currency: "awcoin", Enabled: true,
+				PromptPerMillion: 10, CompletionPerMillion: 30,
+				CacheReadPerMillion: &zero, CacheWritePerMillion: &zero,
+			},
+		}},
+	}
+
+	data := aipddCatalogRatioData(catalog)
+	require.NotContains(t, data, billing_setting.BillingModeField)
+	require.NotContains(t, data, billing_setting.BillingExprField)
+}
+
 func TestAIPDDCatalogRatioDataPreservesLegacyInputPricingWhenCachePricesAreMissing(t *testing.T) {
+	aipddRatioTestDataEnv(t)
 	catalog := aipddcatalog.AtomicCatalog{
 		SchemaVersion: 1,
-		AWCoinRate:    aipddcatalog.AtomicAWCoinRate{USDPerAWCoin: 0.01},
+		AWCoinRate:    aipddcatalog.AtomicAWCoinRate{RMBPerAWCoin: 0.073, USDPerAWCoin: 0.01},
 		Models: []aipddcatalog.AtomicModel{{
-			ID: "deepseek-r1:8b",
+			ID: "deepseek-r1:8b", Available: true,
 			Pricing: aipddcatalog.AtomicPricing{
 				PricingModel: "per_token", Currency: "awcoin", Enabled: true,
 				PromptPerMillion: 10, CompletionPerMillion: 30,
@@ -155,8 +190,55 @@ func TestAIPDDCatalogRatioDataPreservesLegacyInputPricingWhenCachePricesAreMissi
 	exprs := data[billing_setting.BillingExprField].(map[string]string)
 	require.Equal(
 		t,
-		`tier("aipdd", p * 0.1 + c * 0.3)`,
+		`tier("aipdd", p * 0.11000000000000001 + c * 0.33)`,
 		exprs["deepseek-r1:8b"])
+}
+
+// An administrator's pinned price must not be offered as a sync candidate,
+// otherwise applying the batch would overwrite the hand-set price.
+func TestAIPDDCatalogRatioDataOmitsPinnedModels(t *testing.T) {
+	aipddRatioTestDataEnv(t)
+	zero := 0.0
+	catalog := aipddcatalog.AtomicCatalog{
+		SchemaVersion: 2,
+		AWCoinRate:    aipddcatalog.AtomicAWCoinRate{RMBPerAWCoin: 0.073, USDPerAWCoin: 0.01},
+		Capabilities: []aipddcatalog.AtomicCapability{{
+			ID: "pinned-image", AdapterCode: "token_market_media",
+			Pricing: aipddcatalog.AtomicPricing{
+				PricingModel: "per_call", Currency: "awcoin", PricingBasis: "display", Enabled: true,
+				ChargeConfig: map[string]any{"amountAwcoin": float64(100)},
+			},
+		}},
+		Models: []aipddcatalog.AtomicModel{
+			{
+				ID: "pinned-llm", Available: true,
+				Pricing: aipddcatalog.AtomicPricing{
+					PricingModel: "per_token", Currency: "awcoin", Enabled: true,
+					PromptPerMillion: 10, CompletionPerMillion: 30,
+					CacheReadPerMillion: &zero, CacheWritePerMillion: &zero,
+				},
+			},
+			{
+				ID: "catalog-llm", Available: true,
+				Pricing: aipddcatalog.AtomicPricing{
+					PricingModel: "per_token", Currency: "awcoin", Enabled: true,
+					PromptPerMillion: 20, CompletionPerMillion: 40,
+					CacheReadPerMillion: &zero, CacheWritePerMillion: &zero,
+				},
+			},
+		},
+	}
+
+	data := aipddCatalogRatioDataPinned(catalog, map[string]bool{"pinned-image": true, "pinned-llm": true})
+	if prices, ok := data["model_price"].(map[string]any); ok {
+		require.NotContains(t, prices, "pinned-image")
+	}
+	modes := data[billing_setting.BillingModeField].(map[string]string)
+	require.NotContains(t, modes, "pinned-llm")
+	require.Equal(t, billing_setting.BillingModeTieredExpr, modes["catalog-llm"])
+	exprs := data[billing_setting.BillingExprField].(map[string]string)
+	require.NotContains(t, exprs, "pinned-llm")
+	require.Contains(t, exprs, "catalog-llm")
 }
 
 func TestStripTaskPricingSyncModelsRemovesDerivedLegacyPrices(t *testing.T) {

@@ -83,7 +83,7 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 		return priceData, nil
 	}
 	if !usePrice && aipddcatalog.IsExplicitFreeModel(info.OriginModelName) {
-		if _, hasLocalRatio, _ := ratio_setting.GetModelRatio(info.OriginModelName); !hasLocalRatio {
+		if !ratio_setting.HasModelRatioConfig(info.OriginModelName) {
 			priceData := types.PriceData{
 				FreeModel:      true,
 				ModelPrice:     0,
@@ -314,12 +314,13 @@ func ModelPriceHelperPerCall(c *gin.Context, info *relaycommon.RelayInfo) (types
 }
 
 func acceptsUnsetRatio(info *relaycommon.RelayInfo) bool {
-	if info == nil || !info.UserSetting.AcceptUnsetRatioModel {
+	if info == nil {
 		return false
 	}
-	// AIPDD models must have an explicit catalog-synced or administrator-managed
-	// price instead of inheriting the global "accept unset ratio" escape hatch.
-	return info.ChannelMeta == nil || info.ChannelMeta.ChannelType != constant.ChannelTypeAIPDD
+	// Unpriced models bill at the 1x default ratio, so every caller accepts an
+	// unset ratio. This used to be a per-user escape hatch that AIPDD channels
+	// were excluded from.
+	return true
 }
 
 func HasModelBillingConfig(modelName string) bool {

@@ -68,7 +68,10 @@ func ApplyAIPDDTransitSettlementResponse(
 }
 
 func fetchAndApplyAIPDDTransitSettlement(finance *relaycommon.AIPDDFinanceContext) error {
-	if finance == nil {
+	// Without a registered site identity the upstream settlement endpoint answers
+	// 400/403 by design, so skip the read instead of burning retries on it. The
+	// local order keeps its customer charge and estimated source cost.
+	if finance == nil || strings.TrimSpace(finance.InstanceID) == "" {
 		return nil
 	}
 	if order, err := model.GetAIPDDTransitOrder(finance.PlatformOrderID); err == nil && order.Status == model.AIPDDTransitSettled {

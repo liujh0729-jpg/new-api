@@ -38,6 +38,8 @@ export type AIPDDTransitOrder = {
   customer_charge_rmb: number
   source_charge_awcoin: number | null
   source_charge_rmb: number | null
+  estimated_source_awcoin: number | null
+  estimated_source_rmb: number | null
   created_at: number
   settled_at: number | null
 }

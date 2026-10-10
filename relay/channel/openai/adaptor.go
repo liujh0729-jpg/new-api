@@ -233,7 +233,9 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, header *http.Header, info *
 }
 
 func setAIPDDFinanceHeaders(header *http.Header, info *relaycommon.RelayInfo) {
-	if info == nil || info.AIPDDFinance == nil {
+	// AIPDD refuses compute when the instance identity is present but unknown to it,
+	// so an unbound deployment must send no finance headers at all.
+	if info == nil || info.AIPDDFinance == nil || info.AIPDDFinance.InstanceID == "" {
 		return
 	}
 	finance := info.AIPDDFinance

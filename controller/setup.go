@@ -165,7 +165,7 @@ func PostSetup(c *gin.Context) {
 			})
 			return
 		}
-		baseURL := constant.ChannelBaseURLs[constant.ChannelTypeAIPDD]
+		baseURL := model.ResolveAIPDDBaseURL()
 		syncCtx, syncCancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
 		defer syncCancel()
 		if _, err = model.SyncAIPDDCatalog(syncCtx, nil, baseURL, aipddKey); err != nil {

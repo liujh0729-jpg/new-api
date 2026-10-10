@@ -50,9 +50,9 @@ func markVirtualCharacterAIPDDCatalogSynced(at time.Time) error {
 // upserts local public volc_preset characters. When force is false and the
 // upstream revision matches the latest local import, the apply step is skipped.
 func SyncVirtualCharacterCatalogFromAIPDD(ctx context.Context, client *http.Client, force bool, operatorUserID int) (VirtualCharacterAIPDDCatalogSyncResult, error) {
-	apiKey := getAIPDDKeyFromEnv()
+	apiKey := ResolveAIPDDCatalogKey()
 	if apiKey == "" {
-		return VirtualCharacterAIPDDCatalogSyncResult{}, errors.New("AIPDD_API_KEY is not configured")
+		return VirtualCharacterAIPDDCatalogSyncResult{}, errors.New("AIPDD API key is not configured; enter it in the setup wizard or save it on the AIPDD channel")
 	}
 	account, err := GetEnabledVirtualCharacterProviderAccount()
 	if err != nil {
@@ -69,7 +69,7 @@ func SyncVirtualCharacterCatalogFromAIPDD(ctx context.Context, client *http.Clie
 		}
 	}
 
-	catalog, err := aipddcatalog.FetchVirtualCharacterCatalog(ctx, client, getAIPDDBaseURLFromEnv(), apiKey, ifNoneMatch)
+	catalog, err := aipddcatalog.FetchVirtualCharacterCatalog(ctx, client, ResolveAIPDDBaseURL(), apiKey, ifNoneMatch)
 	if errors.Is(err, aipddcatalog.ErrVirtualCharacterCatalogNotModified) {
 		now := time.Now()
 		_ = markVirtualCharacterAIPDDCatalogSynced(now)

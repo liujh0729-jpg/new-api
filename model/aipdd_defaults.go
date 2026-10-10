@@ -16,12 +16,12 @@ import (
 // initialization. It keeps channel abilities and model metadata in sync with
 // the local AIPDD catalog.
 func EnsureAIPDDDefaults() error {
-	key := getAIPDDKeyFromEnv()
+	key := ResolveAIPDDCatalogKey()
 	if err := validateAIPDDBootstrapKey(key); err != nil {
 		return err
 	}
 	if strings.TrimSpace(key) == "" || !isAIPDDCatalogSyncOnBootEnabled(key) {
-		revision, activated, err := activateAIPDDCatalogSnapshot(getAIPDDBaseURLFromEnv())
+		revision, activated, err := activateAIPDDCatalogSnapshot(ResolveAIPDDBaseURL())
 		if err != nil {
 			return fmt.Errorf("AIPDD catalog snapshot activation failed: %w", err)
 		}
@@ -36,7 +36,7 @@ func EnsureAIPDDDefaults() error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSeconds)*time.Second)
 	defer cancel()
-	result, err := SyncAIPDDCatalog(ctx, nil, getAIPDDBaseURLFromEnv(), key)
+	result, err := SyncAIPDDCatalog(ctx, nil, ResolveAIPDDBaseURL(), key)
 	if err != nil {
 		return fmt.Errorf("AIPDD atomic catalog sync failed: %w", err)
 	}
@@ -44,23 +44,23 @@ func EnsureAIPDDDefaults() error {
 	return nil
 }
 
-// IsAIPDDCatalogEnvironmentConfigured reports whether background catalog sync
-// has the credential it needs without exposing that credential to callers.
-func IsAIPDDCatalogEnvironmentConfigured() bool {
-	return strings.TrimSpace(getAIPDDKeyFromEnv()) != ""
+// IsAIPDDCatalogKeyConfigured reports whether background catalog sync has the
+// credential it needs without exposing that credential to callers.
+func IsAIPDDCatalogKeyConfigured() bool {
+	return strings.TrimSpace(ResolveAIPDDCatalogKey()) != ""
 }
 
-// SyncAIPDDCatalogFromEnvironment refreshes the managed AIPDD catalog using
-// the same source and credential as the boot-time sync.
-func SyncAIPDDCatalogFromEnvironment(ctx context.Context) (AIPDDCatalogSyncResult, error) {
-	key := getAIPDDKeyFromEnv()
+// SyncAIPDDCatalogFromStoredKey refreshes the managed AIPDD catalog using the same
+// credential source as the boot-time sync: the stored channel/wizard key first.
+func SyncAIPDDCatalogFromStoredKey(ctx context.Context) (AIPDDCatalogSyncResult, error) {
+	key := ResolveAIPDDCatalogKey()
 	if err := validateAIPDDBootstrapKey(key); err != nil {
 		return AIPDDCatalogSyncResult{}, err
 	}
 	if strings.TrimSpace(key) == "" {
-		return AIPDDCatalogSyncResult{}, errors.New("AIPDD_API_KEY is not configured")
+		return AIPDDCatalogSyncResult{}, errors.New("AIPDD API key is not configured; enter it in the setup wizard or save it on the AIPDD channel")
 	}
-	return SyncAIPDDCatalog(ctx, nil, getAIPDDBaseURLFromEnv(), key)
+	return SyncAIPDDCatalog(ctx, nil, ResolveAIPDDBaseURL(), key)
 }
 
 func EnsureAIPDDOpenAIModelDefaults(modelNames []string) error {
@@ -80,12 +80,16 @@ func EnsureAIPDDOpenAIModelDefaults(modelNames []string) error {
 	return nil
 }
 
+// isAIPDDCatalogSyncOnBootEnabled decides whether boot may ask AIPDD for the
+// catalog. Any configured key is enough: the key format is upstream's choice, and
+// requiring an "sk-" prefix silently skipped the sync for every other key, leaving
+// the instance on a stale snapshot. AIPDD_CATALOG_SYNC_ON_BOOT overrides either way.
 func isAIPDDCatalogSyncOnBootEnabled(key string) bool {
 	raw := strings.TrimSpace(common.GetEnvOrDefaultString(aipddCatalogSyncOnBootEnvName, ""))
 	if raw != "" {
 		return common.GetEnvOrDefaultBool(aipddCatalogSyncOnBootEnvName, true)
 	}
-	return strings.HasPrefix(strings.TrimSpace(key), "sk-")
+	return strings.TrimSpace(key) != ""
 }
 
 func ensureAIPDDModelCatalogDefaults() (bool, error) {

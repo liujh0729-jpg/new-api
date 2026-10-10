@@ -65,7 +65,7 @@
 
 本仓库是基于 New API 的 AIPDD 定制版，保留上游 New API 项目身份、许可证和 attribution，并将 AIPDD 作为一个上游供应商接入。
 
-AIPDD 渠道会把任务请求转发到 `https://api.aipdd.work`，渠道 Key 会作为 `X-API-Key` 发送给 AIPDD。当前内置 Flux 生图、Wan2.2 图生视频、Wan2.2 主体替换、mimicmotion 动作替换、Latentsync 对口型视频、IndexTTS 声音复刻六个任务模型。模型名和请求示例见 [公开 OpenAPI 契约](docs/openapi/public.json)。
+AIPDD 渠道会把任务请求转发到 `https://api.aipdd.work`，渠道 Key 会作为 `X-API-Key` 发送给 AIPDD。系统不再内置任何默认 AIPDD 模型：模型名、参数与价格全部来自上游 `GET {BaseURL}/v1/new-api/catalog`，同步成功后按目录自动建渠道和定价。模型名和请求示例见 [公开 OpenAPI 契约](docs/openapi/public.json)。
 
 ---
 
@@ -132,14 +132,16 @@ AIPDD 渠道会把任务请求转发到 `https://api.aipdd.work`，渠道 Key �
 
 | 参数 | 何时必须 | 说明 |
 |------|----------|------|
-| `AIPDD_API_KEY` | 使用 AIPDD 内置任务模型时必须 | AIPDD 上游 API Key，请先到 [app.aipdd.work](https://app.aipdd.work) 注册获取。设置后会自动创建或同步名为 `AIPDD` 的渠道，默认地址为 `https://api.aipdd.work`，密钥会作为 `X-API-Key` 发送。 |
-| `AIPDD_CATALOG_SYNC_INTERVAL_MINUTES` | 可选 | AIPDD 模型目录定时同步间隔，默认 `5` 分钟；设为 `0` 可关闭定时同步。 |
+| `AIPDD_API_KEY` | 可选，作为首次启动的兜底 | AIPDD 上游 API Key，请先到 [app.aipdd.work](https://app.aipdd.work) 注册获取，会作为 `X-API-Key` 发送。**密钥以数据库为准**：优先取名为 `AIPDD` 的渠道密钥，其次是首次设置向导里保存的密钥，最后才是本环境变量；运行期在渠道页改密钥即刻生效，无需重启。有密钥时会自动创建或同步名为 `AIPDD` 的渠道。 |
+| `AIPDD_BASE_URL` | 可选 | AIPDD 上游地址，同样以数据库为准：渠道自身的地址优先，其次本变量，最后内置默认 `https://api.aipdd.work`。 |
+| `AIPDD_PRICING_MARKUP` | 可选 | 目录同步写入的默认零售价毛利倍率，默认 `1.10`（AIPDD 批发价上加 10%），填 `1` 为平价销售。 |
+| `AIPDD_CATALOG_SYNC_INTERVAL_MINUTES` | 可选 | AIPDD 模型目录定时同步间隔，默认 `5` 分钟；设为 `0` 可关闭定时同步。未配置密钥时该拍直接跳过，配上密钥后无需重启即可开始同步。 |
 | `SQL_DSN` | 使用 MySQL/PostgreSQL 时必须 | 数据库连接字符串；使用默认 SQLite 时可不填，但必须挂载 `/data` 保存数据。 |
 | `SESSION_SECRET` | 生产或多机部署必须 | 固定会话密钥，避免重启或多实例下登录状态不一致。 |
 | `CRYPTO_SECRET` | 使用 Redis 或多机部署时必须 | 固定加密密钥，避免共享缓存/跨实例数据无法解密。 |
 | `REDIS_CONN_STRING` | 多机部署、共享缓存或任务轮询推荐 | Redis 连接字符串；单机可先使用内存缓存。 |
 
-AIPDD 模型调用参数与请求示例请参考 [公开 OpenAPI 契约](docs/openapi/public.json)。
+AIPDD 模型调用参数与请求示例请参考 [公开 OpenAPI 契约](docs/openapi/public.json)。默认定价由目录同步按「批发价 × 毛利倍率」写入；若某个模型要以人工价为准，在「系统设置 → 定价」里点该模型的钉价按钮（存为 `AIPDDPinnedModels`），后续同步会跳过它。
 
 
 ### 使用 Docker Compose（推荐）

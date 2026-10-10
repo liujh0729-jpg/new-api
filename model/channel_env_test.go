@@ -10,6 +10,8 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/pkg/aipddcatalog"
+	"github.com/QuantumNous/new-api/setting/billing_setting"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/stretchr/testify/require"
 )
 
@@ -45,7 +47,7 @@ func aipddCatalogTaskModels(t *testing.T, count int) []string {
 	return modelNames
 }
 
-func TestEnsureAIPDDChannelDefaultsCreatesChannelFromEnv(t *testing.T) {
+func TestEnsureAIPDDChannelDefaultsCreatesChannelFromEnvFallback(t *testing.T) {
 	truncateTables(t)
 	aipddCatalogTaskModels(t, 3)
 	t.Setenv("AIPDD_API_KEY", "aipdd-env-key")
@@ -67,7 +69,7 @@ func TestEnsureAIPDDChannelDefaultsCreatesChannelFromEnv(t *testing.T) {
 	require.Len(t, abilities, len(constant.AIPDDTaskModelList))
 }
 
-func TestEnsureAIPDDChannelDefaultsRequiresEnvWhenEnabled(t *testing.T) {
+func TestEnsureAIPDDChannelDefaultsRequiresStoredKeyWhenBootstrapRequired(t *testing.T) {
 	truncateTables(t)
 	t.Setenv("AIPDD_API_KEY", "")
 	t.Setenv("AIPDD_BOOTSTRAP_REQUIRED", "true")
@@ -75,17 +77,17 @@ func TestEnsureAIPDDChannelDefaultsRequiresEnvWhenEnabled(t *testing.T) {
 	err := EnsureAIPDDChannelDefaults()
 
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "AIPDD_API_KEY is required")
+	require.Contains(t, err.Error(), "AIPDD API key is required")
 }
 
-func TestEnsureAIPDDChannelDefaultsSyncsExistingChannelFromEnv(t *testing.T) {
+func TestEnsureAIPDDChannelDefaultsKeepsStoredChannelKeyOverEnv(t *testing.T) {
 	truncateTables(t)
 	aipddCatalogTaskModels(t, 3)
 	t.Setenv("AIPDD_API_KEY", "aipdd-env-key-new")
 
 	channel := Channel{
 		Type:   constant.ChannelTypeAIPDD,
-		Key:    "aipdd-env-key-old",
+		Key:    "aipdd-stored-key",
 		Name:   "legacy-aipdd",
 		Status: common.ChannelStatusManuallyDisabled,
 		Group:  "default",
@@ -96,7 +98,9 @@ func TestEnsureAIPDDChannelDefaultsSyncsExistingChannelFromEnv(t *testing.T) {
 
 	var stored Channel
 	require.NoError(t, DB.First(&stored, channel.Id).Error)
-	require.Equal(t, "aipdd-env-key-new", stored.Key)
+	// The key lives in the database now: a container environment variable must never
+	// rotate it behind the operator's back, it only fills an empty key.
+	require.Equal(t, "aipdd-stored-key", stored.Key)
 	require.Equal(t, common.ChannelStatusEnabled, stored.Status)
 	require.Equal(t, strings.Join(constant.AIPDDTaskModelList, ","), stored.Models)
 
@@ -108,7 +112,50 @@ func TestEnsureAIPDDChannelDefaultsSyncsExistingChannelFromEnv(t *testing.T) {
 	}
 }
 
-func TestEnsureAIPDDChannelDefaultsOverwritesExistingChannelFromEnv(t *testing.T) {
+func TestEnsureAIPDDChannelDefaultsProvisionsKeyIntoEmptyChannel(t *testing.T) {
+	truncateTables(t)
+	aipddCatalogTaskModels(t, 3)
+	t.Setenv("AIPDD_API_KEY", "aipdd-env-key")
+
+	channel := Channel{
+		Type:   constant.ChannelTypeAIPDD,
+		Key:    "",
+		Name:   "AIPDD",
+		Status: common.ChannelStatusEnabled,
+		Group:  "default",
+	}
+	require.NoError(t, DB.Create(&channel).Error)
+
+	require.NoError(t, EnsureAIPDDChannelDefaults())
+
+	var stored Channel
+	require.NoError(t, DB.First(&stored, channel.Id).Error)
+	require.Equal(t, "aipdd-env-key", stored.Key)
+}
+
+func TestEnsureAIPDDChannelDefaultsPreservesMultiKeyPool(t *testing.T) {
+	truncateTables(t)
+	aipddCatalogTaskModels(t, 3)
+	t.Setenv("AIPDD_API_KEY", "aipdd-env-key")
+
+	channel := Channel{
+		Type:   constant.ChannelTypeAIPDD,
+		Key:    "aipdd-key-one\naipdd-key-two",
+		Name:   "AIPDD",
+		Status: common.ChannelStatusEnabled,
+		Group:  "default",
+	}
+	require.NoError(t, DB.Create(&channel).Error)
+
+	require.NoError(t, EnsureAIPDDChannelDefaults())
+
+	var stored Channel
+	require.NoError(t, DB.First(&stored, channel.Id).Error)
+	require.Len(t, stored.GetKeys(), 2)
+	require.Equal(t, "aipdd-key-one\naipdd-key-two", stored.Key)
+}
+
+func TestEnsureAIPDDChannelDefaultsOverwritesExistingChannel(t *testing.T) {
 	truncateTables(t)
 	aipddCatalogTaskModels(t, 3)
 	t.Setenv("AIPDD_API_KEY", "aipdd-env-key-new")
@@ -118,7 +165,7 @@ func TestEnsureAIPDDChannelDefaultsOverwritesExistingChannelFromEnv(t *testing.T
 	oldBaseURL := "https://old-aipdd.example.com"
 	channel := Channel{
 		Type:    constant.ChannelTypeAIPDD,
-		Key:     "aipdd-env-key-old",
+		Key:     "aipdd-stored-key",
 		Name:    "legacy-aipdd",
 		Status:  common.ChannelStatusManuallyDisabled,
 		Group:   "vip",
@@ -133,7 +180,7 @@ func TestEnsureAIPDDChannelDefaultsOverwritesExistingChannelFromEnv(t *testing.T
 	var stored Channel
 	require.NoError(t, DB.First(&stored, channel.Id).Error)
 	require.Equal(t, "AIPDD", stored.Name)
-	require.Equal(t, "aipdd-env-key-new", stored.Key)
+	require.Equal(t, "aipdd-stored-key", stored.Key)
 	require.Equal(t, common.ChannelStatusEnabled, stored.Status)
 	require.Equal(t, "default", stored.Group)
 	require.NotNil(t, stored.BaseURL)
@@ -240,9 +287,55 @@ func TestEnsureAIPDDChannelDefaultsNormalizesSmokeTestChannel(t *testing.T) {
 	require.Equal(t, constant.ChannelBaseURLs[constant.ChannelTypeAIPDD], *stored.BaseURL)
 }
 
+func TestEnsureAIPDDChannelWithKeyPreservesStoredKeyPool(t *testing.T) {
+	truncateTables(t)
+	const pool = "sk-pool-first\nsk-pool-second"
+	oldBaseURL := "https://aipdd.old.test"
+	require.NoError(t, DB.Create(&Channel{
+		Type:    constant.ChannelTypeAIPDD,
+		Key:     pool,
+		Name:    aipddEnvChannelName,
+		Status:  common.ChannelStatusEnabled,
+		Group:   "default",
+		BaseURL: &oldBaseURL,
+	}).Error)
+
+	require.NoError(t, EnsureAIPDDChannelWithKey("sk-wizard-key", "https://aipdd.wizard.test"))
+
+	var stored Channel
+	require.NoError(t, DB.Where("type = ?", constant.ChannelTypeAIPDD).First(&stored).Error)
+	// The wizard carries one credential; a stored pool holds several, and
+	// overwriting it would delete the others without telling anyone.
+	require.Equal(t, pool, stored.Key)
+	require.NotNil(t, stored.BaseURL)
+	require.Equal(t, "https://aipdd.wizard.test", *stored.BaseURL, "the wizard still owns the base URL")
+}
+
+func TestEnsureAIPDDChannelWithKeyReplacesSingleStoredKey(t *testing.T) {
+	truncateTables(t)
+	require.NoError(t, DB.Create(&Channel{
+		Type:   constant.ChannelTypeAIPDD,
+		Key:    "sk-expired-key",
+		Name:   aipddEnvChannelName,
+		Status: common.ChannelStatusEnabled,
+		Group:  "default",
+	}).Error)
+
+	require.NoError(t, EnsureAIPDDChannelWithKey(" sk-wizard-key ", "https://aipdd.wizard.test/"))
+
+	var stored Channel
+	require.NoError(t, DB.Where("type = ?", constant.ChannelTypeAIPDD).First(&stored).Error)
+	require.Equal(t, "sk-wizard-key", stored.Key, "a lone key is what the operator meant to replace")
+	require.NotNil(t, stored.BaseURL)
+	require.Equal(t, "https://aipdd.wizard.test", *stored.BaseURL)
+}
+
 func TestEnsureAIPDDDefaultsSkipsWhenAtomicSyncDisabled(t *testing.T) {
 	truncateTables(t)
 	t.Setenv("AIPDD_API_KEY", "aipdd-env-key")
+	// Disabling the boot sync is the operator's explicit choice; the key format
+	// must not quietly decide on its own, since no key means no sync either way.
+	t.Setenv("AIPDD_CATALOG_SYNC_ON_BOOT", "false")
 
 	require.NoError(t, EnsureAIPDDDefaults())
 
@@ -363,6 +456,11 @@ func TestEnsureAIPDDDefaultsRestoresRuntimeSnapshotWhenSyncDisabled(t *testing.T
 
 func TestEnsureAIPDDDefaultsSyncsDynamicCatalogOnBoot(t *testing.T) {
 	truncateTables(t)
+	preserveAIPDDPricingRuntime(t)
+	t.Setenv("AIPDD_PRICING_MARKUP", "1.1")
+	previousExchangeRate := operation_setting.USDExchangeRate
+	operation_setting.USDExchangeRate = 2
+	t.Cleanup(func() { operation_setting.USDExchangeRate = previousExchangeRate })
 	constant.ResetAIPDDCapabilities()
 	constant.ResetAIPDDOpenAIModels()
 	t.Cleanup(func() {
@@ -458,14 +556,28 @@ func TestEnsureAIPDDDefaultsSyncsDynamicCatalogOnBoot(t *testing.T) {
 	for _, key := range []string{
 		"ModelPrice",
 		"ModelRatio",
-		"billing_setting.billing_mode",
-		"billing_setting.billing_expr",
 		"billing_setting.task_pricing",
 	} {
 		var count int64
 		require.NoError(t, DB.Model(&Option{}).Where("key = ?", key).Count(&count).Error)
 		require.Zero(t, count, key)
 	}
+	// The only published, available per-token model gets a default retail price on
+	// boot. The unavailable one and the explicitly free one must stay unpriced:
+	// provisioning a price for them would either contradict upstream or charge
+	// for something AIPDD gives away.
+	var bootModes map[string]string
+	var bootModeOption Option
+	require.NoError(t, DB.Where("key = ?", aipddBillingModeOptionKey).First(&bootModeOption).Error)
+	require.NoError(t, common.UnmarshalJsonStr(bootModeOption.Value, &bootModes))
+	require.Equal(t, map[string]string{"qwen2.5:0.5b": billing_setting.BillingModeTieredExpr}, bootModes)
+	var bootExprs map[string]string
+	var bootExprOption Option
+	require.NoError(t, DB.Where("key = ?", aipddBillingExprOptionKey).First(&bootExprOption).Error)
+	require.NoError(t, common.UnmarshalJsonStr(bootExprOption.Value, &bootExprs))
+	require.Equal(t,
+		map[string]string{"qwen2.5:0.5b": "tier(\"aipdd\", p * 0.11000000000000001 + c * 0.22000000000000003 + cr * 0 + cc * 0 + cc1h * 0)"},
+		bootExprs)
 }
 
 func TestEnsureAIPDDDefaultsFailsWhenAtomicCatalogUnavailable(t *testing.T) {
@@ -488,7 +600,7 @@ func TestEnsureAIPDDDefaultsFailsWhenAtomicCatalogUnavailable(t *testing.T) {
 	require.Zero(t, vendorCount)
 }
 
-func TestEnsureAIPDDDefaultsRequiresEnvBeforeCatalogSync(t *testing.T) {
+func TestEnsureAIPDDDefaultsRequiresStoredKeyBeforeCatalogSync(t *testing.T) {
 	truncateTables(t)
 	t.Setenv("AIPDD_API_KEY", "")
 	t.Setenv("AIPDD_BOOTSTRAP_REQUIRED", "true")
@@ -496,7 +608,7 @@ func TestEnsureAIPDDDefaultsRequiresEnvBeforeCatalogSync(t *testing.T) {
 	err := EnsureAIPDDDefaults()
 
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "AIPDD_API_KEY is required")
+	require.Contains(t, err.Error(), "AIPDD API key is required")
 
 	var count int64
 	require.NoError(t, DB.Model(&Vendor{}).Where("name = ?", "AIPDD").Count(&count).Error)

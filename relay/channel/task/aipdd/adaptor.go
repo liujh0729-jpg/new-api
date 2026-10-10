@@ -501,7 +501,9 @@ func (a *TaskAdaptor) BuildRequestHeader(_ *gin.Context, req *http.Request, info
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-API-Key", a.apiKey)
 	req.Header.Set("Authorization", "Bearer "+a.apiKey)
-	if info != nil && info.AIPDDFinance != nil {
+	// An unregistered instance identity makes AIPDD refuse the task, so headers go
+	// out only when this deployment actually has a site identity.
+	if info != nil && info.AIPDDFinance != nil && info.AIPDDFinance.InstanceID != "" {
 		finance := info.AIPDDFinance
 		req.Header.Set("X-AIPDD-Instance-ID", finance.InstanceID)
 		req.Header.Set("X-AIPDD-Order-ID", finance.PlatformOrderID)

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/gin-gonic/gin"
@@ -16,12 +17,84 @@ import (
 	"gorm.io/gorm"
 )
 
-func TestResolveAIPDDFinanceInstanceIDRequiresRegisteredSiteIdentity(t *testing.T) {
+func TestPrepareAIPDDFinanceAttemptWithoutSiteIdentityStillKeepsLedger(t *testing.T) {
+	previousDB := model.DB
+	dsn := fmt.Sprintf("file:aipdd-finance-unconfigured-%d?mode=memory&cache=shared", time.Now().UnixNano())
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	model.DB = db
+	t.Cleanup(func() { model.DB = previousDB })
+	require.NoError(t, db.AutoMigrate(&model.AIPDDTransitOrder{}))
+	t.Setenv(aipddInstanceIDEnv, "")
+	c := aipddFinanceTestContext(constant.ChannelTypeAIPDD, 5)
+	info := &relaycommon.RelayInfo{RequestId: "finance-unconfigured-order", OriginModelName: "test-model"}
+
+	require.NoError(t, PrepareAIPDDFinanceAttempt(c, info))
+
+	// The ledger must survive an unbound deployment, but no site identity may be
+	// invented for the upstream request.
+	require.NotNil(t, info.AIPDDFinance, "local accounting must continue without a site identity")
+	require.Empty(t, info.AIPDDFinance.InstanceID)
+	require.NotNil(t, info.ChannelMeta)
+	var order model.AIPDDTransitOrder
+	require.NoError(t, db.Where("platform_order_id = ?", "finance-unconfigured-order").First(&order).Error)
+	require.Empty(t, order.InstanceID)
+	require.Equal(t, model.AIPDDTransitPending, order.Status)
+}
+
+func TestRecordAIPDDFinanceSettlementWritesEstimateWithoutSiteIdentity(t *testing.T) {
+	previousDB := model.DB
+	dsn := fmt.Sprintf("file:aipdd-finance-estimate-%d?mode=memory&cache=shared", time.Now().UnixNano())
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	model.DB = db
+	t.Cleanup(func() { model.DB = previousDB })
+	require.NoError(t, db.AutoMigrate(&model.AIPDDTransitOrder{}))
+	constant.ResetAIPDDTokenPrices()
+	t.Cleanup(constant.ResetAIPDDTokenPrices)
+	constant.SetAIPDDTokenPrices([]constant.AIPDDModelTokenPrice{{
+		ModelName: "ap-glm-5.2", PromptPerMillion: 80_000, CompletionPerMillion: 280_000,
+	}}, 0.0001)
+	require.NoError(t, model.EnsureAIPDDTransitOrder(
+		"", "estimate-only-order", "estimate-only-order:0:1", 11, 22, 1, 0, "ap-glm-5.2"))
+
+	// No upstream settlement read is attempted because InstanceID is empty, so this
+	// must return without touching the network.
+	require.NoError(t, recordAIPDDFinanceSettlement(
+		&relaycommon.AIPDDFinanceContext{PlatformOrderID: "estimate-only-order"},
+		33, "CHARGED", AIPDDCostBasis{
+			ModelName: "ap-glm-5.2",
+			Usage:     &dto.Usage{PromptTokens: 1_000, CompletionTokens: 500},
+		}))
+
+	var order model.AIPDDTransitOrder
+	require.NoError(t, db.Where("platform_order_id = ?", "estimate-only-order").First(&order).Error)
+	require.NotNil(t, order.EstimatedSourceAWCoin)
+	require.EqualValues(t, 220, *order.EstimatedSourceAWCoin)
+	require.NotNil(t, order.EstimatedSourceRMBMic)
+	require.EqualValues(t, 22_000, *order.EstimatedSourceRMBMic)
+	require.Nil(t, order.SourceChargeAWCoin)
+	require.Nil(t, order.SourceChargeRMBMic)
+	// Still PENDING: only an upstream settlement read moves the row to SETTLED,
+	// and that read is skipped while no site identity is configured.
+	require.Equal(t, model.AIPDDTransitPending, order.Status)
+}
+
+func TestResolveAIPDDFinanceInstanceIDEmptyWhenUnconfigured(t *testing.T) {
 	t.Setenv(aipddInstanceIDEnv, "")
 
 	resolved, err := resolveAIPDDFinanceInstanceID()
 
-	require.ErrorContains(t, err, aipddInstanceIDEnv+" is required")
+	require.NoError(t, err)
+	require.Empty(t, resolved)
+}
+
+func TestResolveAIPDDFinanceInstanceIDRejectsMalformedOverride(t *testing.T) {
+	t.Setenv(aipddInstanceIDEnv, "site-1057")
+
+	resolved, err := resolveAIPDDFinanceInstanceID()
+
+	require.ErrorContains(t, err, aipddInstanceIDEnv+" must be a UUID")
 	require.Empty(t, resolved)
 }
 

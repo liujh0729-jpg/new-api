@@ -210,6 +210,17 @@ func applyAIPDDCatalog(catalog aipddcatalog.AtomicCatalog, baseURL, apiKey strin
 			pricingOptionUpdates[key] = value
 		}
 	}
+	// Runs last so a task model that moved to per-call or per-second billing is
+	// never handed a token expression by the same catalog revision.
+	if err == nil {
+		var updated int
+		var updates map[string]string
+		updated, updates, err = syncAIPDDLLMTokenPricingTx(tx, catalog)
+		result.UpdatedPrices += updated
+		for key, value := range updates {
+			pricingOptionUpdates[key] = value
+		}
+	}
 	if err == nil {
 		snapshot := AIPDDCatalogSnapshot{
 			ID: aipddCatalogSnapshotID, SchemaVersion: catalog.SchemaVersion,
@@ -230,7 +241,12 @@ func applyAIPDDCatalog(catalog aipddcatalog.AtomicCatalog, baseURL, apiKey strin
 	}
 
 	activateAIPDDCatalog(catalog)
-	for _, key := range []string{aipddModelPriceOptionKey, aipddBillingModeOptionKey, aipddTaskPricingOptionKey} {
+	for _, key := range []string{
+		aipddModelPriceOptionKey,
+		aipddBillingModeOptionKey,
+		aipddTaskPricingOptionKey,
+		aipddBillingExprOptionKey,
+	} {
 		value, ok := pricingOptionUpdates[key]
 		if !ok {
 			continue
@@ -285,6 +301,7 @@ func activateAIPDDCatalog(catalog aipddcatalog.AtomicCatalog) {
 	catalog.FilterFreeModels()
 	constant.SetAIPDDCapabilities(catalog.RuntimeCapabilities())
 	constant.SetAIPDDOpenAIModelMeta(catalog.ModelMetadata())
+	constant.SetAIPDDTokenPrices(catalog.TokenPrices(), catalog.AWCoinRate.RMBPerAWCoin)
 	// List-only denylist for GET /v1/models. Does not alter DB models, channel
 	// models, abilities, or request-time routing for manually specified IDs.
 	aipddcatalog.SetV1ModelsListHidden(catalog.V1ModelsListHiddenNames())

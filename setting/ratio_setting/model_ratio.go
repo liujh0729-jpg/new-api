@@ -466,9 +466,19 @@ func GetModelRatio(name string) (float64, bool, string) {
 			}
 			//return 0, true, name
 		}
-		return 37.5, operation_setting.SelfUseModeEnabled, name
+		// Unconfigured models bill at a 1x default ratio instead of erroring.
+		return 1, operation_setting.SelfUseModeEnabled, name
 	}
 	return ratio, true, name
+}
+
+// HasModelRatioConfig reports whether an explicit ratio was configured for the
+// model. GetModelRatio cannot answer this because unconfigured models now fall
+// back to the 1x default ratio and still report the self-use accept flag.
+func HasModelRatioConfig(name string) bool {
+	name = FormatMatchingModelName(name)
+	_, ok := modelRatioMap.Get(name)
+	return ok
 }
 
 func DefaultModelRatio2JSONString() string {
@@ -794,17 +804,4 @@ func FormatMatchingModelName(name string) string {
 		name = "gpt-4o-gizmo-*"
 	}
 	return name
-}
-
-// result: 倍率or价格， usePrice， exist
-func GetModelRatioOrPrice(model string) (float64, bool, bool) { // price or ratio
-	price, usePrice := GetModelPrice(model, false)
-	if usePrice {
-		return price, true, true
-	}
-	modelRatio, success, _ := GetModelRatio(model)
-	if success {
-		return modelRatio, false, true
-	}
-	return 37.5, false, false
 }

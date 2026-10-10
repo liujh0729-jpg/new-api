@@ -153,6 +153,9 @@ type RelayInfo struct {
 	SubscriptionPlanTitle string
 	// RequestId is used for idempotent pre-consume/refund
 	RequestId string
+	// SettlementUsage is the usage the final bill was computed from. It is nil
+	// when the upstream returned no billing information.
+	SettlementUsage *dto.Usage
 	// AIPDDFinance carries identifiers only. It never contains the upstream API key.
 	AIPDDFinance *AIPDDFinanceContext
 	// SubscriptionAmountTotal / SubscriptionAmountUsedAfterPreConsume are used to compute remaining in logs.

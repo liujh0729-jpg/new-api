@@ -119,13 +119,15 @@
 
 | Parameter | Required When | Description |
 |------|---------------|-------------|
-| `AIPDD_API_KEY` | Using built-in AIPDD task models | Upstream AIPDD API key. Register at [app.aipdd.work](https://app.aipdd.work) to obtain it. When set, it automatically creates or syncs the `AIPDD` channel with default base URL `https://api.aipdd.work`, and sends the key as `X-API-Key`. |
+| `AIPDD_API_KEY` | Optional, boot-time fallback only | Upstream AIPDD API key. Register at [app.aipdd.work](https://app.aipdd.work) to obtain it; it is sent as `X-API-Key`. **The database wins**: the key stored on the `AIPDD` channel is used first, then the key saved in the setup wizard, and only then this variable — changing it in the channel editor takes effect without a restart. When a key exists, the `AIPDD` channel is created or synced automatically. |
+| `AIPDD_BASE_URL` | Optional | AIPDD origin, resolved the same way: the channel's own base URL first, then this variable, then the built-in default `https://api.aipdd.work`. |
+| `AIPDD_PRICING_MARKUP` | Optional | Retail markup applied to catalog-synced default prices, default `1.10` (10% over AIPDD wholesale); `1` resells at cost. |
 | `SQL_DSN` | Using MySQL/PostgreSQL | Database connection string; omit it for default SQLite, but mount `/data` to persist data. |
 | `SESSION_SECRET` | Production or multi-instance deployment | Fixed session secret to keep login state stable across restarts and instances. |
 | `CRYPTO_SECRET` | Redis or multi-instance deployment | Fixed encryption secret so shared cache/cross-instance data can be decrypted. |
 | `REDIS_CONN_STRING` | Multi-instance deployment, shared cache, or task polling | Redis connection string; single-instance deployments can start with memory cache. |
 
-For AIPDD model parameters and request examples, see the [public OpenAPI contract](docs/openapi/public.json).
+For AIPDD model parameters and request examples, see the [public OpenAPI contract](docs/openapi/public.json). Catalog sync writes default retail prices as "wholesale × markup"; to keep a hand-set price for one model, use the pin action in System Settings → Pricing (stored in `AIPDDPinnedModels`) and later syncs will skip that model.
 
 
 ### Using Docker Compose (Recommended)

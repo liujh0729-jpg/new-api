@@ -57,7 +57,7 @@ docker push crpi-3iiuxr617jsmyl60.cn-hangzhou.personal.cr.aliyuncs.com/aipdd/ap-
 openssl rand -hex 32
 ```
 
-注意：该镜像默认启用 AIPDD 引导检查和上游模型 catalog 同步，使用 AIPDD 模型时必须设置 `AIPDD_API_KEY`。设置后系统会自动请求 `https://api.aipdd.work/v1/new-api/catalog`，并按 catalog 创建或同步名为 `AIPDD` 的渠道。系统不再内置默认 AIPDD 模型，也不再回退旧版 `/scripts/admin/comfyui_workflow` 和 `/fee-rules`。
+注意：该镜像默认启用上游模型 catalog 同步。密钥与上游地址都以数据库为准：先取名为 AIPDD 的渠道，再取首次设置向导里保存的值，最后才是 `AIPDD_API_KEY` / `AIPDD_BASE_URL`，内置默认地址为 `https://api.aipdd.work`。只要配到了密钥，系统就会自动请求 `GET {BaseURL}/v1/new-api/catalog`，并按 catalog 创建或同步名为 `AIPDD` 的渠道，运行期在渠道页改配置即刻生效，不必重启。系统不再内置默认 AIPDD 模型，也不再回退旧版 `/scripts/admin/comfyui_workflow` 和 `/fee-rules`。只有显式设置 `AIPDD_BOOTSTRAP_REQUIRED=true` 时，缺密钥才会拦住启动。
 
 ## 方案一：Docker Compose 部署
 
@@ -247,10 +247,11 @@ AIPDD_API_KEY=你的 AIPDD 上游 API Key
 
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
-| `AIPDD_BASE_URL` | `https://api.aipdd.work` | AIPDD 上游地址 |
-| `AIPDD_CATALOG_SYNC_ON_BOOT` | `true` | 容器启动时是否同步上游模型 catalog |
-| `AIPDD_CATALOG_SYNC_INTERVAL_MINUTES` | `5` | 定时同步上游模型 catalog 的间隔（分钟）；设为 `0` 禁用 |
+| `AIPDD_BASE_URL` | `https://api.aipdd.work` | AIPDD 上游地址的兜底值；渠道自身的 `base_url` 优先，其次本变量 |
+| `AIPDD_CATALOG_SYNC_ON_BOOT` | 配了密钥就同步 | 容器启动时是否同步上游模型 catalog；显式设为 `true`/`false` 才覆盖该判断 |
+| `AIPDD_CATALOG_SYNC_INTERVAL_MINUTES` | `5` | 定时同步上游模型 catalog 的间隔（分钟）；设为 `0` 禁用。向导里后补的密钥下一拍即生效，无需重启 |
 | `AIPDD_CATALOG_SYNC_TIMEOUT_SECONDS` | `10` | 单次同步超时时间 |
+| `AIPDD_PRICING_MARKUP` | `1.10` | 目录同步写入的默认零售价毛利倍率（AIPDD 批发价上加 10%）；填 `1` 为平价销售 |
 
 ### 后台手动添加
 
@@ -274,7 +275,7 @@ AIPDD_API_KEY=你的 AIPDD 上游 API Key
 
 ## AIPDD 模型如何添加
 
-系统启动时会自动同步 AIPDD 上游模型目录 `GET {BaseURL}/v1/new-api/catalog`。同步成功后，渠道模型列表与模型目录完全以上游 catalog 为准；**系统不再内置任何默认 AIPDD 模型**，同步失败时回退到上一次成功的 catalog 快照（存于 `aipdd_catalog_snapshots`），首次部署且无快照时启动报错并提示配置 `AIPDD_API_KEY`。
+系统启动时会自动同步 AIPDD 上游模型目录 `GET {BaseURL}/v1/new-api/catalog`。同步成功后，渠道模型列表与模型目录完全以上游 catalog 为准；**系统不再内置任何默认 AIPDD 模型**，同步失败时回退到上一次成功的 catalog 快照（存于 `aipdd_catalog_snapshots`）；已配密钥、又是首次部署且没有快照时，启动会报错并提示配置密钥。完全没有密钥时不会发起同步，也不会报错（除非显式设置 `AIPDD_BOOTSTRAP_REQUIRED=true`），补上密钥后由定时同步拉取，无需重启。
 
 catalog 覆盖以下八类端点：
 
@@ -369,7 +370,7 @@ Doubao-pro-128k,Doubao-pro-32k,Doubao-pro-4k,Doubao-lite-128k,Doubao-lite-32k,Do
 
 上线前确认：
 
-- `docker logs new-api` 没有 `AIPDD_API_KEY is required`。
+- `docker logs new-api` 没有 `an AIPDD API key is required`。
 - 管理员后台能看到 `AIPDD` 渠道，状态为启用。
 - 渠道分组包含用户或令牌所在分组。
 - 渠道模型列表包含要调用的模型名。
@@ -380,9 +381,12 @@ Doubao-pro-128k,Doubao-pro-32k,Doubao-pro-4k,Doubao-lite-128k,Doubao-lite-32k,Do
 
 ## 常见问题
 
-### 容器启动失败，日志提示 `AIPDD_API_KEY is required`
+### 启动失败，日志提示 `an AIPDD API key is required`
 
-该镜像默认需要 AIPDD 引导密钥。给容器添加环境变量：
+只有显式要求密钥的部署（`AIPDD_BOOTSTRAP_REQUIRED=true`）才会因缺密钥拦住启动。按解析顺序补上任一即可：
+
+1. 在首次设置向导里填写 AIPDD API Key，或把它保存到名为 AIPDD 的渠道——数据库优先，保存即生效，不必重启。
+2. 首次启动前预置到容器环境变量：
 
 ```env
 AIPDD_API_KEY=你的 AIPDD 上游 API Key

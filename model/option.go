@@ -253,6 +253,12 @@ func validateOptionValue(key string, value string) error {
 		if _, err := billing_setting.ParseTaskPricingMapJSON(value); err != nil {
 			return err
 		}
+	case "AIPDDPinnedModels":
+		// The catalog price importers read this option on every sync; a malformed
+		// value would abort the whole catalog transaction, so reject it here.
+		if _, err := parseAIPDDPinnedModels(value); err != nil {
+			return err
+		}
 	}
 	return nil
 }

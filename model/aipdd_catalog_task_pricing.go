@@ -46,6 +46,10 @@ func syncAIPDDTokenMarketTaskPricingTx(
 	if err != nil {
 		return 0, nil, err
 	}
+	pinned, err := loadAIPDDPinnedModelsTx(tx)
+	if err != nil {
+		return 0, nil, err
+	}
 
 	updated := 0
 	for _, capability := range catalog.Capabilities {
@@ -54,6 +58,9 @@ func syncAIPDDTokenMarketTaskPricingTx(
 		}
 		modelName := strings.TrimSpace(capability.ID)
 		if modelName == "" {
+			continue
+		}
+		if pinned.contains(modelName) {
 			continue
 		}
 
@@ -75,7 +82,8 @@ func syncAIPDDTokenMarketTaskPricingTx(
 
 		config, err := tokenMarketTaskPricingConfig(capability, rmbPerAWCoin, rmbPerUSD)
 		if err != nil {
-			return 0, nil, fmt.Errorf("build Token Market task pricing for %q: %w", modelName, err)
+			logAIPDDPricingSkipped(catalog.Revision, modelName, err)
+			continue
 		}
 		previous, exists := taskPricing[modelName]
 		if billingModes[modelName] != billing_setting.BillingModeTaskPricing ||
@@ -138,6 +146,10 @@ func syncAIPDDTokenMarketFixedPricingTx(
 	if err != nil {
 		return 0, nil, err
 	}
+	pinned, err := loadAIPDDPinnedModelsTx(tx)
+	if err != nil {
+		return 0, nil, err
+	}
 
 	rmbPerAWCoin := catalog.AWCoinRate.RMBPerAWCoin
 	rmbPerUSD := operation_setting.USDExchangeRate
@@ -153,6 +165,9 @@ func syncAIPDDTokenMarketFixedPricingTx(
 		if modelName == "" {
 			continue
 		}
+		if pinned.contains(modelName) {
+			continue
+		}
 
 		modelChanged := false
 		if tokenMarketFixedCapabilityAvailable(capability) {
@@ -165,7 +180,8 @@ func syncAIPDDTokenMarketFixedPricingTx(
 			awcoin := aipddcatalog.TaskAWCoinPrice(capability.Pricing)
 			priceUSD, err := displayAWCoinToUSD(&awcoin, rmbPerAWCoin, rmbPerUSD)
 			if err != nil {
-				return 0, nil, fmt.Errorf("build Token Market fixed price for %q: %w", modelName, err)
+				logAIPDDPricingSkipped(catalog.Revision, modelName, err)
+				continue
 			}
 			if current, ok := modelPrices[modelName]; !ok || !nearlySamePrice(current, priceUSD) {
 				modelPrices[modelName] = priceUSD
@@ -263,12 +279,21 @@ func syncAIPDDSynchronousPerSecondPricingTx(
 	if err != nil {
 		return 0, nil, err
 	}
+	pinned, err := loadAIPDDPinnedModelsTx(tx)
+	if err != nil {
+		return 0, nil, err
+	}
 
 	updated := 0
 	for modelName, awcoinPerSecond := range catalog.SynchronousPerSecondPrices() {
-		unitPriceUSD := awcoinPerSecond * rmbPerAWCoin / rmbPerUSD
+		if pinned.contains(modelName) {
+			continue
+		}
+		unitPriceUSD := aipddRetailUSD(awcoinPerSecond, rmbPerAWCoin, rmbPerUSD)
 		if !finitePositive(unitPriceUSD) {
-			return 0, nil, fmt.Errorf("build per-second price for %q: %g awcoin per second is not usable", modelName, awcoinPerSecond)
+			logAIPDDPricingSkipped(catalog.Revision, modelName,
+				fmt.Errorf("%g awcoin per second is not a usable retail price", awcoinPerSecond))
+			continue
 		}
 		config := billing_setting.TaskPricingConfig{
 			Unit:                      billing_setting.TaskPricingUnitSecond,
@@ -276,7 +301,8 @@ func syncAIPDDSynchronousPerSecondPricingTx(
 			ReferenceVideoPolicy:      billing_setting.ReferenceVideoPolicySame,
 		}
 		if err := billing_setting.ValidateTaskPricingConfig(config); err != nil {
-			return 0, nil, fmt.Errorf("validate per-second price for %q: %w", modelName, err)
+			logAIPDDPricingSkipped(catalog.Revision, modelName, err)
+			continue
 		}
 		previous, exists := taskPricing[modelName]
 		if billingModes[modelName] != billing_setting.BillingModeTaskPricing ||
@@ -342,12 +368,21 @@ func syncAIPDDAsyncPerSecondPricingTx(
 	if err != nil {
 		return 0, nil, err
 	}
+	pinned, err := loadAIPDDPinnedModelsTx(tx)
+	if err != nil {
+		return 0, nil, err
+	}
 
 	updated := 0
 	for modelName, awcoinPerSecond := range catalog.AsyncPerSecondPrices() {
-		unitPriceUSD := awcoinPerSecond * rmbPerAWCoin / rmbPerUSD
+		if pinned.contains(modelName) {
+			continue
+		}
+		unitPriceUSD := aipddRetailUSD(awcoinPerSecond, rmbPerAWCoin, rmbPerUSD)
 		if !finitePositive(unitPriceUSD) {
-			return 0, nil, fmt.Errorf("build async per-second price for %q: %g awcoin per second is not usable", modelName, awcoinPerSecond)
+			logAIPDDPricingSkipped(catalog.Revision, modelName,
+				fmt.Errorf("%g awcoin per second is not a usable retail price", awcoinPerSecond))
+			continue
 		}
 		config := billing_setting.TaskPricingConfig{
 			Unit:                      billing_setting.TaskPricingUnitSecond,
@@ -355,7 +390,8 @@ func syncAIPDDAsyncPerSecondPricingTx(
 			ReferenceVideoPolicy:      billing_setting.ReferenceVideoPolicySame,
 		}
 		if err := billing_setting.ValidateTaskPricingConfig(config); err != nil {
-			return 0, nil, fmt.Errorf("validate async per-second price for %q: %w", modelName, err)
+			logAIPDDPricingSkipped(catalog.Revision, modelName, err)
+			continue
 		}
 		previous, exists := taskPricing[modelName]
 		if billingModes[modelName] != billing_setting.BillingModeTaskPricing ||
@@ -533,7 +569,7 @@ func displayAWCoinToUSD(value *float64, rmbPerAWCoin, rmbPerUSD float64) (float6
 	if value == nil || !finitePositive(*value) {
 		return 0, fmt.Errorf("AWCoin price must be finite and greater than 0")
 	}
-	price := *value * rmbPerAWCoin / rmbPerUSD
+	price := aipddRetailUSD(*value, rmbPerAWCoin, rmbPerUSD)
 	if !finitePositive(price) {
 		return 0, fmt.Errorf("converted USD price must be finite and greater than 0")
 	}

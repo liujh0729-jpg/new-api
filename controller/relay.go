@@ -370,6 +370,10 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 		gopool.Go(func() {
 			service.DisableChannel(channelError, err.ErrorWithStatusCode())
 		})
+	} else if service.WouldDisableChannel(err) {
+		gopool.Go(func() {
+			service.AlertChannelPersistentFailure(channelError, err.ErrorWithStatusCode())
+		})
 	}
 
 	if constant.ErrorLogEnabled && types.IsRecordErrorLog(err) {

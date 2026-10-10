@@ -8,19 +8,18 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/url"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/model"
 )
 
 const (
 	virtualCharacterAIPDDKeyEnv     = "AIPDD_API_KEY"
 	virtualCharacterAIPDDBaseURLEnv = "AIPDD_BASE_URL"
-	virtualCharacterAIPDDDefaultURL = "https://api.aipdd.work"
 	virtualCharacterSignedTTL       = 72 * time.Hour
 	virtualCharacterResponseMax     = 4 << 20
 )
@@ -58,17 +57,14 @@ type AIPDDVirtualCharacterStorage struct {
 }
 
 func NewAIPDDVirtualCharacterStorage() (*AIPDDVirtualCharacterStorage, error) {
-	apiKey := strings.TrimSpace(os.Getenv(virtualCharacterAIPDDKeyEnv))
+	apiKey := strings.TrimSpace(model.ResolveAIPDDCatalogKey())
 	if apiKey == "" {
-		return nil, errors.New("AIPDD_API_KEY is not configured")
+		return nil, errors.New("AIPDD API key is not configured; enter it in the setup wizard or save it on the AIPDD channel")
 	}
-	baseURL := strings.TrimRight(strings.TrimSpace(os.Getenv(virtualCharacterAIPDDBaseURLEnv)), "/")
-	if baseURL == "" {
-		baseURL = virtualCharacterAIPDDDefaultURL
-	}
+	baseURL := model.ResolveAIPDDBaseURL()
 	parsed, err := url.Parse(baseURL)
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return nil, errors.New("AIPDD_BASE_URL is invalid")
+		return nil, errors.New("the AIPDD base URL is invalid; check the AIPDD channel base URL or AIPDD_BASE_URL")
 	}
 	return &AIPDDVirtualCharacterStorage{
 		baseURL: baseURL,
