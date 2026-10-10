@@ -115,6 +115,31 @@ func TestTokenMarketVideoCatalogPreservesH3RequestAndPricingFacts(t *testing.T) 
 	require.Equal(t, "16:9", payload["ratio"])
 }
 
+func TestTokenMarketVideoDefaultsDurationAndResolution(t *testing.T) {
+	const modelName = "ap-minimax-h3-text-to-video"
+	capability := seedanceTestCapabilityForModel(modelName)
+	capability.AdapterCode = "token_market_media"
+	capability.ExecutionProtocol = tokenMarketVideoProtocol
+	capability.ExecutionPath = "/v1/videos"
+	capability.SeedancePricing.ByResolution["480p"] = capability.SeedancePricing.ByResolution["720p"]
+	constant.SetAIPDDCapabilities([]constant.AIPDDCapability{capability})
+	t.Cleanup(constant.ResetAIPDDCapabilities)
+
+	body := `{"model":"ap-minimax-h3-text-to-video","prompt":"hello","ratio":"16:9"}`
+	ctx, info, adaptor := seedanceRequestContextForModel(t, modelName, body)
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(ctx, info))
+
+	requestBody, err := adaptor.BuildRequestBody(ctx, info)
+	require.NoError(t, err)
+	data, err := io.ReadAll(requestBody)
+	require.NoError(t, err)
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(data, &payload))
+	require.Equal(t, float64(1), payload["duration_seconds"])
+	require.Equal(t, "480p", payload["video_resolution"])
+	require.Equal(t, "16:9", payload["ratio"])
+}
+
 func TestTokenMarketVideoFetchAndContentURLResult(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "/v1/videos/upstream-task", r.URL.Path)

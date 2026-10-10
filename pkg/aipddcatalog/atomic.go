@@ -534,6 +534,33 @@ func (catalog AtomicCatalog) SynchronousPerSecondPrices() map[string]float64 {
 	return prices
 }
 
+// AsyncPerSecondPrices returns the retail price per second, in AWCoin, of every
+// capability the gateway calls asynchronously (task submission) and the upstream
+// charges per unit of time. Their price cannot be imported as a per-call price:
+// one request costs as many seconds of output as it produces.
+func (catalog AtomicCatalog) AsyncPerSecondPrices() map[string]float64 {
+	prices := make(map[string]float64)
+	for _, item := range catalog.Capabilities {
+		if _, _, ok := item.SynchronousExecution(); ok {
+			continue
+		}
+		if !strings.EqualFold(strings.TrimSpace(item.Pricing.PricingModel), "per_unit") ||
+			chargeConfigUnit(item.Pricing.ChargeConfig) != "second" {
+			continue
+		}
+		if !item.Pricing.Enabled ||
+			(item.Available != nil && !*item.Available) ||
+			!strings.EqualFold(strings.TrimSpace(item.Pricing.Currency), "awcoin") {
+			continue
+		}
+		modelName := strings.TrimSpace(item.ID)
+		if price := TaskAWCoinPrice(item.Pricing); modelName != "" && price > 0 {
+			prices[modelName] = price
+		}
+	}
+	return prices
+}
+
 // applyImagePricing copies the retail per-image tiers onto the runtime
 // capability. The catalog publishes them in RMB; chargeConfig.amountAwcoin only
 // carries the cheapest tier, so the tiers are converted to AWCoin here and used

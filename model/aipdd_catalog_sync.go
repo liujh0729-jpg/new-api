@@ -202,6 +202,15 @@ func applyAIPDDCatalog(catalog aipddcatalog.AtomicCatalog, baseURL, apiKey strin
 		}
 	}
 	if err == nil {
+		var updated int
+		var updates map[string]string
+		updated, updates, err = syncAIPDDAsyncPerSecondPricingTx(tx, catalog)
+		result.UpdatedPrices += updated
+		for key, value := range updates {
+			pricingOptionUpdates[key] = value
+		}
+	}
+	if err == nil {
 		snapshot := AIPDDCatalogSnapshot{
 			ID: aipddCatalogSnapshotID, SchemaVersion: catalog.SchemaVersion,
 			Revision: catalog.Revision, SourceBaseURL: baseURL,

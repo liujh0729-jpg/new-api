@@ -317,6 +317,85 @@ func syncAIPDDSynchronousPerSecondPricingTx(
 	return updated, updates, nil
 }
 
+// syncAIPDDAsyncPerSecondPricingTx imports the per-second retail price of async
+// task models (submitted via /shared-tasks/tasks or similar) where the upstream
+// charges per unit of time. Without this importer, such models would be callable
+// but unpriced once the upstream marks them available.
+func syncAIPDDAsyncPerSecondPricingTx(
+	tx *gorm.DB,
+	catalog aipddcatalog.AtomicCatalog,
+) (int, map[string]string, error) {
+	rmbPerAWCoin := catalog.AWCoinRate.RMBPerAWCoin
+	rmbPerUSD := operation_setting.USDExchangeRate
+	if !finitePositive(rmbPerAWCoin) {
+		return 0, nil, fmt.Errorf("AIPDD catalog rmbPerAwcoin must be finite and greater than 0")
+	}
+	if !finitePositive(rmbPerUSD) {
+		return 0, nil, fmt.Errorf("New API USDExchangeRate must be finite and greater than 0")
+	}
+
+	billingModes, err := loadAIPDDBillingModesTx(tx)
+	if err != nil {
+		return 0, nil, err
+	}
+	taskPricing, err := loadAIPDDTaskPricingTx(tx)
+	if err != nil {
+		return 0, nil, err
+	}
+
+	updated := 0
+	for modelName, awcoinPerSecond := range catalog.AsyncPerSecondPrices() {
+		unitPriceUSD := awcoinPerSecond * rmbPerAWCoin / rmbPerUSD
+		if !finitePositive(unitPriceUSD) {
+			return 0, nil, fmt.Errorf("build async per-second price for %q: %g awcoin per second is not usable", modelName, awcoinPerSecond)
+		}
+		config := billing_setting.TaskPricingConfig{
+			Unit:                      billing_setting.TaskPricingUnitSecond,
+			NoReferenceVideoUnitPrice: unitPriceUSD,
+			ReferenceVideoPolicy:      billing_setting.ReferenceVideoPolicySame,
+		}
+		if err := billing_setting.ValidateTaskPricingConfig(config); err != nil {
+			return 0, nil, fmt.Errorf("validate async per-second price for %q: %w", modelName, err)
+		}
+		previous, exists := taskPricing[modelName]
+		if billingModes[modelName] != billing_setting.BillingModeTaskPricing ||
+			!exists || !reflect.DeepEqual(previous, config) {
+			updated++
+		}
+		taskPricing[modelName] = config
+		billingModes[modelName] = billing_setting.BillingModeTaskPricing
+	}
+
+	if updated == 0 {
+		return 0, nil, nil
+	}
+	if err := billing_setting.ValidateTaskPricingMap(taskPricing); err != nil {
+		return 0, nil, fmt.Errorf("validate merged AIPDD async task pricing: %w", err)
+	}
+	billingModeJSON, err := common.Marshal(billingModes)
+	if err != nil {
+		return 0, nil, fmt.Errorf("serialize AIPDD billing modes: %w", err)
+	}
+	taskPricingJSON, err := common.Marshal(taskPricing)
+	if err != nil {
+		return 0, nil, fmt.Errorf("serialize AIPDD task pricing: %w", err)
+	}
+	updates := map[string]string{
+		aipddBillingModeOptionKey: string(billingModeJSON),
+		aipddTaskPricingOptionKey: string(taskPricingJSON),
+	}
+	for key, value := range updates {
+		option := Option{Key: key, Value: value}
+		if err := tx.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "key"}},
+			DoUpdates: clause.AssignmentColumns([]string{"value"}),
+		}).Create(&option).Error; err != nil {
+			return 0, nil, err
+		}
+	}
+	return updated, updates, nil
+}
+
 func loadAIPDDModelPricesTx(tx *gorm.DB) (map[string]float64, error) {
 	raw, err := loadAIPDDOptionValueTx(tx, aipddModelPriceOptionKey)
 	if err != nil {

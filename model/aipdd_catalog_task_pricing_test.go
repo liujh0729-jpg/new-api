@@ -98,6 +98,52 @@ func TestSyncAIPDDSynchronousPerSecondPricing(t *testing.T) {
 	require.InDelta(t, 0.006, pricing["ap-funasr"].NoReferenceVideoUnitPrice, 1e-9)
 }
 
+func TestSyncAIPDDAsyncPerSecondPricing(t *testing.T) {
+	truncateTables(t)
+	preserveAIPDDPricingRuntime(t)
+	originalRate := operation_setting.USDExchangeRate
+	operation_setting.USDExchangeRate = 2
+	t.Cleanup(func() { operation_setting.USDExchangeRate = originalRate })
+
+	updated, updates, err := syncAIPDDAsyncPerSecondPricingTx(DB, aipddASRCatalog("revision-1"))
+	require.NoError(t, err)
+	require.Equal(t, 1, updated)
+	require.Len(t, updates, 2)
+	require.Contains(t, updates, aipddBillingModeOptionKey)
+	require.Contains(t, updates, aipddTaskPricingOptionKey)
+
+	pricing, err := loadAIPDDTaskPricingTx(DB)
+	require.NoError(t, err)
+	// 600 awcoin/s at 0.0001 RMB per awcoin over 2 RMB per USD.
+	ltx, ok := pricing["ap-ltx-2.5"]
+	require.True(t, ok, "the async video model must be imported")
+	require.Equal(t, billing_setting.TaskPricingUnitSecond, ltx.Unit)
+	require.InDelta(t, 0.03, ltx.NoReferenceVideoUnitPrice, 1e-9)
+
+	require.NotContains(t, pricing, "ap-funasr", "synchronous models belong to the sync importer")
+	require.NotContains(t, pricing, "ap-indextts-2")
+
+	modes, err := loadAIPDDBillingModesTx(DB)
+	require.NoError(t, err)
+	require.Equal(t, billing_setting.BillingModeTaskPricing, modes["ap-ltx-2.5"])
+
+	// Re-applying the same catalog must not report changes.
+	updated, updates, err = syncAIPDDAsyncPerSecondPricingTx(DB, aipddASRCatalog("revision-2"))
+	require.NoError(t, err)
+	require.Zero(t, updated)
+	require.Nil(t, updates)
+
+	// A price change is reported and written.
+	changed := aipddASRCatalog("revision-3")
+	changed.Capabilities[1].Pricing.ChargeConfig["amountAwcoin"] = float64(720)
+	updated, _, err = syncAIPDDAsyncPerSecondPricingTx(DB, changed)
+	require.NoError(t, err)
+	require.Equal(t, 1, updated)
+	pricing, err = loadAIPDDTaskPricingTx(DB)
+	require.NoError(t, err)
+	require.InDelta(t, 0.036, pricing["ap-ltx-2.5"].NoReferenceVideoUnitPrice, 1e-9)
+}
+
 func TestSyncAIPDDSynchronousPerSecondPricingWithoutSynchronousModels(t *testing.T) {
 	truncateTables(t)
 	preserveAIPDDPricingRuntime(t)

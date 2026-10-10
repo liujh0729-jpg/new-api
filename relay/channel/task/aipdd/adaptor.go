@@ -230,12 +230,17 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		}
 		duration := positiveFloat(raw["duration_seconds"])
 		if duration <= 0 || math.IsNaN(duration) || math.IsInf(duration, 0) {
-			return service.TaskErrorWrapperLocal(
-				fmt.Errorf("duration_seconds must be a positive number"), "invalid_duration", http.StatusBadRequest)
+			duration = 1
+			raw["duration_seconds"] = duration
 		}
-		resolution, err := billing_setting.NormalizeTaskPricingResolution(anyToString(raw["video_resolution"]))
+		resolutionStr := anyToString(raw["video_resolution"])
+		if resolutionStr == "" {
+			resolutionStr = "480p"
+			raw["video_resolution"] = resolutionStr
+		}
+		resolution, err := billing_setting.NormalizeTaskPricingResolution(resolutionStr)
 		if err != nil {
-			return service.TaskErrorWrapperLocal(err, "missing_resolution", http.StatusBadRequest)
+			return service.TaskErrorWrapperLocal(err, "invalid_resolution", http.StatusBadRequest)
 		}
 		if _, ok := seedanceResolutionPricing(cfg, resolution); !ok {
 			return service.TaskErrorWrapperLocal(
