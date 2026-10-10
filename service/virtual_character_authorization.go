@@ -1,0 +1,368 @@
+package service
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/model"
+	"gorm.io/gorm"
+)
+
+const realPersonProviderStateTTL = 2 * time.Minute
+
+type VirtualCharacterAuthorizationError struct {
+	Status  int
+	Code    string
+	Message string
+}
+
+func (e *VirtualCharacterAuthorizationError) Error() string {
+	if e == nil {
+		return ""
+	}
+	return e.Message
+}
+
+type VirtualCharacterAuthorizationSnapshot struct {
+	CharacterID         int64  `json:"character_id"`
+	UserID              int    `json:"user_id"`
+	SourceType          string `json:"source_type"`
+	ProviderAccountID   int    `json:"provider_account_id"`
+	ProviderGroupID     string `json:"provider_group_id,omitempty"`
+	ProviderAssetID     string `json:"provider_asset_id"`
+	AuthorizationStatus string `json:"authorization_status,omitempty"`
+	AgreementReference  string `json:"agreement_reference,omitempty"`
+	ConsentReceiptHash  string `json:"consent_receipt_hash,omitempty"`
+	ProviderGroupStatus string `json:"provider_group_status,omitempty"`
+	ProviderAssetStatus string `json:"provider_asset_status,omitempty"`
+	ProviderCheckedAt   int64  `json:"provider_checked_at,omitempty"`
+	AuthorizedAt        int64  `json:"authorized_at,omitempty"`
+	CapturedAt          int64  `json:"captured_at"`
+}
+
+func SyncRealPersonVirtualCharacter(ctx context.Context, characterID int64) (*model.VirtualCharacter, error) {
+	character, err := model.GetVirtualCharacterByID(characterID)
+	if err != nil {
+		return nil, err
+	}
+	if character.SourceType != model.VirtualCharacterSourceVolcRealPerson || strings.TrimSpace(character.ProviderGroupID) == "" {
+		return nil, errors.New("real-person character is not ready for provider synchronization")
+	}
+	authorization, err := model.GetVirtualCharacterAuthorization(character.ID)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now().Unix()
+	if authorization.ValidUntil > 0 && authorization.ValidUntil <= now {
+		_ = model.ExpireRealPersonAuthorization(character.ID, "authorization expired")
+		return nil, errors.New("real-person authorization expired")
+	}
+	if strings.TrimSpace(character.ProviderAssetID) == "" {
+		if err := model.MarkRealPersonVirtualCharacterAwaitingAssetUpload(character.ID); err != nil {
+			return nil, err
+		}
+		return model.GetVirtualCharacterByID(character.ID)
+	}
+	account, err := providerAccountForCharacter(character)
+	if err != nil {
+		_ = model.BlockRealPersonVirtualCharacter(character.ID, model.VirtualCharacterAuthorizationProviderUnavailable, err.Error())
+		return nil, err
+	}
+	client, err := NewVolcAssetClient(account)
+	if err != nil {
+		_ = model.BlockRealPersonVirtualCharacter(character.ID, model.VirtualCharacterAuthorizationProviderUnavailable, common.MaskSensitiveInfo(err.Error()))
+		return nil, err
+	}
+	group, err := client.GetAssetGroup(ctx, character.ProviderGroupID, account.ProjectName)
+	if err != nil {
+		reason := common.MaskSensitiveInfo(err.Error())
+		_ = model.BlockRealPersonVirtualCharacter(character.ID, model.VirtualCharacterAuthorizationProviderUnavailable, reason)
+		return nil, err
+	}
+	if err := validateRealPersonGroup(character, account, group); err != nil {
+		_ = model.BlockRealPersonVirtualCharacter(character.ID, model.VirtualCharacterAuthorizationProviderUnavailable, err.Error())
+		return nil, err
+	}
+	groupStatus := providerGroupStatus(group)
+	if !strings.EqualFold(groupStatus, "Active") {
+		if isTerminalProviderGroupStatus(groupStatus) {
+			reason := fmt.Sprintf("provider group is not active: %s", groupStatus)
+			_ = model.BlockRealPersonVirtualCharacter(character.ID, model.VirtualCharacterAuthorizationFailed, reason)
+			return nil, errors.New(reason)
+		}
+		return waitForRealPersonProvider(character, groupStatus, "Pending")
+	}
+	asset, err := client.GetAsset(ctx, character.ProviderAssetID, account.ProjectName)
+	if err != nil {
+		reason := common.MaskSensitiveInfo(err.Error())
+		_ = model.BlockRealPersonVirtualCharacter(character.ID, model.VirtualCharacterAuthorizationProviderUnavailable, reason)
+		return nil, err
+	}
+	if asset == nil || !sameVolcAssetID(asset.ID, character.ProviderAssetID) ||
+		!strings.EqualFold(strings.TrimSpace(asset.GroupID), strings.TrimSpace(character.ProviderGroupID)) ||
+		!strings.EqualFold(strings.TrimSpace(asset.AssetType), "Image") {
+		reason := "real-person provider asset does not belong to its verified group"
+		_ = model.BlockRealPersonVirtualCharacter(character.ID, model.VirtualCharacterAuthorizationFailed, reason)
+		return nil, errors.New(reason)
+	}
+	checkedAt := time.Now().Unix()
+	assetStatus := strings.TrimSpace(asset.Status)
+	switch strings.ToLower(assetStatus) {
+	case "active":
+		if err := model.ActivateRealPersonVirtualCharacter(character.ID, asset.ID, assetStatus, checkedAt); err != nil {
+			return nil, err
+		}
+		queueRealPersonStagingCleanup(character)
+		return model.GetVirtualCharacterByID(character.ID)
+	case "processing", "creating", "pending", "queued":
+		return waitForRealPersonProvider(character, groupStatus, assetStatus)
+	case "failed", "error", "rejected", "deleted", "deleting", "disabled", "inactive", "revoked":
+		reason := fmt.Sprintf("real-person portrait asset review failed: %s", assetStatus)
+		_ = model.BlockRealPersonVirtualCharacter(character.ID, model.VirtualCharacterAuthorizationFailed, reason)
+		queueRealPersonStagingCleanup(character)
+		return nil, errors.New(reason)
+	default:
+		if assetStatus == "" {
+			assetStatus = "Unknown"
+		}
+		return waitForRealPersonProvider(character, groupStatus, assetStatus)
+	}
+}
+
+func AuthorizeVirtualCharacterForVideo(ctx context.Context, character *model.VirtualCharacter, userID int) (string, *VirtualCharacterAuthorizationError) {
+	if character == nil || character.ID <= 0 {
+		return "", authorizationError(http.StatusNotFound, "character_not_found", "character not found")
+	}
+	if character.Scope == model.VirtualCharacterScopePrivate && character.UserID != userID {
+		return "", authorizationError(http.StatusForbidden, "character_forbidden", "character does not belong to the current user")
+	}
+	if character.Scope == model.VirtualCharacterScopePublic && character.Status != model.VirtualCharacterStatusActive {
+		return "", authorizationError(http.StatusConflict, "character_unavailable", "character is not active")
+	}
+	if character.Scope == model.VirtualCharacterScopePrivate && character.Status != model.VirtualCharacterStatusActive {
+		return "", authorizationError(http.StatusConflict, "character_unavailable", "character is not available for new tasks")
+	}
+	if strings.TrimSpace(character.ProviderAssetID) == "" {
+		return "", authorizationError(http.StatusConflict, "character_unavailable", "character asset is not active")
+	}
+	account, err := providerAccountForCharacter(character)
+	if err != nil {
+		return "", authorizationError(http.StatusServiceUnavailable, "character_provider_unavailable", err.Error())
+	}
+	if character.SourceType != model.VirtualCharacterSourceVolcRealPerson {
+		return marshalAuthorizationSnapshot(character, nil)
+	}
+	if !account.RealPersonEnabled {
+		return "", authorizationError(http.StatusServiceUnavailable, "real_person_disabled", "real-person character support is disabled")
+	}
+	authorization, err := model.GetVirtualCharacterAuthorization(character.ID)
+	if err != nil {
+		return "", authorizationError(http.StatusConflict, "authorization_missing", "real-person authorization record is missing")
+	}
+	now := time.Now().Unix()
+	if authorization.ValidFrom > now {
+		return "", authorizationError(http.StatusConflict, "authorization_not_started", "real-person authorization is not active yet")
+	}
+	if authorization.ValidUntil > 0 && authorization.ValidUntil <= now {
+		_ = model.ExpireRealPersonAuthorization(character.ID, "authorization expired")
+		return "", authorizationError(http.StatusConflict, "authorization_expired", "real-person authorization has expired")
+	}
+	if authorization.Status != model.VirtualCharacterAuthorizationActive {
+		return "", authorizationError(http.StatusConflict, "authorization_inactive", "real-person authorization is not active")
+	}
+	if authorization.HolderScopeAcceptedAt <= 0 || strings.TrimSpace(authorization.ConsentReceiptHash) == "" {
+		return "", authorizationError(http.StatusConflict, "authorization_evidence_incomplete", "real-person authorization evidence is incomplete")
+	}
+	if authorization.ProviderCheckedAt <= time.Now().Add(-realPersonProviderStateTTL).Unix() {
+		if _, err := RefreshRealPersonVirtualCharacterState(ctx, character, account); err != nil {
+			return "", authorizationError(http.StatusServiceUnavailable, "provider_state_unavailable", common.MaskSensitiveInfo(err.Error()))
+		}
+		authorization, err = model.GetVirtualCharacterAuthorization(character.ID)
+		if err != nil || authorization.Status != model.VirtualCharacterAuthorizationActive {
+			return "", authorizationError(http.StatusConflict, "authorization_inactive", "real-person authorization is not active")
+		}
+	}
+	return marshalAuthorizationSnapshot(character, authorization)
+}
+
+func RefreshRealPersonVirtualCharacterState(ctx context.Context, character *model.VirtualCharacter, account *model.VirtualCharacterProviderAccount) (*model.VirtualCharacterAuthorization, error) {
+	if character == nil || account == nil || character.SourceType != model.VirtualCharacterSourceVolcRealPerson {
+		return nil, errors.New("invalid real-person provider state request")
+	}
+	client, err := NewVolcAssetClient(account)
+	if err != nil {
+		return nil, err
+	}
+	group, err := client.GetAssetGroup(ctx, character.ProviderGroupID, account.ProjectName)
+	if err != nil {
+		reason := common.MaskSensitiveInfo(err.Error())
+		_ = model.BlockRealPersonVirtualCharacter(character.ID, model.VirtualCharacterAuthorizationProviderUnavailable, reason)
+		return nil, err
+	}
+	if err := validateRealPersonGroup(character, account, group); err != nil {
+		_ = model.BlockRealPersonVirtualCharacter(character.ID, model.VirtualCharacterAuthorizationProviderUnavailable, err.Error())
+		return nil, err
+	}
+	groupStatus := providerGroupStatus(group)
+	if !strings.EqualFold(groupStatus, "Active") {
+		reason := fmt.Sprintf("provider group is not active: %s", groupStatus)
+		_ = model.BlockRealPersonVirtualCharacter(character.ID, model.VirtualCharacterAuthorizationProviderUnavailable, reason)
+		return nil, errors.New(reason)
+	}
+	asset, err := client.GetAsset(ctx, character.ProviderAssetID, account.ProjectName)
+	if err != nil {
+		reason := common.MaskSensitiveInfo(err.Error())
+		_ = model.BlockRealPersonVirtualCharacter(character.ID, model.VirtualCharacterAuthorizationProviderUnavailable, reason)
+		return nil, err
+	}
+	if !strings.EqualFold(strings.TrimSpace(asset.ID), strings.TrimSpace(character.ProviderAssetID)) ||
+		!strings.EqualFold(strings.TrimSpace(asset.GroupID), strings.TrimSpace(character.ProviderGroupID)) ||
+		!strings.EqualFold(strings.TrimSpace(asset.AssetType), "Image") ||
+		!strings.EqualFold(strings.TrimSpace(asset.Status), "Active") {
+		reason := "real-person provider asset is no longer active or no longer belongs to its verified group"
+		_ = model.BlockRealPersonVirtualCharacter(character.ID, model.VirtualCharacterAuthorizationProviderUnavailable, reason)
+		return nil, errors.New(reason)
+	}
+	checkedAt := time.Now().Unix()
+	if err := model.ActivateRealPersonVirtualCharacter(character.ID, asset.ID, asset.Status, checkedAt); err != nil {
+		return nil, err
+	}
+	return model.GetVirtualCharacterAuthorization(character.ID)
+}
+
+func GetRealPersonVirtualCharacterPreviewAsset(ctx context.Context, character *model.VirtualCharacter) (*VolcAssetResult, error) {
+	account, err := providerAccountForCharacter(character)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := RefreshRealPersonVirtualCharacterState(ctx, character, account); err != nil {
+		return nil, err
+	}
+	client, err := NewVolcAssetClient(account)
+	if err != nil {
+		return nil, err
+	}
+	asset, err := client.GetAsset(ctx, character.ProviderAssetID, account.ProjectName)
+	if err != nil {
+		return nil, err
+	}
+	if !strings.EqualFold(asset.Status, "Active") || strings.TrimSpace(asset.URL) == "" {
+		return nil, errors.New("real-person preview asset is unavailable")
+	}
+	return asset, nil
+}
+
+func providerAccountForCharacter(character *model.VirtualCharacter) (*model.VirtualCharacterProviderAccount, error) {
+	if character == nil || !common.HasStableCryptoSecret() {
+		return nil, errors.New("virtual character provider is unavailable")
+	}
+	account, err := model.GetEnabledVirtualCharacterProviderAccount()
+	if err != nil || account.ID != character.ProviderAccountID {
+		return nil, errors.New("virtual character provider account is unavailable")
+	}
+	return account, nil
+}
+
+func validateRealPersonGroup(character *model.VirtualCharacter, account *model.VirtualCharacterProviderAccount, group *VolcAssetGroupResult) error {
+	if group == nil || strings.TrimSpace(group.ID) == "" || !strings.EqualFold(strings.TrimSpace(group.ID), strings.TrimSpace(character.ProviderGroupID)) {
+		return errors.New("verified real-person group was not found")
+	}
+	if !strings.EqualFold(strings.TrimSpace(group.GroupType), model.VirtualCharacterRealPersonGroupType) {
+		return fmt.Errorf("provider group type %q is not %s", group.GroupType, model.VirtualCharacterRealPersonGroupType)
+	}
+	if group.ProjectName != "" && !strings.EqualFold(strings.TrimSpace(group.ProjectName), strings.TrimSpace(account.ProjectName)) {
+		return errors.New("provider group belongs to a different project")
+	}
+	return nil
+}
+
+func providerGroupStatus(group *VolcAssetGroupResult) string {
+	if group == nil || strings.TrimSpace(group.Status) == "" {
+		// GetAssetGroup does not always include Status for LivenessFace groups.
+		// A successfully returned, structurally valid group is usable in that case.
+		return "Active"
+	}
+	return strings.TrimSpace(group.Status)
+}
+
+func isTerminalProviderGroupStatus(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "failed", "error", "rejected", "deleted", "deleting", "disabled", "inactive", "revoked":
+		return true
+	default:
+		return false
+	}
+}
+
+func waitForRealPersonProvider(character *model.VirtualCharacter, groupStatus, assetStatus string) (*model.VirtualCharacter, error) {
+	if character == nil || character.ID <= 0 {
+		return nil, errors.New("invalid real-person character")
+	}
+	attempts := character.AssetPollAttempts + 1
+	now := time.Now()
+	if err := model.MarkRealPersonVirtualCharacterSynchronizing(
+		character.ID,
+		groupStatus,
+		assetStatus,
+		now.Unix(),
+		attempts,
+		now.Add(virtualCharacterRetryDelay(attempts)).Unix(),
+	); err != nil {
+		return nil, err
+	}
+	return model.GetVirtualCharacterByID(character.ID)
+}
+
+func sameVolcAssetID(left, right string) bool {
+	normalize := func(value string) string {
+		return strings.TrimPrefix(strings.TrimSpace(value), "asset://")
+	}
+	return strings.EqualFold(normalize(left), normalize(right))
+}
+
+func queueRealPersonStagingCleanup(character *model.VirtualCharacter) {
+	if character == nil || strings.TrimSpace(character.StagingFileID) == "" {
+		return
+	}
+	if err := model.CreateVirtualCharacterCleanupJob(&model.VirtualCharacterCleanupJob{
+		CharacterID: character.ID, ProviderAccountID: character.ProviderAccountID,
+		TargetType: "aipdd_file", TargetID: character.StagingFileID,
+	}); err != nil {
+		common.SysError(fmt.Sprintf("queue real-person staging cleanup for character %d: %v", character.ID, err))
+	}
+}
+
+func marshalAuthorizationSnapshot(character *model.VirtualCharacter, authorization *model.VirtualCharacterAuthorization) (string, *VirtualCharacterAuthorizationError) {
+	snapshot := VirtualCharacterAuthorizationSnapshot{
+		CharacterID: character.ID, UserID: character.UserID, SourceType: character.SourceType,
+		ProviderAccountID: character.ProviderAccountID, ProviderGroupID: character.ProviderGroupID,
+		ProviderAssetID: character.ProviderAssetID, CapturedAt: time.Now().Unix(),
+	}
+	if authorization != nil {
+		snapshot.AuthorizationStatus = authorization.Status
+		snapshot.AgreementReference = authorization.AgreementReference
+		snapshot.ConsentReceiptHash = authorization.ConsentReceiptHash
+		snapshot.ProviderGroupStatus = authorization.ProviderGroupStatus
+		snapshot.ProviderAssetStatus = authorization.ProviderAssetStatus
+		snapshot.ProviderCheckedAt = authorization.ProviderCheckedAt
+		snapshot.AuthorizedAt = authorization.AuthorizedAt
+	}
+	payload, err := common.Marshal(snapshot)
+	if err != nil {
+		return "", authorizationError(http.StatusInternalServerError, "authorization_snapshot_failed", err.Error())
+	}
+	return string(payload), nil
+}
+
+func authorizationError(status int, code, message string) *VirtualCharacterAuthorizationError {
+	return &VirtualCharacterAuthorizationError{Status: status, Code: code, Message: message}
+}
+
+func IsVirtualCharacterNotFound(err error) bool {
+	return errors.Is(err, gorm.ErrRecordNotFound)
+}

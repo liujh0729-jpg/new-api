@@ -1,0 +1,41 @@
+{
+  "batch_id": "20260813-184409",
+  "created_at_utc": "2026-08-13T11:07:30.678843+00:00",
+  "base_url": "https://susciyuan.com",
+  "model": "AP Seedance-2.0 轻量版",
+  "group": "default",
+  "resolution": "480p",
+  "ratio": "16:9",
+  "duration_seconds": 4,
+  "warmup_task": {
+    "index": 1,
+    "task_id": "task_LRZF8U9egvAYJeup7qOctFmavuQahfWg"
+  },
+  "concurrent_new_requests": 49,
+  "total_batch_tasks": 50,
+  "preflight": {
+    "captured_at_utc": "2026-08-13T11:01:14.089230+00:00",
+    "latency_ms": 1474.76,
+    "model_found": true,
+    "model_count": 12
+  },
+  "test_started_epoch": 1786618874.0897722,
+  "barrier_released_at_utc": "2026-08-13T11:01:14.094640+00:00",
+  "barrier_released_epoch": 1786618874.0946407,
+  "submission_attempts": 49,
+  "submission_accepted": 49,
+  "submission_rejected": 0,
+  "submission_window_seconds": 12.125906705856323,
+  "submission_latency_ms": {
+    "min": 7211.739,
+    "max": 12125.12,
+    "mean": 8745.67793877551,
+    "median": 8300.082
+  },
+  "terminal_observed": 49,
+  "terminal_status_counts": {
+    "completed": 49
+  },
+  "poll_timeout_seconds": 1200,
+  "test_finished_epoch": 1786619250.6788428
+}

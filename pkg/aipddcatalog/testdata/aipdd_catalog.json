@@ -1,0 +1,2558 @@
+{
+  "schemaVersion": 2,
+  "revision": "7494d4ff009fab75cbbe44d0f9d7d7a078094b949dff3d5a7347c25fd72acd2e",
+  "generatedAt": "2026-10-10T05:38:01.511815456",
+  "awcoinRate": {
+    "rmbPerAwcoin": 0.0001,
+    "usdPerAwcoin": 0.000014935851,
+    "updatedAt": "2026-07-02T00:10:35.427379"
+  },
+  "capabilities": [
+    {
+      "id": "ap-funasr",
+      "code": "ap-funasr",
+      "name": "FunASR",
+      "description": "",
+      "adapterCode": "token_market_shared",
+      "endpointType": "audio-transcriptions",
+      "taskKind": "speech_to_text",
+      "inputModalities": [
+        "text",
+        "audio"
+      ],
+      "outputModalities": [
+        "text",
+        "subtitle",
+        "json"
+      ],
+      "params": [],
+      "available": true,
+      "execution": {
+        "protocol": "shared_task",
+        "path": "/shared-tasks/tasks"
+      },
+      "pricing": {
+        "currency": "awcoin",
+        "enabled": true,
+        "pricingModel": "per_unit",
+        "chargeConfig": {
+          "amountAwcoin": 100,
+          "unit": "second"
+        }
+      }
+    },
+    {
+      "id": "ap-image-2.0",
+      "code": "ap-image-2.0",
+      "name": "ap-image-2.0",
+      "description": "支持文字生成图像和参考图编辑，注重提示词遵循与画面细节，适用于海报、产品视觉、插画和多轮创意修改。",
+      "adapterCode": "token_market_media",
+      "endpointType": "image-generation",
+      "taskKind": "image_generation",
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "outputModalities": [
+        "image"
+      ],
+      "imageCapabilities": {
+        "supportsEdits": true,
+        "maxInputImages": 8,
+        "maxOutputImages": 2,
+        "supportedSizes": [
+          "auto",
+          "1024x1024",
+          "1024x1536",
+          "1536x1024"
+        ],
+        "supportedAspectRatios": [
+          "auto",
+          "1:1",
+          "2:3",
+          "3:2"
+        ]
+      },
+      "params": [],
+      "available": true,
+      "execution": {
+        "protocol": "token_market_image",
+        "path": "/v1/images/generations"
+      },
+      "pricing": {
+        "currency": "awcoin",
+        "enabled": true,
+        "pricingModel": "per_call",
+        "pricingBasis": "display",
+        "billingMode": "PLATFORM",
+        "chargeConfig": {
+          "amountAwcoin": 2000,
+          "unit": "image"
+        },
+        "imagePricing": {
+          "defaultUnitRmb": 0.2,
+          "tiers": [
+            {
+              "match": {
+                "quality": "4K"
+              },
+              "unitRmb": 0.6
+            },
+            {
+              "match": {
+                "size": "4096x4096"
+              },
+              "unitRmb": 0.6
+            },
+            {
+              "match": {
+                "quality": "2K"
+              },
+              "unitRmb": 0.4
+            },
+            {
+              "match": {
+                "size": "2048x2048"
+              },
+              "unitRmb": 0.4
+            },
+            {
+              "match": {
+                "quality": "1K"
+              },
+              "unitRmb": 0.3
+            },
+            {
+              "match": {
+                "quality": "auto"
+              },
+              "unitRmb": 0.2
+            },
+            {
+              "match": {
+                "size": "1024x1024"
+              },
+              "unitRmb": 0.3
+            },
+            {
+              "match": {
+                "size": "1024x1536"
+              },
+              "unitRmb": 0.3
+            },
+            {
+              "match": {
+                "size": "1536x1024"
+              },
+              "unitRmb": 0.3
+            },
+            {
+              "match": {
+                "size": "auto"
+              },
+              "unitRmb": 0.2
+            }
+          ],
+          "supportedSizes": [
+            "auto",
+            "1024x1024",
+            "1024x1536",
+            "1536x1024"
+          ],
+          "supportedQualities": [
+            "auto",
+            "1024x1024",
+            "1024x1536",
+            "1536x1024"
+          ],
+          "policy": "gpt-image-pixels-v1",
+          "maxInputImages": 8,
+          "maxOutputImages": 2,
+          "supportsEdits": true,
+          "resolutions": [
+            {
+              "unitRmb": 0.2,
+              "available": true,
+              "resolution": "auto"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "ap-image-fast-2.0",
+      "code": "ap-image-fast-2.0",
+      "name": "ap-image-fast-2.0",
+      "description": "",
+      "adapterCode": "token_market_media",
+      "endpointType": "image-generation",
+      "taskKind": "image_generation",
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "outputModalities": [
+        "image"
+      ],
+      "imageCapabilities": {
+        "supportsEdits": true,
+        "maxInputImages": 3,
+        "maxOutputImages": 1,
+        "supportedSizes": [
+          "1024x1024",
+          "2048x2048",
+          "1536x1024",
+          "1024x1536",
+          "2048x1152",
+          "1152x2048"
+        ],
+        "supportedAspectRatios": [
+          "1:1",
+          "3:2",
+          "2:3",
+          "16:9",
+          "9:16"
+        ]
+      },
+      "params": [],
+      "available": true,
+      "execution": {
+        "protocol": "token_market_image",
+        "path": "/v1/images/generations"
+      },
+      "pricing": {
+        "currency": "awcoin",
+        "enabled": true,
+        "pricingModel": "per_call",
+        "pricingBasis": "display",
+        "billingMode": "PLATFORM",
+        "chargeConfig": {
+          "amountAwcoin": 4000,
+          "unit": "image"
+        }
+      }
+    },
+    {
+      "id": "ap-image-flare-2.5",
+      "code": "ap-image-flare-2.5",
+      "name": "ap-image-flare-2.5",
+      "description": "面向高效率的图像生成与编辑，兼顾画面质量、细节和生成速度，适用于创意试稿、营销素材及批量视觉内容制作。",
+      "adapterCode": "token_market_media",
+      "endpointType": "image-generation",
+      "taskKind": "image_generation",
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "outputModalities": [
+        "image"
+      ],
+      "imageCapabilities": {
+        "supportsEdits": true,
+        "maxInputImages": 2,
+        "maxOutputImages": 1,
+        "supportedSizes": [
+          "auto",
+          "1280x720",
+          "2048x1152",
+          "3840x2160",
+          "1024x1024",
+          "2048x2048",
+          "2880x2880",
+          "768x1536",
+          "1536x3072",
+          "1920x3840",
+          "1456x624",
+          "2912x1248",
+          "3840x1648",
+          "1536x768",
+          "3072x1536",
+          "3840x1920",
+          "1024x1536",
+          "1360x2048",
+          "2336x3504",
+          "1536x1024",
+          "2048x1360",
+          "3504x2336",
+          "864x1152",
+          "1728x2304",
+          "2448x3264",
+          "1152x864",
+          "2304x1728",
+          "3264x2448",
+          "896x1120",
+          "1792x2240",
+          "2560x3200",
+          "1120x896",
+          "2240x1792",
+          "3200x2560",
+          "720x1280",
+          "1152x2048",
+          "2160x3840",
+          "624x1456",
+          "1248x2912",
+          "1648x3840"
+        ],
+        "supportedAspectRatios": [
+          "16:9",
+          "1:1",
+          "1:2",
+          "21:9",
+          "2:1",
+          "2:3",
+          "3:2",
+          "3:4",
+          "4:3",
+          "4:5",
+          "5:4",
+          "9:16",
+          "9:21"
+        ]
+      },
+      "params": [],
+      "available": true,
+      "execution": {
+        "protocol": "token_market_image",
+        "path": "/v1/images/generations"
+      },
+      "pricing": {
+        "currency": "awcoin",
+        "enabled": true,
+        "pricingModel": "per_call",
+        "pricingBasis": "display",
+        "billingMode": "PLATFORM",
+        "chargeConfig": {
+          "amountAwcoin": 2000,
+          "unit": "image"
+        },
+        "imagePricing": {
+          "defaultUnitRmb": 0.2,
+          "tiers": [
+            {
+              "match": {
+                "quality": "4K"
+              },
+              "unitRmb": 0.6
+            },
+            {
+              "match": {
+                "quality": "2K"
+              },
+              "unitRmb": 0.4
+            },
+            {
+              "match": {
+                "quality": "1K"
+              },
+              "unitRmb": 0.3
+            },
+            {
+              "match": {
+                "quality": "auto"
+              },
+              "unitRmb": 0.2
+            }
+          ],
+          "supportedSizes": [
+            "auto",
+            "1280x720",
+            "2048x1152",
+            "3840x2160",
+            "1024x1024",
+            "2048x2048",
+            "2880x2880",
+            "768x1536",
+            "1536x3072",
+            "1920x3840",
+            "1456x624",
+            "2912x1248",
+            "3840x1648",
+            "1536x768",
+            "3072x1536",
+            "3840x1920",
+            "1024x1536",
+            "1360x2048",
+            "2336x3504",
+            "1536x1024",
+            "2048x1360",
+            "3504x2336",
+            "864x1152",
+            "1728x2304",
+            "2448x3264",
+            "1152x864",
+            "2304x1728",
+            "3264x2448",
+            "896x1120",
+            "1792x2240",
+            "2560x3200",
+            "1120x896",
+            "2240x1792",
+            "3200x2560",
+            "720x1280",
+            "1152x2048",
+            "2160x3840",
+            "624x1456",
+            "1248x2912",
+            "1648x3840"
+          ],
+          "supportedQualities": [
+            "auto",
+            "1K",
+            "2K",
+            "4K"
+          ],
+          "policy": "quality-tiers-v1",
+          "maxInputImages": 2,
+          "maxOutputImages": 1,
+          "supportsEdits": true,
+          "resolutions": [
+            {
+              "unitRmb": 0.2,
+              "available": true,
+              "resolution": "auto"
+            },
+            {
+              "unitRmb": 0.3,
+              "available": true,
+              "resolution": "1K"
+            },
+            {
+              "unitRmb": 0.4,
+              "available": true,
+              "resolution": "2K"
+            },
+            {
+              "unitRmb": 0.6,
+              "available": true,
+              "resolution": "4K"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "ap-image-lite-2.0",
+      "code": "ap-image-lite-2.0",
+      "name": "ap-image-lite-2.0",
+      "description": "结合推理能力进行图像生成与编辑，可理解文字与参考图片中的复杂要求，适用于文字排版、信息图、产品设计和精细视觉修改。",
+      "adapterCode": "token_market_media",
+      "endpointType": "image-generation",
+      "taskKind": "image_generation",
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "outputModalities": [
+        "image"
+      ],
+      "imageCapabilities": {
+        "supportsEdits": true,
+        "maxInputImages": 8,
+        "maxOutputImages": 1,
+        "supportedSizes": [
+          "auto",
+          "1K",
+          "2K",
+          "4K"
+        ],
+        "supportedAspectRatios": null
+      },
+      "params": [],
+      "available": true,
+      "execution": {
+        "protocol": "token_market_image",
+        "path": "/v1/images/generations"
+      },
+      "pricing": {
+        "currency": "awcoin",
+        "enabled": true,
+        "pricingModel": "per_call",
+        "pricingBasis": "display",
+        "billingMode": "PLATFORM",
+        "chargeConfig": {
+          "amountAwcoin": 2400,
+          "unit": "image"
+        },
+        "imagePricing": {
+          "defaultUnitRmb": 0.24,
+          "tiers": [
+            {
+              "match": {
+                "size": "auto"
+              },
+              "unitRmb": 0.24
+            },
+            {
+              "match": {
+                "size": "1K"
+              },
+              "unitRmb": 0.24
+            },
+            {
+              "match": {
+                "size": "2K"
+              },
+              "unitRmb": 0.3
+            },
+            {
+              "match": {
+                "size": "4K"
+              },
+              "unitRmb": 0.36
+            }
+          ],
+          "supportedSizes": [
+            "auto",
+            "1K",
+            "2K",
+            "4K"
+          ],
+          "supportedQualities": [
+            "auto",
+            "1K",
+            "2K",
+            "4K"
+          ],
+          "policy": "size-tiers-v1",
+          "maxInputImages": 8,
+          "maxOutputImages": 1,
+          "supportsEdits": true,
+          "resolutions": [
+            {
+              "unitRmb": 0.24,
+              "available": true,
+              "resolution": "auto"
+            },
+            {
+              "unitRmb": 0.24,
+              "available": true,
+              "resolution": "1K"
+            },
+            {
+              "unitRmb": 0.3,
+              "available": true,
+              "resolution": "2K"
+            },
+            {
+              "unitRmb": 0.36,
+              "available": true,
+              "resolution": "4K"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "ap-image-sunburst-2.5",
+      "code": "ap-image-sunburst-2.5",
+      "name": "ap-image-sunburst-2.5",
+      "description": "面向精细视觉创作的图像生成与编辑模型，注重材质细节、自然光影和修改时的一致性，适用于产品视觉、复杂构图和高要求设计素材。",
+      "adapterCode": "token_market_media",
+      "endpointType": "image-generation",
+      "taskKind": "image_generation",
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "outputModalities": [
+        "image"
+      ],
+      "imageCapabilities": {
+        "supportsEdits": true,
+        "maxInputImages": 2,
+        "maxOutputImages": 1,
+        "supportedSizes": [
+          "auto",
+          "1280x720",
+          "2048x1152",
+          "3840x2160",
+          "1024x1024",
+          "2048x2048",
+          "2880x2880",
+          "768x1536",
+          "1536x3072",
+          "1920x3840",
+          "1456x624",
+          "2912x1248",
+          "3840x1648",
+          "1536x768",
+          "3072x1536",
+          "3840x1920",
+          "1024x1536",
+          "1360x2048",
+          "2336x3504",
+          "1536x1024",
+          "2048x1360",
+          "3504x2336",
+          "864x1152",
+          "1728x2304",
+          "2448x3264",
+          "1152x864",
+          "2304x1728",
+          "3264x2448",
+          "896x1120",
+          "1792x2240",
+          "2560x3200",
+          "1120x896",
+          "2240x1792",
+          "3200x2560",
+          "720x1280",
+          "1152x2048",
+          "2160x3840",
+          "624x1456",
+          "1248x2912",
+          "1648x3840"
+        ],
+        "supportedAspectRatios": [
+          "16:9",
+          "1:1",
+          "1:2",
+          "21:9",
+          "2:1",
+          "2:3",
+          "3:2",
+          "3:4",
+          "4:3",
+          "4:5",
+          "5:4",
+          "9:16",
+          "9:21"
+        ]
+      },
+      "params": [],
+      "available": true,
+      "execution": {
+        "protocol": "token_market_image",
+        "path": "/v1/images/generations"
+      },
+      "pricing": {
+        "currency": "awcoin",
+        "enabled": true,
+        "pricingModel": "per_call",
+        "pricingBasis": "display",
+        "billingMode": "PLATFORM",
+        "chargeConfig": {
+          "amountAwcoin": 3000,
+          "unit": "image"
+        },
+        "imagePricing": {
+          "defaultUnitRmb": 0.3,
+          "tiers": [
+            {
+              "match": {
+                "quality": "4K"
+              },
+              "unitRmb": 0.7
+            },
+            {
+              "match": {
+                "quality": "2K"
+              },
+              "unitRmb": 0.5
+            },
+            {
+              "match": {
+                "quality": "1K"
+              },
+              "unitRmb": 0.4
+            },
+            {
+              "match": {
+                "quality": "auto"
+              },
+              "unitRmb": 0.3
+            }
+          ],
+          "supportedSizes": [
+            "auto",
+            "1280x720",
+            "2048x1152",
+            "3840x2160",
+            "1024x1024",
+            "2048x2048",
+            "2880x2880",
+            "768x1536",
+            "1536x3072",
+            "1920x3840",
+            "1456x624",
+            "2912x1248",
+            "3840x1648",
+            "1536x768",
+            "3072x1536",
+            "3840x1920",
+            "1024x1536",
+            "1360x2048",
+            "2336x3504",
+            "1536x1024",
+            "2048x1360",
+            "3504x2336",
+            "864x1152",
+            "1728x2304",
+            "2448x3264",
+            "1152x864",
+            "2304x1728",
+            "3264x2448",
+            "896x1120",
+            "1792x2240",
+            "2560x3200",
+            "1120x896",
+            "2240x1792",
+            "3200x2560",
+            "720x1280",
+            "1152x2048",
+            "2160x3840",
+            "624x1456",
+            "1248x2912",
+            "1648x3840"
+          ],
+          "supportedQualities": [
+            "auto",
+            "1K",
+            "2K",
+            "4K"
+          ],
+          "policy": "quality-tiers-v1",
+          "maxInputImages": 2,
+          "maxOutputImages": 1,
+          "supportsEdits": true,
+          "resolutions": [
+            {
+              "unitRmb": 0.3,
+              "available": true,
+              "resolution": "auto"
+            },
+            {
+              "unitRmb": 0.4,
+              "available": true,
+              "resolution": "1K"
+            },
+            {
+              "unitRmb": 0.5,
+              "available": true,
+              "resolution": "2K"
+            },
+            {
+              "unitRmb": 0.7,
+              "available": true,
+              "resolution": "4K"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "ap-indextts-2",
+      "code": "ap-indextts-2",
+      "name": "IndexTTS2",
+      "description": "IndexTTS2 是可控制情绪表达的语音合成模型，可通过参考音频保持音色，并依据文本或情绪参考调整表达，适用于配音、旁白和个性化语音创作。",
+      "adapterCode": "token_market_media",
+      "endpointType": "audio-speech",
+      "taskKind": "voice_clone",
+      "inputModalities": [
+        "text",
+        "audio"
+      ],
+      "outputModalities": [
+        "audio"
+      ],
+      "params": [
+        {
+          "uiType": "textarea",
+          "dataType": "string",
+          "paramKey": "input",
+          "paramName": "要合成的文本",
+          "isRequired": true
+        },
+        {
+          "uiType": "audio_url",
+          "dataType": "string",
+          "paramKey": "audio",
+          "paramName": "音色参考音频 URL",
+          "isRequired": true,
+          "acceptedMimeTypes": [
+            "audio/*"
+          ]
+        },
+        {
+          "uiType": "audio_url",
+          "dataType": "string",
+          "paramKey": "emotion_audio",
+          "paramName": "情感参考音频 URL",
+          "isRequired": false,
+          "acceptedMimeTypes": [
+            "audio/*"
+          ]
+        }
+      ],
+      "available": true,
+      "execution": {
+        "protocol": "token_market_audio",
+        "path": "/v1/audio/speech"
+      },
+      "pricing": {
+        "currency": "awcoin",
+        "enabled": true,
+        "pricingModel": "per_call",
+        "pricingBasis": "display",
+        "billingMode": "PLATFORM",
+        "chargeConfig": {
+          "amountAwcoin": 1000,
+          "unit": "call"
+        }
+      }
+    },
+    {
+      "id": "ap-jimeng-image-4.0",
+      "code": "ap-jimeng-image-4.0",
+      "name": "即梦4.0",
+      "description": "即梦 4.0 可根据文字提示生成图像，注重中文文字表现、复杂构图与内容多样性，适用于海报、电商产品图和高分辨率创意视觉。",
+      "adapterCode": "token_market_media",
+      "endpointType": "image-generation",
+      "taskKind": "image_generation",
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "image"
+      ],
+      "imageCapabilities": {
+        "supportsEdits": false,
+        "maxInputImages": 0,
+        "maxOutputImages": 1,
+        "supportedSizes": [
+          "2048x2048",
+          "2304x1728",
+          "1728x2304",
+          "2560x1440",
+          "1440x2560",
+          "2496x1664",
+          "1664x2496",
+          "3024x1296",
+          "4096x4096",
+          "4693x3520",
+          "3520x4693",
+          "5404x3040",
+          "3040x5404",
+          "4992x3328",
+          "3328x4992",
+          "6197x2656"
+        ],
+        "supportedAspectRatios": [
+          "1:1",
+          "4:3",
+          "3:4",
+          "16:9",
+          "9:16",
+          "3:2",
+          "2:3",
+          "21:9"
+        ]
+      },
+      "params": [],
+      "available": true,
+      "execution": {
+        "protocol": "token_market_image",
+        "path": "/v1/images/generations"
+      },
+      "pricing": {
+        "currency": "awcoin",
+        "enabled": true,
+        "pricingModel": "per_call",
+        "pricingBasis": "display",
+        "billingMode": "PLATFORM",
+        "chargeConfig": {
+          "amountAwcoin": 1500,
+          "unit": "image"
+        }
+      }
+    },
+    {
+      "id": "ap-ltx-2.5",
+      "code": "ap-ltx-2.5",
+      "name": "LTX 2.5",
+      "description": "LTX 2.5 支持文字或图片驱动的音视频创作，在动作表现、画面细节与音画一致性方面持续改进，适用于短片、产品演示和创意视频素材制作。",
+      "adapterCode": "token_market_shared",
+      "endpointType": "openai-video",
+      "taskKind": "video_generation",
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "outputModalities": [
+        "video",
+        "audio"
+      ],
+      "params": [
+        {
+          "uiType": "select",
+          "dataType": "string",
+          "paramKey": "variant",
+          "paramName": "生成模式（留空自动选择）",
+          "isRequired": false,
+          "options": [
+            "t2v",
+            "i2v"
+          ]
+        },
+        {
+          "uiType": "textarea",
+          "dataType": "string",
+          "paramKey": "prompt",
+          "paramName": "提示词",
+          "isRequired": true
+        },
+        {
+          "uiType": "image_url",
+          "dataType": "string",
+          "paramKey": "image",
+          "paramName": "首帧图片（图生视频必填）",
+          "isRequired": false,
+          "maxFileSize": 52428800,
+          "acceptedMimeTypes": [
+            "image/*"
+          ]
+        },
+        {
+          "uiType": "number",
+          "dataType": "int",
+          "paramKey": "durationSeconds",
+          "paramName": "时长（秒）",
+          "isRequired": false,
+          "min": 1,
+          "max": 20,
+          "defaultValue": 5
+        },
+        {
+          "uiType": "number",
+          "dataType": "int",
+          "paramKey": "seed",
+          "paramName": "随机种子",
+          "isRequired": false
+        }
+      ],
+      "available": false,
+      "execution": {
+        "protocol": "shared_task",
+        "path": "/shared-tasks/tasks"
+      },
+      "pricing": {
+        "currency": "awcoin",
+        "enabled": true,
+        "pricingModel": "per_unit",
+        "chargeConfig": {
+          "amountAwcoin": 4000,
+          "unit": "second"
+        }
+      }
+    },
+    {
+      "id": "ap-minimax-h3",
+      "code": "ap-minimax-h3",
+      "name": "MiniMax H3",
+      "description": "MiniMax H3 是多模态视频生成模型，可结合文字、图片、音频和视频参考进行创作，注重内容可控性与音画表现，适用于广告、电商、品牌和创意短片。",
+      "adapterCode": "token_market_media",
+      "endpointType": "openai-video",
+      "taskKind": "video_generation",
+      "inputModalities": [
+        "text",
+        "image",
+        "audio"
+      ],
+      "outputModalities": [
+        "video"
+      ],
+      "mediaCapabilities": {
+        "supportsSeed": true,
+        "inputProfiles": [
+          {
+            "name": "text",
+            "resolution": "480p",
+            "ratio": "16:9",
+            "requiresPrompt": true,
+            "minImageInputs": 0,
+            "maxImageInputs": 0,
+            "minAudioInputs": 0,
+            "maxAudioInputs": 0,
+            "minDurationSeconds": 1,
+            "maxDurationSeconds": 15,
+            "supportsSeed": false
+          },
+          {
+            "name": "text",
+            "resolution": "480p",
+            "ratio": "9:16",
+            "requiresPrompt": true,
+            "minImageInputs": 0,
+            "maxImageInputs": 0,
+            "minAudioInputs": 0,
+            "maxAudioInputs": 0,
+            "minDurationSeconds": 1,
+            "maxDurationSeconds": 15,
+            "supportsSeed": false
+          },
+          {
+            "name": "text",
+            "resolution": "480p",
+            "ratio": "1:1",
+            "requiresPrompt": true,
+            "minImageInputs": 0,
+            "maxImageInputs": 0,
+            "minAudioInputs": 0,
+            "maxAudioInputs": 0,
+            "minDurationSeconds": 1,
+            "maxDurationSeconds": 15,
+            "supportsSeed": false
+          },
+          {
+            "name": "text",
+            "resolution": "768p",
+            "ratio": "16:9",
+            "requiresPrompt": true,
+            "minImageInputs": 0,
+            "maxImageInputs": 0,
+            "minAudioInputs": 0,
+            "maxAudioInputs": 0,
+            "minDurationSeconds": 1,
+            "maxDurationSeconds": 15,
+            "supportsSeed": false
+          },
+          {
+            "name": "text",
+            "resolution": "768p",
+            "ratio": "9:16",
+            "requiresPrompt": true,
+            "minImageInputs": 0,
+            "maxImageInputs": 0,
+            "minAudioInputs": 0,
+            "maxAudioInputs": 0,
+            "minDurationSeconds": 1,
+            "maxDurationSeconds": 15,
+            "supportsSeed": false
+          },
+          {
+            "name": "text",
+            "resolution": "768p",
+            "ratio": "1:1",
+            "requiresPrompt": true,
+            "minImageInputs": 0,
+            "maxImageInputs": 0,
+            "minAudioInputs": 0,
+            "maxAudioInputs": 0,
+            "minDurationSeconds": 1,
+            "maxDurationSeconds": 15,
+            "supportsSeed": false
+          },
+          {
+            "name": "images",
+            "resolution": "480p",
+            "ratio": "16:9",
+            "requiresPrompt": true,
+            "minImageInputs": 1,
+            "maxImageInputs": 9,
+            "minAudioInputs": 0,
+            "maxAudioInputs": 0,
+            "minDurationSeconds": 1,
+            "maxDurationSeconds": 15,
+            "supportsSeed": true
+          },
+          {
+            "name": "images",
+            "resolution": "480p",
+            "ratio": "9:16",
+            "requiresPrompt": true,
+            "minImageInputs": 1,
+            "maxImageInputs": 9,
+            "minAudioInputs": 0,
+            "maxAudioInputs": 0,
+            "minDurationSeconds": 1,
+            "maxDurationSeconds": 15,
+            "supportsSeed": true
+          },
+          {
+            "name": "images",
+            "resolution": "480p",
+            "ratio": "1:1",
+            "requiresPrompt": true,
+            "minImageInputs": 1,
+            "maxImageInputs": 9,
+            "minAudioInputs": 0,
+            "maxAudioInputs": 0,
+            "minDurationSeconds": 1,
+            "maxDurationSeconds": 15,
+            "supportsSeed": true
+          },
+          {
+            "name": "images",
+            "resolution": "768p",
+            "ratio": "16:9",
+            "requiresPrompt": true,
+            "minImageInputs": 1,
+            "maxImageInputs": 9,
+            "minAudioInputs": 0,
+            "maxAudioInputs": 0,
+            "minDurationSeconds": 1,
+            "maxDurationSeconds": 15,
+            "supportsSeed": true
+          },
+          {
+            "name": "images",
+            "resolution": "768p",
+            "ratio": "9:16",
+            "requiresPrompt": true,
+            "minImageInputs": 1,
+            "maxImageInputs": 9,
+            "minAudioInputs": 0,
+            "maxAudioInputs": 0,
+            "minDurationSeconds": 1,
+            "maxDurationSeconds": 15,
+            "supportsSeed": true
+          },
+          {
+            "name": "images",
+            "resolution": "768p",
+            "ratio": "1:1",
+            "requiresPrompt": true,
+            "minImageInputs": 1,
+            "maxImageInputs": 9,
+            "minAudioInputs": 0,
+            "maxAudioInputs": 0,
+            "minDurationSeconds": 1,
+            "maxDurationSeconds": 15,
+            "supportsSeed": true
+          },
+          {
+            "name": "images",
+            "resolution": "1080p",
+            "ratio": "16:9",
+            "requiresPrompt": true,
+            "minImageInputs": 1,
+            "maxImageInputs": 9,
+            "minAudioInputs": 0,
+            "maxAudioInputs": 0,
+            "minDurationSeconds": 1,
+            "maxDurationSeconds": 10,
+            "supportsSeed": true
+          },
+          {
+            "name": "images",
+            "resolution": "1080p",
+            "ratio": "9:16",
+            "requiresPrompt": true,
+            "minImageInputs": 1,
+            "maxImageInputs": 9,
+            "minAudioInputs": 0,
+            "maxAudioInputs": 0,
+            "minDurationSeconds": 1,
+            "maxDurationSeconds": 10,
+            "supportsSeed": true
+          },
+          {
+            "name": "images",
+            "resolution": "1080p",
+            "ratio": "1:1",
+            "requiresPrompt": true,
+            "minImageInputs": 1,
+            "maxImageInputs": 9,
+            "minAudioInputs": 0,
+            "maxAudioInputs": 0,
+            "minDurationSeconds": 1,
+            "maxDurationSeconds": 10,
+            "supportsSeed": true
+          },
+          {
+            "name": "images_audio",
+            "resolution": "480p",
+            "ratio": "16:9",
+            "requiresPrompt": true,
+            "minImageInputs": 1,
+            "maxImageInputs": 9,
+            "minAudioInputs": 1,
+            "maxAudioInputs": 3,
+            "minDurationSeconds": 1,
+            "maxDurationSeconds": 15,
+            "supportsSeed": true
+          },
+          {
+            "name": "images_audio",
+            "resolution": "480p",
+            "ratio": "9:16",
+            "requiresPrompt": true,
+            "minImageInputs": 1,
+            "maxImageInputs": 9,
+            "minAudioInputs": 1,
+            "maxAudioInputs": 3,
+            "minDurationSeconds": 1,
+            "maxDurationSeconds": 15,
+            "supportsSeed": true
+          },
+          {
+            "name": "images_audio",
+            "resolution": "768p",
+            "ratio": "16:9",
+            "requiresPrompt": true,
+            "minImageInputs": 1,
+            "maxImageInputs": 9,
+            "minAudioInputs": 1,
+            "maxAudioInputs": 3,
+            "minDurationSeconds": 1,
+            "maxDurationSeconds": 15,
+            "supportsSeed": true
+          },
+          {
+            "name": "images_audio",
+            "resolution": "768p",
+            "ratio": "9:16",
+            "requiresPrompt": true,
+            "minImageInputs": 1,
+            "maxImageInputs": 9,
+            "minAudioInputs": 1,
+            "maxAudioInputs": 3,
+            "minDurationSeconds": 1,
+            "maxDurationSeconds": 15,
+            "supportsSeed": true
+          },
+          {
+            "name": "images_audio",
+            "resolution": "1080p",
+            "ratio": "16:9",
+            "requiresPrompt": true,
+            "minImageInputs": 1,
+            "maxImageInputs": 9,
+            "minAudioInputs": 1,
+            "maxAudioInputs": 3,
+            "minDurationSeconds": 1,
+            "maxDurationSeconds": 10,
+            "supportsSeed": true
+          },
+          {
+            "name": "images_audio",
+            "resolution": "1080p",
+            "ratio": "9:16",
+            "requiresPrompt": true,
+            "minImageInputs": 1,
+            "maxImageInputs": 9,
+            "minAudioInputs": 1,
+            "maxAudioInputs": 3,
+            "minDurationSeconds": 1,
+            "maxDurationSeconds": 10,
+            "supportsSeed": true
+          },
+          {
+            "name": "image_audio_lipsync",
+            "resolution": "480p",
+            "ratio": "16:9",
+            "requiresPrompt": false,
+            "minImageInputs": 1,
+            "maxImageInputs": 1,
+            "minAudioInputs": 1,
+            "maxAudioInputs": 1,
+            "minDurationSeconds": 1,
+            "maxDurationSeconds": 15,
+            "supportsSeed": false
+          },
+          {
+            "name": "image_audio_lipsync",
+            "resolution": "480p",
+            "ratio": "9:16",
+            "requiresPrompt": false,
+            "minImageInputs": 1,
+            "maxImageInputs": 1,
+            "minAudioInputs": 1,
+            "maxAudioInputs": 1,
+            "minDurationSeconds": 1,
+            "maxDurationSeconds": 15,
+            "supportsSeed": false
+          },
+          {
+            "name": "image_audio_lipsync",
+            "resolution": "768p",
+            "ratio": "16:9",
+            "requiresPrompt": false,
+            "minImageInputs": 1,
+            "maxImageInputs": 1,
+            "minAudioInputs": 1,
+            "maxAudioInputs": 1,
+            "minDurationSeconds": 1,
+            "maxDurationSeconds": 15,
+            "supportsSeed": false
+          },
+          {
+            "name": "image_audio_lipsync",
+            "resolution": "768p",
+            "ratio": "9:16",
+            "requiresPrompt": false,
+            "minImageInputs": 1,
+            "maxImageInputs": 1,
+            "minAudioInputs": 1,
+            "maxAudioInputs": 1,
+            "minDurationSeconds": 1,
+            "maxDurationSeconds": 15,
+            "supportsSeed": false
+          },
+          {
+            "name": "image_audio_lipsync",
+            "resolution": "1080p",
+            "ratio": "16:9",
+            "requiresPrompt": false,
+            "minImageInputs": 1,
+            "maxImageInputs": 1,
+            "minAudioInputs": 1,
+            "maxAudioInputs": 1,
+            "minDurationSeconds": 1,
+            "maxDurationSeconds": 15,
+            "supportsSeed": false
+          },
+          {
+            "name": "image_audio_lipsync",
+            "resolution": "1080p",
+            "ratio": "9:16",
+            "requiresPrompt": false,
+            "minImageInputs": 1,
+            "maxImageInputs": 1,
+            "minAudioInputs": 1,
+            "maxAudioInputs": 1,
+            "minDurationSeconds": 1,
+            "maxDurationSeconds": 15,
+            "supportsSeed": false
+          },
+          {
+            "name": "first_last_frames",
+            "resolution": "480p",
+            "ratio": "16:9",
+            "requiresPrompt": true,
+            "minImageInputs": 2,
+            "maxImageInputs": 2,
+            "minAudioInputs": 0,
+            "maxAudioInputs": 0,
+            "minDurationSeconds": 1,
+            "maxDurationSeconds": 15,
+            "supportsSeed": false
+          },
+          {
+            "name": "first_last_frames",
+            "resolution": "480p",
+            "ratio": "9:16",
+            "requiresPrompt": true,
+            "minImageInputs": 2,
+            "maxImageInputs": 2,
+            "minAudioInputs": 0,
+            "maxAudioInputs": 0,
+            "minDurationSeconds": 1,
+            "maxDurationSeconds": 15,
+            "supportsSeed": false
+          },
+          {
+            "name": "first_last_frames",
+            "resolution": "768p",
+            "ratio": "16:9",
+            "requiresPrompt": true,
+            "minImageInputs": 2,
+            "maxImageInputs": 2,
+            "minAudioInputs": 0,
+            "maxAudioInputs": 0,
+            "minDurationSeconds": 1,
+            "maxDurationSeconds": 15,
+            "supportsSeed": false
+          },
+          {
+            "name": "first_last_frames",
+            "resolution": "768p",
+            "ratio": "9:16",
+            "requiresPrompt": true,
+            "minImageInputs": 2,
+            "maxImageInputs": 2,
+            "minAudioInputs": 0,
+            "maxAudioInputs": 0,
+            "minDurationSeconds": 1,
+            "maxDurationSeconds": 15,
+            "supportsSeed": false
+          }
+        ],
+        "supportedAspectRatios": [
+          "16:9",
+          "9:16",
+          "1:1"
+        ],
+        "supportsReferenceVideo": false,
+        "supportsAudioOnlyReference": false,
+        "maxDurationSeconds": 15,
+        "maxReferenceInputs": 12,
+        "minDurationSeconds": 1,
+        "supportsReferenceAudio": true,
+        "maxAudioInputs": 3,
+        "maxVideoInputs": 0,
+        "maxImageInputs": 9,
+        "supportedResolutions": [
+          "480p",
+          "768p",
+          "1080p"
+        ]
+      },
+      "params": [],
+      "available": true,
+      "execution": {
+        "protocol": "token_market_video",
+        "path": "/v1/videos"
+      },
+      "pricing": {
+        "currency": "awcoin",
+        "enabled": true,
+        "pricingModel": "per_second",
+        "pricingBasis": "display",
+        "billingMode": "PLATFORM",
+        "byResolution": {
+          "480p": {
+            "targetResolution": "480p",
+            "displayAmountAwcoinPerSecond": 900,
+            "displayVideoInputAwcoinPerSecond": 900,
+            "defaultDurationSeconds": 1,
+            "defaultFramesPerSecond": 24
+          },
+          "768p": {
+            "targetResolution": "768p",
+            "displayAmountAwcoinPerSecond": 1200,
+            "displayVideoInputAwcoinPerSecond": 1200,
+            "defaultDurationSeconds": 1,
+            "defaultFramesPerSecond": 24
+          },
+          "1080p": {
+            "targetResolution": "1080p",
+            "displayAmountAwcoinPerSecond": 1500,
+            "displayVideoInputAwcoinPerSecond": 1500,
+            "defaultDurationSeconds": 1,
+            "defaultFramesPerSecond": 24
+          }
+        }
+      }
+    },
+    {
+      "id": "ap-nano-2.1",
+      "code": "ap-nano-2.1",
+      "name": "ap-nano-2.1",
+      "description": "",
+      "adapterCode": "token_market_media",
+      "endpointType": "image-generation",
+      "taskKind": "image_generation",
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "outputModalities": [
+        "image"
+      ],
+      "imageCapabilities": {
+        "supportsEdits": true,
+        "maxInputImages": 8,
+        "maxOutputImages": 1,
+        "supportedSizes": [
+          "1K",
+          "2K",
+          "4K"
+        ],
+        "supportedAspectRatios": [
+          "1:1",
+          "2:3",
+          "3:2",
+          "3:4",
+          "4:3",
+          "4:5",
+          "5:4",
+          "9:16",
+          "16:9",
+          "21:9"
+        ]
+      },
+      "params": [],
+      "available": true,
+      "execution": {
+        "protocol": "token_market_image",
+        "path": "/v1/images/generations"
+      },
+      "pricing": {
+        "currency": "awcoin",
+        "enabled": true,
+        "pricingModel": "per_call",
+        "pricingBasis": "display",
+        "billingMode": "PLATFORM",
+        "chargeConfig": {
+          "amountAwcoin": 5000,
+          "unit": "image"
+        },
+        "imagePricing": {
+          "defaultUnitRmb": 0.5,
+          "tiers": [
+            {
+              "match": {
+                "size": "1K"
+              },
+              "unitRmb": 0.4
+            },
+            {
+              "match": {
+                "size": "2K"
+              },
+              "unitRmb": 0.5
+            },
+            {
+              "match": {
+                "size": "4K"
+              },
+              "unitRmb": 0.6
+            },
+            {
+              "match": {
+                "size": "1024x1024"
+              },
+              "unitRmb": 0.4
+            },
+            {
+              "match": {
+                "size": "2048x2048"
+              },
+              "unitRmb": 0.5
+            },
+            {
+              "match": {
+                "size": "4096x4096"
+              },
+              "unitRmb": 0.6
+            }
+          ],
+          "supportedSizes": [
+            "1K",
+            "2K",
+            "4K"
+          ],
+          "supportedQualities": [
+            "1K",
+            "2K",
+            "4K"
+          ],
+          "policy": "size-tiers-v1",
+          "maxInputImages": 8,
+          "maxOutputImages": 1,
+          "supportsEdits": true,
+          "resolutions": [
+            {
+              "unitRmb": 0.4,
+              "available": true,
+              "resolution": "1K"
+            },
+            {
+              "unitRmb": 0.5,
+              "available": true,
+              "resolution": "2K"
+            },
+            {
+              "unitRmb": 0.6,
+              "available": true,
+              "resolution": "4K"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "ap-qwen-image-edit",
+      "code": "ap-qwen-image-edit",
+      "name": "Qwen Image Edit",
+      "description": "Qwen Image Edit 支持通过文字指令修改图片内容、外观与风格，并可编辑图中的中英文文字，适用于局部修改、产品设计和创意视觉调整。",
+      "adapterCode": "token_market_shared",
+      "endpointType": "image-generation",
+      "taskKind": "image_to_image",
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "outputModalities": [
+        "image"
+      ],
+      "imageCapabilities": {
+        "supportsEdits": true,
+        "maxInputImages": 3,
+        "maxOutputImages": 1,
+        "supportedSizes": null,
+        "supportedAspectRatios": null
+      },
+      "params": [
+        {
+          "uiType": "textarea",
+          "dataType": "string",
+          "paramKey": "prompt",
+          "paramName": "编辑指令",
+          "isRequired": true
+        },
+        {
+          "uiType": "upload",
+          "dataType": "array",
+          "paramKey": "images",
+          "paramName": "待编辑图片",
+          "isRequired": true,
+          "minItems": 1,
+          "maxItems": 3,
+          "maxFileSize": 52428800,
+          "acceptedMimeTypes": [
+            "image/*"
+          ]
+        },
+        {
+          "uiType": "hidden",
+          "dataType": "string",
+          "paramKey": "image_1",
+          "isRequired": false
+        },
+        {
+          "uiType": "hidden",
+          "dataType": "string",
+          "paramKey": "image_2",
+          "isRequired": false
+        },
+        {
+          "uiType": "hidden",
+          "dataType": "string",
+          "paramKey": "image_3",
+          "isRequired": false
+        }
+      ],
+      "available": true,
+      "execution": {
+        "protocol": "shared_task",
+        "path": "/shared-tasks/tasks"
+      },
+      "pricing": {
+        "currency": "awcoin",
+        "enabled": true,
+        "pricingModel": "per_call",
+        "chargeConfig": {
+          "amountAwcoin": 10000,
+          "unit": "image"
+        }
+      }
+    }
+  ],
+  "models": [
+    {
+      "id": "ap-chat-3.8-flash",
+      "name": "ap-chat-3.8-flash",
+      "description": "面向多步骤软件工程、智能体和复杂工作流的通用模型，兼顾推理能力与响应效率，适用于代码开发、文档分析和工具协作任务。",
+      "inputModalities": [
+        "image",
+        "text"
+      ],
+      "outputModalities": [
+        "text"
+      ],
+      "protocols": [
+        "chat",
+        "responses"
+      ],
+      "features": {
+        "imageSources": [
+          "data",
+          "https"
+        ],
+        "videoInput": {
+          "sources": [],
+          "protocols": [],
+          "maxDurationSeconds": 0,
+          "maxFps": 0,
+          "maxBytes": 0
+        },
+        "functionTools": {
+          "basic": false,
+          "strict": false,
+          "parallel": false,
+          "streaming": false,
+          "multiRound": false
+        },
+        "usage": {
+          "nonStreaming": true,
+          "streaming": true
+        },
+        "byProtocol": {
+          "chat": {
+            "inputModalities": [
+              "image",
+              "text"
+            ],
+            "imageSources": [
+              "data",
+              "https"
+            ],
+            "videoInput": {
+              "sources": [],
+              "protocols": [],
+              "maxDurationSeconds": 0,
+              "maxFps": 0,
+              "maxBytes": 0
+            },
+            "functionTools": {
+              "basic": false,
+              "strict": false,
+              "parallel": false,
+              "streaming": false,
+              "multiRound": false
+            },
+            "usage": {
+              "nonStreaming": true,
+              "streaming": true
+            }
+          },
+          "responses": {
+            "inputModalities": [
+              "image",
+              "text"
+            ],
+            "imageSources": [
+              "data",
+              "https"
+            ],
+            "videoInput": {
+              "sources": [],
+              "protocols": [],
+              "maxDurationSeconds": 0,
+              "maxFps": 0,
+              "maxBytes": 0
+            },
+            "functionTools": {
+              "basic": false,
+              "strict": false,
+              "parallel": false,
+              "streaming": false,
+              "multiRound": false
+            },
+            "usage": {
+              "nonStreaming": true,
+              "streaming": true
+            }
+          }
+        }
+      },
+      "available": true,
+      "execution": {
+        "protocol": "openai",
+        "path": "/v1/chat/completions"
+      },
+      "pricing": {
+        "pricingModel": "per_token",
+        "promptPerMillion": 12000,
+        "completionPerMillion": 70000,
+        "cacheReadPerMillion": 12000,
+        "cacheWritePerMillion": 12000,
+        "currency": "awcoin",
+        "enabled": true
+      }
+    },
+    {
+      "id": "ap-deepseek-v4-flash",
+      "name": "DeepSeek V4.1 Flash (V4 Flash 兼容)",
+      "description": "DeepSeek V4 Flash 面向高效率的通用推理、代码和智能体任务，兼顾长文本处理能力，适用于问答、内容分析与自动化工作流。",
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "text"
+      ],
+      "protocols": [
+        "chat",
+        "messages",
+        "responses"
+      ],
+      "features": {
+        "imageSources": [],
+        "videoInput": {
+          "sources": [],
+          "protocols": [],
+          "maxDurationSeconds": 0,
+          "maxFps": 0,
+          "maxBytes": 0
+        },
+        "functionTools": {
+          "basic": true,
+          "strict": true,
+          "parallel": true,
+          "streaming": true,
+          "multiRound": true
+        },
+        "usage": {
+          "nonStreaming": true,
+          "streaming": true
+        },
+        "byProtocol": {
+          "chat": {
+            "inputModalities": [
+              "text"
+            ],
+            "imageSources": [],
+            "videoInput": {
+              "sources": [],
+              "protocols": [],
+              "maxDurationSeconds": 0,
+              "maxFps": 0,
+              "maxBytes": 0
+            },
+            "functionTools": {
+              "basic": true,
+              "strict": true,
+              "parallel": true,
+              "streaming": true,
+              "multiRound": true
+            },
+            "usage": {
+              "nonStreaming": true,
+              "streaming": true
+            }
+          },
+          "messages": {
+            "inputModalities": [
+              "text"
+            ],
+            "imageSources": [],
+            "videoInput": {
+              "sources": [],
+              "protocols": [],
+              "maxDurationSeconds": 0,
+              "maxFps": 0,
+              "maxBytes": 0
+            },
+            "functionTools": {
+              "basic": true,
+              "strict": true,
+              "parallel": true,
+              "streaming": true,
+              "multiRound": true
+            },
+            "usage": {
+              "nonStreaming": true,
+              "streaming": true
+            }
+          },
+          "responses": {
+            "inputModalities": [
+              "text"
+            ],
+            "imageSources": [],
+            "videoInput": {
+              "sources": [],
+              "protocols": [],
+              "maxDurationSeconds": 0,
+              "maxFps": 0,
+              "maxBytes": 0
+            },
+            "functionTools": {
+              "basic": true,
+              "strict": true,
+              "parallel": true,
+              "streaming": true,
+              "multiRound": true
+            },
+            "usage": {
+              "nonStreaming": true,
+              "streaming": true
+            }
+          }
+        }
+      },
+      "available": true,
+      "execution": {
+        "protocol": "openai",
+        "path": "/v1/chat/completions"
+      },
+      "pricing": {
+        "pricingModel": "per_token",
+        "promptPerMillion": 30000,
+        "completionPerMillion": 90000,
+        "cacheReadPerMillion": 1000,
+        "cacheWritePerMillion": 30000,
+        "currency": "awcoin",
+        "enabled": true
+      }
+    },
+    {
+      "id": "ap-deepseek-v4-pro",
+      "name": "deepseek-v4-pro",
+      "description": "DeepSeek V4 Pro 面向复杂推理、编程和长程智能体任务，具备长上下文处理能力，适用于复杂问题分析、软件开发和多步骤任务规划。",
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "text"
+      ],
+      "protocols": [
+        "chat",
+        "responses",
+        "messages"
+      ],
+      "features": {
+        "imageSources": [],
+        "videoInput": {
+          "sources": [],
+          "protocols": [],
+          "maxDurationSeconds": 0,
+          "maxFps": 0,
+          "maxBytes": 0
+        },
+        "functionTools": {
+          "basic": true,
+          "strict": true,
+          "parallel": true,
+          "streaming": true,
+          "multiRound": true
+        },
+        "usage": {
+          "nonStreaming": true,
+          "streaming": true
+        },
+        "byProtocol": {
+          "chat": {
+            "inputModalities": [
+              "text"
+            ],
+            "imageSources": [],
+            "videoInput": {
+              "sources": [],
+              "protocols": [],
+              "maxDurationSeconds": 0,
+              "maxFps": 0,
+              "maxBytes": 0
+            },
+            "functionTools": {
+              "basic": true,
+              "strict": true,
+              "parallel": true,
+              "streaming": true,
+              "multiRound": true
+            },
+            "usage": {
+              "nonStreaming": true,
+              "streaming": true
+            }
+          },
+          "responses": {
+            "inputModalities": [
+              "text"
+            ],
+            "imageSources": [],
+            "videoInput": {
+              "sources": [],
+              "protocols": [],
+              "maxDurationSeconds": 0,
+              "maxFps": 0,
+              "maxBytes": 0
+            },
+            "functionTools": {
+              "basic": true,
+              "strict": true,
+              "parallel": true,
+              "streaming": true,
+              "multiRound": true
+            },
+            "usage": {
+              "nonStreaming": true,
+              "streaming": true
+            }
+          },
+          "messages": {
+            "inputModalities": [
+              "text"
+            ],
+            "imageSources": [],
+            "videoInput": {
+              "sources": [],
+              "protocols": [],
+              "maxDurationSeconds": 0,
+              "maxFps": 0,
+              "maxBytes": 0
+            },
+            "functionTools": {
+              "basic": true,
+              "strict": true,
+              "parallel": true,
+              "streaming": true,
+              "multiRound": true
+            },
+            "usage": {
+              "nonStreaming": true,
+              "streaming": true
+            }
+          }
+        }
+      },
+      "available": true,
+      "execution": {
+        "protocol": "openai",
+        "path": "/v1/chat/completions"
+      },
+      "pricing": {
+        "pricingModel": "per_token",
+        "promptPerMillion": 90000,
+        "completionPerMillion": 270000,
+        "cacheReadPerMillion": 3000,
+        "cacheWritePerMillion": 90000,
+        "currency": "awcoin",
+        "enabled": true
+      }
+    },
+    {
+      "id": "ap-glm-5.2",
+      "name": "glm-5.2",
+      "description": "GLM-5.2 面向长程任务与软件工程，提升长文本处理、代码开发和持续执行能力，可用于代码库分析、复杂调试与智能体工作流。",
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "text"
+      ],
+      "protocols": [
+        "chat",
+        "responses",
+        "messages"
+      ],
+      "features": {
+        "imageSources": [],
+        "videoInput": {
+          "sources": [],
+          "protocols": [],
+          "maxDurationSeconds": 0,
+          "maxFps": 0,
+          "maxBytes": 0
+        },
+        "functionTools": {
+          "basic": true,
+          "strict": true,
+          "parallel": true,
+          "streaming": true,
+          "multiRound": true
+        },
+        "usage": {
+          "nonStreaming": true,
+          "streaming": true
+        },
+        "byProtocol": {
+          "chat": {
+            "inputModalities": [
+              "text"
+            ],
+            "imageSources": [],
+            "videoInput": {
+              "sources": [],
+              "protocols": [],
+              "maxDurationSeconds": 0,
+              "maxFps": 0,
+              "maxBytes": 0
+            },
+            "functionTools": {
+              "basic": true,
+              "strict": true,
+              "parallel": true,
+              "streaming": true,
+              "multiRound": true
+            },
+            "usage": {
+              "nonStreaming": true,
+              "streaming": true
+            }
+          },
+          "responses": {
+            "inputModalities": [
+              "text"
+            ],
+            "imageSources": [],
+            "videoInput": {
+              "sources": [],
+              "protocols": [],
+              "maxDurationSeconds": 0,
+              "maxFps": 0,
+              "maxBytes": 0
+            },
+            "functionTools": {
+              "basic": true,
+              "strict": true,
+              "parallel": true,
+              "streaming": true,
+              "multiRound": true
+            },
+            "usage": {
+              "nonStreaming": true,
+              "streaming": true
+            }
+          },
+          "messages": {
+            "inputModalities": [
+              "text"
+            ],
+            "imageSources": [],
+            "videoInput": {
+              "sources": [],
+              "protocols": [],
+              "maxDurationSeconds": 0,
+              "maxFps": 0,
+              "maxBytes": 0
+            },
+            "functionTools": {
+              "basic": true,
+              "strict": true,
+              "parallel": true,
+              "streaming": true,
+              "multiRound": true
+            },
+            "usage": {
+              "nonStreaming": true,
+              "streaming": true
+            }
+          }
+        }
+      },
+      "available": true,
+      "execution": {
+        "protocol": "openai",
+        "path": "/v1/chat/completions"
+      },
+      "pricing": {
+        "pricingModel": "per_token",
+        "promptPerMillion": 80000,
+        "completionPerMillion": 280000,
+        "cacheReadPerMillion": 20000,
+        "cacheWritePerMillion": 80000,
+        "currency": "awcoin",
+        "enabled": true
+      }
+    },
+    {
+      "id": "ap-glm-5.3",
+      "name": "glm-5.3",
+      "description": "GLM-5.3 在 GLM-5.2 基础上进一步提升复杂编码与长程任务能力，适用于工程开发、系统分析和需要持续推理与工具协作的任务。",
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "text"
+      ],
+      "protocols": [
+        "chat",
+        "responses",
+        "messages"
+      ],
+      "features": {
+        "imageSources": [],
+        "videoInput": {
+          "sources": [],
+          "protocols": [],
+          "maxDurationSeconds": 0,
+          "maxFps": 0,
+          "maxBytes": 0
+        },
+        "functionTools": {
+          "basic": true,
+          "strict": true,
+          "parallel": true,
+          "streaming": true,
+          "multiRound": true
+        },
+        "usage": {
+          "nonStreaming": true,
+          "streaming": true
+        },
+        "byProtocol": {
+          "chat": {
+            "inputModalities": [
+              "text"
+            ],
+            "imageSources": [],
+            "videoInput": {
+              "sources": [],
+              "protocols": [],
+              "maxDurationSeconds": 0,
+              "maxFps": 0,
+              "maxBytes": 0
+            },
+            "functionTools": {
+              "basic": true,
+              "strict": true,
+              "parallel": true,
+              "streaming": true,
+              "multiRound": true
+            },
+            "usage": {
+              "nonStreaming": true,
+              "streaming": true
+            }
+          },
+          "responses": {
+            "inputModalities": [
+              "text"
+            ],
+            "imageSources": [],
+            "videoInput": {
+              "sources": [],
+              "protocols": [],
+              "maxDurationSeconds": 0,
+              "maxFps": 0,
+              "maxBytes": 0
+            },
+            "functionTools": {
+              "basic": true,
+              "strict": true,
+              "parallel": true,
+              "streaming": true,
+              "multiRound": true
+            },
+            "usage": {
+              "nonStreaming": true,
+              "streaming": true
+            }
+          },
+          "messages": {
+            "inputModalities": [
+              "text"
+            ],
+            "imageSources": [],
+            "videoInput": {
+              "sources": [],
+              "protocols": [],
+              "maxDurationSeconds": 0,
+              "maxFps": 0,
+              "maxBytes": 0
+            },
+            "functionTools": {
+              "basic": true,
+              "strict": true,
+              "parallel": true,
+              "streaming": true,
+              "multiRound": true
+            },
+            "usage": {
+              "nonStreaming": true,
+              "streaming": true
+            }
+          }
+        }
+      },
+      "available": true,
+      "execution": {
+        "protocol": "openai",
+        "path": "/v1/chat/completions"
+      },
+      "pricing": {
+        "pricingModel": "per_token",
+        "promptPerMillion": 80000,
+        "completionPerMillion": 280000,
+        "cacheReadPerMillion": 20000,
+        "cacheWritePerMillion": 80000,
+        "currency": "awcoin",
+        "enabled": true
+      }
+    },
+    {
+      "id": "ap-glm-5.3-flash",
+      "name": "glm-5.3-flash",
+      "description": "GLM-5.3 Flash 是兼顾效率与能力的多模态模型，结合视觉理解、代码和长文本处理，适用于办公分析、开发助手及智能体应用。",
+      "inputModalities": [
+        "image",
+        "text"
+      ],
+      "outputModalities": [
+        "text"
+      ],
+      "protocols": [
+        "chat",
+        "responses",
+        "messages"
+      ],
+      "features": {
+        "imageSources": [
+          "data",
+          "https"
+        ],
+        "videoInput": {
+          "sources": [],
+          "protocols": [],
+          "maxDurationSeconds": 0,
+          "maxFps": 0,
+          "maxBytes": 0
+        },
+        "functionTools": {
+          "basic": true,
+          "strict": true,
+          "parallel": true,
+          "streaming": true,
+          "multiRound": true
+        },
+        "usage": {
+          "nonStreaming": true,
+          "streaming": true
+        },
+        "byProtocol": {
+          "chat": {
+            "inputModalities": [
+              "image",
+              "text"
+            ],
+            "imageSources": [
+              "data",
+              "https"
+            ],
+            "videoInput": {
+              "sources": [],
+              "protocols": [],
+              "maxDurationSeconds": 0,
+              "maxFps": 0,
+              "maxBytes": 0
+            },
+            "functionTools": {
+              "basic": true,
+              "strict": true,
+              "parallel": true,
+              "streaming": true,
+              "multiRound": true
+            },
+            "usage": {
+              "nonStreaming": true,
+              "streaming": true
+            }
+          },
+          "responses": {
+            "inputModalities": [
+              "text"
+            ],
+            "imageSources": [],
+            "videoInput": {
+              "sources": [],
+              "protocols": [],
+              "maxDurationSeconds": 0,
+              "maxFps": 0,
+              "maxBytes": 0
+            },
+            "functionTools": {
+              "basic": true,
+              "strict": true,
+              "parallel": true,
+              "streaming": true,
+              "multiRound": true
+            },
+            "usage": {
+              "nonStreaming": true,
+              "streaming": true
+            }
+          },
+          "messages": {
+            "inputModalities": [
+              "image",
+              "text"
+            ],
+            "imageSources": [
+              "data",
+              "https"
+            ],
+            "videoInput": {
+              "sources": [],
+              "protocols": [],
+              "maxDurationSeconds": 0,
+              "maxFps": 0,
+              "maxBytes": 0
+            },
+            "functionTools": {
+              "basic": true,
+              "strict": true,
+              "parallel": true,
+              "streaming": true,
+              "multiRound": true
+            },
+            "usage": {
+              "nonStreaming": true,
+              "streaming": true
+            }
+          }
+        }
+      },
+      "available": true,
+      "execution": {
+        "protocol": "openai",
+        "path": "/v1/chat/completions"
+      },
+      "pricing": {
+        "pricingModel": "per_token",
+        "promptPerMillion": 4000,
+        "completionPerMillion": 14000,
+        "cacheReadPerMillion": 1150,
+        "cacheWritePerMillion": 4000,
+        "currency": "awcoin",
+        "enabled": true
+      }
+    },
+    {
+      "id": "ap-qwen3-embedding:0.6b",
+      "name": "qwen3-embedding:0.6b",
+      "description": "",
+      "kind": "embedding",
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "embedding"
+      ],
+      "protocols": [
+        "embeddings"
+      ],
+      "dimensions": 1024,
+      "features": {
+        "embeddingDimensions": 1024
+      },
+      "available": true,
+      "execution": {
+        "path": "/v1/embeddings",
+        "protocol": "openai"
+      },
+      "pricing": {
+        "completionPerMillion": 0,
+        "cacheWritePerMillion": 0,
+        "enabled": true,
+        "pricingModel": "per_token",
+        "cacheReadPerMillion": 0,
+        "currency": "awcoin",
+        "promptPerMillion": 300
+      }
+    },
+    {
+      "id": "ap-qwen3.8-max",
+      "name": "qwen3.8-max",
+      "description": "Qwen3.8 Max 面向复杂推理与智能体工作流，支持长上下文、工具调用和结构化输出，适用于大型资料分析、软件开发及多步骤任务执行。",
+      "inputModalities": [
+        "image",
+        "text"
+      ],
+      "outputModalities": [
+        "text"
+      ],
+      "protocols": [
+        "chat",
+        "responses",
+        "messages"
+      ],
+      "features": {
+        "imageSources": [
+          "data",
+          "https"
+        ],
+        "videoInput": {
+          "sources": [],
+          "protocols": [],
+          "maxDurationSeconds": 0,
+          "maxFps": 0,
+          "maxBytes": 0
+        },
+        "functionTools": {
+          "basic": true,
+          "strict": true,
+          "parallel": true,
+          "streaming": true,
+          "multiRound": true
+        },
+        "usage": {
+          "nonStreaming": true,
+          "streaming": true
+        },
+        "byProtocol": {
+          "chat": {
+            "inputModalities": [
+              "image",
+              "text"
+            ],
+            "imageSources": [
+              "data",
+              "https"
+            ],
+            "videoInput": {
+              "sources": [],
+              "protocols": [],
+              "maxDurationSeconds": 0,
+              "maxFps": 0,
+              "maxBytes": 0
+            },
+            "functionTools": {
+              "basic": true,
+              "strict": true,
+              "parallel": true,
+              "streaming": true,
+              "multiRound": true
+            },
+            "usage": {
+              "nonStreaming": true,
+              "streaming": true
+            }
+          },
+          "responses": {
+            "inputModalities": [
+              "image",
+              "text"
+            ],
+            "imageSources": [
+              "data",
+              "https"
+            ],
+            "videoInput": {
+              "sources": [],
+              "protocols": [],
+              "maxDurationSeconds": 0,
+              "maxFps": 0,
+              "maxBytes": 0
+            },
+            "functionTools": {
+              "basic": true,
+              "strict": true,
+              "parallel": true,
+              "streaming": true,
+              "multiRound": true
+            },
+            "usage": {
+              "nonStreaming": true,
+              "streaming": true
+            }
+          },
+          "messages": {
+            "inputModalities": [
+              "image",
+              "text"
+            ],
+            "imageSources": [
+              "data",
+              "https"
+            ],
+            "videoInput": {
+              "sources": [],
+              "protocols": [],
+              "maxDurationSeconds": 0,
+              "maxFps": 0,
+              "maxBytes": 0
+            },
+            "functionTools": {
+              "basic": true,
+              "strict": true,
+              "parallel": true,
+              "streaming": true,
+              "multiRound": true
+            },
+            "usage": {
+              "nonStreaming": true,
+              "streaming": true
+            }
+          }
+        }
+      },
+      "available": true,
+      "execution": {
+        "protocol": "openai",
+        "path": "/v1/chat/completions"
+      },
+      "pricing": {
+        "pricingModel": "per_token",
+        "promptPerMillion": 120000,
+        "completionPerMillion": 360000,
+        "cacheReadPerMillion": 120000,
+        "cacheWritePerMillion": 150000,
+        "currency": "awcoin",
+        "enabled": true
+      }
+    }
+  ]
+}

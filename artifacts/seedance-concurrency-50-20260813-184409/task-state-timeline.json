@@ -1,0 +1,386 @@
+[
+  {
+    "elapsed_seconds": 0.0,
+    "in_progress": 11,
+    "queued": 26,
+    "accepted": 12
+  },
+  {
+    "elapsed_seconds": 5.0,
+    "in_progress": 16,
+    "queued": 33
+  },
+  {
+    "elapsed_seconds": 10.0,
+    "in_progress": 16,
+    "queued": 33
+  },
+  {
+    "elapsed_seconds": 15.0,
+    "in_progress": 16,
+    "queued": 33
+  },
+  {
+    "elapsed_seconds": 20.0,
+    "in_progress": 16,
+    "queued": 33
+  },
+  {
+    "elapsed_seconds": 25.0,
+    "in_progress": 16,
+    "queued": 33
+  },
+  {
+    "elapsed_seconds": 30.0,
+    "in_progress": 16,
+    "queued": 33
+  },
+  {
+    "elapsed_seconds": 35.0,
+    "in_progress": 16,
+    "queued": 33
+  },
+  {
+    "elapsed_seconds": 40.0,
+    "in_progress": 16,
+    "queued": 33
+  },
+  {
+    "elapsed_seconds": 45.0,
+    "in_progress": 16,
+    "queued": 33
+  },
+  {
+    "elapsed_seconds": 50.0,
+    "in_progress": 16,
+    "queued": 33
+  },
+  {
+    "elapsed_seconds": 55.0,
+    "in_progress": 16,
+    "queued": 33
+  },
+  {
+    "elapsed_seconds": 60.0,
+    "in_progress": 16,
+    "queued": 33
+  },
+  {
+    "elapsed_seconds": 65.0,
+    "in_progress": 16,
+    "queued": 33
+  },
+  {
+    "elapsed_seconds": 70.0,
+    "in_progress": 16,
+    "queued": 33
+  },
+  {
+    "elapsed_seconds": 75.0,
+    "in_progress": 21,
+    "queued": 28
+  },
+  {
+    "elapsed_seconds": 80.0,
+    "in_progress": 21,
+    "queued": 28
+  },
+  {
+    "elapsed_seconds": 85.0,
+    "in_progress": 21,
+    "queued": 28
+  },
+  {
+    "elapsed_seconds": 90.0,
+    "in_progress": 21,
+    "queued": 28
+  },
+  {
+    "elapsed_seconds": 95.0,
+    "in_progress": 23,
+    "queued": 26
+  },
+  {
+    "elapsed_seconds": 100.0,
+    "in_progress": 23,
+    "queued": 26
+  },
+  {
+    "elapsed_seconds": 105.0,
+    "in_progress": 23,
+    "queued": 26
+  },
+  {
+    "elapsed_seconds": 110.0,
+    "in_progress": 26,
+    "queued": 23
+  },
+  {
+    "elapsed_seconds": 115.0,
+    "in_progress": 26,
+    "queued": 23
+  },
+  {
+    "elapsed_seconds": 120.0,
+    "in_progress": 26,
+    "queued": 23
+  },
+  {
+    "elapsed_seconds": 125.0,
+    "in_progress": 27,
+    "queued": 20,
+    "completed": 2
+  },
+  {
+    "elapsed_seconds": 130.0,
+    "in_progress": 27,
+    "queued": 20,
+    "completed": 2
+  },
+  {
+    "elapsed_seconds": 135.0,
+    "in_progress": 27,
+    "queued": 20,
+    "completed": 2
+  },
+  {
+    "elapsed_seconds": 140.0,
+    "completed": 5,
+    "in_progress": 26,
+    "queued": 18
+  },
+  {
+    "elapsed_seconds": 145.0,
+    "completed": 5,
+    "in_progress": 26,
+    "queued": 18
+  },
+  {
+    "elapsed_seconds": 150.0,
+    "completed": 10,
+    "in_progress": 29,
+    "queued": 10
+  },
+  {
+    "elapsed_seconds": 155.0,
+    "completed": 13,
+    "in_progress": 26,
+    "queued": 10
+  },
+  {
+    "elapsed_seconds": 160.0,
+    "completed": 14,
+    "in_progress": 25,
+    "queued": 10
+  },
+  {
+    "elapsed_seconds": 165.0,
+    "completed": 16,
+    "in_progress": 24,
+    "queued": 9
+  },
+  {
+    "elapsed_seconds": 170.0,
+    "completed": 16,
+    "in_progress": 24,
+    "queued": 9
+  },
+  {
+    "elapsed_seconds": 175.0,
+    "completed": 16,
+    "in_progress": 28,
+    "queued": 5
+  },
+  {
+    "elapsed_seconds": 180.0,
+    "completed": 16,
+    "in_progress": 28,
+    "queued": 5
+  },
+  {
+    "elapsed_seconds": 185.0,
+    "completed": 16,
+    "in_progress": 28,
+    "queued": 5
+  },
+  {
+    "elapsed_seconds": 190.0,
+    "completed": 17,
+    "in_progress": 29,
+    "queued": 3
+  },
+  {
+    "elapsed_seconds": 195.0,
+    "completed": 17,
+    "in_progress": 29,
+    "queued": 3
+  },
+  {
+    "elapsed_seconds": 200.0,
+    "completed": 20,
+    "in_progress": 26,
+    "queued": 3
+  },
+  {
+    "elapsed_seconds": 205.0,
+    "completed": 20,
+    "in_progress": 26,
+    "queued": 3
+  },
+  {
+    "elapsed_seconds": 210.0,
+    "completed": 21,
+    "in_progress": 27,
+    "queued": 1
+  },
+  {
+    "elapsed_seconds": 215.0,
+    "completed": 21,
+    "in_progress": 27,
+    "queued": 1
+  },
+  {
+    "elapsed_seconds": 220.0,
+    "completed": 22,
+    "in_progress": 27
+  },
+  {
+    "elapsed_seconds": 225.0,
+    "completed": 22,
+    "in_progress": 27
+  },
+  {
+    "elapsed_seconds": 230.0,
+    "completed": 22,
+    "in_progress": 27
+  },
+  {
+    "elapsed_seconds": 235.0,
+    "completed": 24,
+    "in_progress": 25
+  },
+  {
+    "elapsed_seconds": 240.0,
+    "completed": 24,
+    "in_progress": 25
+  },
+  {
+    "elapsed_seconds": 245.0,
+    "completed": 25,
+    "in_progress": 24
+  },
+  {
+    "elapsed_seconds": 250.0,
+    "completed": 25,
+    "in_progress": 24
+  },
+  {
+    "elapsed_seconds": 255.0,
+    "completed": 27,
+    "in_progress": 22
+  },
+  {
+    "elapsed_seconds": 260.0,
+    "completed": 27,
+    "in_progress": 22
+  },
+  {
+    "elapsed_seconds": 265.0,
+    "completed": 30,
+    "in_progress": 19
+  },
+  {
+    "elapsed_seconds": 270.0,
+    "completed": 31,
+    "in_progress": 18
+  },
+  {
+    "elapsed_seconds": 275.0,
+    "completed": 32,
+    "in_progress": 17
+  },
+  {
+    "elapsed_seconds": 280.0,
+    "completed": 32,
+    "in_progress": 17
+  },
+  {
+    "elapsed_seconds": 285.0,
+    "completed": 37,
+    "in_progress": 12
+  },
+  {
+    "elapsed_seconds": 290.0,
+    "completed": 37,
+    "in_progress": 12
+  },
+  {
+    "elapsed_seconds": 295.0,
+    "completed": 37,
+    "in_progress": 12
+  },
+  {
+    "elapsed_seconds": 300.0,
+    "completed": 37,
+    "in_progress": 12
+  },
+  {
+    "elapsed_seconds": 305.0,
+    "completed": 37,
+    "in_progress": 12
+  },
+  {
+    "elapsed_seconds": 310.0,
+    "completed": 38,
+    "in_progress": 11
+  },
+  {
+    "elapsed_seconds": 315.0,
+    "completed": 38,
+    "in_progress": 11
+  },
+  {
+    "elapsed_seconds": 320.0,
+    "completed": 40,
+    "in_progress": 9
+  },
+  {
+    "elapsed_seconds": 325.0,
+    "completed": 41,
+    "in_progress": 8
+  },
+  {
+    "elapsed_seconds": 330.0,
+    "completed": 41,
+    "in_progress": 8
+  },
+  {
+    "elapsed_seconds": 335.0,
+    "completed": 43,
+    "in_progress": 6
+  },
+  {
+    "elapsed_seconds": 340.0,
+    "completed": 43,
+    "in_progress": 6
+  },
+  {
+    "elapsed_seconds": 345.0,
+    "completed": 45,
+    "in_progress": 4
+  },
+  {
+    "elapsed_seconds": 350.0,
+    "completed": 46,
+    "in_progress": 3
+  },
+  {
+    "elapsed_seconds": 355.0,
+    "completed": 47,
+    "in_progress": 2
+  },
+  {
+    "elapsed_seconds": 360.0,
+    "completed": 49
+  }
+]

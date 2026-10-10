@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Seedance 端到端压力测试报告</title>
+  <style>
+    :root { color-scheme: light; --ink:#0f172a; --muted:#64748b; --line:#e2e8f0; --blue:#2563eb; --green:#16a34a; --orange:#f97316; --bg:#f8fafc; }
+    * { box-sizing: border-box; }
+    body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.65 Inter,"Segoe UI","Microsoft YaHei",sans-serif; }
+    .hero { padding:54px 6vw 42px; color:#fff; background:linear-gradient(135deg,#0f172a,#1d4ed8); }
+    .hero h1 { margin:0 0 10px; font-size:40px; letter-spacing:-.02em; }
+    .hero p { margin:0; color:#dbeafe; }
+    main { width:min(1180px,92vw); margin:-22px auto 60px; }
+    section { margin:22px 0; padding:28px; border:1px solid var(--line); border-radius:18px; background:#fff; box-shadow:0 10px 30px rgba(15,23,42,.05); }
+    .speed-section { break-inside: avoid; }
+    h2 { margin:0 0 18px; font-size:24px; }
+    h3 { margin-top:26px; }
+    .grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:14px; }
+    .card { padding:18px; border:1px solid var(--line); border-radius:14px; background:#fff; }
+    .card .k { color:var(--muted); font-size:13px; }
+    .card .v { margin-top:5px; font-size:28px; font-weight:750; }
+    .good { color:var(--green); }
+    .blue { color:var(--blue); }
+    .orange { color:var(--orange); }
+    table { width:100%; border-collapse:collapse; margin:12px 0 22px; }
+    th,td { padding:10px 12px; border-bottom:1px solid var(--line); text-align:right; }
+    th:first-child,td:first-child { text-align:left; }
+    th { color:#334155; background:#f8fafc; }
+    img { width:100%; height:auto; margin:12px 0; border:1px solid var(--line); border-radius:12px; }
+    .note { padding:14px 16px; border-left:4px solid var(--orange); background:#fff7ed; color:#7c2d12; }
+    .evidence { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; }
+    code { padding:.15em .35em; border-radius:6px; background:#f1f5f9; }
+    footer { color:var(--muted); text-align:center; }
+    @media(max-width:850px){ .grid,.evidence{grid-template-columns:1fr 1fr;} }
+    @media(max-width:560px){ .grid,.evidence{grid-template-columns:1fr;} .hero h1{font-size:30px;} section{padding:20px;} }
+  </style>
+</head>
+<body>
+  <header class="hero">
+    <h1>Seedance 端到端压力测试</h1>
+    <p>批次 20260813-184409 · New API + 上游 AIPDD · 真实任务与真实扣费</p>
+  </header>
+  <main>
+    <section>
+      <div class="grid">
+        <div class="card"><div class="k">总任务</div><div class="v blue">50</div></div>
+        <div class="card"><div class="k">成功率</div><div class="v good">100%</div></div>
+        <div class="card"><div class="k">实际费用</div><div class="v orange">¥64.00</div></div>
+        <div class="card"><div class="k">并发波完成</div><div class="v">376.58s</div></div>
+      </div>
+      <p class="note">浏览器操练场会串行等待单个视频完成，因此本次由 1 个浏览器探针任务和 49 个通过同一公网 <code>/v1/videos</code> 路径同时释放的任务组成。性能分位数基于 49 个同时请求。</p>
+    </section>
+
+    <section>
+      <h2>核心结果</h2>
+      <div class="grid">
+        <div class="card"><div class="k">提交任务/受理 P50 / P95</div><div class="v">8.30 / 10.67s</div></div>
+        <div class="card"><div class="k">端到端 P50 / P95</div><div class="v">259.12 / 367.76s</div></div>
+        <div class="card"><div class="k">有效吞吐</div><div class="v">7.81 / min</div></div>
+        <div class="card"><div class="k">最大排队 / 生成中</div><div class="v">33 / 29</div></div>
+      </div>
+      <img src="charts/01-task-latency.png" alt="任务端到端耗时" />
+      <img src="charts/03-task-states.png" alt="任务状态时间线" />
+    </section>
+
+    <section class="speed-section">
+      <h2>生成速度分位数</h2>
+      <p class="flow"><strong>发送请求</strong> → <strong>提交任务/接口受理</strong>（约 7–12 秒） → <strong>排队等待</strong>（平均约 101 秒） → <strong>视频生成</strong>（平均约 142 秒） → <strong>任务完成</strong></p>
+      <div class="note">
+        <strong>如何理解这些时间：</strong>提交任务耗时只是客户端发出 <code>/v1/videos</code> 到 New API 返回任务 ID 的时间，表示任务已进入系统，<strong>不代表视频已经生成</strong>。排队等待是已提交但尚未获得生成 Worker 的时间；视频生成耗时是开始生成到 <code>SUCCESS</code> 的时间；端到端完成耗时则从最初请求一直算到视频完成，包含以上所有阶段。
+      </div>
+      <table>
+        <thead><tr><th>指标</th><th>最小</th><th>P50</th><th>P95</th><th>P99</th><th>平均</th><th>最大</th></tr></thead>
+        <tbody>
+          <tr><td>提交任务/接口受理</td><td>7.21s</td><td>8.30s</td><td>10.67s</td><td>12.04s</td><td>8.75s</td><td>12.13s</td></tr>
+          <tr><td>排队等待（近似）</td><td>5.65s</td><td>116.82s</td><td>208.38s</td><td>222.63s</td><td>101.24s</td><td>228.30s</td></tr>
+          <tr><td>视频生成阶段（近似）</td><td>100.15s</td><td>138.55s</td><td>170.19s</td><td>197.91s</td><td>142.47s</td><td>209.59s</td></tr>
+          <tr><td>端到端完成</td><td>141.77s</td><td>259.12s</td><td>367.76s</td><td>375.99s</td><td>252.46s</td><td>376.58s</td></tr>
+        </tbody>
+      </table>
+      <p>注意：7.81 个/分钟（约每 7.68 秒完成一条）是整个并发批次的<strong>输出吞吐</strong>，不是单个视频只需 8 秒。单个任务从发出请求到完成，平均约 252 秒；其中实际视频生成平均约 142 秒。</p>
+    </section>
+
+    <section>
+      <h2>最大并发预测</h2>
+      <div class="grid">
+        <div class="card"><div class="k">上游稳态服务槽位（估算）</div><div class="v">18–22</div></div>
+        <div class="card"><div class="k">推荐生产峰值</div><div class="v good">45 路</div></div>
+        <div class="card"><div class="k">预测可用上限</div><div class="v blue">65 路</div></div>
+        <div class="card"><div class="k">高风险边界</div><div class="v orange">100+ 路</div></div>
+      </div>
+      <p>预测采用饱和吞吐排队模型，以实测 <strong>7.81 个任务/分钟</strong>为基准，并用 6.5 个任务/分钟作为保守情景。推荐峰值 45 路接近本次已验证负载且留有波动余量；预测可用上限 65 路的定义是：即使落入保守情景，单批任务预计仍可在 10 分钟内清空。</p>
+      <table>
+        <thead><tr><th>批次完成时限</th><th>保守 6.5/分钟</th><th>实测基准 7.81/分钟</th><th>乐观 9.0/分钟</th></tr></thead>
+        <tbody>
+          <tr><td>5 分钟</td><td>32 路</td><td>39 路</td><td>45 路</td></tr>
+          <tr><td>6 分钟</td><td>39 路</td><td>47 路</td><td>54 路</td></tr>
+          <tr><td>10 分钟</td><td><strong>65 路</strong></td><td>78 路</td><td>90 路</td></tr>
+        </tbody>
+      </table>
+      <img src="charts/04-capacity-forecast.png" alt="Seedance 最大并发预测" />
+      <p class="note">65 路是带有“10 分钟内清空”约束的预测可用上限，并非接口的绝对拒绝点。100 路预计需约 12.81 分钟清空，保守情景约 15.38 分钟，已进入明显排队风险区。该预测应通过下一轮 65 路真实任务验证。</p>
+    </section>
+
+    <section>
+      <h2>服务器资源</h2>
+      <table>
+        <thead><tr><th>主机</th><th>CPU 基线</th><th>CPU 平均</th><th>CPU 峰值</th><th>内存平均</th><th>内存峰值</th><th>Load 1m 峰值</th></tr></thead>
+        <tbody>
+          <tr><td>New API 14.103.100.4</td><td>2.37%</td><td>2.84%</td><td>8.23%</td><td>11.71%</td><td>12.18%</td><td>0.15</td></tr>
+          <tr><td>上游 AIPDD 8.219.81.18</td><td>33.39%</td><td>35.44%</td><td>55.19%</td><td>39.32%</td><td>39.81%</td><td>1.65</td></tr>
+        </tbody>
+      </table>
+      <img src="charts/02-server-resources.png" alt="双服务器 CPU 和内存曲线" />
+      <p>New API 网关没有形成资源瓶颈；主要延迟来自上游排队与视频生成。上游实际 GPU Worker 不在所提供服务器中，因此本报告不包含 GPU 和显存指标。</p>
+    </section>
+
+    <section>
+      <h2>成本与账务</h2>
+      <table>
+        <thead><tr><th>项目</th><th>测试前</th><th>测试后</th><th>变化</th></tr></thead>
+        <tbody>
+          <tr><td>余额</td><td>¥1,359.35</td><td>¥1,295.35</td><td>-¥64.00</td></tr>
+          <tr><td>历史使用</td><td>¥109.85</td><td>¥173.85</td><td>+¥64.00</td></tr>
+          <tr><td>请求计数</td><td>35</td><td>85</td><td>+50</td></tr>
+        </tbody>
+      </table>
+      <p>最低标价核对：<code>¥0.32 × 4 秒 × 50 = ¥64.00</code>，与实际扣费完全一致。数据库保存了 50 条任务、状态全部为 <code>SUCCESS</code>。</p>
+    </section>
+
+    <section>
+      <h2>关键证据截图</h2>
+      <div class="evidence">
+        <div><h3>最低成本配置</h3><img src="screenshots/07-seedance-ready-expanded-test.png" alt="最低成本配置" /></div>
+        <div><h3>任务执行中</h3><img src="screenshots/08-task-log-during-load.png" alt="任务执行中" /></div>
+        <div><h3>浏览器探针成功</h3><img src="screenshots/10-playground-probe-success.png" alt="浏览器探针成功" /></div>
+        <div><h3>测试前余额</h3><img src="screenshots/03-balance-before.png" alt="测试前余额" /></div>
+      </div>
+    </section>
+
+    <section>
+      <h2>证据完整性</h2>
+      <ul>
+        <li>数据库任务：50 行，ID 193–242，全部 SUCCESS。</li>
+        <li>任务轮询：909 条事件。</li>
+        <li>服务器采样：New API 495 个，上游 AIPDD 495 个，采样错误为 0。</li>
+        <li>容量预测：<code>capacity-forecast.json</code>、<code>capacity-forecast.csv</code> 和中文预测图均保存在本目录。</li>
+        <li>报告归档：<code>REPORT.html</code> 与已转换的 <code>REPORT.pdf</code> 均保存在本目录。</li>
+        <li>原始文件、逐任务 CSV、汇总 JSON、脚本、截图和图表均保存在本目录。</li>
+      </ul>
+      <p>完整方法、限制和后续容量建议见 <code>REPORT.md</code>。</p>
+    </section>
+    <footer>生成时间：2026-08-13 · Asia/Shanghai</footer>
+  </main>
+</body>
+</html>

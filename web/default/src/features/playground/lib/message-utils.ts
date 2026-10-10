@@ -1,0 +1,428 @@
+/*
+Copyright (C) 2023-2026 QuantumNous
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+For commercial licensing, please contact support@quantumnous.com
+*/
+import { nanoid } from 'nanoid'
+import { MESSAGE_ROLES, MESSAGE_STATUS, ERROR_MESSAGES } from '../constants'
+import type {
+  Message,
+  MessageVersion,
+  ChatCompletionMessage,
+  ContentPart,
+  SeedanceReference,
+} from '../types'
+
+/**
+ * Create a new message version
+ */
+export function createMessageVersion(content: string): MessageVersion {
+  return {
+    id: nanoid(),
+    content,
+  }
+}
+
+/**
+ * Get current version from message (always returns the first version)
+ */
+export function getCurrentVersion(message: Message): MessageVersion {
+  return message.versions[0] || { id: 'default', content: '' }
+}
+
+/**
+ * Update current version content in message
+ */
+export function updateCurrentVersionContent(
+  message: Message,
+  content: string
+): Message {
+  const currentVersion = getCurrentVersion(message)
+  return {
+    ...message,
+    versions: [{ ...currentVersion, content }],
+  }
+}
+
+/**
+ * Create a user message
+ */
+export function createUserMessage(
+  content: string,
+  seedanceReferences?: SeedanceReference[]
+): Message {
+  return {
+    key: nanoid(),
+    from: MESSAGE_ROLES.USER,
+    versions: [createMessageVersion(content)],
+    seedanceReferences:
+      seedanceReferences && seedanceReferences.length > 0
+        ? seedanceReferences
+        : undefined,
+  }
+}
+
+export function createClientTaskId(): string {
+  return `task_${nanoid(32)}`
+}
+
+/**
+ * Create a loading assistant message
+ */
+export function createLoadingAssistantMessage(
+  overrides: Partial<Message> = {}
+): Message {
+  return {
+    key: nanoid(),
+    from: MESSAGE_ROLES.ASSISTANT,
+    versions: [createMessageVersion('')],
+    reasoning: undefined,
+    isReasoningComplete: false,
+    isContentComplete: false,
+    isReasoningStreaming: false,
+    status: MESSAGE_STATUS.LOADING,
+    ...overrides,
+  }
+}
+
+/**
+ * Build message content with optional images
+ */
+export function buildMessageContent(
+  text: string,
+  imageUrls: string[] = []
+): string | ContentPart[] {
+  const validImages = imageUrls.filter((url) => url.trim() !== '')
+
+  if (validImages.length === 0) {
+    return text
+  }
+
+  const parts: ContentPart[] = [
+    {
+      type: 'text',
+      text: text || '',
+    },
+    ...validImages.map((url) => ({
+      type: 'image_url' as const,
+      image_url: { url: url.trim() },
+    })),
+  ]
+
+  return parts
+}
+
+/**
+ * Extract text content from message content
+ */
+export function getTextContent(content: string | ContentPart[]): string {
+  if (typeof content === 'string') {
+    return content
+  }
+
+  if (Array.isArray(content)) {
+    const textPart = content.find((part) => part.type === 'text')
+    return textPart?.text || ''
+  }
+
+  return ''
+}
+
+/**
+ * Format message for API request
+ */
+export function formatMessageForAPI(message: Message): ChatCompletionMessage {
+  const currentVersion = getCurrentVersion(message)
+  return {
+    role: message.from,
+    content: currentVersion.content,
+  }
+}
+
+/**
+ * Check if message is valid for API request
+ * Excludes non-final assistant messages and empty assistant content
+ */
+export function isValidMessage(message: Message): boolean {
+  if (!message || !message.from || !message.versions.length) return false
+
+  const content = message.versions[0]?.content
+  if (content === undefined) return false
+
+  if (message.from === MESSAGE_ROLES.ASSISTANT) {
+    if (isInterruptedErrorMessage(message)) {
+      return false
+    }
+    if (
+      message.status === MESSAGE_STATUS.ERROR ||
+      message.status === MESSAGE_STATUS.LOADING ||
+      message.status === MESSAGE_STATUS.STREAMING
+    ) {
+      return false
+    }
+    if (!content.trim()) return false
+  }
+
+  return true
+}
+
+function isWebUrl(url: string): boolean {
+  return /^https?:\/\//i.test(url.trim())
+}
+
+function isDataReferenceUrl(url: string): boolean {
+  return /^data:(image|video|audio)\//i.test(url.trim())
+}
+
+function isValidReferenceUrl(url: string): boolean {
+  return isWebUrl(url) || isDataReferenceUrl(url)
+}
+
+function sanitizeSeedanceReferences(message: Message): Message {
+  const references = message.seedanceReferences
+  if (!references?.length) return message
+
+  const safeReferences = references
+    .map((reference) => ({
+      ...reference,
+      url: reference.url.trim(),
+    }))
+    .filter((reference) => isValidReferenceUrl(reference.url))
+
+  const unchanged =
+    safeReferences.length === references.length &&
+    safeReferences.every(
+      (reference, index) => reference.url === references[index]?.url
+    )
+
+  if (unchanged) return message
+
+  return {
+    ...message,
+    seedanceReferences: safeReferences.length > 0 ? safeReferences : undefined,
+  }
+}
+
+function isInterruptedErrorMessage(message: Message): boolean {
+  if (message.from !== MESSAGE_ROLES.ASSISTANT) {
+    return false
+  }
+
+  return (
+    getCurrentVersion(message).content.trim() ===
+    `${ERROR_MESSAGES.API_REQUEST_ERROR}: ${ERROR_MESSAGES.INTERRUPTED}`
+  )
+}
+
+/**
+ * Parse content to separate thinking from visible text
+ * Handles both complete and incomplete <think> tags
+ */
+export function parseThinkTags(content: string): {
+  visibleContent: string
+  reasoning: string
+  hasUnclosedTag: boolean
+} {
+  if (!content.includes('<think>')) {
+    return { visibleContent: content, reasoning: '', hasUnclosedTag: false }
+  }
+
+  const visibleParts: string[] = []
+  const reasoningParts: string[] = []
+  let currentPos = 0
+  let hasUnclosed = false
+
+  while (true) {
+    // Find next <think> tag
+    const openPos = content.indexOf('<think>', currentPos)
+
+    if (openPos === -1) {
+      // No more think tags, add remaining content
+      if (currentPos < content.length) {
+        visibleParts.push(content.substring(currentPos))
+      }
+      break
+    }
+
+    // Add visible content before this tag
+    if (openPos > currentPos) {
+      visibleParts.push(content.substring(currentPos, openPos))
+    }
+
+    // Look for matching </think> tag
+    const closePos = content.indexOf('</think>', openPos + 7)
+
+    if (closePos === -1) {
+      // Unclosed tag: rest is reasoning buffer
+      reasoningParts.push(content.substring(openPos + 7))
+      hasUnclosed = true
+      break
+    }
+
+    // Extract reasoning content between tags
+    reasoningParts.push(content.substring(openPos + 7, closePos))
+    currentPos = closePos + 8
+  }
+
+  return {
+    visibleContent: visibleParts.join('').trim(),
+    reasoning: reasoningParts.join('\n\n').trim(),
+    hasUnclosedTag: hasUnclosed,
+  }
+}
+
+/**
+ * Update the last assistant message with an error
+ * @param messages - Current messages array
+ * @param errorMessage - Error message to display
+ * @returns Updated messages array
+ */
+export function updateAssistantMessageWithError(
+  messages: Message[],
+  errorMessage: string,
+  errorCode?: string
+): Message[] {
+  return updateLastAssistantMessage(messages, (message) => {
+    if (message.status === MESSAGE_STATUS.COMPLETE) return message
+
+    const updatedMessage = updateCurrentVersionContent(message, errorMessage)
+    return {
+      ...updatedMessage,
+      status: MESSAGE_STATUS.ERROR,
+      isReasoningStreaming: false,
+      errorCode: errorCode || null,
+    }
+  })
+}
+
+/**
+ * Helper function to update the last assistant message
+ * @param messages - Current messages array
+ * @param updater - Function to update the message
+ * @returns Updated messages array or original if no assistant message found
+ */
+export function updateLastAssistantMessage(
+  messages: Message[],
+  updater: (message: Message) => Message
+): Message[] {
+  if (messages.length === 0) return messages
+  const last = messages[messages.length - 1]
+  if (!last || last.from !== MESSAGE_ROLES.ASSISTANT) return messages
+
+  const updated = [...messages]
+  updated[updated.length - 1] = updater(last)
+  return updated
+}
+
+/**
+ * Process content chunk during streaming
+ * Separates <think> reasoning from visible content in real-time
+ * Note: versions[0].content keeps the full raw content (with tags) during streaming
+ */
+export function processStreamingContent(
+  message: Message,
+  contentChunk?: string
+): Message {
+  const currentVersion = getCurrentVersion(message)
+  const fullContent = contentChunk
+    ? currentVersion.content + contentChunk
+    : currentVersion.content
+
+  const { reasoning, hasUnclosedTag } = parseThinkTags(fullContent)
+
+  // Preserve existing reasoning if no think tags found (e.g., from API reasoning_content)
+  const finalReasoning = reasoning
+    ? { content: reasoning, duration: 0 }
+    : message.reasoning
+
+  return {
+    ...updateCurrentVersionContent(message, fullContent),
+    reasoning: finalReasoning,
+    isReasoningStreaming: hasUnclosedTag,
+  }
+}
+
+/**
+ * Finalize message after streaming completes
+ * Cleans content and consolidates reasoning from all sources
+ */
+export function finalizeMessage(
+  message: Message,
+  apiReasoningContent?: string
+): Message {
+  const currentVersion = getCurrentVersion(message)
+  const { visibleContent, reasoning } = parseThinkTags(currentVersion.content)
+
+  // Priority:
+  // 1. API reasoning_content passed as parameter (non-streaming response)
+  // 2. Existing message.reasoning (from streaming reasoning_content)
+  // 3. Extracted think tags from content
+  const finalReasoning =
+    apiReasoningContent || message.reasoning?.content || reasoning || ''
+
+  return {
+    ...updateCurrentVersionContent(message, visibleContent),
+    reasoning: finalReasoning
+      ? { content: finalReasoning, duration: message.reasoning?.duration || 0 }
+      : undefined,
+    isReasoningStreaming: false,
+  }
+}
+
+/**
+ * Sanitize messages loaded from storage
+ * Converts stuck loading/streaming messages to stable state
+ */
+export function sanitizeMessagesOnLoad(messages: Message[]): Message[] {
+  let changed = false
+
+  const sanitizedMessages = messages.flatMap((message) => {
+    let sanitized = sanitizeSeedanceReferences(message)
+    if (sanitized !== message) changed = true
+
+    if (isInterruptedErrorMessage(sanitized)) {
+      changed = true
+      return []
+    }
+
+    if (
+      sanitized.from !== MESSAGE_ROLES.ASSISTANT ||
+      (sanitized.status !== MESSAGE_STATUS.LOADING &&
+        sanitized.status !== MESSAGE_STATUS.STREAMING) ||
+      sanitized.taskId
+    ) {
+      return [sanitized]
+    }
+
+    const finalized = finalizeMessage(sanitized)
+    const hasContent = finalized.versions?.[0]?.content?.trim()
+    const hasReasoning = finalized.reasoning?.content?.trim()
+    changed = true
+
+    if (!hasContent && !hasReasoning) {
+      return []
+    }
+
+    sanitized = {
+      ...finalized,
+      status: MESSAGE_STATUS.COMPLETE,
+      isReasoningStreaming: false,
+    }
+    return [sanitized]
+  })
+
+  return changed ? sanitizedMessages : messages
+}

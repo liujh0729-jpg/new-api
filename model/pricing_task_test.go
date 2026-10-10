@@ -1,0 +1,191 @@
+package model
+
+import (
+	"testing"
+
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/setting/billing_setting"
+	"github.com/QuantumNous/new-api/setting/config"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
+	"github.com/stretchr/testify/require"
+)
+
+func TestPricingExposesStructuredTaskPricingAndHidesUnconfiguredSeedance(t *testing.T) {
+	truncateTables(t)
+	const (
+		modelName         = "local Seedance pricing alias"
+		upstreamModelName = "AP Seedance pricing API test"
+	)
+
+	configSnapshot := config.GlobalConfig.ExportAllConfigs()
+	modelPriceSnapshot := ratio_setting.ModelPrice2JSONString()
+	capabilitiesSnapshot := constant.GetAIPDDCapabilities()
+	t.Cleanup(func() {
+		require.NoError(t, config.GlobalConfig.LoadFromDB(configSnapshot))
+		require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(modelPriceSnapshot))
+		constant.SetAIPDDCapabilities(capabilitiesSnapshot)
+		InvalidatePricingCache()
+	})
+
+	constant.SetAIPDDCapabilities([]constant.AIPDDCapability{{
+		ModelName:    upstreamModelName,
+		AdapterCode:  "seedance",
+		EndpointType: constant.EndpointTypeOpenAIVideo,
+		SeedancePricing: &constant.AIPDDSeedancePricing{ByResolution: map[string]constant.AIPDDSeedanceResolutionPricing{
+			"720p": {TargetResolution: "720p"},
+		}},
+	}})
+	modelMapping := `{"local Seedance pricing alias":"AP Seedance pricing API test"}`
+	channel := Channel{
+		Type:         constant.ChannelTypeAIPDD,
+		Name:         "task-pricing-public-test",
+		Key:          "sk-test",
+		Group:        "default",
+		Models:       modelName,
+		ModelMapping: &modelMapping,
+		Status:       common.ChannelStatusEnabled,
+	}
+	require.NoError(t, DB.Create(&channel).Error)
+	require.NoError(t, DB.Create(&Ability{
+		Group: "default", Model: modelName, ChannelId: channel.Id, Enabled: true,
+	}).Error)
+	require.NoError(t, DB.Create(&Model{
+		ModelName: modelName, Status: 1, NameRule: NameRuleExact,
+	}).Error)
+
+	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
+		"billing_setting.billing_mode": `{"local Seedance pricing alias":"task_pricing"}`,
+		"billing_setting.task_pricing": `{"local Seedance pricing alias":{"unit":"second","no_reference_video_unit_price":0.18,"reference_video_policy":"custom","reference_video_unit_price":0.12}}`,
+	}))
+	InvalidatePricingCache()
+	require.True(t, IsAIPDDSeedancePricingRequiredModel(modelName))
+
+	configured, ok := findPricingForTest(GetPricing(), modelName)
+	require.True(t, ok)
+	require.Equal(t, "task_pricing", configured.BillingMode)
+	require.NotNil(t, configured.TaskPricing)
+	require.Equal(t, 0.18, configured.TaskPricing.NoReferenceVideoUnitPrice)
+	require.Equal(t, 0.12, configured.TaskPricing.ReferenceVideoUnitPrice)
+	require.Equal(t, 0.12, configured.ModelPrice, "compatibility model_price must be the lowest valid per-second price")
+	require.Equal(t, []string{"720p"}, configured.TaskPricingResolutions)
+	require.Equal(t, 1, configured.QuotaType)
+	require.Equal(t, []string{"720p"}, GetTaskPricingResolutionOptions()[modelName])
+
+	// Matrix pricing exposes only the catalog intersection and ignores cheaper
+	// inactive tiers when computing the public starting price.
+	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
+		"billing_setting.billing_mode": `{"local Seedance pricing alias":"task_pricing"}`,
+		"billing_setting.task_pricing": `{"local Seedance pricing alias":{"unit":"second","by_resolution":{"720p":{"no_reference_video_unit_price":0.08,"reference_video_policy":"custom","reference_video_unit_price":0.09},"4k":{"no_reference_video_unit_price":0.01,"reference_video_policy":"same"}}}}`,
+	}))
+	InvalidatePricingCache()
+	configured, ok = findPricingForTest(GetPricing(), modelName)
+	require.True(t, ok)
+	require.Equal(t, []string{"720p"}, configured.TaskPricingResolutions)
+	require.Equal(t, 0.08, configured.ModelPrice)
+	require.Contains(t, configured.TaskPricing.ByResolution, "4k", "inactive configured tiers must remain available to administrators")
+	configured.TaskPricing.ByResolution["720p"] = billing_setting.TaskPricingTier{
+		NoReferenceVideoUnitPrice: 99,
+		ReferenceVideoPolicy:      billing_setting.ReferenceVideoPolicySame,
+	}
+	again, foundAgain := findPricingForTest(GetPricing(), modelName)
+	require.True(t, foundAgain)
+	require.Equal(t, 0.08, again.TaskPricing.ByResolution["720p"].NoReferenceVideoUnitPrice)
+
+	// A valid matrix with no upstream intersection remains saved but is omitted
+	// from public pricing and Playground model details.
+	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
+		"billing_setting.billing_mode": `{"local Seedance pricing alias":"task_pricing"}`,
+		"billing_setting.task_pricing": `{"local Seedance pricing alias":{"unit":"second","by_resolution":{"4k":{"no_reference_video_unit_price":0.01,"reference_video_policy":"same"}}}}`,
+	}))
+	InvalidatePricingCache()
+	_, ok = findPricingForTest(GetPricing(), modelName)
+	require.False(t, ok)
+
+	// A legacy fixed ModelPrice is deliberately not a fallback for Seedance.
+	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{"local Seedance pricing alias":99}`))
+	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
+		"billing_setting.billing_mode": `{}`,
+		"billing_setting.task_pricing": `{}`,
+	}))
+	InvalidatePricingCache()
+	_, ok = findPricingForTest(GetPricing(), modelName)
+	require.False(t, ok)
+}
+
+func TestPricingExposesFlatDurationTaskPricingAndRejectsFixedFallback(t *testing.T) {
+	truncateTables(t)
+	const (
+		modelName         = "local LTX duration alias"
+		upstreamModelName = "aipdd_ltx_2.3 pricing API test"
+	)
+
+	configSnapshot := config.GlobalConfig.ExportAllConfigs()
+	modelPriceSnapshot := ratio_setting.ModelPrice2JSONString()
+	capabilitiesSnapshot := constant.GetAIPDDCapabilities()
+	t.Cleanup(func() {
+		require.NoError(t, config.GlobalConfig.LoadFromDB(configSnapshot))
+		require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(modelPriceSnapshot))
+		constant.SetAIPDDCapabilities(capabilitiesSnapshot)
+		InvalidatePricingCache()
+	})
+
+	constant.SetAIPDDCapabilities([]constant.AIPDDCapability{{
+		ModelName:    upstreamModelName,
+		AdapterCode:  "comfyui",
+		EndpointType: constant.EndpointTypeOpenAIVideo,
+		BillingType:  constant.AIPDDBillingTypeDurationSeconds,
+	}})
+	modelMapping := `{"local LTX duration alias":"aipdd_ltx_2.3 pricing API test"}`
+	channel := Channel{
+		Type:         constant.ChannelTypeAIPDD,
+		Name:         "duration-task-pricing-public-test",
+		Key:          "sk-test",
+		Group:        "default",
+		Models:       modelName,
+		ModelMapping: &modelMapping,
+		Status:       common.ChannelStatusEnabled,
+	}
+	require.NoError(t, DB.Create(&channel).Error)
+	require.NoError(t, DB.Create(&Ability{
+		Group: "default", Model: modelName, ChannelId: channel.Id, Enabled: true,
+	}).Error)
+	require.NoError(t, DB.Create(&Model{
+		ModelName: modelName, Status: 1, NameRule: NameRuleExact,
+	}).Error)
+
+	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
+		"billing_setting.billing_mode": `{"local LTX duration alias":"task_pricing"}`,
+		"billing_setting.task_pricing": `{"local LTX duration alias":{"unit":"second","no_reference_video_unit_price":0.03,"reference_video_policy":"same"}}`,
+	}))
+	InvalidatePricingCache()
+	require.True(t, IsAIPDDTaskPricingRequiredModel(modelName))
+	require.False(t, IsAIPDDSeedancePricingRequiredModel(modelName))
+	require.NotContains(t, GetTaskPricingResolutionOptions(), modelName)
+
+	configured, ok := findPricingForTest(GetPricing(), modelName)
+	require.True(t, ok)
+	require.Equal(t, billing_setting.BillingModeTaskPricing, configured.BillingMode)
+	require.NotNil(t, configured.TaskPricing)
+	require.Equal(t, 0.03, configured.ModelPrice)
+	require.Empty(t, configured.TaskPricingResolutions)
+
+	// A stale fixed price must never revive a catalog duration-priced model.
+	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{"local LTX duration alias":99}`))
+	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
+		"billing_setting.billing_mode": `{}`,
+		"billing_setting.task_pricing": `{}`,
+	}))
+	InvalidatePricingCache()
+	_, ok = findPricingForTest(GetPricing(), modelName)
+	require.False(t, ok)
+}
+
+func findPricingForTest(items []Pricing, modelName string) (Pricing, bool) {
+	for _, item := range items {
+		if item.ModelName == modelName {
+			return item, true
+		}
+	}
+	return Pricing{}, false
+}

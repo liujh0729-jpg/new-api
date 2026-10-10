@@ -1,0 +1,8 @@
+extends:
+  - recommended
+
+rules:
+  # Redocly treats every templated path segment as a string. These routes are
+  # unambiguous in NewAPI because {id} is declared and handled as an int64,
+  # while "validation-sessions" is a static segment.
+  no-ambiguous-paths: off

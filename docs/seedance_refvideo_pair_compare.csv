@@ -1,0 +1,11 @@
+﻿model,resolution,no_ref_http,no_ref_awcoin,no_ref_has_ref_flag,with_ref_http,with_ref_awcoin,with_ref_has_ref_flag,awcoin_delta,price_differs,no_ref_task,with_ref_task,with_ref_error
+AP Seedance-2.0 VIP,720p,200,35000,0,400,,,,Y,task_dqPkgDum2oq60EUSvuhq0b0cWSB6uNah,,"{""error"":{""code"":""InputVideoSensitiveContentDetected.PrivacyInformation"",""message"":""任务处理失败，请稍后重试"",""param"":"""",""type"":""BadRequest""}}"
+AP Seedance-2.0 VIP,1080p,200,65000,0,400,,,,Y,task_hbLcWHDuQgzfZ7NFqdgwQdJYliaFfWmD,,"{""error"":{""code"":""InputVideoSensitiveContentDetected.PrivacyInformation"",""message"":""任务处理失败，请稍后重试"",""param"":"""",""type"":""BadRequest""}}"
+AP Seedance-2.0 VIP,4k,200,245000,0,400,,,,Y,task_hq6O08jj3YQgGoJ0t0AwQaopCrQEHD0P,,"{""error"":{""code"":""InputVideoSensitiveContentDetected.PrivacyInformation"",""message"":""任务处理失败，请稍后重试"",""param"":"""",""type"":""BadRequest""}}"
+AP Seedance-2.0 标准版,720p,200,35000,0,400,,,,Y,task_BcB8do8q1lJyhj44RdstaAZ7ADrg7SCG,,"{""error"":{""code"":""InputVideoSensitiveContentDetected.PrivacyInformation"",""message"":""任务处理失败，请稍后重试"",""param"":"""",""type"":""BadRequest""}}"
+AP Seedance-2.0 标准版,1080p,200,65000,0,400,,,,Y,task_nJfHcYroPcqnSOpMW3nfXi0tsbPhjNRq,,"{""error"":{""code"":""InputVideoSensitiveContentDetected.PrivacyInformation"",""message"":""任务处理失败，请稍后重试"",""param"":"""",""type"":""BadRequest""}}"
+AP Seedance-2.0 标准版,4k,403,,,403,,,,N,,,"{""error"":{""code"":""AccountOverdueError"",""message"":""任务处理失败，请稍后重试"",""param"":"""",""type"":""Forbidden""}}"
+AP Seedance-2.0 轻量版,720p,403,,,403,,,,N,,,"{""error"":{""code"":""AccountOverdueError"",""message"":""任务处理失败，请稍后重试"",""param"":"""",""type"":""Forbidden""}}"
+AP Seedance-2.0 轻量版,1080p,403,,,403,,,,N,,,"{""error"":{""code"":""AccountOverdueError"",""message"":""任务处理失败，请稍后重试"",""param"":"""",""type"":""Forbidden""}}"
+AP Seedance-2.0 高性价比版,1080p,403,,,403,,,,N,,,"{""error"":{""code"":""AccountOverdueError"",""message"":""任务处理失败，请稍后重试"",""param"":"""",""type"":""Forbidden""}}"
+AP Seedance-2.0 高性价比版,4k,403,,,403,,,,N,,,"{""error"":{""code"":""AccountOverdueError"",""message"":""任务处理失败，请稍后重试"",""param"":"""",""type"":""Forbidden""}}"

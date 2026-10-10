@@ -1,0 +1,2879 @@
+package aipdd
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"io"
+	"math"
+	"net/http"
+	"net/url"
+	"regexp"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/billingexpr"
+	"github.com/QuantumNous/new-api/relay/channel"
+	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	relayconstant "github.com/QuantumNous/new-api/relay/constant"
+	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/billing_setting"
+
+	"github.com/gin-gonic/gin"
+	"github.com/pkg/errors"
+)
+
+const (
+	ChannelName                       = "aipdd"
+	seedanceOfficialPayloadContextKey = "aipdd_seedance_official_payload"
+	tokenMarketVideoPayloadContextKey = "aipdd_token_market_video_payload"
+	tokenMarketVideoProtocol          = "token_market_video"
+
+	defaultTaskNamePrefix = "new-api"
+)
+
+// ModelList is repopulated from the upstream catalog on every sync; AIPDD has no
+// built-in model fallback.
+var ModelList = constant.GetAIPDDTaskModelList()
+
+type modelConfig = constant.AIPDDCapability
+
+type TaskAdaptor struct {
+	taskcommon.BaseBilling
+	apiKey  string
+	baseURL string
+	proxy   string
+}
+
+type createTaskPayload struct {
+	RequestID    string         `json:"requestId,omitempty"`
+	TaskName     string         `json:"taskName,omitempty"`
+	TaskTypeCode string         `json:"taskTypeCode"`
+	Priority     int            `json:"priority,omitempty"`
+	Input        map[string]any `json:"input"`
+	Requirements map[string]any `json:"requirements,omitempty"`
+}
+
+type createTaskResponse struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+	Data    struct {
+		ID           string  `json:"id"`
+		TaskID       string  `json:"taskId"`
+		RequestID    string  `json:"requestId"`
+		TaskName     string  `json:"taskName"`
+		TaskTypeCode string  `json:"taskTypeCode"`
+		Status       string  `json:"status"`
+		TaskType     string  `json:"task_type"`
+		TaskStatus   int     `json:"task_status"`
+		TaskCost     float64 `json:"task_cost"`
+		TaskTime     string  `json:"task_time"`
+	} `json:"data"`
+}
+
+type taskDetailResponse struct {
+	Code    int        `json:"code"`
+	Message string     `json:"message"`
+	Data    *aipddTask `json:"data"`
+}
+
+// seedanceOfficialTaskResponse is the response shape used by the official
+// Seedance task endpoint.  It is intentionally separate from taskDetailResponse:
+// the official endpoint returns the task directly at the top level, while the
+// legacy AIPDD endpoint wraps it in data.
+type seedanceOfficialTaskResponse struct {
+	ID             string  `json:"id"`
+	Status         string  `json:"status"`
+	Model          string  `json:"model"`
+	Duration       float64 `json:"duration"`
+	OutputFormat   string  `json:"output_format"`
+	Resolution     string  `json:"resolution"`
+	Code           any     `json:"code"`
+	Message        string  `json:"message"`
+	RequestID      string  `json:"request_id"`
+	CamelRequestID string  `json:"requestId"`
+	Content        struct {
+		VideoURL string `json:"video_url"`
+	} `json:"content"`
+	ContentURL string          `json:"content_url"`
+	Usage      *dto.VideoUsage `json:"usage,omitempty"`
+	Error      any             `json:"error"`
+}
+
+type aipddTask struct {
+	ID             string  `json:"id"`
+	TaskID         string  `json:"taskId"`
+	RequestID      string  `json:"requestId"`
+	TaskName       string  `json:"task_name"`
+	TaskType       string  `json:"task_type"`
+	TaskTypeCode   string  `json:"taskTypeCode"`
+	TaskStatus     int     `json:"task_status"`
+	Status         string  `json:"status"`
+	Progress       int     `json:"progress"`
+	Stage          string  `json:"stage"`
+	ResultReady    bool    `json:"resultReady"`
+	Message        string  `json:"message"`
+	TaskTime       string  `json:"task_time"`
+	TaskCost       float64 `json:"task_cost"`
+	TaskService    string  `json:"task_service"`
+	TaskContent    string  `json:"task_content"`
+	DrawUserID     string  `json:"draw_user_id"`
+	DrawUserReward float64 `json:"draw_user_reward"`
+	DrawTime       string  `json:"draw_time"`
+	TaskResult     any     `json:"task_result"`
+	ReqID          string  `json:"req_id"`
+	ReqIP          string  `json:"req_ip"`
+	IsPay          int     `json:"is_pay"`
+	Icon           float64 `json:"icon"`
+	ScriptID       string  `json:"script_id"`
+	ScriptCode     string  `json:"script_code"`
+	Output         any     `json:"output"`
+	ObjectRefs     any     `json:"objectRefs"`
+	DownloadRefs   any     `json:"downloadRefs"`
+	ResultStatus   string  `json:"resultStatus"`
+	Checksum       string  `json:"checksum"`
+}
+
+func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
+	a.baseURL = strings.TrimRight(info.ChannelBaseUrl, "/")
+	if a.baseURL == "" {
+		a.baseURL = constant.ChannelBaseURLs[constant.ChannelTypeAIPDD]
+	}
+	a.apiKey = info.ApiKey
+	a.proxy = info.ChannelSetting.Proxy
+}
+
+func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
+	var req relaycommon.TaskSubmitReq
+	if err := common.UnmarshalBodyReusable(c, &req); err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+	}
+
+	mergeUnknownFieldsIntoMetadata(c, &req)
+	normalizeTaskSubmitReq(&req)
+
+	if strings.TrimSpace(req.Model) == "" && strings.TrimSpace(info.OriginModelName) != "" {
+		req.Model = info.OriginModelName
+	}
+	if strings.TrimSpace(req.Model) == "" {
+		return service.TaskErrorWrapperLocal(fmt.Errorf("model field is required"), "missing_model", http.StatusBadRequest)
+	}
+	configModelName := firstNonEmpty(info.UpstreamModelName, req.Model, info.OriginModelName)
+	cfg, ok := a.resolveModelConfig(ginRequestContext(c), configModelName)
+	if !ok {
+		return service.TaskErrorWrapperLocal(fmt.Errorf("unsupported AIPDD model: %s", configModelName), "unsupported_model", http.StatusBadRequest)
+	}
+	if endpoint := endpointTypeFromPath(c.Request.URL.Path); endpoint != "" && endpoint != cfg.EndpointType {
+		return service.TaskErrorWrapperLocal(
+			fmt.Errorf("%s must be used with %s endpoint", cfg.ModelName, cfg.EndpointType),
+			"invalid_endpoint",
+			http.StatusBadRequest,
+		)
+	}
+	if relayconstant.IsSeedanceOfficialTasksPath(c.Request.URL.Path) && cfg.ExecutionProtocol != "seedance_official" {
+		return service.TaskErrorWrapperLocal(
+			fmt.Errorf("%s does not support the Seedance official endpoint", cfg.ModelName),
+			"invalid_endpoint",
+			http.StatusBadRequest,
+		)
+	}
+	if cfg.Synchronous {
+		return service.TaskErrorWrapperLocal(
+			fmt.Errorf("%s must be called on %s instead of the task API", cfg.ModelName, firstNonEmpty(cfg.ExecutionPath, string(cfg.EndpointType))),
+			"invalid_endpoint",
+			http.StatusBadRequest,
+		)
+	}
+	if cfg.ExecutionProtocol == "seedance_official" {
+		var raw map[string]any
+		if err := common.UnmarshalBodyReusable(c, &raw); err != nil {
+			return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+		}
+		if info.Action == constant.TaskActionRemix &&
+			info.TaskPricingFacts != nil &&
+			!seedanceRequestSpecifiesResolution(raw) {
+			raw["resolution"] = info.TaskPricingFacts.Resolution
+		}
+		payload, errorCode, err := normalizeAndValidateSeedanceOfficialPayload(raw, cfg)
+		if err != nil {
+			return service.TaskErrorWrapperLocal(err, errorCode, http.StatusBadRequest)
+		}
+		if errorCode, err = validateSeedanceFrameParameters(payload, cfg); err != nil {
+			return service.TaskErrorWrapperLocal(err, errorCode, http.StatusBadRequest)
+		}
+		resolution := canonicalSeedanceResolution(payload["resolution"])
+		if _, ok := seedanceResolutionPricing(cfg, resolution); !ok {
+			return service.TaskErrorWrapperLocal(
+				fmt.Errorf("resolution %q is not supported by AIPDD model %s", resolution, cfg.ModelName),
+				"unsupported_resolution",
+				http.StatusBadRequest,
+			)
+		}
+		c.Set(seedanceOfficialPayloadContextKey, payload)
+		if info.TaskRelayInfo != nil {
+			info.RequestedDuration = nil
+			if duration := positiveFloat(payload["duration"]); duration > 0 && !math.IsNaN(duration) && !math.IsInf(duration, 0) {
+				info.RequestedDuration = common.GetPointer(duration)
+			}
+		}
+	}
+	if cfg.ExecutionProtocol == tokenMarketVideoProtocol {
+		var raw map[string]any
+		if err := common.UnmarshalBodyReusable(c, &raw); err != nil {
+			return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+		}
+		duration := positiveFloat(raw["duration_seconds"])
+		if duration <= 0 || math.IsNaN(duration) || math.IsInf(duration, 0) {
+			return service.TaskErrorWrapperLocal(
+				fmt.Errorf("duration_seconds must be a positive number"), "invalid_duration", http.StatusBadRequest)
+		}
+		resolution, err := billing_setting.NormalizeTaskPricingResolution(anyToString(raw["video_resolution"]))
+		if err != nil {
+			return service.TaskErrorWrapperLocal(err, "missing_resolution", http.StatusBadRequest)
+		}
+		if _, ok := seedanceResolutionPricing(cfg, resolution); !ok {
+			return service.TaskErrorWrapperLocal(
+				fmt.Errorf("video_resolution %q is not supported by AIPDD model %s", resolution, cfg.ModelName),
+				"unsupported_resolution", http.StatusBadRequest)
+		}
+		c.Set(tokenMarketVideoPayloadContextKey, raw)
+		if info.TaskRelayInfo != nil {
+			info.RequestedDuration = common.GetPointer(duration)
+		}
+	}
+	if cfg.BillingType == constant.AIPDDBillingTypeDurationSeconds && cfg.SeedancePricing == nil &&
+		cfg.ExecutionProtocol != tokenMarketVideoProtocol && !isLtx23Config(cfg) {
+		duration, err := normalizeDurationSeconds(&req, cfg)
+		if err != nil {
+			return service.TaskErrorWrapperLocal(err, "invalid_duration", http.StatusBadRequest)
+		}
+		req.Duration = duration
+	}
+	if err := normalizeLtxRequestDuration(&req, cfg); err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_duration", http.StatusBadRequest)
+	}
+	if isLtx23Config(cfg) {
+		if _, err := buildWorkflowContent(req, cfg); err != nil {
+			return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+		}
+	}
+
+	info.Action = constant.TaskActionGenerate
+	c.Set("task_request", req)
+	return nil
+}
+
+func seedanceRequestSpecifiesResolution(raw map[string]any) bool {
+	if raw == nil {
+		return false
+	}
+	metadata, _ := raw["metadata"].(map[string]any)
+	if seedanceRequestValuePresent(raw["resolution"]) ||
+		seedanceRequestValuePresent(metadata["resolution"]) {
+		return true
+	}
+	return (seedanceRequestValuePresent(raw["width"]) &&
+		seedanceRequestValuePresent(raw["height"])) ||
+		(seedanceRequestValuePresent(metadata["width"]) &&
+			seedanceRequestValuePresent(metadata["height"]))
+}
+
+func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInfo) map[string]float64 {
+	req, err := relaycommon.GetTaskRequest(c)
+	if err != nil {
+		return nil
+	}
+	cfg, ok := a.resolveModelConfig(ginRequestContext(c), firstNonEmpty(info.UpstreamModelName, info.OriginModelName, req.Model))
+	if !ok {
+		return nil
+	}
+	ratios := map[string]float64{}
+	if isSeedanceExecutionConfig(cfg) {
+		raw, err := getSeedanceOfficialPayload(c)
+		if err != nil {
+			return nil
+		}
+		pricing, ok := seedanceResolutionPricing(cfg, canonicalSeedanceResolution(raw["resolution"]))
+		if !ok {
+			return nil
+		}
+		ratios["seconds"] = seedanceBillingSeconds(raw, pricing, cfg)
+		if seedanceHasReferenceVideo(raw["content"]) {
+			ratios["has_reference_video"] = 1
+		}
+		return ratios
+	}
+	if cfg.ExecutionProtocol == tokenMarketVideoProtocol {
+		raw, err := getTokenMarketVideoPayload(c)
+		if err != nil {
+			return nil
+		}
+		duration := positiveFloat(raw["duration_seconds"])
+		if duration <= 0 || math.IsNaN(duration) || math.IsInf(duration, 0) {
+			return nil
+		}
+		ratios["seconds"] = duration
+		return ratios
+	}
+
+	if cfg.BillingType == constant.AIPDDBillingTypeDurationSeconds {
+		duration, err := taskPricingDurationSeconds(req, cfg)
+		if err != nil {
+			return nil
+		}
+		ratios["seconds"] = duration
+	}
+
+	if cfg.EndpointType == constant.EndpointTypeImageGeneration {
+		if count := taskSubmitReqCount(req); count > 1 {
+			ratios["n"] = float64(count)
+		}
+	}
+	if len(ratios) == 0 {
+		return nil
+	}
+	return ratios
+}
+
+// AdjustBillingOnComplete settles Seedance 2.5 against the duration returned by
+// Ark. The billing context is the immutable submit-time unit-price snapshot, so
+// a later catalog refresh cannot change an in-flight task's charge.
+func (a *TaskAdaptor) AdjustBillingOnComplete(task *model.Task, taskResult *relaycommon.TaskInfo) int {
+	if task == nil || taskResult == nil || !validSeedance25ActualDuration(taskResult.Duration) {
+		return 0
+	}
+	billing := task.PrivateData.BillingContext
+	if billing == nil || billing.BillingMode != billing_setting.BillingModeTaskPricing ||
+		billing.BillingUnit != billing_setting.TaskPricingUnitSecond ||
+		!isSeedance25ModelName(billing.OriginModelName) || billing.UnitPriceUSD <= 0 ||
+		billing.QuotaPerUnit <= 0 || billing.GroupRatio < 0 {
+		return 0
+	}
+	quota := billing.UnitPriceUSD * taskResult.Duration * billing.GroupRatio * billing.QuotaPerUnit
+	if math.IsNaN(quota) || math.IsInf(quota, 0) || quota <= 0 || quota > float64(int(^uint(0)>>1)) {
+		return 0
+	}
+	return billingexpr.QuotaRound(quota)
+}
+
+func (a *TaskAdaptor) EstimateTaskPricingFacts(c *gin.Context, info *relaycommon.RelayInfo) (relaycommon.TaskPricingFacts, *dto.TaskError) {
+	req, err := relaycommon.GetTaskRequest(c)
+	if err != nil {
+		return relaycommon.TaskPricingFacts{}, service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+	}
+	cfg, ok := a.resolveModelConfig(ginRequestContext(c), firstNonEmpty(info.UpstreamModelName, info.OriginModelName, req.Model))
+	if !ok || cfg.BillingType != constant.AIPDDBillingTypeDurationSeconds {
+		return relaycommon.TaskPricingFacts{}, service.TaskErrorWrapperLocal(
+			fmt.Errorf("task pricing facts are unavailable for model %s", info.OriginModelName),
+			"task_pricing_facts_unavailable",
+			http.StatusBadRequest,
+		)
+	}
+	if isSeedanceExecutionConfig(cfg) {
+		raw, err := getSeedanceOfficialPayload(c)
+		if err != nil {
+			return relaycommon.TaskPricingFacts{}, service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+		}
+		resolution, err := billing_setting.NormalizeTaskPricingResolution(anyToString(raw["resolution"]))
+		if err != nil {
+			return relaycommon.TaskPricingFacts{}, service.TaskErrorWrapperLocal(err, "missing_resolution", http.StatusBadRequest)
+		}
+		pricing, ok := seedanceResolutionPricing(cfg, resolution)
+		if !ok {
+			return relaycommon.TaskPricingFacts{}, service.TaskErrorWrapperLocal(
+				fmt.Errorf("resolution %q is not supported by AIPDD model %s", resolution, cfg.ModelName),
+				"unsupported_resolution",
+				http.StatusBadRequest,
+			)
+		}
+		quantity := seedanceBillingSeconds(raw, pricing, cfg)
+		if quantity <= 0 {
+			return relaycommon.TaskPricingFacts{}, service.TaskErrorWrapperLocal(
+				fmt.Errorf("invalid billing duration for model %s", info.OriginModelName),
+				"invalid_duration",
+				http.StatusBadRequest,
+			)
+		}
+		return relaycommon.TaskPricingFacts{
+			Quantity:          quantity,
+			Resolution:        resolution,
+			HasReferenceVideo: seedanceHasReferenceVideo(raw["content"]),
+		}, nil
+	}
+	if cfg.ExecutionProtocol == tokenMarketVideoProtocol {
+		raw, err := getTokenMarketVideoPayload(c)
+		if err != nil {
+			return relaycommon.TaskPricingFacts{}, service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+		}
+		resolution, err := billing_setting.NormalizeTaskPricingResolution(anyToString(raw["video_resolution"]))
+		if err != nil {
+			return relaycommon.TaskPricingFacts{}, service.TaskErrorWrapperLocal(err, "missing_resolution", http.StatusBadRequest)
+		}
+		quantity := positiveFloat(raw["duration_seconds"])
+		if quantity <= 0 || math.IsNaN(quantity) || math.IsInf(quantity, 0) {
+			return relaycommon.TaskPricingFacts{}, service.TaskErrorWrapperLocal(
+				fmt.Errorf("invalid billing duration for model %s", info.OriginModelName), "invalid_duration", http.StatusBadRequest)
+		}
+		return relaycommon.TaskPricingFacts{Quantity: quantity, Resolution: resolution}, nil
+	}
+
+	quantity, err := taskPricingDurationSeconds(req, cfg)
+	if err != nil || quantity <= 0 || math.IsNaN(quantity) || math.IsInf(quantity, 0) {
+		if err == nil {
+			err = fmt.Errorf("invalid billing duration for model %s", info.OriginModelName)
+		}
+		return relaycommon.TaskPricingFacts{}, service.TaskErrorWrapperLocal(err, "invalid_duration", http.StatusBadRequest)
+	}
+	return relaycommon.TaskPricingFacts{Quantity: quantity}, nil
+}
+
+func (a *TaskAdaptor) AIPDDTaskSnapshot(info *relaycommon.RelayInfo) *model.AIPDDTaskExecutionSnapshot {
+	cfg, ok := constant.GetAIPDDCapability(firstNonEmpty(info.UpstreamModelName, info.OriginModelName))
+	if !ok {
+		return nil
+	}
+	snapshot := &model.AIPDDTaskExecutionSnapshot{
+		CatalogRevision: cfg.CatalogRevision, Protocol: cfg.ExecutionProtocol,
+		Endpoint: cfg.ExecutionPath, EndpointType: cfg.EndpointType,
+		MediaType: mediaTypeFromCapability(cfg), TaskKind: cfg.TaskKind,
+		OutputModalities: append([]string(nil), cfg.OutputModalities...),
+		BaseURL:          a.baseURL,
+	}
+	if info.TaskRelayInfo != nil && info.RequestedDuration != nil {
+		requestedDuration := *info.RequestedDuration
+		snapshot.RequestedDuration = &requestedDuration
+	}
+	if ratios := info.PriceData.OtherRatios; ratios != nil {
+		snapshot.BillingSeconds = ratios["seconds"]
+		snapshot.HasReferenceVideo = ratios["has_reference_video"] > 0
+	}
+	if quote := info.TaskPricingQuote; quote != nil {
+		snapshot.BillingSeconds = quote.Quantity
+		snapshot.HasReferenceVideo = quote.HasReferenceVideo
+		snapshot.Resolution = quote.Resolution
+	} else if facts := info.TaskPricingFacts; facts != nil {
+		snapshot.BillingSeconds = facts.Quantity
+		snapshot.HasReferenceVideo = facts.HasReferenceVideo
+		snapshot.Resolution = facts.Resolution
+	}
+	return snapshot
+}
+
+func mediaTypeFromCapability(cfg modelConfig) string {
+	switch cfg.EndpointType {
+	case constant.EndpointTypeImageGeneration:
+		return "image"
+	case constant.EndpointTypeOpenAIVideo:
+		return "video"
+	case constant.EndpointTypeAudioSpeech:
+		return "audio"
+	}
+	for _, modality := range cfg.OutputModalities {
+		switch strings.ToLower(strings.TrimSpace(modality)) {
+		case "image", "video", "audio":
+			return strings.ToLower(strings.TrimSpace(modality))
+		}
+	}
+	return ""
+}
+
+func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, error) {
+	cfg, ok := constant.GetAIPDDCapability(firstNonEmpty(info.UpstreamModelName, info.OriginModelName))
+	if !ok || strings.TrimSpace(cfg.ExecutionPath) == "" {
+		return "", fmt.Errorf("AIPDD execution endpoint is unavailable for %s", info.OriginModelName)
+	}
+	return a.baseURL + normalizeExecutionPath(cfg.ExecutionPath), nil
+}
+
+func (a *TaskAdaptor) BuildRequestHeader(_ *gin.Context, req *http.Request, info *relaycommon.RelayInfo) error {
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-API-Key", a.apiKey)
+	req.Header.Set("Authorization", "Bearer "+a.apiKey)
+	if info != nil && info.AIPDDFinance != nil {
+		finance := info.AIPDDFinance
+		req.Header.Set("X-AIPDD-Instance-ID", finance.InstanceID)
+		req.Header.Set("X-AIPDD-Order-ID", finance.PlatformOrderID)
+		req.Header.Set("X-AIPDD-Attempt-ID", finance.AttemptID)
+		if finance.NewAPIUserID > 0 {
+			req.Header.Set("X-AIPDD-NewAPI-User-ID", strconv.Itoa(finance.NewAPIUserID))
+		}
+		if finance.NewAPITokenID > 0 {
+			req.Header.Set("X-AIPDD-NewAPI-Token-ID", strconv.Itoa(finance.NewAPITokenID))
+		}
+	}
+	return nil
+}
+
+func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayInfo) (io.Reader, error) {
+	req, err := relaycommon.GetTaskRequest(c)
+	if err != nil {
+		return nil, err
+	}
+	normalizeTaskSubmitReq(&req)
+	c.Set("task_request", req)
+	cfg, ok := constant.GetAIPDDCapability(firstNonEmpty(info.UpstreamModelName, info.OriginModelName, req.Model))
+	if ok && cfg.ExecutionProtocol == "seedance_official" {
+		canonical, err := getSeedanceOfficialPayload(c)
+		if err != nil {
+			return nil, err
+		}
+		raw := cloneAnyMap(canonical)
+		if info.IsModelMapped {
+			raw["model"] = info.UpstreamModelName
+		}
+		data, err := common.Marshal(raw)
+		if err != nil {
+			return nil, err
+		}
+		return bytes.NewReader(data), nil
+	}
+	if ok && cfg.ExecutionProtocol == tokenMarketVideoProtocol {
+		raw, err := getTokenMarketVideoPayload(c)
+		if err != nil {
+			return nil, err
+		}
+		raw = cloneAnyMap(raw)
+		if info.IsModelMapped {
+			raw["model"] = info.UpstreamModelName
+		}
+		data, err := common.Marshal(raw)
+		if err != nil {
+			return nil, err
+		}
+		return bytes.NewReader(data), nil
+	}
+
+	payload, err := a.convertToRequestPayload(req, info)
+	if err != nil {
+		return nil, err
+	}
+	data, err := common.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	return bytes.NewReader(data), nil
+}
+
+func (a *TaskAdaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (*http.Response, error) {
+	return channel.DoTaskApiRequest(a, c, info, requestBody)
+}
+
+func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (taskID string, taskData []byte, taskErr *dto.TaskError) {
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", nil, service.TaskErrorWrapper(err, "read_response_body_failed", http.StatusInternalServerError)
+	}
+	_ = resp.Body.Close()
+
+	cfg, _ := constant.GetAIPDDCapability(firstNonEmpty(info.UpstreamModelName, info.OriginModelName))
+	if cfg.ExecutionProtocol == "seedance_official" || cfg.ExecutionProtocol == tokenMarketVideoProtocol {
+		var official seedanceOfficialTaskResponse
+		if err := common.Unmarshal(responseBody, &official); err != nil {
+			return "", nil, service.TaskErrorWrapper(errors.Wrapf(err, "body: %s", responseBody), "unmarshal_response_body_failed", http.StatusInternalServerError)
+		}
+		if strings.TrimSpace(official.ID) == "" {
+			rawMessage, rawCode := seedanceOfficialErrorDetails(official)
+			rawMessage = firstNonEmpty(rawMessage, "Seedance task creation failed")
+			statusCode := http.StatusBadGateway
+			businessCode := positiveIntValue(official.Code)
+			if businessCode == 0 {
+				businessCode = positiveIntValue(rawCode)
+			}
+			if businessCode >= http.StatusBadRequest && businessCode < http.StatusInternalServerError {
+				statusCode = businessCode
+			}
+			taskErr := service.TaskErrorWrapper(
+				fmt.Errorf("%s", rawMessage),
+				"seedance_task_create_failed",
+				statusCode,
+			)
+			applyPublicUpstreamTaskError(taskErr, seedanceOfficialPublicError(
+				official,
+				relaycommon.AIPDDTaskErrorOperationCreate,
+				statusCode,
+			))
+			return "", nil, taskErr
+		}
+		writeCreateTaskResponse(c, info, cfg)
+		return official.ID, responseBody, nil
+	}
+
+	var aipddResp createTaskResponse
+	if err := common.Unmarshal(responseBody, &aipddResp); err != nil {
+		return "", nil, service.TaskErrorWrapper(errors.Wrapf(err, "body: %s", responseBody), "unmarshal_response_body_failed", http.StatusInternalServerError)
+	}
+	if aipddResp.Code != 0 && aipddResp.Code != http.StatusOK {
+		taskErr := service.TaskErrorWrapper(fmt.Errorf("%s", aipddResp.Message), "aipdd_task_create_failed", http.StatusBadGateway)
+		applyPublicUpstreamTaskError(taskErr, relaycommon.NormalizeAIPDDTaskError(
+			fmt.Sprint(aipddResp.Code),
+			aipddResp.Message,
+			"",
+			"",
+			aipddResp.Code,
+			relaycommon.AIPDDTaskErrorOperationCreate,
+		))
+		return "", nil, taskErr
+	}
+	upstreamTaskID := firstNonEmpty(aipddResp.Data.ID, aipddResp.Data.TaskID)
+	if strings.TrimSpace(upstreamTaskID) == "" {
+		return "", nil, service.TaskErrorWrapper(fmt.Errorf("task_id is empty"), "invalid_response", http.StatusInternalServerError)
+	}
+
+	writeCreateTaskResponse(c, info, cfg)
+
+	return upstreamTaskID, responseBody, nil
+}
+
+func writeCreateTaskResponse(c *gin.Context, info *relaycommon.RelayInfo, cfg modelConfig) {
+	if c != nil && c.Request != nil && c.Request.URL != nil &&
+		relayconstant.IsSeedanceOfficialTasksPath(c.Request.URL.Path) {
+		c.JSON(http.StatusOK, gin.H{"id": info.PublicTaskID})
+		return
+	}
+	now := time.Now().Unix()
+	if cfg.EndpointType == constant.EndpointTypeOpenAIVideo {
+		ov := dto.NewOpenAIVideo()
+		ov.ID = info.PublicTaskID
+		ov.TaskID = info.PublicTaskID
+		ov.CreatedAt = now
+		ov.Model = info.OriginModelName
+		c.JSON(http.StatusOK, ov)
+		return
+	}
+
+	object := "task"
+	switch cfg.EndpointType {
+	case constant.EndpointTypeImageGeneration:
+		object = "image.generation.task"
+	case constant.EndpointTypeAudioSpeech:
+		object = "audio.speech.task"
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"id":      info.PublicTaskID,
+		"task_id": info.PublicTaskID,
+		"object":  object,
+		"created": now,
+		"model":   info.OriginModelName,
+		"status":  "queued",
+		"metadata": gin.H{
+			"endpoint_type": cfg.EndpointType,
+		},
+	})
+}
+
+func (a *TaskAdaptor) FetchTask(baseURL, key string, body map[string]any, proxy string) (*http.Response, error) {
+	taskID, ok := body["task_id"].(string)
+	if !ok || strings.TrimSpace(taskID) == "" {
+		return nil, fmt.Errorf("invalid task_id")
+	}
+
+	client, err := service.GetHttpClientWithProxy(proxy)
+	if err != nil {
+		return nil, fmt.Errorf("new proxy http client failed: %w", err)
+	}
+	if client == nil {
+		client = http.DefaultClient
+	}
+
+	protocol, _ := body["execution_protocol"].(string)
+	endpoint, _ := body["execution_endpoint"].(string)
+	if protocol == "seedance_official" || protocol == tokenMarketVideoProtocol {
+		if strings.TrimSpace(endpoint) == "" {
+			endpoint = "/api/v3/contents/generations/tasks"
+		}
+		uri := strings.TrimRight(baseURL, "/") + normalizeExecutionPath(endpoint) + "/" + url.PathEscape(taskID)
+		return aipddOfficialGet(client, uri, key)
+	}
+	detailURI := fmt.Sprintf("%s/shared-tasks/tasks/%s/detail", strings.TrimRight(baseURL, "/"), url.PathEscape(taskID))
+	detailResp, detailBody, err := aipddGet(client, detailURI, key)
+	if err != nil {
+		return nil, err
+	}
+	if detailResp.StatusCode < http.StatusOK || detailResp.StatusCode >= http.StatusMultipleChoices {
+		return responseWithBody(detailResp, detailBody), nil
+	}
+
+	shouldFetchResult, resultTaskID := shouldFetchAIPDDResult(detailBody)
+	if !shouldFetchResult {
+		return responseWithBody(detailResp, detailBody), nil
+	}
+	if resultTaskID == "" {
+		resultTaskID = taskID
+	}
+
+	resultURI := fmt.Sprintf("%s/shared-tasks/tasks/%s/result", strings.TrimRight(baseURL, "/"), url.PathEscape(resultTaskID))
+	resultResp, resultBody, err := aipddGet(client, resultURI, key)
+	if err != nil {
+		return nil, err
+	}
+	if resultResp.StatusCode < http.StatusOK || resultResp.StatusCode >= http.StatusMultipleChoices {
+		return responseWithBody(resultResp, resultBody), nil
+	}
+	return responseWithBody(detailResp, mergeAIPDDResultBody(detailBody, resultBody)), nil
+}
+
+func aipddOfficialGet(client *http.Client, uri, key string) (*http.Response, error) {
+	req, err := http.NewRequest(http.MethodGet, uri, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("X-API-Key", key)
+	req.Header.Set("Authorization", "Bearer "+key)
+	return client.Do(req)
+}
+
+func aipddGet(client *http.Client, uri, key string) (*http.Response, []byte, error) {
+	req, err := http.NewRequest(http.MethodGet, uri, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("X-API-Key", key)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, nil, err
+	}
+	return resp, body, nil
+}
+
+func responseWithBody(resp *http.Response, body []byte) *http.Response {
+	if resp == nil {
+		resp = &http.Response{StatusCode: http.StatusOK}
+	}
+	resp.Body = io.NopCloser(bytes.NewReader(body))
+	resp.ContentLength = int64(len(body))
+	if resp.Header == nil {
+		resp.Header = make(http.Header)
+	}
+	resp.Header.Set("Content-Type", "application/json")
+	return resp
+}
+
+func shouldFetchAIPDDResult(detailBody []byte) (bool, string) {
+	var detail taskDetailResponse
+	if err := common.Unmarshal(detailBody, &detail); err != nil || detail.Data == nil {
+		return false, ""
+	}
+	if detail.Code != 0 && detail.Code != http.StatusOK {
+		return false, ""
+	}
+	task := detail.Data
+	status := strings.ToUpper(strings.TrimSpace(task.Status))
+	if status == "SUCCESS" && task.ResultReady {
+		return true, firstNonEmpty(task.ID, task.TaskID)
+	}
+	return false, ""
+}
+
+func mergeAIPDDResultBody(detailBody, resultBody []byte) []byte {
+	var detail map[string]any
+	var result map[string]any
+	if err := common.Unmarshal(detailBody, &detail); err != nil {
+		return resultBody
+	}
+	if err := common.Unmarshal(resultBody, &result); err != nil {
+		return detailBody
+	}
+
+	detailData, ok := mapValue(detail["data"])
+	if !ok {
+		return resultBody
+	}
+	resultData, ok := mapValue(result["data"])
+	if !ok {
+		return detailBody
+	}
+
+	if taskID := firstNonEmpty(anyToString(resultData["taskId"]), anyToString(detailData["id"]), anyToString(detailData["taskId"])); taskID != "" {
+		if anyToString(detailData["id"]) == "" {
+			detailData["id"] = taskID
+		}
+		detailData["taskId"] = taskID
+	}
+	if status := anyToString(resultData["status"]); status != "" {
+		detailData["resultStatus"] = status
+	}
+	for _, key := range []string{"output", "objectRefs", "downloadRefs", "checksum", "validatedAt", "updatedAt"} {
+		if value, ok := resultData[key]; ok {
+			detailData[key] = value
+		}
+	}
+	detailData["task_result"] = resultData
+	detail["data"] = detailData
+
+	merged, err := common.Marshal(detail)
+	if err != nil {
+		return detailBody
+	}
+	return merged
+}
+
+func mapValue(value any) (map[string]any, bool) {
+	typed, ok := value.(map[string]any)
+	return typed, ok
+}
+
+func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error) {
+	var official seedanceOfficialTaskResponse
+	if err := common.Unmarshal(respBody, &official); err == nil && strings.TrimSpace(official.Status) != "" {
+		info := &relaycommon.TaskInfo{
+			Code: 0, TaskID: official.ID, Duration: official.Duration,
+			OutputFormat: official.OutputFormat, Resolution: official.Resolution,
+		}
+		switch strings.ToLower(strings.TrimSpace(official.Status)) {
+		case "pending", "queued":
+			info.Status, info.Progress = model.TaskStatusQueued, taskcommon.ProgressQueued
+		case "processing", "running":
+			info.Status, info.Progress = model.TaskStatusInProgress, taskcommon.ProgressInProgress
+		case "succeeded", "completed":
+			if isSeedance25ModelName(official.Model) && !validSeedance25ActualDuration(official.Duration) {
+				info.Status, info.Progress = model.TaskStatusInProgress, taskcommon.ProgressInProgress
+				return info, nil
+			}
+			info.Status, info.Progress, info.Url = model.TaskStatusSuccess, taskcommon.ProgressComplete,
+				firstNonEmpty(official.Content.VideoURL, official.ContentURL)
+			if official.Usage != nil && official.Usage.CompletionTokens > 0 &&
+				official.Usage.TotalTokens >= official.Usage.CompletionTokens {
+				info.EquivalentUsageCompletionTokens = official.Usage.CompletionTokens
+				info.EquivalentUsageTotalTokens = official.Usage.TotalTokens
+			}
+		case "failed", "cancelled", "canceled":
+			rawMessage, rawCode := seedanceOfficialErrorDetails(official)
+			publicError := relaycommon.NormalizeUpstreamTaskError(
+				rawCode,
+				rawMessage,
+				"",
+				firstNonEmpty(official.RequestID, official.CamelRequestID),
+			)
+			message := firstNonEmpty(rawMessage, "Seedance task failed")
+			if publicError.Matched {
+				message = publicError.Message
+			}
+			info.Status, info.Progress, info.Reason = model.TaskStatusFailure, taskcommon.ProgressComplete, message
+			info.Code = positiveIntValue(rawCode)
+		default:
+			info.Status, info.Progress = model.TaskStatusInProgress, taskcommon.ProgressInProgress
+		}
+		return info, nil
+	}
+	var aipddResp taskDetailResponse
+	if err := common.Unmarshal(respBody, &aipddResp); err != nil {
+		return nil, errors.Wrap(err, "unmarshal aipdd task result failed")
+	}
+
+	if aipddResp.Code != 0 && aipddResp.Code != http.StatusOK {
+		return &relaycommon.TaskInfo{
+			Code:   aipddResp.Code,
+			Status: string(model.TaskStatusFailure),
+			Reason: strings.TrimSpace(aipddResp.Message),
+		}, nil
+	}
+	if aipddResp.Data == nil {
+		return nil, fmt.Errorf("aipdd task data is empty")
+	}
+
+	task := aipddResp.Data
+	resultPayload := aipddResultPayload(task)
+	taskInfo := &relaycommon.TaskInfo{
+		Code:   0,
+		TaskID: firstNonEmpty(task.ID, task.TaskID),
+	}
+
+	if reason, failed := failedTaskResultReason(resultPayload); failed {
+		taskInfo.Status = model.TaskStatusFailure
+		taskInfo.Progress = taskcommon.ProgressComplete
+		taskInfo.Reason = reason
+		return taskInfo, nil
+	}
+
+	resultURLs := extractResultURLs(resultPayload)
+	if len(resultURLs) > 0 {
+		taskInfo.Status = model.TaskStatusSuccess
+		taskInfo.Progress = taskcommon.ProgressComplete
+		taskInfo.Url = resultURLs[0]
+		return taskInfo, nil
+	}
+
+	if strings.TrimSpace(task.Status) != "" {
+		return parseAIPDDComputeTaskStatus(task, taskInfo), nil
+	}
+
+	switch task.TaskStatus {
+	case 0:
+		taskInfo.Status = model.TaskStatusSubmitted
+		taskInfo.Progress = taskcommon.ProgressSubmitted
+	case 1:
+		taskInfo.Status = model.TaskStatusInProgress
+		taskInfo.Progress = taskcommon.ProgressInProgress
+	case 2:
+		taskInfo.Status = model.TaskStatusFailure
+		taskInfo.Progress = taskcommon.ProgressComplete
+		taskInfo.Reason = taskResultText(task.TaskResult)
+		if taskInfo.Reason == "" {
+			taskInfo.Reason = "AIPDD task succeeded without result URL"
+		}
+	case 3:
+		taskInfo.Status = model.TaskStatusFailure
+		taskInfo.Progress = taskcommon.ProgressComplete
+		taskInfo.Reason = taskResultText(task.TaskResult)
+		if taskInfo.Reason == "" {
+			taskInfo.Reason = "AIPDD task failed"
+		}
+	case 4:
+		taskInfo.Status = model.TaskStatusFailure
+		taskInfo.Progress = taskcommon.ProgressComplete
+		taskInfo.Reason = taskResultText(task.TaskResult)
+		if taskInfo.Reason == "" {
+			taskInfo.Reason = "AIPDD task succeeded but result transfer failed"
+		}
+	default:
+		taskInfo.Status = model.TaskStatusInProgress
+		taskInfo.Progress = taskcommon.ProgressInProgress
+	}
+	return taskInfo, nil
+}
+
+func parseAIPDDComputeTaskStatus(task *aipddTask, taskInfo *relaycommon.TaskInfo) *relaycommon.TaskInfo {
+	status := strings.ToUpper(strings.TrimSpace(task.Status))
+	if task.Progress > 0 {
+		taskInfo.Progress = strconv.Itoa(task.Progress)
+	}
+
+	switch status {
+	case "QUEUED", "RETRY_WAIT":
+		taskInfo.Status = model.TaskStatusSubmitted
+		if taskInfo.Progress == "" {
+			taskInfo.Progress = taskcommon.ProgressSubmitted
+		}
+	case "ASSIGNED", "RUNNING":
+		taskInfo.Status = model.TaskStatusInProgress
+		if taskInfo.Progress == "" {
+			taskInfo.Progress = taskcommon.ProgressInProgress
+		}
+	case "SUCCESS":
+		if task.ResultReady {
+			taskInfo.Status = model.TaskStatusFailure
+			taskInfo.Progress = taskcommon.ProgressComplete
+			taskInfo.Reason = "AIPDD task succeeded without result URL"
+		} else {
+			taskInfo.Status = model.TaskStatusInProgress
+			if taskInfo.Progress == "" {
+				taskInfo.Progress = taskcommon.ProgressInProgress
+			}
+		}
+	case "FAILED", "CANCELED", "EXPIRED":
+		taskInfo.Status = model.TaskStatusFailure
+		taskInfo.Progress = taskcommon.ProgressComplete
+		taskInfo.Reason = firstNonEmpty(strings.TrimSpace(task.Message), strings.TrimSpace(task.Stage), "AIPDD task failed")
+	default:
+		taskInfo.Status = model.TaskStatusInProgress
+		if taskInfo.Progress == "" {
+			taskInfo.Progress = taskcommon.ProgressInProgress
+		}
+	}
+	return taskInfo
+}
+
+func aipddResultPayload(task *aipddTask) any {
+	if task == nil {
+		return nil
+	}
+	if task.TaskResult != nil {
+		return task.TaskResult
+	}
+
+	payload := map[string]any{}
+	if task.Output != nil {
+		payload["output"] = task.Output
+	}
+	if task.ObjectRefs != nil {
+		payload["objectRefs"] = task.ObjectRefs
+	}
+	if task.DownloadRefs != nil {
+		payload["downloadRefs"] = task.DownloadRefs
+	}
+	if task.Checksum != "" {
+		payload["checksum"] = task.Checksum
+	}
+	if task.ResultStatus != "" {
+		payload["status"] = task.ResultStatus
+	}
+	if len(payload) == 0 {
+		return nil
+	}
+	return payload
+}
+
+func (a *TaskAdaptor) GetModelList() []string {
+	return constant.GetAIPDDTaskModelList()
+}
+
+func (a *TaskAdaptor) GetChannelName() string {
+	return ChannelName
+}
+
+func (a *TaskAdaptor) ConvertToSeedanceOfficialTask(originTask *model.Task) ([]byte, error) {
+	if originTask == nil {
+		return nil, fmt.Errorf("task is required")
+	}
+
+	response := map[string]any{}
+	if len(originTask.Data) > 0 {
+		_ = common.Unmarshal(originTask.Data, &response)
+	}
+	stripSeedanceInternalResponseFields(response)
+	delete(response, "task_id")
+	delete(response, "taskId")
+	response["id"] = originTask.TaskID
+
+	publicModel := firstNonEmpty(originTask.Properties.OriginModelName, anyToString(response["model"]))
+	if publicModel != "" {
+		response["model"] = publicModel
+	} else {
+		delete(response, "model")
+	}
+	response["status"] = seedanceOfficialPublicStatus(originTask.Status, anyToString(response["status"]))
+
+	actualDuration := positiveFloat(response["duration"])
+	if actualDuration > 0 && !math.IsNaN(actualDuration) && !math.IsInf(actualDuration, 0) {
+		response["duration"] = actualDuration
+	} else if snapshot := originTask.PrivateData.AIPDDExecution; snapshot != nil &&
+		snapshot.RequestedDuration != nil && *snapshot.RequestedDuration > 0 &&
+		!math.IsNaN(*snapshot.RequestedDuration) && !math.IsInf(*snapshot.RequestedDuration, 0) {
+		response["duration"] = *snapshot.RequestedDuration
+	} else {
+		delete(response, "duration")
+	}
+
+	if originTask.Status == model.TaskStatusFailure && response["error"] == nil {
+		message := firstNonEmpty(originTask.FailReason, "Seedance task failed")
+		response["error"] = map[string]any{
+			"code":    "seedance_task_failed",
+			"message": message,
+		}
+	}
+	return common.Marshal(response)
+}
+
+func seedanceOfficialPublicStatus(taskStatus model.TaskStatus, upstreamStatus string) string {
+	switch taskStatus {
+	case model.TaskStatusNotStart, model.TaskStatusQueued, model.TaskStatusSubmitted:
+		return "queued"
+	case model.TaskStatusInProgress:
+		return "running"
+	case model.TaskStatusSuccess:
+		return "succeeded"
+	case model.TaskStatusFailure:
+		if normalized := strings.ToLower(strings.TrimSpace(upstreamStatus)); normalized == "cancelled" || normalized == "canceled" {
+			return "cancelled"
+		}
+		return "failed"
+	}
+
+	switch strings.ToLower(strings.TrimSpace(upstreamStatus)) {
+	case "pending", "queued":
+		return "queued"
+	case "processing", "running":
+		return "running"
+	case "succeeded", "completed":
+		return "succeeded"
+	case "cancelled", "canceled":
+		return "cancelled"
+	case "failed":
+		return "failed"
+	default:
+		return "queued"
+	}
+}
+
+func stripSeedanceInternalResponseFields(value any) {
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, child := range typed {
+			if isSeedanceInternalResponseField(key) {
+				delete(typed, key)
+				continue
+			}
+			stripSeedanceInternalResponseFields(child)
+		}
+	case []any:
+		for _, child := range typed {
+			stripSeedanceInternalResponseFields(child)
+		}
+	}
+}
+
+func isSeedanceInternalResponseField(key string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(key))
+	compact := strings.ReplaceAll(normalized, "_", "")
+	if strings.HasPrefix(compact, "finance") || strings.HasPrefix(compact, "billing") ||
+		strings.HasPrefix(compact, "channel") {
+		return true
+	}
+	switch normalized {
+	case "aipdd_meta",
+		"upstreammodelid", "upstream_model_id",
+		"executionchain", "execution_chain",
+		"enhancemodelid", "enhance_model_id",
+		"enhancemodelname", "enhance_model_name",
+		"superresolutionlevel", "super_resolution_level",
+		"sourceresolution", "source_resolution",
+		"basesource", "base_source",
+		"providername", "provider_name",
+		"billingscope", "billingmode",
+		"estimated_awcoin", "base_status", "enhance_status",
+		"base_video_file_id", "base_video_object_key", "base_video_url",
+		"enhance_retry_count", "costawcoinpersecond", "cost_awcoin_per_second",
+		"channel_id", "channel_key", "api_key":
+		return true
+	default:
+		return false
+	}
+}
+
+func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, error) {
+	openAIVideo := originTask.ToOpenAIVideo()
+	openAIVideo.TaskID = originTask.TaskID
+
+	// Official Seedance responses are not wrapped in data.  The realtime
+	// fetcher stores the latest response in originTask.Data, so parse this shape
+	// before falling back to the legacy AIPDD response format.  Without this,
+	// upstream error.message is discarded and clients only see a generic failure.
+	var official seedanceOfficialTaskResponse
+	if err := common.Unmarshal(originTask.Data, &official); err == nil && strings.TrimSpace(official.Status) != "" {
+		if contentURL := firstNonEmpty(official.Content.VideoURL, official.ContentURL); contentURL != "" {
+			openAIVideo.SetMetadata("url", contentURL)
+		}
+		if official.Duration > 0 {
+			openAIVideo.SetMetadata("duration", official.Duration)
+		}
+		if strings.TrimSpace(official.OutputFormat) != "" {
+			openAIVideo.SetMetadata("output_format", official.OutputFormat)
+		}
+		if strings.TrimSpace(official.Resolution) != "" {
+			openAIVideo.SetMetadata("resolution", official.Resolution)
+		}
+		if official.Usage != nil && official.Usage.CompletionTokens > 0 && official.Usage.TotalTokens > 0 {
+			openAIVideo.Usage = official.Usage
+		}
+		if isSeedanceOfficialFailure(official.Status) || originTask.Status == model.TaskStatusFailure {
+			rawMessage, rawCode := seedanceOfficialErrorDetails(official)
+			message := firstNonEmpty(rawMessage, originTask.FailReason, "Seedance task failed")
+			code := firstNonEmpty(rawCode, "seedance_task_failed")
+			publicError := seedanceOfficialPublicError(
+				official,
+				relaycommon.AIPDDTaskErrorOperationExecute,
+				0,
+			)
+			if publicError.Matched {
+				message, code = publicError.Message, publicError.Code
+			}
+			openAIVideo.Error = &dto.OpenAIVideoError{
+				Message:      message,
+				Code:         code,
+				Param:        publicError.Param,
+				RequestID:    publicError.RequestID,
+				Provider:     publicError.Provider,
+				Category:     publicError.Category,
+				UpstreamCode: publicError.UpstreamCode,
+				Retryable:    publicError.RetryableValue(),
+			}
+		}
+		return common.Marshal(openAIVideo)
+	}
+
+	var detail taskDetailResponse
+	if err := common.Unmarshal(originTask.Data, &detail); err == nil && detail.Data != nil {
+		urls := extractResultURLs(aipddResultPayload(detail.Data))
+		if len(urls) > 1 {
+			openAIVideo.SetMetadata("urls", urls)
+		}
+		if originTask.Status == model.TaskStatusFailure {
+			message := firstNonEmpty(taskResultText(aipddResultPayload(detail.Data)), detail.Data.Message, originTask.FailReason, "AIPDD task failed")
+			code := "aipdd_task_failed"
+			publicError := relaycommon.NormalizeAIPDDTaskError(
+				"",
+				message,
+				"",
+				"",
+				0,
+				relaycommon.AIPDDTaskErrorOperationExecute,
+			)
+			if publicError.Matched {
+				message, code = publicError.Message, publicError.Code
+			}
+			openAIVideo.Error = &dto.OpenAIVideoError{
+				Message:      message,
+				Code:         code,
+				Param:        publicError.Param,
+				RequestID:    publicError.RequestID,
+				Provider:     publicError.Provider,
+				Category:     publicError.Category,
+				UpstreamCode: publicError.UpstreamCode,
+				Retryable:    publicError.RetryableValue(),
+			}
+		}
+	} else if originTask.Status == model.TaskStatusFailure {
+		message := firstNonEmpty(originTask.FailReason, "AIPDD task failed")
+		code := "aipdd_task_failed"
+		publicError := relaycommon.NormalizeAIPDDTaskError(
+			"",
+			message,
+			"",
+			"",
+			0,
+			relaycommon.AIPDDTaskErrorOperationExecute,
+		)
+		if publicError.Matched {
+			message, code = publicError.Message, publicError.Code
+		}
+		openAIVideo.Error = &dto.OpenAIVideoError{
+			Message:      message,
+			Code:         code,
+			Param:        publicError.Param,
+			RequestID:    publicError.RequestID,
+			Provider:     publicError.Provider,
+			Category:     publicError.Category,
+			UpstreamCode: publicError.UpstreamCode,
+			Retryable:    publicError.RetryableValue(),
+		}
+	}
+
+	return common.Marshal(openAIVideo)
+}
+
+func isSeedanceOfficialFailure(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "failed", "cancelled", "canceled":
+		return true
+	default:
+		return false
+	}
+}
+
+func seedanceOfficialErrorDetails(response seedanceOfficialTaskResponse) (string, string) {
+	code, message := seedanceOfficialErrorValue(response.Error)
+	if strings.TrimSpace(message) == "" {
+		message = strings.TrimSpace(response.Message)
+	}
+	if strings.TrimSpace(code) == "" {
+		code = anyToString(response.Code)
+	}
+	return strings.TrimSpace(message), strings.TrimSpace(code)
+}
+
+func seedanceOfficialPublicError(
+	response seedanceOfficialTaskResponse,
+	operation relaycommon.AIPDDTaskErrorOperation,
+	statusCode int,
+) relaycommon.PublicUpstreamTaskError {
+	message, code := seedanceOfficialErrorDetails(response)
+	requestID := firstNonEmpty(response.RequestID, response.CamelRequestID)
+	return relaycommon.NormalizeAIPDDTaskError(code, message, "", requestID, statusCode, operation)
+}
+
+func applyPublicUpstreamTaskError(taskErr *dto.TaskError, publicError relaycommon.PublicUpstreamTaskError) {
+	if taskErr == nil || !publicError.Matched {
+		return
+	}
+	taskErr.Code = publicError.Code
+	taskErr.Message = publicError.Message
+	if data := publicError.Data(); len(data) > 0 {
+		taskErr.Data = data
+	} else if publicError.HideRaw {
+		taskErr.Data = nil
+	}
+}
+
+func seedanceOfficialErrorValue(value any) (string, string) {
+	switch typed := value.(type) {
+	case string:
+		text := strings.TrimSpace(typed)
+		if text == "" {
+			return "", ""
+		}
+		var parsed any
+		if err := common.Unmarshal([]byte(text), &parsed); err == nil {
+			if _, ok := parsed.(map[string]any); ok {
+				return seedanceOfficialErrorValue(parsed)
+			}
+		}
+		return "", text
+	case map[string]any:
+		code := firstNonEmpty(anyToString(typed["code"]), anyToString(typed["error_code"]))
+		message := firstNonEmpty(anyToString(typed["message"]), anyToString(typed["reason"]), anyToString(typed["detail"]))
+		if message == "" {
+			if nested, ok := typed["error"]; ok {
+				nestedCode, nestedMessage := seedanceOfficialErrorValue(nested)
+				code = firstNonEmpty(code, nestedCode)
+				message = nestedMessage
+			}
+		}
+		return code, message
+	default:
+		return "", ""
+	}
+}
+
+func (a *TaskAdaptor) convertToRequestPayload(req relaycommon.TaskSubmitReq, info *relaycommon.RelayInfo) (*createTaskPayload, error) {
+	normalizeTaskSubmitReq(&req)
+	cfg, err := a.resolveRequestModelConfig(context.Background(), req, info)
+	if err != nil {
+		return nil, err
+	}
+	if cfg.BillingType == constant.AIPDDBillingTypeDurationSeconds && !isLtx23Config(cfg) {
+		duration, err := normalizeDurationSeconds(&req, cfg)
+		if err != nil {
+			return nil, err
+		}
+		req.Duration = duration
+	}
+	if err := normalizeLtxRequestDuration(&req, cfg); err != nil {
+		return nil, err
+	}
+
+	content, err := buildWorkflowContent(req, cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	taskName := metadataString(req.Metadata, "task_name")
+	if strings.TrimSpace(taskName) == "" {
+		taskName = fmt.Sprintf("%s:%s", defaultTaskNamePrefix, cfg.ModelName)
+	}
+	requestID := ""
+	if info != nil {
+		if info.AIPDDFinance != nil {
+			requestID = strings.TrimSpace(info.AIPDDFinance.PlatformOrderID)
+		}
+		if requestID == "" {
+			requestID = strings.TrimSpace(info.PublicTaskID)
+		}
+	}
+	if requestID == "" {
+		requestID = metadataString(req.Metadata, "request_id")
+	}
+
+	return &createTaskPayload{
+		RequestID:    requestID,
+		TaskName:     taskName,
+		TaskTypeCode: cfg.ScriptCode,
+		Input:        content,
+	}, nil
+}
+
+func buildWorkflowContent(req relaycommon.TaskSubmitReq, cfg modelConfig) (map[string]any, error) {
+	content := cloneWorkflowMetadata(req.Metadata)
+	explicitNumFrames := hasContentValue(content["numFrames"])
+	explicitDurationSeconds := hasContentValue(content["durationSeconds"])
+	explicitLength := hasContentValue(content["length"])
+	applyModelDefaults(content, req, cfg)
+	// The catalog normally describes this mapping in WorkflowDefaults. Keep a
+	// direct fallback for prompt because it is the primary user input and older
+	// or partially refreshed catalogs may omit the prompt parameter entirely.
+	// AIPDD workflows can still require this field even when the catalog does
+	// not advertise it, so do not gate this fallback on workflowParamAllowed.
+	if !hasContentValue(content["prompt"]) {
+		if prompt := strings.TrimSpace(req.Prompt); prompt != "" {
+			content["prompt"] = prompt
+		}
+	}
+	if isLtx23StartEndConfig(cfg) {
+		if err := normalizeLtxStartEndContent(content, req, explicitLength, explicitNumFrames); err != nil {
+			return nil, err
+		}
+	} else if isLtx23StandardConfig(cfg) {
+		if err := normalizeAndValidateLtx23Content(content, req.Duration, explicitNumFrames, explicitDurationSeconds); err != nil {
+			return nil, err
+		}
+	}
+	if err := normalizeWorkflowTimelineData(content, cfg); err != nil {
+		return nil, err
+	}
+	if err := validateTaskContent(content, cfg); err != nil {
+		return nil, err
+	}
+	return content, nil
+}
+
+func resolveRequestModelConfig(req relaycommon.TaskSubmitReq, info *relaycommon.RelayInfo) (modelConfig, error) {
+	modelName := ""
+	if info != nil {
+		modelName = strings.TrimSpace(info.UpstreamModelName)
+	}
+	if modelName == "" {
+		modelName = strings.TrimSpace(req.Model)
+	}
+	cfg, ok := resolveModelConfig(modelName)
+	if !ok {
+		return modelConfig{}, fmt.Errorf("unsupported AIPDD model: %s", modelName)
+	}
+	return cfg, nil
+}
+
+func (a *TaskAdaptor) resolveRequestModelConfig(ctx context.Context, req relaycommon.TaskSubmitReq, info *relaycommon.RelayInfo) (modelConfig, error) {
+	modelName := ""
+	if info != nil {
+		modelName = strings.TrimSpace(info.UpstreamModelName)
+	}
+	if modelName == "" {
+		modelName = strings.TrimSpace(req.Model)
+	}
+	cfg, ok := a.resolveModelConfig(ctx, modelName)
+	if !ok {
+		return modelConfig{}, fmt.Errorf("unsupported AIPDD model: %s", modelName)
+	}
+	return cfg, nil
+}
+
+func resolveModelConfig(modelName string) (modelConfig, bool) {
+	return constant.GetAIPDDCapability(modelName)
+}
+
+func ginRequestContext(c *gin.Context) context.Context {
+	if c != nil && c.Request != nil {
+		return c.Request.Context()
+	}
+	return context.Background()
+}
+
+func (a *TaskAdaptor) resolveModelConfig(_ context.Context, modelName string) (modelConfig, bool) {
+	return resolveModelConfig(modelName)
+}
+
+func normalizeExecutionPath(path string) string {
+	path = strings.TrimSpace(path)
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	return strings.TrimRight(path, "/")
+}
+
+func seedanceHasReferenceVideo(content any) bool {
+	items, ok := content.([]any)
+	if !ok {
+		return false
+	}
+	for _, value := range items {
+		item, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		typeName := strings.TrimSpace(anyToString(item["type"]))
+		role := strings.TrimSpace(anyToString(item["role"]))
+		if strings.EqualFold(typeName, "video_url") ||
+			strings.EqualFold(typeName, "video") ||
+			strings.EqualFold(role, "reference_video") {
+			return true
+		}
+		if validSeedanceVideoURL(item["video_url"]) {
+			return true
+		}
+	}
+	return false
+}
+
+func validSeedanceVideoURL(value any) bool {
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed) != ""
+	case map[string]any:
+		return strings.TrimSpace(anyToString(typed["url"])) != ""
+	default:
+		return false
+	}
+}
+
+func normalizeAndValidateSeedanceOfficialPayload(raw map[string]any, cfg modelConfig) (map[string]any, string, error) {
+	if raw == nil {
+		return nil, "invalid_request", fmt.Errorf("request body is required")
+	}
+	payload := cloneAnyMap(raw)
+	metadata, _ := payload["metadata"].(map[string]any)
+	topLevelDurationPresent := seedanceRequestValuePresent(payload["duration"])
+	topLevelSecondsPresent := seedanceRequestValuePresent(payload["seconds"])
+	for _, key := range []string{
+		"content", "resolution", "ratio", "duration", "seconds", "frames", "fps", "framespersecond",
+		"frames_per_second", "seed", "callback_url", "return_last_frame", "service_tier",
+		"generate_audio", "watermark", "output_format", "omni_reference_task_type", "priority",
+		"execution_expires_after", "safety_identifier", "tools", "camera_fixed", "draft", "media_mode",
+	} {
+		if seedanceRequestValuePresent(payload[key]) {
+			continue
+		}
+		if value := metadata[key]; seedanceRequestValuePresent(value) {
+			payload[key] = value
+		}
+	}
+	if !topLevelDurationPresent && topLevelSecondsPresent {
+		payload["duration"] = payload["seconds"]
+	} else if !seedanceRequestValuePresent(payload["duration"]) && seedanceRequestValuePresent(payload["seconds"]) {
+		payload["duration"] = payload["seconds"]
+	}
+	delete(payload, "seconds")
+
+	content, contentPresent := payload["content"].([]any)
+	if !contentPresent || len(content) == 0 {
+		if seedanceRequestValuePresent(payload["content"]) && !contentPresent {
+			return nil, "invalid_content", fmt.Errorf("content must be a non-empty array")
+		}
+		content = seedanceOfficialContentFromLegacyFields(payload)
+		if len(content) == 0 {
+			return nil, "missing_content", fmt.Errorf("content is required when prompt is empty")
+		}
+		payload["content"] = content
+	}
+	for index, value := range content {
+		item, ok := value.(map[string]any)
+		if !ok || strings.TrimSpace(anyToString(item["type"])) == "" {
+			return nil, "invalid_content", fmt.Errorf("content[%d] must be an object with a non-empty type", index)
+		}
+	}
+	if isSeedance25Config(cfg) {
+		return normalizeAndValidateSeedance25Payload(payload, metadata, content)
+	}
+
+	resolution := canonicalSeedanceResolution(payload["resolution"])
+	ratio := strings.TrimSpace(anyToString(payload["ratio"]))
+	if resolution == "" || ratio == "" {
+		width, height, found, err := seedanceRequestDimensions(payload, metadata)
+		if err != nil {
+			return nil, "invalid_dimensions", err
+		}
+		if found {
+			if resolution == "" {
+				resolution, err = inferSeedanceResolution(width, height)
+				if err != nil {
+					return nil, "invalid_dimensions", err
+				}
+			}
+			if ratio == "" {
+				ratio, err = inferSeedanceRatio(width, height)
+				if err != nil {
+					return nil, "invalid_dimensions", err
+				}
+			}
+		}
+	}
+	if resolution == "" {
+		return nil, "missing_resolution", fmt.Errorf("resolution is required when width and height are absent")
+	}
+	if ratio != "" && !isSupportedSeedanceRatio(ratio) {
+		return nil, "unsupported_ratio", fmt.Errorf("Seedance ratio %q is not supported", ratio)
+	}
+	payload["resolution"] = resolution
+	if ratio != "" {
+		payload["ratio"] = ratio
+	}
+	// These fields belong to New API's compatibility request shape, not to the
+	// official Seedance request contract. Their values have already been folded
+	// into content above, so do not leak them to the upstream endpoint.
+	for _, key := range []string{"character_id", "prompt", "image", "images"} {
+		delete(payload, key)
+	}
+	return payload, "", nil
+}
+
+func normalizeAndValidateSeedance25Payload(payload, metadata map[string]any, content []any) (map[string]any, string, error) {
+	for _, key := range []string{
+		"frames", "fps", "framespersecond", "frames_per_second", "seed",
+		"camera_fixed", "draft", "service_tier",
+	} {
+		if seedanceRequestValuePresent(payload[key]) {
+			return nil, "unsupported_parameter", fmt.Errorf("%s is not supported by Seedance 2.5", key)
+		}
+	}
+
+	applySeedance25CompatibilityMediaMode(content, payload["media_mode"])
+	resolution := canonicalSeedanceResolution(payload["resolution"])
+	ratio := strings.ToLower(strings.TrimSpace(anyToString(payload["ratio"])))
+	width, height, dimensionsFound, err := seedanceRequestDimensions(payload, metadata)
+	if err != nil {
+		return nil, "invalid_dimensions", err
+	}
+	if resolution == "" && dimensionsFound {
+		resolution, err = inferSeedanceResolution(width, height)
+		if err != nil {
+			return nil, "invalid_dimensions", err
+		}
+	}
+	if ratio == "" && dimensionsFound {
+		ratio, err = inferSeedance25Ratio(width, height)
+		if err != nil {
+			return nil, "invalid_dimensions", err
+		}
+	}
+	if resolution == "" {
+		resolution = "720p"
+	}
+	if ratio == "" {
+		ratio = "adaptive"
+	}
+	if resolution != "480p" && resolution != "720p" && resolution != "1080p" {
+		return nil, "unsupported_resolution", fmt.Errorf("Seedance 2.5 resolution %q is not supported", resolution)
+	}
+	if !isSupportedSeedance25Ratio(ratio) {
+		return nil, "unsupported_ratio", fmt.Errorf("Seedance 2.5 ratio %q is not supported", ratio)
+	}
+	payload["resolution"] = resolution
+	payload["ratio"] = ratio
+
+	duration := -1
+	if seedanceRequestValuePresent(payload["duration"]) {
+		var ok bool
+		duration, ok = exactInteger(payload["duration"])
+		if !ok {
+			return nil, "invalid_duration", fmt.Errorf("duration must be an integer")
+		}
+	}
+	if duration != -1 && (duration < 4 || duration > 30) {
+		return nil, "invalid_duration", fmt.Errorf("duration must be -1 or an integer from 4 to 30")
+	}
+	payload["duration"] = duration
+
+	taskType := strings.ToLower(strings.TrimSpace(anyToString(payload["omni_reference_task_type"])))
+	if taskType == "" {
+		taskType = "auto"
+	}
+	if taskType != "auto" && taskType != "reference" && taskType != "edit" && taskType != "extend" {
+		return nil, "invalid_reference_task_type", fmt.Errorf("omni_reference_task_type must be auto, reference, edit, or extend")
+	}
+
+	if err := seedance25BooleanDefault(payload, "generate_audio", true); err != nil {
+		return nil, "invalid_generate_audio", err
+	}
+	if err := seedance25BooleanDefault(payload, "watermark", false); err != nil {
+		return nil, "invalid_watermark", err
+	}
+	if err := seedance25BooleanDefault(payload, "return_last_frame", false); err != nil {
+		return nil, "invalid_return_last_frame", err
+	}
+	outputFormat := strings.ToLower(strings.TrimSpace(anyToString(payload["output_format"])))
+	if outputFormat == "" {
+		outputFormat = "mp4"
+	}
+	if outputFormat != "mp4" && outputFormat != "mov" {
+		return nil, "invalid_output_format", fmt.Errorf("output_format must be mp4 or mov")
+	}
+	payload["output_format"] = outputFormat
+
+	expiresAfter, err := seedance25IntegerDefault(payload, "execution_expires_after", 172800, 3600, 259200)
+	if err != nil {
+		return nil, "invalid_execution_expires_after", err
+	}
+	payload["execution_expires_after"] = expiresAfter
+	priority, err := seedance25IntegerDefault(payload, "priority", 0, 0, 9)
+	if err != nil {
+		return nil, "invalid_priority", err
+	}
+	payload["priority"] = priority
+	if safety := strings.TrimSpace(anyToString(payload["safety_identifier"])); safety != "" {
+		if len(safety) > 64 || !regexp.MustCompile(`^[\x20-\x7e]+$`).MatchString(safety) {
+			return nil, "invalid_safety_identifier", fmt.Errorf("safety_identifier must contain at most 64 ASCII characters")
+		}
+		payload["safety_identifier"] = safety
+	}
+	if err := validateSeedance25Tools(payload["tools"]); err != nil {
+		return nil, "invalid_tools", err
+	}
+	if errorCode, err := validateSeedance25Content(content, taskType, ratio, duration); err != nil {
+		return nil, errorCode, err
+	}
+	if taskType == "auto" && !seedance25ContentHasReferenceMaterial(content) {
+		delete(payload, "omni_reference_task_type")
+	} else {
+		payload["omni_reference_task_type"] = taskType
+	}
+
+	for _, key := range []string{
+		"character_id", "prompt", "image", "images", "width", "height", "media_mode",
+		"metadata", "response_format", "user", "n", "frames", "fps", "framespersecond",
+		"frames_per_second", "seed", "camera_fixed", "draft", "service_tier",
+	} {
+		delete(payload, key)
+	}
+	return payload, "", nil
+}
+
+func seedance25ContentHasReferenceMaterial(content []any) bool {
+	for _, value := range content {
+		item, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		typeName := strings.ToLower(strings.TrimSpace(anyToString(item["type"])))
+		role := strings.ToLower(strings.TrimSpace(anyToString(item["role"])))
+		switch typeName {
+		case "video", "video_url", "audio", "audio_url":
+			return true
+		case "image", "image_url":
+			if role != "first_frame" && role != "last_frame" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func applySeedance25CompatibilityMediaMode(content []any, modeValue any) {
+	mode := strings.ToLower(strings.TrimSpace(anyToString(modeValue)))
+	imageIndexes := make([]int, 0, 2)
+	for index, value := range content {
+		item, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		typeName := strings.ToLower(strings.TrimSpace(anyToString(item["type"])))
+		if typeName == "image" || typeName == "image_url" {
+			imageIndexes = append(imageIndexes, index)
+		}
+	}
+	if len(imageIndexes) == 0 {
+		return
+	}
+	setRole := func(index int, role string) {
+		if item, ok := content[index].(map[string]any); ok {
+			item["role"] = role
+		}
+	}
+	switch mode {
+	case "first_frame", "first_last_frame", "start_end_frame":
+		setRole(imageIndexes[0], "first_frame")
+		if len(imageIndexes) > 1 {
+			setRole(imageIndexes[1], "last_frame")
+		}
+	case "last_frame":
+		setRole(imageIndexes[0], "last_frame")
+	}
+}
+
+func validateSeedance25Content(content []any, taskType, ratio string, duration int) (string, error) {
+	if len(content) == 0 || len(content) > 50 {
+		return "invalid_content", fmt.Errorf("content must contain between 1 and 50 items")
+	}
+	images, videos, audios := 0, 0, 0
+	firstFrame, frameMode, referenceMaterial := false, false, false
+	for index, value := range content {
+		item, ok := value.(map[string]any)
+		if !ok {
+			return "invalid_content", fmt.Errorf("content[%d] must be an object", index)
+		}
+		typeName := strings.ToLower(strings.TrimSpace(anyToString(item["type"])))
+		role := strings.ToLower(strings.TrimSpace(anyToString(item["role"])))
+		switch typeName {
+		case "text":
+			if strings.TrimSpace(anyToString(item["text"])) == "" {
+				return "invalid_content", fmt.Errorf("content[%d].text is required", index)
+			}
+		case "image", "image_url":
+			images++
+			isFrame := role == "first_frame" || role == "last_frame"
+			frameMode = frameMode || isFrame
+			firstFrame = firstFrame || role == "first_frame"
+			referenceMaterial = referenceMaterial || !isFrame
+		case "video", "video_url":
+			videos++
+			referenceMaterial = true
+		case "audio", "audio_url":
+			audios++
+			referenceMaterial = true
+		default:
+			return "invalid_content", fmt.Errorf("content[%d].type %q is not supported", index, typeName)
+		}
+	}
+	if images > 30 || videos > 10 || audios > 10 {
+		return "invalid_content", fmt.Errorf("content supports at most 30 images, 10 videos, and 10 audio files")
+	}
+	if frameMode && referenceMaterial {
+		return "invalid_content_mode", fmt.Errorf("first/last-frame mode cannot be combined with reference media")
+	}
+	if frameMode && !firstFrame {
+		return "invalid_content_mode", fmt.Errorf("last_frame requires first_frame")
+	}
+	if (frameMode || taskType == "extend") && ratio != "adaptive" {
+		return "invalid_ratio", fmt.Errorf("first/last-frame and extend modes require ratio=adaptive")
+	}
+	if taskType == "edit" && (videos != 1 || ratio != "adaptive" || duration != -1) {
+		return "invalid_edit_request", fmt.Errorf("edit requires one 4-30 second reference video, ratio=adaptive, and duration=-1")
+	}
+	if taskType == "extend" && videos != 1 {
+		return "invalid_extend_request", fmt.Errorf("extend requires one reference video")
+	}
+	if taskType == "reference" && !referenceMaterial {
+		return "invalid_reference_request", fmt.Errorf("reference mode requires reference media")
+	}
+	return "", nil
+}
+
+func validateSeedance25Tools(value any) error {
+	if value == nil {
+		return nil
+	}
+	tools, ok := value.([]any)
+	if !ok {
+		return fmt.Errorf("tools must be an array")
+	}
+	for _, raw := range tools {
+		tool, ok := raw.(map[string]any)
+		if !ok || len(tool) != 1 || strings.TrimSpace(anyToString(tool["type"])) != "web_search" {
+			return fmt.Errorf(`tools only supports {"type":"web_search"}`)
+		}
+	}
+	return nil
+}
+
+func seedance25BooleanDefault(payload map[string]any, key string, fallback bool) error {
+	value, exists := payload[key]
+	if !exists || value == nil {
+		payload[key] = fallback
+		return nil
+	}
+	if _, ok := value.(bool); !ok {
+		return fmt.Errorf("%s must be a boolean", key)
+	}
+	return nil
+}
+
+func seedance25IntegerDefault(payload map[string]any, key string, fallback, minimum, maximum int) (int, error) {
+	if !seedanceRequestValuePresent(payload[key]) {
+		return fallback, nil
+	}
+	value, ok := exactInteger(payload[key])
+	if !ok || value < minimum || value > maximum {
+		return 0, fmt.Errorf("%s must be an integer from %d to %d", key, minimum, maximum)
+	}
+	return value, nil
+}
+
+func exactInteger(value any) (int, bool) {
+	var parsed float64
+	switch typed := value.(type) {
+	case float64:
+		parsed = typed
+	case float32:
+		parsed = float64(typed)
+	case int:
+		return typed, true
+	case int64:
+		if int64(int(typed)) != typed {
+			return 0, false
+		}
+		return int(typed), true
+	case string:
+		value, err := strconv.ParseFloat(strings.TrimSpace(typed), 64)
+		if err != nil {
+			return 0, false
+		}
+		parsed = value
+	default:
+		return 0, false
+	}
+	maxIntValue := int(^uint(0) >> 1)
+	minIntValue := -maxIntValue - 1
+	if math.IsNaN(parsed) || math.IsInf(parsed, 0) || parsed != math.Trunc(parsed) ||
+		parsed > float64(maxIntValue) || parsed < float64(minIntValue) {
+		return 0, false
+	}
+	return int(parsed), true
+}
+
+func inferSeedance25Ratio(width, height int) (string, error) {
+	divisor := greatestCommonDivisor(width, height)
+	ratio := fmt.Sprintf("%d:%d", width/divisor, height/divisor)
+	if !isSupportedSeedance25Ratio(ratio) {
+		return "", fmt.Errorf("Seedance 2.5 dimensions %dx%d do not map to a supported ratio", width, height)
+	}
+	return ratio, nil
+}
+
+func isSupportedSeedance25Ratio(ratio string) bool {
+	switch ratio {
+	case "16:9", "4:3", "1:1", "3:4", "9:16", "21:9", "adaptive":
+		return true
+	default:
+		return false
+	}
+}
+
+func seedanceOfficialContentFromLegacyFields(payload map[string]any) []any {
+	content := make([]any, 0, 2)
+	if prompt := strings.TrimSpace(anyToString(payload["prompt"])); prompt != "" {
+		content = append(content, map[string]any{"type": "text", "text": prompt})
+	}
+
+	imageURLs := seedanceLegacyImageURLs(payload["images"], payload["image"])
+	for _, imageURL := range imageURLs {
+		content = append(content, map[string]any{
+			"type": "image_url",
+			"role": "reference_image",
+			"image_url": map[string]any{
+				"url": imageURL,
+			},
+		})
+	}
+	return content
+}
+
+func seedanceLegacyImageURLs(values ...any) []string {
+	urls := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	appendURL := func(value any) {
+		var raw string
+		switch typed := value.(type) {
+		case string:
+			raw = typed
+		case map[string]any:
+			raw = anyToString(typed["url"])
+		}
+		url := strings.TrimSpace(raw)
+		if url == "" {
+			return
+		}
+		if _, exists := seen[url]; exists {
+			return
+		}
+		seen[url] = struct{}{}
+		urls = append(urls, url)
+	}
+
+	for _, value := range values {
+		switch typed := value.(type) {
+		case []any:
+			for _, item := range typed {
+				appendURL(item)
+			}
+		case []string:
+			for _, item := range typed {
+				appendURL(item)
+			}
+		default:
+			appendURL(typed)
+		}
+	}
+	return urls
+}
+
+func validateSeedanceFrameParameters(payload map[string]any, cfg modelConfig) (string, error) {
+	// An empty catalog parameter list belongs to legacy capabilities. Keep their
+	// historical behavior, while treating a populated live catalog as authoritative.
+	if len(cfg.WorkflowParamKeys) == 0 {
+		return "", nil
+	}
+	for _, key := range cfg.WorkflowParamKeys {
+		if strings.EqualFold(strings.TrimSpace(key), "frames") {
+			return "", nil
+		}
+	}
+	if seedanceRequestValuePresent(payload["frames"]) {
+		return "unsupported_frames", fmt.Errorf(
+			"frames is not supported by Seedance model %s; use duration in seconds instead",
+			cfg.ModelName,
+		)
+	}
+	for _, key := range []string{"fps", "framespersecond", "frames_per_second"} {
+		if seedanceRequestValuePresent(payload[key]) {
+			return "unsupported_frame_rate", fmt.Errorf(
+				"%s is not supported by Seedance model %s; use duration in seconds instead",
+				key,
+				cfg.ModelName,
+			)
+		}
+	}
+	return "", nil
+}
+
+func getSeedanceOfficialPayload(c *gin.Context) (map[string]any, error) {
+	value, exists := c.Get(seedanceOfficialPayloadContextKey)
+	if !exists {
+		return nil, fmt.Errorf("normalized Seedance request not found in context")
+	}
+	payload, ok := value.(map[string]any)
+	if !ok || payload == nil {
+		return nil, fmt.Errorf("invalid normalized Seedance request")
+	}
+	return payload, nil
+}
+
+func getTokenMarketVideoPayload(c *gin.Context) (map[string]any, error) {
+	value, exists := c.Get(tokenMarketVideoPayloadContextKey)
+	if !exists {
+		return nil, fmt.Errorf("normalized Token Market video request not found in context")
+	}
+	payload, ok := value.(map[string]any)
+	if !ok || payload == nil {
+		return nil, fmt.Errorf("invalid normalized Token Market video request")
+	}
+	return payload, nil
+}
+
+func cloneAnyMap(source map[string]any) map[string]any {
+	cloned := make(map[string]any, len(source))
+	for key, value := range source {
+		cloned[key] = value
+	}
+	return cloned
+}
+
+func canonicalSeedanceResolution(value any) string {
+	return strings.ToLower(strings.TrimSpace(anyToString(value)))
+}
+
+func seedanceResolutionPricing(cfg modelConfig, resolution string) (constant.AIPDDSeedanceResolutionPricing, bool) {
+	if cfg.SeedancePricing == nil {
+		return constant.AIPDDSeedanceResolutionPricing{}, false
+	}
+	canonical := canonicalSeedanceResolution(resolution)
+	for key, pricing := range cfg.SeedancePricing.ByResolution {
+		if canonicalSeedanceResolution(key) == canonical {
+			return pricing, true
+		}
+	}
+	return constant.AIPDDSeedanceResolutionPricing{}, false
+}
+
+func isSeedanceExecutionConfig(cfg modelConfig) bool {
+	return strings.EqualFold(strings.TrimSpace(cfg.AdapterCode), "seedance") ||
+		strings.EqualFold(strings.TrimSpace(cfg.ExecutionProtocol), "seedance_official")
+}
+
+func isSeedance25Config(cfg modelConfig) bool {
+	return isSeedance25ModelName(cfg.ModelName) || isSeedance25ModelName(cfg.ScriptCode)
+}
+
+func isSeedance25ModelName(value string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	return strings.Contains(normalized, "seedance-2.5") ||
+		strings.Contains(normalized, "seedance-2-5-260628")
+}
+
+func validSeedance25ActualDuration(duration float64) bool {
+	return duration > 0 && duration <= 30 && duration == math.Trunc(duration) &&
+		!math.IsNaN(duration) && !math.IsInf(duration, 0)
+}
+
+func seedanceRequestDimensions(payload, metadata map[string]any) (int, int, bool, error) {
+	for _, source := range []map[string]any{payload, metadata} {
+		if source == nil {
+			continue
+		}
+		widthPresent := seedanceRequestValuePresent(source["width"])
+		heightPresent := seedanceRequestValuePresent(source["height"])
+		if !widthPresent && !heightPresent {
+			continue
+		}
+		if !widthPresent || !heightPresent {
+			return 0, 0, false, fmt.Errorf("width and height must be provided together")
+		}
+		width := positiveIntValue(source["width"])
+		height := positiveIntValue(source["height"])
+		if width <= 0 || height <= 0 {
+			return 0, 0, false, fmt.Errorf("width and height must be positive integers")
+		}
+		return width, height, true, nil
+	}
+	return 0, 0, false, nil
+}
+
+func inferSeedanceResolution(width, height int) (string, error) {
+	shortEdge := min(width, height)
+	switch shortEdge {
+	case 480:
+		return "480p", nil
+	case 720:
+		return "720p", nil
+	case 1080:
+		return "1080p", nil
+	case 2160:
+		return "4k", nil
+	default:
+		return "", fmt.Errorf("Seedance dimensions %dx%d do not map to 480p, 720p, 1080p, or 4k", width, height)
+	}
+}
+
+func inferSeedanceRatio(width, height int) (string, error) {
+	divisor := greatestCommonDivisor(width, height)
+	ratio := fmt.Sprintf("%d:%d", width/divisor, height/divisor)
+	if !isSupportedSeedanceRatio(ratio) {
+		return "", fmt.Errorf("Seedance dimensions %dx%d do not map to a supported ratio", width, height)
+	}
+	return ratio, nil
+}
+
+func greatestCommonDivisor(a, b int) int {
+	for b != 0 {
+		a, b = b, a%b
+	}
+	return a
+}
+
+func isSupportedSeedanceRatio(ratio string) bool {
+	switch ratio {
+	case "16:9", "9:16", "1:1", "4:3", "3:4":
+		return true
+	default:
+		return false
+	}
+}
+
+func seedanceRequestValuePresent(value any) bool {
+	switch typed := value.(type) {
+	case nil:
+		return false
+	case string:
+		return strings.TrimSpace(typed) != ""
+	case []any:
+		return len(typed) > 0
+	default:
+		return true
+	}
+}
+
+func seedanceBillingSeconds(raw map[string]any, pricing constant.AIPDDSeedanceResolutionPricing, cfg modelConfig) float64 {
+	if duration := positiveFloat(raw["duration"]); duration > 0 {
+		return duration
+	}
+	if isSeedance25Config(cfg) {
+		return 30
+	}
+	if frames := positiveFloat(raw["frames"]); frames > 0 {
+		fps := positiveFloat(raw["fps"])
+		if fps <= 0 {
+			fps = positiveFloat(raw["framespersecond"])
+		}
+		if fps <= 0 {
+			fps = positiveFloat(raw["frames_per_second"])
+		}
+		if fps <= 0 {
+			fps = pricing.DefaultFramesPerSecond
+		}
+		if fps <= 0 {
+			fps = 24
+		}
+		return frames / fps
+	}
+	if pricing.DefaultDurationSeconds > 0 {
+		return pricing.DefaultDurationSeconds
+	}
+	return 5
+}
+
+func positiveFloat(value any) float64 {
+	switch typed := value.(type) {
+	case float64:
+		if typed > 0 {
+			return typed
+		}
+	case float32:
+		if typed > 0 {
+			return float64(typed)
+		}
+	case int:
+		if typed > 0 {
+			return float64(typed)
+		}
+	case int64:
+		if typed > 0 {
+			return float64(typed)
+		}
+	case string:
+		if parsed, err := strconv.ParseFloat(strings.TrimSpace(typed), 64); err == nil && parsed > 0 {
+			return parsed
+		}
+	}
+	return 0
+}
+
+func normalizeLtxRequestDuration(req *relaycommon.TaskSubmitReq, cfg modelConfig) error {
+	if req == nil || !isLtx23Config(cfg) {
+		return nil
+	}
+	if req.Duration <= 0 {
+		req.Duration = parseDurationValue(req.Seconds)
+	}
+	if req.Duration <= 0 {
+		req.Duration = parseDurationValue(metadataString(req.Metadata, "duration"))
+	}
+	if req.Duration <= 0 {
+		req.Duration = parseDurationValue(metadataString(req.Metadata, "seconds"))
+	}
+	if req.Duration > 0 && (req.Duration < 1 || req.Duration > 20) {
+		return fmt.Errorf("LTX 2.3 duration must be an integer between 1 and 20 seconds")
+	}
+	return nil
+}
+
+func endpointTypeFromPath(path string) constant.EndpointType {
+	switch {
+	case strings.HasPrefix(path, "/v1/images/generations"), strings.HasPrefix(path, "/pg/images/generations"):
+		return constant.EndpointTypeImageGeneration
+	case strings.HasPrefix(path, "/v1/audio/speech"), strings.HasPrefix(path, "/pg/audio/speech"):
+		return constant.EndpointTypeAudioSpeech
+	case strings.HasPrefix(path, "/v1/videos"), strings.HasPrefix(path, "/pg/videos"), strings.HasPrefix(path, "/pg/video/generations"):
+		return constant.EndpointTypeOpenAIVideo
+	case relayconstant.IsSeedanceOfficialTasksPath(path):
+		return constant.EndpointTypeOpenAIVideo
+	default:
+		return ""
+	}
+}
+
+func normalizeDurationSeconds(req *relaycommon.TaskSubmitReq, cfg modelConfig) (int, error) {
+	duration := req.Duration
+	if duration <= 0 {
+		duration = parseDurationValue(req.Seconds)
+	}
+	if duration <= 0 {
+		duration = parseDurationValue(metadataString(req.Metadata, "duration"))
+	}
+	if duration <= 0 {
+		duration = parseDurationValue(metadataString(req.Metadata, "seconds"))
+	}
+	if duration <= 0 {
+		duration = 5
+	}
+	if isLtx23Config(cfg) {
+		if duration < 1 || duration > 20 {
+			return 0, fmt.Errorf("LTX 2.3 duration must be an integer between 1 and 20 seconds")
+		}
+		return duration, nil
+	}
+	if duration != 5 && duration != 10 {
+		return 0, fmt.Errorf("duration must be 5 or 10 seconds")
+	}
+	return duration, nil
+}
+
+func taskPricingDurationSeconds(req relaycommon.TaskSubmitReq, cfg modelConfig) (float64, error) {
+	if !isLtx23Config(cfg) {
+		duration, err := normalizeDurationSeconds(&req, cfg)
+		return float64(duration), err
+	}
+	if err := normalizeLtxRequestDuration(&req, cfg); err != nil {
+		return 0, err
+	}
+	content, err := buildWorkflowContent(req, cfg)
+	if err != nil {
+		return 0, err
+	}
+	frames := positiveIntValue(content["numFrames"])
+	if frames <= 0 {
+		frames = positiveIntValue(content["length"])
+	}
+	frameRate := positiveIntValue(content["frameRate"])
+	if frameRate <= 0 && isLtx23StartEndConfig(cfg) {
+		frameRate = 24
+	}
+	if frames <= 1 || frameRate <= 0 {
+		return 0, fmt.Errorf("LTX 2.3 requires at least two frames and a positive frame rate")
+	}
+	return float64(frames-1) / float64(frameRate), nil
+}
+
+func parseDurationValue(value string) int {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0
+	}
+	if i, err := strconv.Atoi(value); err == nil {
+		return i
+	}
+	if f, err := strconv.ParseFloat(value, 64); err == nil {
+		i := int(f)
+		if f == float64(i) {
+			return i
+		}
+	}
+	return 0
+}
+
+func applyModelDefaults(content map[string]any, req relaycommon.TaskSubmitReq, cfg modelConfig) {
+	for _, item := range cfg.WorkflowDefaults {
+		if strings.TrimSpace(item.ParamKey) == "" || hasContentValue(content[item.ParamKey]) {
+			continue
+		}
+		switch item.ValueType {
+		case constant.AIPDDWorkflowValueTypeInt:
+			if value, ok := resolveWorkflowDefaultInt(content, req, item.Sources); ok {
+				setContentInt(content, item.ParamKey, value)
+			}
+		default:
+			if value := resolveWorkflowDefaultString(content, req, item.Sources); value != "" {
+				setContentString(content, item.ParamKey, value)
+			}
+		}
+	}
+}
+
+func resolveWorkflowDefaultString(content map[string]any, req relaycommon.TaskSubmitReq, sources []constant.AIPDDWorkflowValueSource) string {
+	values := make([]string, 0, len(sources))
+	for _, source := range sources {
+		switch source.Type {
+		case constant.AIPDDWorkflowSourceMetadata:
+			values = append(values, metadataString(req.Metadata, source.Key))
+		case constant.AIPDDWorkflowSourcePrompt:
+			values = append(values, req.Prompt)
+		case constant.AIPDDWorkflowSourceImage:
+			values = append(values, req.Image)
+		case constant.AIPDDWorkflowSourceFirstImage:
+			values = append(values, req.FirstFrame, firstString(req.Images))
+		case constant.AIPDDWorkflowSourceLastImage:
+			values = append(values, req.LastFrame, req.ImageTail, secondString(req.Images))
+		case constant.AIPDDWorkflowSourceInputReference:
+			values = append(values, req.InputReference)
+		case constant.AIPDDWorkflowSourceDuration:
+			if req.Duration > 0 {
+				values = append(values, strconv.Itoa(req.Duration))
+			}
+		case constant.AIPDDWorkflowSourceStatic:
+			values = append(values, source.Key)
+		}
+	}
+	return firstNonEmpty(values...)
+}
+
+func resolveWorkflowDefaultInt(content map[string]any, req relaycommon.TaskSubmitReq, sources []constant.AIPDDWorkflowValueSource) (int, bool) {
+	for _, source := range sources {
+		switch source.Type {
+		case constant.AIPDDWorkflowSourceMetadata:
+			if value := parseDurationValue(metadataString(req.Metadata, source.Key)); value > 0 {
+				return value, true
+			}
+		case constant.AIPDDWorkflowSourceDuration:
+			if req.Duration > 0 {
+				return req.Duration, true
+			}
+		case constant.AIPDDWorkflowSourceStatic:
+			if value := parseDurationValue(source.Key); value > 0 {
+				return value, true
+			}
+		default:
+			if value := parseDurationValue(resolveWorkflowDefaultString(content, req, []constant.AIPDDWorkflowValueSource{source})); value > 0 {
+				return value, true
+			}
+		}
+	}
+	return 0, false
+}
+
+func validateTaskContent(content map[string]any, cfg modelConfig) error {
+	allowed := make(map[string]bool, len(cfg.WorkflowParamKeys))
+	for _, key := range cfg.WorkflowParamKeys {
+		allowed[key] = true
+		if cfg.RequiredWorkflowParams[key] {
+			if !hasContentValue(content[key]) {
+				return fmt.Errorf("%s is required for %s", key, cfg.ModelName)
+			}
+			continue
+		}
+		if !hasContentValue(content[key]) {
+			delete(content, key)
+		}
+	}
+	for key := range content {
+		if !allowed[key] {
+			delete(content, key)
+		}
+	}
+	for _, constraint := range cfg.WorkflowConstraints {
+		value, exists := content[constraint.ParamKey]
+		if !exists || !hasContentValue(value) {
+			continue
+		}
+		if err := validateWorkflowConstraint(value, constraint); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateWorkflowConstraint(value any, constraint constant.AIPDDWorkflowParamConstraint) error {
+	numeric, numericErr := strconv.ParseFloat(anyToString(value), 64)
+	if constraint.Min != nil || constraint.Max != nil {
+		if numericErr != nil {
+			return fmt.Errorf("%s must be numeric", constraint.ParamKey)
+		}
+		if constraint.Min != nil && numeric < *constraint.Min {
+			return fmt.Errorf("%s must be at least %v", constraint.ParamKey, *constraint.Min)
+		}
+		if constraint.Max != nil && numeric > *constraint.Max {
+			return fmt.Errorf("%s must be at most %v", constraint.ParamKey, *constraint.Max)
+		}
+	}
+	if len(constraint.Allowed) > 0 {
+		for _, allowed := range constraint.Allowed {
+			allowedNumeric, allowedErr := strconv.ParseFloat(anyToString(allowed), 64)
+			if numericErr == nil && allowedErr == nil && numeric == allowedNumeric {
+				return nil
+			}
+			if anyToString(value) == anyToString(allowed) {
+				return nil
+			}
+		}
+		return fmt.Errorf("%s is not an allowed value", constraint.ParamKey)
+	}
+	return nil
+}
+
+func isLtx23Config(cfg modelConfig) bool {
+	return isLtx23StandardConfig(cfg) || isLtx23StartEndConfig(cfg)
+}
+
+func isLtx23StandardConfig(cfg modelConfig) bool {
+	for _, value := range []string{cfg.ModelName, cfg.ScriptCode} {
+		normalized := strings.NewReplacer("_", "-", ".", "-", " ", "-").Replace(strings.ToLower(strings.TrimSpace(value)))
+		if normalized == "aipdd-ltx-2-3" && !isLtx23StartEndValue(value) {
+			return true
+		}
+	}
+	return false
+}
+
+func isLtx23StartEndConfig(cfg modelConfig) bool {
+	return isLtx23StartEndValue(cfg.ModelName) || isLtx23StartEndValue(cfg.ScriptCode)
+}
+
+func isLtx23StartEndValue(value string) bool {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if strings.Contains(value, "首尾帧") {
+		return true
+	}
+	return strings.Contains(value, "first") && strings.Contains(value, "last") && strings.Contains(value, "ltx")
+}
+
+func normalizeLtxStartEndContent(content map[string]any, req relaycommon.TaskSubmitReq, explicitLength, explicitNumFrames bool) error {
+	if !explicitLength && explicitNumFrames {
+		numFrames := positiveIntValue(req.Metadata["numFrames"])
+		if numFrames <= 0 {
+			return fmt.Errorf("numFrames must be a positive integer")
+		}
+		content["length"] = numFrames
+	} else if !explicitLength && req.Duration > 0 {
+		content["length"] = req.Duration*24 + 1
+	}
+	if value, ok := content["length"]; ok && hasContentValue(value) {
+		length := positiveIntValue(value)
+		if length <= 0 {
+			return fmt.Errorf("length must be a positive integer")
+		}
+		content["length"] = length
+		// The upstream first/last-frame workflow validates numFrames as a
+		// separate required input even though length is its timeline alias.
+		content["numFrames"] = length
+	}
+	return nil
+}
+
+func normalizeWorkflowTimelineData(content map[string]any, cfg modelConfig) error {
+	if !workflowParamAllowed(cfg, "timeline_data") {
+		return nil
+	}
+	value, exists := content["timeline_data"]
+	if !exists || !hasContentValue(value) {
+		return nil
+	}
+	if raw, ok := value.(string); ok {
+		var parsed any
+		if err := common.Unmarshal([]byte(strings.TrimSpace(raw)), &parsed); err != nil {
+			return fmt.Errorf("timeline_data must be valid JSON: %w", err)
+		}
+		content["timeline_data"] = parsed
+	}
+	return nil
+}
+
+func workflowParamAllowed(cfg modelConfig, key string) bool {
+	for _, paramKey := range cfg.WorkflowParamKeys {
+		if paramKey == key {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeAndValidateLtx23Content(content map[string]any, duration int, explicitNumFrames bool, explicitDurationSeconds bool) error {
+	const frameRate = 24
+	if duration <= 0 && explicitDurationSeconds {
+		duration = positiveIntValue(content["durationSeconds"])
+	}
+	if duration > 20 {
+		return fmt.Errorf("LTX 2.3 duration must be an integer between 1 and 20 seconds")
+	}
+	if duration > 0 {
+		expectedFrames := duration*frameRate + 1
+		if explicitNumFrames && positiveIntValue(content["numFrames"]) != expectedFrames {
+			return fmt.Errorf("LTX 2.3 numFrames must be %d for %d seconds", expectedFrames, duration)
+		}
+		if explicitDurationSeconds && positiveIntValue(content["durationSeconds"]) != duration {
+			return fmt.Errorf("LTX 2.3 durationSeconds must match duration")
+		}
+		content["numFrames"] = expectedFrames
+		content["durationSeconds"] = duration
+	} else if positiveIntValue(content["numFrames"]) <= 0 {
+		return fmt.Errorf("LTX 2.3 numFrames must be a positive integer")
+	}
+
+	if hasContentValue(content["frameRate"]) && positiveIntValue(content["frameRate"]) != frameRate {
+		return fmt.Errorf("LTX 2.3 frameRate must be 24 FPS")
+	}
+	content["frameRate"] = frameRate
+
+	width := positiveIntValue(content["width"])
+	height := positiveIntValue(content["height"])
+	allowedDimensions := [][2]int{{1280, 704}, {704, 1280}, {704, 704}, {640, 640}, {640, 480}, {480, 640}, {480, 480}}
+	for _, dimensions := range allowedDimensions {
+		if width == dimensions[0] && height == dimensions[1] {
+			return nil
+		}
+	}
+	return fmt.Errorf("LTX 2.3 resolution %dx%d is not allowed", width, height)
+}
+
+func mergeUnknownFieldsIntoMetadata(c *gin.Context, req *relaycommon.TaskSubmitReq) {
+	var raw map[string]any
+	if err := common.UnmarshalBodyReusable(c, &raw); err != nil {
+		return
+	}
+	if len(raw) == 0 {
+		return
+	}
+	if req.Metadata == nil {
+		req.Metadata = map[string]interface{}{}
+	}
+	for key, value := range raw {
+		if isKnownSubmitField(key) || key == "metadata" {
+			continue
+		}
+		req.Metadata[key] = value
+	}
+}
+
+func normalizeTaskSubmitReq(req *relaycommon.TaskSubmitReq) {
+	req.FirstFrame = firstNonEmpty(
+		req.FirstFrame,
+		metadataString(req.Metadata, "first_frame_image"),
+		metadataString(req.Metadata, "first_frame"),
+		req.Image,
+		firstString(req.Images),
+		req.InputReference,
+	)
+	req.LastFrame = firstNonEmpty(
+		req.LastFrame,
+		metadataString(req.Metadata, "last_frame_image"),
+		metadataString(req.Metadata, "last_frame"),
+		req.ImageTail,
+		metadataString(req.Metadata, "image_tail"),
+		secondString(req.Images),
+	)
+	if strings.TrimSpace(req.Image) == "" {
+		req.Image = req.FirstFrame
+	}
+	if len(req.Images) == 0 && strings.TrimSpace(req.Image) != "" {
+		req.Images = []string{req.Image}
+	}
+	if req.N == nil && req.ImageCount != nil {
+		req.N = req.ImageCount
+	}
+	if count := taskSubmitReqCount(*req); count > 0 {
+		setTaskMetadataIntIfAbsent(req, count, "n", "image_count", "count")
+	}
+}
+
+func taskSubmitReqCount(req relaycommon.TaskSubmitReq) int {
+	if req.N != nil && *req.N > 0 {
+		return *req.N
+	}
+	if req.ImageCount != nil && *req.ImageCount > 0 {
+		return *req.ImageCount
+	}
+	for _, key := range []string{"n", "image_count", "count"} {
+		if value := metadataPositiveInt(req.Metadata, key); value > 0 {
+			return value
+		}
+	}
+	return 0
+}
+
+func setTaskMetadataIntIfAbsent(req *relaycommon.TaskSubmitReq, value int, keys ...string) {
+	if value <= 0 {
+		return
+	}
+	if req.Metadata == nil {
+		req.Metadata = map[string]interface{}{}
+	}
+	for _, key := range keys {
+		if _, exists := req.Metadata[key]; !exists {
+			req.Metadata[key] = value
+		}
+	}
+}
+
+func metadataPositiveInt(metadata map[string]interface{}, key string) int {
+	if metadata == nil {
+		return 0
+	}
+	return positiveIntValue(metadata[key])
+}
+
+func positiveIntValue(value any) int {
+	switch v := value.(type) {
+	case int:
+		if v > 0 {
+			return v
+		}
+	case int64:
+		if v > 0 && int64(int(v)) == v {
+			return int(v)
+		}
+	case uint:
+		if v > 0 && uint(int(v)) == v {
+			return int(v)
+		}
+	case uint64:
+		if v > 0 && uint64(int(v)) == v {
+			return int(v)
+		}
+	case float64:
+		i := int(v)
+		if v > 0 && v == float64(i) {
+			return i
+		}
+	case float32:
+		i := int(v)
+		if v > 0 && v == float32(i) {
+			return i
+		}
+	case string:
+		return parseDurationValue(v)
+	}
+	return 0
+}
+
+func cloneWorkflowMetadata(metadata map[string]interface{}) map[string]any {
+	out := make(map[string]any)
+	for key, value := range metadata {
+		if isKnownSubmitField(key) || isAIPDDPayloadField(key) {
+			continue
+		}
+		out[key] = value
+	}
+	return out
+}
+
+func setContentString(content map[string]any, key string, values ...string) {
+	if hasContentValue(content[key]) {
+		return
+	}
+	if value := firstNonEmpty(values...); value != "" {
+		content[key] = value
+	}
+}
+
+func setContentInt(content map[string]any, key string, value int) {
+	if hasContentValue(content[key]) {
+		return
+	}
+	if value > 0 {
+		content[key] = value
+	}
+}
+
+func metadataString(metadata map[string]interface{}, key string) string {
+	if metadata == nil {
+		return ""
+	}
+	return anyToString(metadata[key])
+}
+
+func firstString(values []string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func secondString(values []string) string {
+	if len(values) < 2 {
+		return ""
+	}
+	return firstString(values[1:])
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func anyToString(value any) string {
+	switch v := value.(type) {
+	case nil:
+		return ""
+	case string:
+		return strings.TrimSpace(v)
+	case fmt.Stringer:
+		return strings.TrimSpace(v.String())
+	default:
+		return strings.TrimSpace(fmt.Sprintf("%v", v))
+	}
+}
+
+func hasContentValue(value any) bool {
+	return strings.TrimSpace(anyToString(value)) != ""
+}
+
+func isKnownSubmitField(key string) bool {
+	switch key {
+	case "prompt", "model", "mode", "client_task_id", "image", "image_tail", "first_frame", "last_frame", "images", "size", "n", "image_count", "duration", "seconds", "input_reference", "group":
+		return true
+	default:
+		return false
+	}
+}
+
+func isAIPDDPayloadField(key string) bool {
+	switch key {
+	case "task_name", "task_type", "task_cost", "task_service", "task_content", "script_id", "script_code":
+		return true
+	default:
+		return false
+	}
+}
+
+func failedTaskResultReason(value any) (string, bool) {
+	switch v := value.(type) {
+	case string:
+		var parsed any
+		if err := common.Unmarshal([]byte(strings.TrimSpace(v)), &parsed); err != nil {
+			return "", false
+		}
+		return failedTaskResultReason(parsed)
+	case map[string]any:
+		success, ok := v["success"].(bool)
+		if ok && !success {
+			return firstNonEmpty(
+				anyToString(v["message"]),
+				anyToString(v["error"]),
+				anyToString(v["reason"]),
+				"AIPDD task failed",
+			), true
+		}
+	}
+	return "", false
+}
+
+func extractResultURLs(value any) []string {
+	switch v := value.(type) {
+	case nil:
+		return nil
+	case string:
+		return extractResultURLsFromString(v)
+	case []string:
+		return cleanURLList(v)
+	case []any:
+		urls := make([]string, 0, len(v))
+		for _, item := range v {
+			urls = append(urls, extractResultURLs(item)...)
+		}
+		return cleanURLList(urls)
+	case map[string]any:
+		for _, key := range []string{"url", "urls", "public_url", "publicUrl", "signed_url", "signedUrl", "download_url", "downloadUrl", "result", "results", "output", "outputs", "objectRefs", "downloadRefs", "video", "videos", "image", "images", "audio", "audios", "file", "files", "data"} {
+			if nested, ok := v[key]; ok {
+				if urls := extractResultURLs(nested); len(urls) > 0 {
+					return urls
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func extractResultURLsFromString(value string) []string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" || trimmed == "null" {
+		return nil
+	}
+	var parsed any
+	if err := common.Unmarshal([]byte(trimmed), &parsed); err == nil {
+		if urls := extractResultURLs(parsed); len(urls) > 0 {
+			return urls
+		}
+		return nil
+	}
+	if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
+		items := strings.Split(strings.Trim(trimmed, "[]"), ",")
+		urls := make([]string, 0, len(items))
+		for _, item := range items {
+			urls = append(urls, strings.Trim(strings.TrimSpace(item), `"'`))
+		}
+		return cleanURLList(urls)
+	}
+	return cleanURLList([]string{trimmed})
+}
+
+func taskResultText(value any) string {
+	if reason, failed := failedTaskResultReason(value); failed {
+		return reason
+	}
+	switch v := value.(type) {
+	case nil:
+		return ""
+	case string:
+		return strings.TrimSpace(v)
+	default:
+		data, err := common.Marshal(v)
+		if err != nil {
+			return fmt.Sprintf("%v", v)
+		}
+		return string(data)
+	}
+}
+
+func cleanURLList(values []string) []string {
+	out := make([]string, 0, len(values))
+	seen := map[string]bool{}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] || !isResultURL(value) {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
+}
+
+func isResultURL(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return false
+	}
+	if strings.HasPrefix(strings.ToLower(value), "data:") {
+		return true
+	}
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return false
+	}
+	scheme := strings.ToLower(parsed.Scheme)
+	return scheme == "http" || scheme == "https"
+}

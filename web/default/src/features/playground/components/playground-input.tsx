@@ -1,0 +1,1003 @@
+/*
+Copyright (C) 2023-2026 QuantumNous
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+For commercial licensing, please contact support@quantumnous.com
+*/
+import { useCallback, useState } from 'react'
+import {
+  PaperclipIcon,
+  ChevronDownIcon,
+  FileIcon,
+  ImageIcon,
+  MessageSquareIcon,
+  ScreenShareIcon,
+  CameraIcon,
+  SendIcon,
+  SquareIcon,
+  Settings2Icon,
+  VideoIcon,
+  ClockIcon,
+  AtSignIcon,
+  RectangleHorizontalIcon,
+  MonitorIcon,
+} from 'lucide-react'
+import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuLabel,
+  DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import { Slider } from '@/components/ui/slider'
+import {
+  PromptInput,
+  PromptInputAttachment,
+  PromptInputButton,
+  PromptInputFooter,
+  PromptInputTextarea,
+  PromptInputTools,
+  type PromptInputMessage,
+  type PromptInputPreparedFile,
+  usePromptInputAttachments,
+} from '@/components/ai-elements/prompt-input'
+import { ModelGroupSelector } from '@/components/model-group-selector'
+import { uploadReferenceMedia } from '../api'
+import {
+  formatVideoResolutionLabel,
+  getImageSizeOptionsForModel,
+  getLTXVideoSizeOptionsForModel,
+  getVideoDurationRangeForModel,
+  getVideoRatioOptionsForModel,
+  getVideoResolutionOptionsForModel,
+  IMAGE_REFERENCE_ACCEPT,
+  IMAGE_REFERENCE_LIMITS,
+  isLTX23StartEndModel,
+  isLTX23PolicyModel,
+  isLTXVideoModel,
+  normalizeVideoDurationForModel,
+  SEEDANCE_REFERENCE_ACCEPT,
+  SEEDANCE_REFERENCE_LIMITS,
+} from '../constants'
+import { normalizePlaygroundError } from '../lib'
+import { resolveLTXStartEndTimeline } from '../lib/ltx-start-end'
+import {
+  assignLTXStartEndAttachmentRoles,
+  getLTXStartEndAttachmentState,
+} from '../lib/ltx-start-end-attachments'
+import { getMinimaxH3ModelSpec } from '../lib/minimax-h3'
+import { getMinimaxH3PromptInputIssue } from '../lib/minimax-h3-input'
+import type {
+  ModelOption,
+  GroupOption,
+  PlaygroundMode,
+  ThinkingMode,
+} from '../types'
+import { LTXStartEndPanel } from './ltx-start-end-panel'
+import { MaterialSelectorDialog } from './material-selector-dialog'
+import { MinimaxH3FirstLastFramePanel } from './minimax-h3-first-last-frame-panel'
+import {
+  MinimaxH3AttachmentPolicy,
+  MinimaxH3ValidationMessage,
+} from './minimax-h3-input-support'
+
+interface PlaygroundInputProps {
+  onSubmit: (message: PromptInputMessage) => void | Promise<void>
+  onStop?: () => void
+  mode: PlaygroundMode
+  onModeChange: (value: PlaygroundMode) => void
+  disabled?: boolean
+  isGenerating?: boolean
+  models: ModelOption[]
+  modelValue: string
+  onModelChange: (value: string) => void
+  isModelLoading?: boolean
+  groups: GroupOption[]
+  groupValue: string
+  onGroupChange: (value: string) => void
+  thinkingMode: ThinkingMode
+  onThinkingModeChange: (value: ThinkingMode) => void
+  imageSize: string
+  onImageSizeChange: (value: string) => void
+  imageQuality: string
+  onImageQualityChange: (value: string) => void
+  imageCount: number
+  onImageCountChange: (value: number) => void
+  videoRatio: string
+  onVideoRatioChange: (value: string) => void
+  videoDuration: number
+  onVideoDurationChange: (value: number) => void
+  videoResolution: string
+  onVideoResolutionChange: (value: string) => void
+  videoSize: string
+  onVideoSizeChange: (value: string) => void
+  ltxTimelineData: string
+  onLtxTimelineDataChange: (value: string) => void
+}
+
+const imageQualities = ['standard', 'hd', 'auto']
+const imageCounts = [1, 2, 4]
+const thinkingModeLabels: Record<ThinkingMode, string> = {
+  auto: 'Auto',
+  enabled: 'Enabled',
+  disabled: 'Disabled',
+}
+
+function PlaygroundSubmitButton({
+  disabled,
+  isVideoMode,
+  isImageMode,
+  isLTXStartEnd,
+  timelineData,
+  videoDuration,
+  videoResolution,
+  videoRatio,
+  model,
+  text,
+}: {
+  disabled?: boolean
+  isVideoMode: boolean
+  isImageMode: boolean
+  isLTXStartEnd: boolean
+  timelineData: string
+  videoDuration: number
+  videoResolution: string
+  videoRatio: string
+  model: string
+  text: string
+}) {
+  const { t } = useTranslation()
+  const attachments = usePromptInputAttachments()
+  const hasText = text.trim().length > 0
+  const hasReferences = attachments.files.length > 0
+  const ltxAttachmentState = getLTXStartEndAttachmentState(attachments.files)
+  const timelineResolution = resolveLTXStartEndTimeline(
+    text,
+    videoDuration,
+    timelineData
+  )
+  const minimaxH3Spec = isVideoMode ? getMinimaxH3ModelSpec(model) : undefined
+  const minimaxH3Issue = minimaxH3Spec
+    ? getMinimaxH3PromptInputIssue(
+        {
+          model,
+          prompt: text,
+          duration: videoDuration,
+          resolution: videoResolution,
+          ratio: videoRatio,
+        },
+        attachments.files
+      )
+    : null
+  let canSubmit = hasText
+  if (minimaxH3Spec) {
+    canSubmit = !minimaxH3Issue
+  } else if (isLTXStartEnd) {
+    canSubmit =
+      hasText && ltxAttachmentState.isValid && !timelineResolution.error
+  } else if (isVideoMode || isImageMode) {
+    canSubmit = hasText || hasReferences
+  }
+
+  return (
+    <PromptInputButton
+      className='text-foreground font-medium'
+      disabled={disabled || !canSubmit}
+      type='submit'
+      variant='secondary'
+    >
+      <SendIcon size={16} />
+      <span className='hidden sm:inline'>{t('Send')}</span>
+      <span className='sr-only sm:hidden'>{t('Send')}</span>
+    </PromptInputButton>
+  )
+}
+
+function DirectAttachmentButton({ disabled }: { disabled?: boolean }) {
+  const { t } = useTranslation()
+  const attachments = usePromptInputAttachments()
+
+  return (
+    <PromptInputButton
+      aria-label={t('Attach')}
+      className='border font-medium'
+      disabled={disabled}
+      onClick={attachments.openFileDialog}
+      type='button'
+      variant='outline'
+    >
+      <PaperclipIcon size={16} />
+      <span className='hidden sm:inline'>{t('Attach')}</span>
+      <span className='sr-only sm:hidden'>{t('Attach')}</span>
+    </PromptInputButton>
+  )
+}
+
+function ReferenceAttachments() {
+  const { t } = useTranslation()
+  const attachments = usePromptInputAttachments()
+  if (attachments.files.length === 0) return null
+
+  return (
+    <div className='flex flex-wrap gap-2 px-4 pt-3'>
+      {attachments.files.map((attachment, index) => (
+        <div className='relative' key={attachment.id}>
+          <span
+            aria-label={t('Reference {{n}}', { n: index + 1 })}
+            className='bg-primary text-primary-foreground pointer-events-none absolute -top-1.5 -left-1.5 z-10 flex size-4 items-center justify-center rounded-full text-[9px] font-semibold shadow-sm'
+          >
+            {index + 1}
+          </span>
+          <PromptInputAttachment className='max-w-48' data={attachment} />
+        </div>
+      ))}
+    </div>
+  )
+}
+
+export function PlaygroundInput({
+  onSubmit,
+  onStop,
+  mode,
+  onModeChange,
+  disabled,
+  isGenerating,
+  models,
+  modelValue,
+  onModelChange,
+  isModelLoading = false,
+  groups,
+  groupValue,
+  onGroupChange,
+  thinkingMode,
+  onThinkingModeChange,
+  imageSize,
+  onImageSizeChange,
+  imageQuality,
+  onImageQualityChange,
+  imageCount,
+  onImageCountChange,
+  videoRatio,
+  onVideoRatioChange,
+  videoDuration,
+  onVideoDurationChange,
+  videoResolution,
+  onVideoResolutionChange,
+  videoSize,
+  onVideoSizeChange,
+  ltxTimelineData,
+  onLtxTimelineDataChange,
+}: PlaygroundInputProps) {
+  const { t } = useTranslation()
+  const [text, setText] = useState('')
+  const [isMaterialSelectorOpen, setIsMaterialSelectorOpen] = useState(false)
+  const [isPreparingReferences, setIsPreparingReferences] = useState(false)
+  const isImageMode = mode === 'image'
+  const isVideoMode = mode === 'video'
+  const isLTXVideo = isVideoMode && isLTXVideoModel(modelValue)
+  const isLTX23StartEnd = isVideoMode && isLTX23StartEndModel(modelValue)
+  const isLTX23Policy = isVideoMode && isLTX23PolicyModel(modelValue)
+  const minimaxH3Spec = isVideoMode
+    ? getMinimaxH3ModelSpec(modelValue)
+    : undefined
+  const isMinimaxH3FirstLast =
+    minimaxH3Spec?.kind === 'first-last-frame-to-video'
+  const isMinimaxH3TextToVideo = minimaxH3Spec?.kind === 'text-to-video'
+  const isMinimaxH3Lipsync = minimaxH3Spec?.kind === 'image-audio-lipsync'
+  const controlsDisabled = disabled || isPreparingReferences
+  const imageSizeOptions = getImageSizeOptionsForModel(modelValue)
+  const videoDurationRange = getVideoDurationRangeForModel(
+    modelValue,
+    videoResolution
+  )
+  const videoSizeOptions = getLTXVideoSizeOptionsForModel(modelValue)
+  const effectiveVideoResolutions = models.find(
+    (model) => model.value === modelValue
+  )?.video_resolutions
+  const videoResolutionOptions = getVideoResolutionOptionsForModel(
+    modelValue,
+    effectiveVideoResolutions
+  )
+  const usesVideoSizeOptions = videoSizeOptions.length > 0
+  const normalizedVideoDuration = normalizeVideoDurationForModel(
+    modelValue,
+    videoDuration,
+    videoResolution
+  )
+  const ModeIcon = isVideoMode
+    ? VideoIcon
+    : isImageMode
+      ? ImageIcon
+      : MessageSquareIcon
+
+  const isModelSelectDisabled =
+    controlsDisabled || isModelLoading || models.length === 0
+  const isGroupSelectDisabled = controlsDisabled || groups.length === 0
+  const isSubmitDisabled =
+    controlsDisabled || isGenerating || isModelLoading || !modelValue
+
+  let videoReferenceAccept: string = SEEDANCE_REFERENCE_ACCEPT
+  let videoReferenceMaxFiles: number = SEEDANCE_REFERENCE_LIMITS.total
+  let videoReferenceMultiple = true
+  if (isLTXVideo) {
+    videoReferenceAccept = IMAGE_REFERENCE_ACCEPT
+    videoReferenceMaxFiles = 1
+    videoReferenceMultiple = false
+  } else if (minimaxH3Spec) {
+    if (minimaxH3Spec.kind === 'text-to-video') {
+      videoReferenceAccept = 'application/x-no-minimax-h3-reference'
+    } else if (
+      minimaxH3Spec.kind === 'multimodal-to-video' ||
+      minimaxH3Spec.kind === 'image-audio-lipsync'
+    ) {
+      videoReferenceAccept = 'image/*,audio/*'
+    } else {
+      videoReferenceAccept = IMAGE_REFERENCE_ACCEPT
+    }
+    videoReferenceMaxFiles =
+      minimaxH3Spec.imageRange[1] + minimaxH3Spec.audioRange[1]
+    videoReferenceMultiple = videoReferenceMaxFiles > 1
+  }
+
+  const showGenericReferenceAttachments =
+    (isVideoMode || isImageMode) &&
+    !isLTX23StartEnd &&
+    !isMinimaxH3FirstLast &&
+    !isMinimaxH3TextToVideo
+  const showDirectAttachmentButton =
+    (isVideoMode || isImageMode) &&
+    !isLTX23StartEnd &&
+    !isMinimaxH3FirstLast &&
+    !isMinimaxH3TextToVideo
+  const showMaterialButton =
+    isImageMode ||
+    (isVideoMode &&
+      !isLTX23StartEnd &&
+      !isMinimaxH3FirstLast &&
+      !isMinimaxH3TextToVideo)
+  const minimaxH3MaterialTypes =
+    minimaxH3Spec?.kind === 'multimodal-to-video' ||
+    minimaxH3Spec?.kind === 'image-audio-lipsync'
+      ? (['image', 'audio'] as Array<'image' | 'audio'>)
+      : undefined
+  const minimaxH3FixedMaterialType =
+    minimaxH3Spec?.kind === 'reference-to-video' ? 'image' : undefined
+
+  let promptPlaceholder = t('Ask anything')
+  if (isImageMode) {
+    promptPlaceholder = t('Describe the image to generate')
+  } else if (isVideoMode) {
+    promptPlaceholder = t('Upload references or describe the video')
+    if (isMinimaxH3Lipsync) {
+      promptPlaceholder = t('This MiniMax H3 model does not use a prompt')
+    } else if (isLTX23StartEnd) {
+      promptPlaceholder = t('Describe how the first frame should move')
+    } else if (isLTXVideo) {
+      promptPlaceholder = t('Upload a reference image or describe the video')
+    } else if (isMinimaxH3FirstLast) {
+      promptPlaceholder = t(
+        'Describe the transition from the first frame to the last frame'
+      )
+    } else if (isMinimaxH3TextToVideo) {
+      promptPlaceholder = t('Describe the video to generate')
+    }
+  }
+
+  const prepareReferenceFiles = useCallback(
+    async (files: File[]): Promise<PromptInputPreparedFile[]> => {
+      try {
+        return await Promise.all(
+          files.map(async (file) => {
+            const uploaded = await uploadReferenceMedia(file)
+            return {
+              url: uploaded.url,
+              mediaType: uploaded.media_type || file.type,
+              filename: uploaded.filename || file.name,
+              sourceFile: isVideoMode ? file : undefined,
+            }
+          })
+        )
+      } catch (error) {
+        const uploadError = normalizePlaygroundError(error, t)
+        throw new Error(uploadError.message, { cause: error })
+      }
+    },
+    [isVideoMode, t]
+  )
+
+  const handleSubmit = (message: PromptInputMessage) => {
+    const files = isLTX23StartEnd
+      ? assignLTXStartEndAttachmentRoles(message.files || [])
+      : message.files
+    const hasText = !!message.text?.trim()
+    const hasReferences = !!files?.length
+    if (
+      isSubmitDisabled ||
+      (!hasText && ((!isVideoMode && !isImageMode) || !hasReferences))
+    ) {
+      return
+    }
+    const result = onSubmit({
+      ...message,
+      files,
+      text: message.text?.trim() || '',
+    })
+    if (result instanceof Promise) {
+      return result.then(() => setText(''))
+    }
+    setText('')
+    return result
+  }
+
+  const handleInsertReferenceMarker = () => {
+    setIsMaterialSelectorOpen(true)
+  }
+
+  const handleModelChange = (value: string) => {
+    if (getMinimaxH3ModelSpec(value)?.kind === 'image-audio-lipsync') {
+      setText('')
+    }
+    onModelChange(value)
+  }
+
+  const handleVideoDurationChange = (value: number) => {
+    onVideoDurationChange(
+      normalizeVideoDurationForModel(modelValue, value, videoResolution)
+    )
+  }
+
+  const handleVideoResolutionChange = (value: string) => {
+    onVideoResolutionChange(value)
+    const nextDuration = normalizeVideoDurationForModel(
+      modelValue,
+      videoDuration,
+      value
+    )
+    if (nextDuration !== videoDuration) onVideoDurationChange(nextDuration)
+  }
+
+  return (
+    <div className='grid shrink-0 gap-4 px-1 md:pb-4'>
+      <PromptInput
+        accept={
+          isVideoMode
+            ? videoReferenceAccept
+            : isImageMode
+              ? IMAGE_REFERENCE_ACCEPT
+              : undefined
+        }
+        groupClassName='rounded-xl'
+        maxFileSize={
+          isVideoMode
+            ? SEEDANCE_REFERENCE_LIMITS.maxFileSize
+            : isImageMode
+              ? IMAGE_REFERENCE_LIMITS.maxFileSize
+              : undefined
+        }
+        maxFiles={
+          isVideoMode
+            ? videoReferenceMaxFiles
+            : isImageMode
+              ? IMAGE_REFERENCE_LIMITS.maxFiles
+              : undefined
+        }
+        multiple={(isVideoMode && videoReferenceMultiple) || isImageMode}
+        onError={(error) => toast.error(error.message)}
+        onFilesPreparingChange={setIsPreparingReferences}
+        prepareFiles={
+          isImageMode || isVideoMode ? prepareReferenceFiles : undefined
+        }
+        onSubmit={handleSubmit}
+      >
+        <MinimaxH3AttachmentPolicy model={isVideoMode ? modelValue : ''} />
+
+        {showGenericReferenceAttachments && <ReferenceAttachments />}
+
+        {isLTX23StartEnd && (
+          <LTXStartEndPanel
+            disabled={controlsDisabled}
+            duration={normalizedVideoDuration}
+            maxFileSize={SEEDANCE_REFERENCE_LIMITS.maxFileSize}
+            onPreparingChange={setIsPreparingReferences}
+            onTimelineDataChange={onLtxTimelineDataChange}
+            prepareFiles={prepareReferenceFiles}
+            prompt={text}
+            timelineData={ltxTimelineData}
+          />
+        )}
+
+        {isMinimaxH3FirstLast && (
+          <MinimaxH3FirstLastFramePanel
+            disabled={controlsDisabled}
+            maxFileSize={SEEDANCE_REFERENCE_LIMITS.maxFileSize}
+            onPreparingChange={setIsPreparingReferences}
+            prepareFiles={prepareReferenceFiles}
+          />
+        )}
+
+        <PromptInputTextarea
+          autoComplete='off'
+          autoCorrect='off'
+          autoCapitalize='off'
+          spellCheck={false}
+          className='px-5 md:text-base'
+          disabled={controlsDisabled || isMinimaxH3Lipsync}
+          onChange={(event) => setText(event.target.value)}
+          placeholder={promptPlaceholder}
+          value={text}
+        />
+
+        {minimaxH3Spec && (
+          <MinimaxH3ValidationMessage
+            duration={normalizedVideoDuration}
+            model={modelValue}
+            prompt={text}
+            ratio={videoRatio}
+            resolution={videoResolution}
+          />
+        )}
+
+        <PromptInputFooter className='p-2.5'>
+          <PromptInputTools>
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                render={
+                  <PromptInputButton
+                    className='min-w-24 justify-between border font-medium'
+                    disabled={controlsDisabled}
+                    type='button'
+                    variant='outline'
+                  />
+                }
+              >
+                <ModeIcon size={16} />
+                <span>
+                  {isVideoMode
+                    ? t('Video')
+                    : isImageMode
+                      ? t('Image')
+                      : t('Chat')}
+                </span>
+                <ChevronDownIcon className='opacity-70' size={14} />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align='start' className='min-w-36'>
+                <DropdownMenuRadioGroup
+                  value={mode}
+                  onValueChange={(value) =>
+                    onModeChange(value as PlaygroundMode)
+                  }
+                >
+                  <DropdownMenuRadioItem value='chat'>
+                    <MessageSquareIcon className='mr-2' size={16} />
+                    {t('Chat')}
+                  </DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value='image'>
+                    <ImageIcon className='mr-2' size={16} />
+                    {t('Image')}
+                  </DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value='video'>
+                    <VideoIcon className='mr-2' size={16} />
+                    {t('Video')}
+                  </DropdownMenuRadioItem>
+                </DropdownMenuRadioGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
+
+            {showDirectAttachmentButton ? (
+              <DirectAttachmentButton disabled={controlsDisabled} />
+            ) : !isVideoMode && !isImageMode ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  render={
+                    <PromptInputButton
+                      className='border font-medium'
+                      disabled={controlsDisabled}
+                      variant='outline'
+                    />
+                  }
+                >
+                  <PaperclipIcon size={16} />
+                  <span className='hidden sm:inline'>{t('Attach')}</span>
+                  <span className='sr-only sm:hidden'>{t('Attach')}</span>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align='start'>
+                  <DropdownMenuItem
+                    onClick={() => toast.info(t('Feature in development'))}
+                  >
+                    <FileIcon className='mr-2' size={16} />
+                    {t('Upload file')}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={() => toast.info(t('Feature in development'))}
+                  >
+                    <ImageIcon className='mr-2' size={16} />
+                    {t('Upload photo')}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={() => toast.info(t('Feature in development'))}
+                  >
+                    <ScreenShareIcon className='mr-2' size={16} />
+                    {t('Take screenshot')}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={() => toast.info(t('Feature in development'))}
+                  >
+                    <CameraIcon className='mr-2' size={16} />
+                    {t('Take photo')}
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : null}
+
+            {!isVideoMode && !isImageMode && (
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  render={
+                    <PromptInputButton
+                      className='border font-medium'
+                      disabled={controlsDisabled}
+                      type='button'
+                      variant='outline'
+                    />
+                  }
+                >
+                  <Settings2Icon size={16} />
+                  <span className='hidden sm:inline'>
+                    {t('Reasoning')}: {t(thinkingModeLabels[thinkingMode])}
+                  </span>
+                  <span className='sr-only sm:hidden'>
+                    {t('Reasoning')}: {t(thinkingModeLabels[thinkingMode])}
+                  </span>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align='start' className='min-w-40'>
+                  <DropdownMenuGroup>
+                    <DropdownMenuLabel>{t('Reasoning')}</DropdownMenuLabel>
+                    <DropdownMenuRadioGroup
+                      value={thinkingMode}
+                      onValueChange={(value) =>
+                        onThinkingModeChange(value as ThinkingMode)
+                      }
+                    >
+                      {Object.entries(thinkingModeLabels).map(
+                        ([value, label]) => (
+                          <DropdownMenuRadioItem key={value} value={value}>
+                            {t(label)}
+                          </DropdownMenuRadioItem>
+                        )
+                      )}
+                    </DropdownMenuRadioGroup>
+                  </DropdownMenuGroup>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
+
+            {isImageMode && (
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  render={
+                    <PromptInputButton
+                      className='border font-medium'
+                      disabled={controlsDisabled}
+                      type='button'
+                      variant='outline'
+                    />
+                  }
+                >
+                  <Settings2Icon size={16} />
+                  <span className='hidden sm:inline'>
+                    {t('Image settings')}
+                  </span>
+                  <span className='sr-only sm:hidden'>
+                    {t('Image settings')}
+                  </span>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align='start' className='min-w-44'>
+                  <DropdownMenuGroup>
+                    <DropdownMenuLabel>{t('Size')}</DropdownMenuLabel>
+                    <DropdownMenuRadioGroup
+                      value={imageSize}
+                      onValueChange={onImageSizeChange}
+                    >
+                      {imageSizeOptions.map((size) => (
+                        <DropdownMenuRadioItem key={size} value={size}>
+                          {size}
+                        </DropdownMenuRadioItem>
+                      ))}
+                    </DropdownMenuRadioGroup>
+                  </DropdownMenuGroup>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuGroup>
+                    <DropdownMenuLabel>{t('Quality')}</DropdownMenuLabel>
+                    <DropdownMenuRadioGroup
+                      value={imageQuality}
+                      onValueChange={onImageQualityChange}
+                    >
+                      {imageQualities.map((quality) => (
+                        <DropdownMenuRadioItem key={quality} value={quality}>
+                          {t(quality)}
+                        </DropdownMenuRadioItem>
+                      ))}
+                    </DropdownMenuRadioGroup>
+                  </DropdownMenuGroup>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuGroup>
+                    <DropdownMenuLabel>{t('Count')}</DropdownMenuLabel>
+                    <DropdownMenuRadioGroup
+                      value={String(imageCount)}
+                      onValueChange={(value) =>
+                        onImageCountChange(Number.parseInt(value, 10))
+                      }
+                    >
+                      {imageCounts.map((count) => (
+                        <DropdownMenuRadioItem
+                          key={count}
+                          value={String(count)}
+                        >
+                          {count}
+                        </DropdownMenuRadioItem>
+                      ))}
+                    </DropdownMenuRadioGroup>
+                  </DropdownMenuGroup>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
+
+            {isVideoMode && (
+              <>
+                {usesVideoSizeOptions ? (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger
+                      render={
+                        <PromptInputButton
+                          className='border font-medium'
+                          disabled={controlsDisabled}
+                          type='button'
+                          variant='outline'
+                        />
+                      }
+                    >
+                      <MonitorIcon size={16} />
+                      <span>{videoSize}</span>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align='start' className='min-w-36'>
+                      <DropdownMenuGroup>
+                        <div className='flex items-start justify-between gap-4 px-2 py-1.5'>
+                          <DropdownMenuLabel className='p-0'>
+                            {t('LTX output settings')}
+                          </DropdownMenuLabel>
+                          {(isLTX23Policy || isLTX23StartEnd) && (
+                            <span className='text-muted-foreground text-xs whitespace-nowrap'>
+                              {t('Fixed at {{fps}} FPS', { fps: 24 })}
+                            </span>
+                          )}
+                        </div>
+                        <DropdownMenuRadioGroup
+                          value={videoSize}
+                          onValueChange={onVideoSizeChange}
+                        >
+                          {videoSizeOptions.map((size) => (
+                            <DropdownMenuRadioItem key={size} value={size}>
+                              {size}
+                            </DropdownMenuRadioItem>
+                          ))}
+                        </DropdownMenuRadioGroup>
+                      </DropdownMenuGroup>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                ) : (
+                  <>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger
+                        render={
+                          <PromptInputButton
+                            className='border font-medium'
+                            disabled={controlsDisabled}
+                            type='button'
+                            variant='outline'
+                          />
+                        }
+                      >
+                        <RectangleHorizontalIcon size={16} />
+                        <span>{videoRatio}</span>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align='start' className='min-w-36'>
+                        <DropdownMenuGroup>
+                          <DropdownMenuLabel>
+                            {t('Aspect ratio')}
+                          </DropdownMenuLabel>
+                          <DropdownMenuRadioGroup
+                            value={videoRatio}
+                            onValueChange={onVideoRatioChange}
+                          >
+                            {getVideoRatioOptionsForModel(modelValue).map(
+                              (ratio) => (
+                                <DropdownMenuRadioItem
+                                  key={ratio}
+                                  value={ratio}
+                                >
+                                  {ratio}
+                                </DropdownMenuRadioItem>
+                              )
+                            )}
+                          </DropdownMenuRadioGroup>
+                        </DropdownMenuGroup>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+
+                    <DropdownMenu>
+                      <DropdownMenuTrigger
+                        render={
+                          <PromptInputButton
+                            className='border font-medium'
+                            disabled={controlsDisabled}
+                            type='button'
+                            variant='outline'
+                          />
+                        }
+                      >
+                        <MonitorIcon size={16} />
+                        <span>
+                          {formatVideoResolutionLabel(videoResolution)}
+                        </span>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align='start' className='min-w-56'>
+                        <DropdownMenuGroup>
+                          <DropdownMenuLabel>
+                            {t('Resolution')}
+                          </DropdownMenuLabel>
+                          <DropdownMenuRadioGroup
+                            value={videoResolution}
+                            onValueChange={handleVideoResolutionChange}
+                          >
+                            {videoResolutionOptions.map((resolution) => (
+                              <DropdownMenuRadioItem
+                                key={resolution}
+                                value={resolution}
+                              >
+                                {formatVideoResolutionLabel(resolution)}
+                              </DropdownMenuRadioItem>
+                            ))}
+                          </DropdownMenuRadioGroup>
+                        </DropdownMenuGroup>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </>
+                )}
+
+                <DropdownMenu>
+                  <DropdownMenuTrigger
+                    render={
+                      <PromptInputButton
+                        className='border font-medium'
+                        disabled={controlsDisabled}
+                        type='button'
+                        variant='outline'
+                      />
+                    }
+                  >
+                    <ClockIcon size={16} />
+                    <span>{normalizedVideoDuration}s</span>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align='start' className='w-64'>
+                    <DropdownMenuGroup>
+                      <div className='flex items-center justify-between px-2 py-1.5'>
+                        <DropdownMenuLabel className='p-0'>
+                          {t('Duration')}
+                        </DropdownMenuLabel>
+                        <span className='text-foreground text-sm font-semibold'>
+                          {normalizedVideoDuration}s
+                        </span>
+                      </div>
+                      <div className='flex flex-col gap-2 px-2 pb-2'>
+                        <Slider
+                          aria-label={t('Duration')}
+                          disabled={controlsDisabled}
+                          max={videoDurationRange.max}
+                          min={videoDurationRange.min}
+                          onValueChange={(value) =>
+                            handleVideoDurationChange(
+                              Array.isArray(value) ? value[0] : value
+                            )
+                          }
+                          step={videoDurationRange.step}
+                          value={normalizedVideoDuration}
+                        />
+                        <div className='text-muted-foreground flex items-center justify-between text-xs'>
+                          <span>{videoDurationRange.min}s</span>
+                          <span>{videoDurationRange.max}s</span>
+                        </div>
+                      </div>
+                    </DropdownMenuGroup>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </>
+            )}
+
+            {showMaterialButton && (
+              <PromptInputButton
+                className='border font-medium'
+                disabled={controlsDisabled}
+                onClick={handleInsertReferenceMarker}
+                type='button'
+                variant='outline'
+              >
+                <AtSignIcon size={16} />
+                <span className='sr-only'>
+                  {t('Select reference material')}
+                </span>
+              </PromptInputButton>
+            )}
+          </PromptInputTools>
+
+          <div className='flex items-center gap-1.5 md:gap-2'>
+            <ModelGroupSelector
+              selectedModel={modelValue}
+              models={models}
+              onModelChange={handleModelChange}
+              selectedGroup={groupValue}
+              groups={groups}
+              onGroupChange={onGroupChange}
+              disabled={isModelSelectDisabled || isGroupSelectDisabled}
+            />
+
+            {isGenerating && onStop ? (
+              <PromptInputButton
+                className='text-foreground font-medium'
+                onClick={onStop}
+                variant='secondary'
+              >
+                <SquareIcon className='fill-current' size={16} />
+                <span className='hidden sm:inline'>{t('Stop')}</span>
+                <span className='sr-only sm:hidden'>{t('Stop')}</span>
+              </PromptInputButton>
+            ) : (
+              <PlaygroundSubmitButton
+                disabled={isSubmitDisabled}
+                isVideoMode={isVideoMode}
+                isImageMode={isImageMode}
+                isLTXStartEnd={isLTX23StartEnd}
+                model={modelValue}
+                timelineData={ltxTimelineData}
+                videoDuration={normalizedVideoDuration}
+                videoRatio={videoRatio}
+                videoResolution={videoResolution}
+                text={text}
+              />
+            )}
+          </div>
+        </PromptInputFooter>
+
+        {mode !== 'chat' &&
+          !isLTX23StartEnd &&
+          !isMinimaxH3FirstLast &&
+          !isMinimaxH3TextToVideo && (
+            <MaterialSelectorDialog
+              allowedTypes={minimaxH3MaterialTypes}
+              fixedType={minimaxH3FixedMaterialType}
+              open={isMaterialSelectorOpen}
+              onOpenChange={setIsMaterialSelectorOpen}
+              mode={mode as 'image' | 'video'}
+            />
+          )}
+      </PromptInput>
+    </div>
+  )
+}

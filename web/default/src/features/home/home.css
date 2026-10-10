@@ -1,0 +1,424 @@
+/*
+Copyright (C) 2023-2026 QuantumNous
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+For commercial licensing, please contact support@quantumnous.com
+*/
+
+.home-landing {
+  --home-accent: #ff6b86;
+  --home-accent-strong: #ff8ca1;
+  --home-accent-contrast: #1a1015;
+  --home-accent-soft: rgb(255 107 134 / 12%);
+  --home-accent-border: rgb(255 107 134 / 30%);
+  --home-bg: #f5f6f8;
+  --home-bg-subtle: #eceef2;
+  --home-surface: #ffffff;
+  --home-surface-soft: #eef0f4;
+  --home-text: #14151a;
+  --home-text-muted: #626771;
+  --home-text-subtle: #7b808a;
+  --home-border: rgb(20 21 26 / 12%);
+  --home-border-strong: rgb(20 21 26 / 20%);
+  --home-icon-bg: rgb(20 21 26 / 6%);
+  --home-secondary-button: rgb(255 255 255 / 56%);
+  --home-secondary-button-hover: rgb(255 255 255 / 88%);
+  --home-primary-button-bg: #15161a;
+  --home-primary-button-fg: #f7f7f5;
+  --home-primary-button-hover: #2a2c32;
+  --home-skeleton: rgb(20 21 26 / 8%);
+  --home-code-text: #24262c;
+  --home-code-muted: #666b75;
+  --home-code-line: #373a42;
+  --home-code-tab-active: rgb(255 107 134 / 9%);
+  --home-code-tab-hover: rgb(20 21 26 / 5%);
+  background: var(--home-bg);
+  color: var(--home-text);
+  color-scheme: light;
+}
+
+.dark .home-landing {
+  --home-bg: #08090b;
+  --home-bg-subtle: #111216;
+  --home-surface: #191a1f;
+  --home-surface-soft: #17181c;
+  --home-text: #f6f6f2;
+  --home-text-muted: #aaaeb7;
+  --home-text-subtle: #8f939c;
+  --home-border: rgb(255 255 255 / 10%);
+  --home-border-strong: rgb(255 255 255 / 20%);
+  --home-icon-bg: rgb(255 255 255 / 8%);
+  --home-secondary-button: rgb(255 255 255 / 5%);
+  --home-secondary-button-hover: rgb(255 255 255 / 10%);
+  --home-primary-button-bg: #f6f6f2;
+  --home-primary-button-fg: #101114;
+  --home-primary-button-hover: #ffffff;
+  --home-skeleton: rgb(255 255 255 / 10%);
+  --home-code-text: #e8e9ed;
+  --home-code-muted: #8f949f;
+  --home-code-line: #dadce2;
+  --home-code-tab-active: rgb(255 255 255 / 8%);
+  --home-code-tab-hover: rgb(255 255 255 / 5%);
+  color-scheme: dark;
+}
+
+.home-hero-stage {
+  background:
+    radial-gradient(circle at 50% 58%, rgb(255 107 134 / 11%), transparent 36%),
+    linear-gradient(180deg, #fbfbfc 0%, var(--home-bg) 100%);
+}
+
+.dark .home-hero-stage {
+  background:
+    radial-gradient(circle at 50% 58%, rgb(255 107 134 / 8%), transparent 36%),
+    linear-gradient(180deg, #090a0c 0%, var(--home-bg) 100%);
+}
+
+.home-hero-title {
+  font-size: clamp(2.9rem, 6vw, 5.65rem);
+}
+
+.home-hero-title-rest {
+  margin-inline-start: 0.18em;
+}
+
+:lang(zh) .home-hero-title-rest,
+:lang(ja) .home-hero-title-rest {
+  margin-inline-start: 0;
+}
+
+:lang(fr) .home-hero-title,
+:lang(ru) .home-hero-title,
+:lang(vi) .home-hero-title {
+  font-size: clamp(2.5rem, 5vw, 4.7rem);
+}
+
+.home-gateway-visual::after {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  content: '';
+  background: linear-gradient(
+    180deg,
+    transparent 48%,
+    color-mix(in srgb, var(--home-bg) 20%, transparent) 76%,
+    var(--home-bg) 100%
+  );
+  pointer-events: none;
+}
+
+.home-gateway-visual {
+  isolation: isolate;
+  overflow: hidden;
+  perspective: 3000px;
+  perspective-origin: 50% 28%;
+  cursor: grab;
+  user-select: none;
+}
+
+.home-gateway-motion {
+  transform-style: preserve-3d;
+  transform-origin: 50% 76%;
+  will-change: transform;
+}
+
+.home-gateway-focus {
+  z-index: 1;
+  transform-style: preserve-3d;
+  transform-origin: 50% 68%;
+  mask-image: linear-gradient(
+    90deg,
+    transparent 24%,
+    rgb(0 0 0 / 28%) 32%,
+    #000 41%,
+    #000 59%,
+    rgb(0 0 0 / 28%) 68%,
+    transparent 76%
+  );
+  pointer-events: none;
+  will-change: transform;
+}
+
+.home-gateway-focus-image {
+  filter: brightness(1.08) saturate(1.07)
+    drop-shadow(0 26px 34px rgb(0 0 0 / 34%));
+}
+
+.home-gateway-spotlight-anchor {
+  z-index: 2;
+  pointer-events: none;
+  will-change: transform, opacity;
+}
+
+.home-gateway-spotlight {
+  position: relative;
+  width: clamp(20rem, 38vw, 34rem);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle at center,
+    rgb(255 255 255 / 42%) 0%,
+    rgb(255 236 240 / 28%) 10%,
+    rgb(255 107 134 / 17%) 30%,
+    rgb(255 107 134 / 7%) 48%,
+    transparent 70%
+  );
+  filter: blur(12px);
+  mix-blend-mode: screen;
+  transform: translate(-50%, -50%);
+}
+
+.home-gateway-spotlight::after {
+  position: absolute;
+  inset: 31%;
+  border-radius: inherit;
+  background: radial-gradient(
+    circle,
+    rgb(255 255 255 / 34%) 0%,
+    rgb(255 255 255 / 8%) 42%,
+    transparent 72%
+  );
+  content: '';
+  filter: blur(8px);
+}
+
+.home-gateway-depth-light {
+  background: radial-gradient(
+    ellipse at center,
+    rgb(255 107 134 / 16%) 0%,
+    rgb(255 107 134 / 6%) 42%,
+    transparent 72%
+  );
+  filter: blur(24px);
+  mix-blend-mode: screen;
+  pointer-events: none;
+  will-change: transform;
+}
+
+.home-model-marquee {
+  mask-image: linear-gradient(
+    90deg,
+    transparent,
+    black 8%,
+    black 92%,
+    transparent
+  );
+}
+
+.home-model-marquee-track {
+  display: flex;
+  width: max-content;
+  animation: home-model-marquee 30s linear infinite;
+  will-change: transform;
+}
+
+.home-model-marquee-group {
+  display: flex;
+  align-items: center;
+  gap: 3.5rem;
+  padding-right: 3.5rem;
+}
+
+.home-model-marquee-item {
+  flex: none;
+  color: var(--home-text-muted);
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+@keyframes home-model-marquee {
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+.home-model-showcase {
+  background:
+    radial-gradient(circle at 12% 14%, rgb(255 170 198 / 48%), transparent 38%),
+    radial-gradient(circle at 82% 22%, rgb(222 170 224 / 38%), transparent 42%),
+    radial-gradient(circle at 58% 88%, rgb(255 187 170 / 42%), transparent 46%),
+    linear-gradient(145deg, #fffafb 0%, #f8f1f8 48%, #fff8f5 100%);
+}
+
+.dark .home-model-showcase {
+  background:
+    radial-gradient(circle at 18% 16%, rgb(250 110 150 / 86%), transparent 33%),
+    radial-gradient(circle at 78% 28%, rgb(209 60 157 / 88%), transparent 38%),
+    radial-gradient(circle at 58% 84%, rgb(251 99 96 / 92%), transparent 42%),
+    linear-gradient(135deg, #a64d91 0%, #d55282 46%, #ee715e 100%);
+}
+
+.home-media-scrim {
+  background: linear-gradient(180deg, transparent 34%, rgb(7 8 10 / 82%) 100%);
+}
+
+.home-media-scrim-strong {
+  background: linear-gradient(
+    90deg,
+    rgb(7 8 10 / 92%) 0%,
+    rgb(7 8 10 / 68%) 42%,
+    rgb(7 8 10 / 12%) 74%,
+    rgb(7 8 10 / 18%) 100%
+  );
+}
+
+.home-api-surface {
+  background: rgb(255 255 255 / 82%);
+  border-color: var(--home-border);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 90%),
+    0 18px 48px rgb(32 35 43 / 10%);
+  backdrop-filter: blur(18px) saturate(120%);
+  -webkit-backdrop-filter: blur(18px) saturate(120%);
+}
+
+.dark .home-api-surface {
+  background: rgb(12 13 16 / 94%);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 7%),
+    0 18px 48px rgb(0 0 0 / 24%);
+}
+
+.home-surface-card {
+  border: 1px solid var(--home-border);
+  background: var(--home-surface);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 72%),
+    0 24px 60px rgb(32 35 43 / 8%);
+}
+
+.dark .home-surface-card {
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 5%);
+}
+
+.home-console-card {
+  border: 1px solid var(--home-border);
+  background:
+    radial-gradient(circle at 85% 18%, rgb(255 107 134 / 13%), transparent 34%),
+    linear-gradient(145deg, #ffffff 0%, #eceef2 100%);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 90%),
+    0 24px 60px rgb(32 35 43 / 8%);
+}
+
+.dark .home-console-card {
+  background:
+    radial-gradient(circle at 85% 18%, rgb(255 107 134 / 16%), transparent 34%),
+    linear-gradient(145deg, #1a1b20 0%, #111216 100%);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 5%);
+}
+
+.home-cta-vignette {
+  background:
+    radial-gradient(
+      circle at 50% 50%,
+      transparent 0%,
+      rgb(8 9 11 / 26%) 54%,
+      #08090b 100%
+    ),
+    linear-gradient(
+      180deg,
+      #08090b 0%,
+      transparent 20%,
+      transparent 78%,
+      #08090b 100%
+    );
+}
+
+.home-footer {
+  --background: #f5f6f8;
+  --foreground: #14151a;
+  --muted-foreground: #626771;
+  --border: rgb(20 21 26 / 12%);
+  background: #f5f6f8;
+  color: #14151a;
+}
+
+.home-footer [class*='text-muted-foreground/'] {
+  color: #5f646e;
+}
+
+.dark .home-footer {
+  --background: #08090b;
+  --foreground: #f6f6f2;
+  --muted-foreground: #9ca0a9;
+  --border: rgb(255 255 255 / 12%);
+  background: #08090b;
+  color: #f6f6f2;
+}
+
+.dark .home-footer [class*='text-muted-foreground/'] {
+  color: #9ca0a9;
+}
+
+@media (max-width: 767px) {
+  .home-media-scrim-strong {
+    background: linear-gradient(
+      180deg,
+      rgb(7 8 10 / 22%) 0%,
+      rgb(7 8 10 / 82%) 60%,
+      rgb(7 8 10 / 94%) 100%
+    );
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .home-api-surface {
+    background: var(--home-surface);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .home-landing * {
+    scroll-behavior: auto !important;
+  }
+
+  .home-model-marquee {
+    mask-image: none;
+  }
+
+  .home-model-marquee-track {
+    width: 100%;
+    animation: none;
+    will-change: auto;
+  }
+
+  .home-model-marquee-group {
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0.75rem 2rem;
+    padding: 0 1rem;
+  }
+
+  .home-model-marquee-group[aria-hidden='true'] {
+    display: none;
+  }
+
+  .home-gateway-motion,
+  .home-gateway-focus,
+  .home-gateway-spotlight-anchor,
+  .home-gateway-depth-light {
+    will-change: auto;
+  }
+}
+
+@media (pointer: coarse) {
+  .home-gateway-visual {
+    cursor: auto;
+  }
+}
