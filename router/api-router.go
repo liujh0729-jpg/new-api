@@ -199,6 +199,8 @@ func SetApiRouter(router *gin.Engine) {
 			optionRoute.GET("/task_pricing_csv/export", controller.ExportTaskPricingCSV)
 			optionRoute.POST("/task_pricing_csv/preview", controller.PreviewTaskPricingCSV)
 			optionRoute.POST("/task_pricing_csv/import", controller.ImportTaskPricingCSV)
+			optionRoute.GET("/update_check", controller.CheckUpdateStatus)
+			optionRoute.POST("/update_apply", controller.ApplyUpdate)
 		}
 		wechatPayConfigRoute := apiRouter.Group("/wechat-pay/config")
 		wechatPayConfigRoute.Use(middleware.RootAuth())

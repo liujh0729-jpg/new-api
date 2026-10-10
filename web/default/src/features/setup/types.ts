@@ -32,6 +32,7 @@ export interface SetupFormValues {
   password: string
   confirmPassword: string
   usageMode: SetupUsageMode
+  aipddKey: string
 }
 
 export interface SetupResponse {

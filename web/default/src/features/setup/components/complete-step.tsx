@@ -42,6 +42,12 @@ const DATABASE_VARIANT: Record<
   postgres: 'success',
 }
 
+function maskApiKey(key: string): string {
+  const trimmed = key.trim()
+  if (trimmed.length <= 10) return '••••••••'
+  return trimmed.slice(0, 5) + '••••' + trimmed.slice(-4)
+}
+
 export function CompleteStep({ status, values }: CompleteStepProps) {
   const { t } = useTranslation()
   const usageLabelKey = USAGE_MODE_LABEL_KEYS[values.usageMode]
@@ -100,6 +106,19 @@ export function CompleteStep({ status, values }: CompleteStepProps) {
               {t('Usage mode')}
             </dt>
             <dd className='text-sm font-semibold'>{t(usageLabelKey)}</dd>
+          </div>
+
+          <Separator />
+
+          <div className='space-y-1.5'>
+            <dt className='text-muted-foreground text-xs font-medium tracking-wide uppercase'>
+              {t('AIPDD API Key')}
+            </dt>
+            <dd className='text-sm font-semibold'>
+              {values.aipddKey
+                ? maskApiKey(values.aipddKey)
+                : t('Not set yet')}
+            </dd>
           </div>
         </dl>
       </div>

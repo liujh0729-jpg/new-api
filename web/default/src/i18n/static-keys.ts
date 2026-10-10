@@ -174,6 +174,34 @@ export const STATIC_I18N_KEYS = [
   'Review & initialize',
   'Confirm settings and finish setup',
 
+  // Setup wizard — AIPDD step
+  'AIPDD configuration',
+  'Enter your AIPDD API key to set up models and channels',
+  'AIPDD API Key',
+  'Provide your AIPDD API key to automatically configure models and channels. This key will be saved to the system.',
+  'Enter your AIPDD API key',
+  'Please enter your AIPDD API key',
+
+  // Update checker
+  'Compare local code with the GitHub repository and pull updates.',
+  'Current deployment is not a git repository',
+  'Branch',
+  'Remote',
+  'Behind',
+  'Ahead',
+  'Working tree has changes',
+  '{{count}} new commits on GitHub',
+  'Repository status',
+  'Local working tree has uncommitted changes; update is blocked to protect them.',
+  'Local branch has {{count}} commits not pushed to the remote.',
+  'You are up to date with the remote branch.',
+  'Incoming commits',
+  'Updating...',
+  'Pull latest from GitHub',
+  'Nothing to pull',
+  'Update failed',
+  'Code updated. Rebuild and restart the service to apply.',
+
   // Setup wizard — database step
   'SQLite stores all data in a single file. Make sure that file is persisted when running in containers.',
   'MySQL is a production-ready relational database. Keep your credentials secure.',

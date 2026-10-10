@@ -39,6 +39,7 @@ import { LanguageSwitcher } from '@/components/language-switcher'
 import { LoadingState } from '@/components/loading-state'
 import { buildSetupPayload, getSetupStatus, submitSetup } from './api'
 import { AdminStep } from './components/admin-step'
+import { AipddStep } from './components/aipdd-step'
 import { CompleteStep } from './components/complete-step'
 import { DatabaseStep } from './components/database-step'
 import { StepNavigation } from './components/step-navigation'
@@ -59,6 +60,10 @@ const STEPS = [
     descriptionKey: 'Choose how the platform will operate',
   },
   {
+    titleKey: 'AIPDD configuration',
+    descriptionKey: 'Enter your AIPDD API key to set up models and channels',
+  },
+  {
     titleKey: 'Review & initialize',
     descriptionKey: 'Confirm settings and finish setup',
   },
@@ -69,6 +74,7 @@ const DEFAULT_FORM_VALUES: SetupFormValues = {
   password: '',
   confirmPassword: '',
   usageMode: 'external',
+  aipddKey: '',
 }
 
 export function SetupWizard() {
@@ -199,6 +205,9 @@ export function SetupWizard() {
     if (currentStep === 2) {
       return <UsageModeStep form={form} />
     }
+    if (currentStep === 3) {
+      return <AipddStep form={form} />
+    }
     return <CompleteStep status={setupStatus} values={watchedValues} />
   }, [currentStep, setupStatus, form, watchedValues])
 
@@ -252,9 +261,23 @@ export function SetupWizard() {
     return true
   }
 
+  const validateAipddStep = () => {
+    const aipddKey = form.getValues('aipddKey')?.trim()
+    if (!aipddKey) {
+      form.setError('aipddKey', {
+        type: 'manual',
+        message: t('Please enter your AIPDD API key'),
+      })
+      toast.error(t('Please enter your AIPDD API key'))
+      return false
+    }
+    return true
+  }
+
   const handleNextStep = () => {
     if (currentStep === 1 && !validateAdminStep()) return
     if (currentStep === 2 && !validateUsageModeStep()) return
+    if (currentStep === 3 && !validateAipddStep()) return
 
     setCurrentStep((step) => Math.min(step + 1, STEPS.length - 1))
   }
@@ -266,7 +289,8 @@ export function SetupWizard() {
   const handleSubmit = async () => {
     const adminValid = validateAdminStep()
     const usageValid = validateUsageModeStep()
-    if (!adminValid || !usageValid) return
+    const aipddValid = validateAipddStep()
+    if (!adminValid || !usageValid || !aipddValid) return
 
     const payload = buildSetupPayload(
       form.getValues(),
@@ -319,7 +343,7 @@ export function SetupWizard() {
           </CardHeader>
 
           <CardContent className='space-y-6'>
-            <ol className='grid gap-3 sm:grid-cols-4'>
+            <ol className='grid gap-3 sm:grid-cols-5'>
               {STEPS.map((step, index) => {
                 const isActive = currentStep === index
                 const isCompleted = currentStep > index

@@ -40,11 +40,12 @@ export function buildSetupPayload(
   values: SetupFormValues,
   rootInitialized: boolean
 ) {
-  const { usageMode, ...rest } = values
+  const { usageMode, aipddKey, ...rest } = values
 
   const basePayload = {
     SelfUseModeEnabled: usageMode === 'self',
     DemoSiteEnabled: usageMode === 'demo',
+    aipdd_api_key: aipddKey,
   }
 
   if (rootInitialized) {

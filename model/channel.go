@@ -506,6 +506,62 @@ func EnsureAIPDDChannelDefaults() error {
 	return nil
 }
 
+// EnsureAIPDDChannelWithKey creates or updates the AIPDD channel using a
+// caller-supplied API key and base URL. Used by the setup wizard to bootstrap
+// AIPDD after the operator enters their key.
+func EnsureAIPDDChannelWithKey(key, baseURL string) error {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return nil
+	}
+	baseURL = strings.TrimRight(baseURL, "/")
+
+	var channels []Channel
+	if err := DB.Where("type = ?", constant.ChannelTypeAIPDD).Order("id asc").Find(&channels).Error; err != nil {
+		return err
+	}
+
+	channel := selectAIPDDEnvChannel(channels)
+	if channel == nil {
+		channel = &Channel{
+			Type:        constant.ChannelTypeAIPDD,
+			Key:         key,
+			Name:        aipddEnvChannelName,
+			Status:      common.ChannelStatusEnabled,
+			Group:       "default",
+			BaseURL:     &baseURL,
+			CreatedTime: common.GetTimestamp(),
+		}
+		if err := channel.Insert(); err != nil {
+			return err
+		}
+		common.SysLog("AIPDD channel created during setup wizard")
+		return nil
+	}
+
+	updates := map[string]interface{}{}
+	if channel.Key != key {
+		updates["key"] = key
+	}
+	if channel.BaseURL == nil || strings.TrimSpace(*channel.BaseURL) == "" || *channel.BaseURL != baseURL {
+		updates["base_url"] = baseURL
+	}
+	if channel.Status != common.ChannelStatusEnabled {
+		updates["status"] = common.ChannelStatusEnabled
+	}
+	if strings.TrimSpace(channel.Group) == "" {
+		updates["group"] = "default"
+	}
+	if len(updates) == 0 {
+		return nil
+	}
+	if err := DB.Model(&Channel{}).Where("id = ?", channel.Id).Updates(updates).Error; err != nil {
+		return err
+	}
+	common.SysLog("AIPDD channel updated during setup wizard")
+	return nil
+}
+
 func (channel *Channel) GetGroups() []string {
 	if channel.Group == "" {
 		return []string{}

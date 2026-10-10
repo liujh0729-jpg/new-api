@@ -1,6 +1,8 @@
 package controller
 
 import (
+	"context"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -22,6 +24,7 @@ type SetupRequest struct {
 	ConfirmPassword    string `json:"confirmPassword"`
 	SelfUseModeEnabled bool   `json:"SelfUseModeEnabled"`
 	DemoSiteEnabled    bool   `json:"DemoSiteEnabled"`
+	AIPDDApiKey        string `json:"aipdd_api_key"`
 }
 
 func GetSetup(c *gin.Context) {
@@ -150,6 +153,27 @@ func PostSetup(c *gin.Context) {
 			"message": "保存演示站点模式设置失败: " + err.Error(),
 		})
 		return
+	}
+
+	// Save AIPDD API key and bootstrap catalog + channel
+	aipddKey := strings.TrimSpace(req.AIPDDApiKey)
+	if aipddKey != "" {
+		if err = model.UpdateOption("AIPDDApiKey", aipddKey); err != nil {
+			c.JSON(200, gin.H{
+				"success": false,
+				"message": "保存 AIPDD API Key 失败: " + err.Error(),
+			})
+			return
+		}
+		baseURL := constant.ChannelBaseURLs[constant.ChannelTypeAIPDD]
+		syncCtx, syncCancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
+		defer syncCancel()
+		if _, err = model.SyncAIPDDCatalog(syncCtx, nil, baseURL, aipddKey); err != nil {
+			common.SysLog("AIPDD catalog sync during setup failed: " + err.Error())
+		}
+		if err = model.EnsureAIPDDChannelWithKey(aipddKey, baseURL); err != nil {
+			common.SysLog("AIPDD channel creation during setup failed: " + err.Error())
+		}
 	}
 
 	// Update setup status
