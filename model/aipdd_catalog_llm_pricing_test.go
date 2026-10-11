@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	aipddRetailGLMExpr   = `tier("aipdd", p * 0.8800000000000001 + c * 3.0799999999999996 + cr * 0.011 + cc * 0.132 + cc1h * 0.132)`
+	aipddRetailGLMExpr   = `tier("aipdd", p * 0.88 + c * 3.08 + cr * 0.011 + cc * 0.132 + cc1h * 0.132)`
 	aipddRetailEmbedExpr = `tier("aipdd", p * 0.033 + c * 0 + cr * 0 + cc * 0 + cc1h * 0)`
 )
 
@@ -84,6 +84,31 @@ func seedAIPDDBillingOptions(t *testing.T, modes map[string]string, exprs map[st
 	}
 }
 
+// editAIPDDModelExpr stands in for an administrator changing one model on the
+// pricing page: every other model's rows keep whatever the syncer wrote.
+func editAIPDDModelExpr(t *testing.T, modelName string, mode string, expr string) {
+	t.Helper()
+	modes, err := loadAIPDDBillingModesTx(DB)
+	require.NoError(t, err)
+	exprs, err := loadAIPDDBillingExprsTx(DB)
+	require.NoError(t, err)
+	modes[modelName] = mode
+	exprs[modelName] = expr
+	seedAIPDDBillingOptions(t, modes, exprs)
+}
+
+// deleteAIPDDModelExpr stands in for an administrator clearing one model's price.
+func deleteAIPDDModelExpr(t *testing.T, modelName string) {
+	t.Helper()
+	modes, err := loadAIPDDBillingModesTx(DB)
+	require.NoError(t, err)
+	exprs, err := loadAIPDDBillingExprsTx(DB)
+	require.NoError(t, err)
+	delete(modes, modelName)
+	delete(exprs, modelName)
+	seedAIPDDBillingOptions(t, modes, exprs)
+}
+
 func TestSyncAIPDDLLMTokenPricingTxProvisionsRetailPrices(t *testing.T) {
 	truncateTables(t)
 	preserveAIPDDPricingRuntime(t)
@@ -99,9 +124,10 @@ func TestSyncAIPDDLLMTokenPricingTxProvisionsRetailPrices(t *testing.T) {
 	updated, updates, err := syncAIPDDLLMTokenPricingTx(DB, aipddRetailLLMCatalog("revision-1"))
 	require.NoError(t, err)
 	require.Equal(t, 3, updated)
-	require.Len(t, updates, 2)
+	require.Len(t, updates, 3)
 	require.Contains(t, updates, aipddBillingModeOptionKey)
 	require.Contains(t, updates, aipddBillingExprOptionKey)
+	require.Contains(t, updates, aipddSyncedPricesOptionKey)
 
 	modes, err := loadAIPDDBillingModesTx(DB)
 	require.NoError(t, err)
@@ -136,11 +162,11 @@ func TestSyncAIPDDLLMTokenPricingTxProvisionsRetailPrices(t *testing.T) {
 	exprs, err = loadAIPDDBillingExprsTx(DB)
 	require.NoError(t, err)
 	require.Equal(t,
-		`tier("aipdd", p * 1.7600000000000002 + c * 3.0799999999999996 + cr * 0.011 + cc * 0.132 + cc1h * 0.132)`,
+		`tier("aipdd", p * 1.76 + c * 3.08 + cr * 0.011 + cc * 0.132 + cc1h * 0.132)`,
 		exprs["ap-glm-5.2"])
 }
 
-func TestSyncAIPDDLLMTokenPricingTxReclaimsPricingOfUnsellableModels(t *testing.T) {
+func TestSyncAIPDDLLMTokenPricingTxKeepsPricingOfUnsellableModels(t *testing.T) {
 	truncateTables(t)
 	preserveAIPDDPricingRuntime(t)
 	t.Setenv("AIPDD_PRICING_MARKUP", "1.1")
@@ -151,39 +177,105 @@ func TestSyncAIPDDLLMTokenPricingTxReclaimsPricingOfUnsellableModels(t *testing.
 	_, _, err := syncAIPDDLLMTokenPricingTx(DB, aipddRetailLLMCatalog("revision-1"))
 	require.NoError(t, err)
 
-	seedAIPDDBillingOptions(t,
-		map[string]string{
-			"ap-glm-5.2":              billing_setting.BillingModeTieredExpr,
-			"ap-qwen3-embedding:0.6b": billing_setting.BillingModeTieredExpr,
-			"ap-retired":              billing_setting.BillingModeTieredExpr,
-			"manual-model":            "ratio",
-		},
-		map[string]string{
-			"ap-glm-5.2":              aipddRetailGLMExpr,
-			"ap-qwen3-embedding:0.6b": aipddRetailEmbedExpr,
-			"ap-retired":              aipddRetailGLMExpr,
-			"manual-model":            `tier("manual", p * 2)`,
-		})
-
-	// The marketplace withdrew ap-retired's display price: its catalog-owned
-	// expression and tiered_expr mode go away, while a mode an administrator chose
-	// on purpose survives so their own pricing is not silently deleted.
+	// The marketplace withdrew ap-retired's display price. Its expression stays:
+	// the managed channel still lists the model, and a routable model without a
+	// price bills at the neutral ratio, below what AIPDD charges wholesale.
 	withdrawn := aipddRetailLLMCatalog("revision-2")
 	withdrawn.Models[2].Pricing.Enabled = false
 	updated, _, err := syncAIPDDLLMTokenPricingTx(DB, withdrawn)
 	require.NoError(t, err)
-	require.Equal(t, 1, updated)
+	require.Zero(t, updated)
 
 	modes, err := loadAIPDDBillingModesTx(DB)
 	require.NoError(t, err)
-	require.NotContains(t, modes, "ap-retired")
-	require.Equal(t, "ratio", modes["manual-model"])
+	require.Equal(t, billing_setting.BillingModeTieredExpr, modes["ap-retired"])
+	require.Equal(t, billing_setting.BillingModeTieredExpr, modes["ap-glm-5.2"])
 
 	exprs, err := loadAIPDDBillingExprsTx(DB)
 	require.NoError(t, err)
-	require.NotContains(t, exprs, "ap-retired")
-	require.Equal(t, `tier("manual", p * 2)`, exprs["manual-model"])
-	require.Equal(t, aipddRetailGLMExpr, exprs["ap-glm-5.2"], "the models the catalog still sells stay priced")
+	require.Equal(t, aipddRetailGLMExpr, exprs["ap-retired"], "a withdrawn display price keeps its last retail expression")
+	require.Equal(t, aipddRetailGLMExpr, exprs["ap-glm-5.2"])
+}
+
+// An administrator's edited price outranks the catalog without any pin: the
+// syncer compares every row against the value it wrote last.
+func TestSyncAIPDDLLMTokenPricingTxKeepsEditedPrice(t *testing.T) {
+	truncateTables(t)
+	preserveAIPDDPricingRuntime(t)
+	t.Setenv("AIPDD_PRICING_MARKUP", "1.1")
+	originalRate := operation_setting.USDExchangeRate
+	operation_setting.USDExchangeRate = 7.3
+	t.Cleanup(func() { operation_setting.USDExchangeRate = originalRate })
+
+	_, _, err := syncAIPDDLLMTokenPricingTx(DB, aipddRetailLLMCatalog("revision-1"))
+	require.NoError(t, err)
+
+	const editedExpr = `tier("manual", p * 1 + c * 2)`
+	editAIPDDModelExpr(t, "ap-glm-5.2", billing_setting.BillingModeTieredExpr, editedExpr)
+
+	// A wholesale change reprices the untouched models only.
+	changed := aipddRetailLLMCatalog("revision-2")
+	changed.Models[0].Pricing.PromptPerMillion = 160
+	changed.Models[1].Pricing.PromptPerMillion = 6
+	updated, _, err := syncAIPDDLLMTokenPricingTx(DB, changed)
+	require.NoError(t, err)
+	require.Equal(t, 1, updated, "only the unedited model is repriced")
+
+	exprs, err := loadAIPDDBillingExprsTx(DB)
+	require.NoError(t, err)
+	require.Equal(t, editedExpr, exprs["ap-glm-5.2"], "an edited price is never overwritten")
+	require.NotEqual(t, aipddRetailEmbedExpr, exprs["ap-qwen3-embedding:0.6b"],
+		"a model nobody edited follows the catalog")
+
+	// Deleting a price row is how an operator hands the model back to the catalog:
+	// nothing is left to protect, so its retail price is provisioned again.
+	deleteAIPDDModelExpr(t, "ap-glm-5.2")
+	updated, _, err = syncAIPDDLLMTokenPricingTx(DB, changed)
+	require.NoError(t, err)
+	require.Equal(t, 1, updated)
+	exprs, err = loadAIPDDBillingExprsTx(DB)
+	require.NoError(t, err)
+	require.Equal(t,
+		`tier("aipdd", p * 1.76 + c * 3.08 + cr * 0.011 + cc * 0.132 + cc1h * 0.132)`,
+		exprs["ap-glm-5.2"])
+}
+
+// A price that predates the record is adopted rather than overwritten, so
+// installing this protection cannot clobber a hand-set price; the next sync
+// resumes following the catalog from that baseline.
+func TestSyncAIPDDLLMTokenPricingTxAdoptsPreexistingPrice(t *testing.T) {
+	truncateTables(t)
+	preserveAIPDDPricingRuntime(t)
+	t.Setenv("AIPDD_PRICING_MARKUP", "1.1")
+	originalRate := operation_setting.USDExchangeRate
+	operation_setting.USDExchangeRate = 7.3
+	t.Cleanup(func() { operation_setting.USDExchangeRate = originalRate })
+
+	seedAIPDDBillingOptions(t,
+		map[string]string{"ap-glm-5.2": billing_setting.BillingModeTieredExpr},
+		map[string]string{"ap-glm-5.2": `tier("legacy", p * 1 + c * 2)`})
+
+	updated, updates, err := syncAIPDDLLMTokenPricingTx(DB, aipddRetailLLMCatalog("revision-1"))
+	require.NoError(t, err)
+	require.Equal(t, 2, updated, "the seeded price is adopted, the models without a price are provisioned")
+	require.Contains(t, updates, aipddSyncedPricesOptionKey)
+
+	exprs, err := loadAIPDDBillingExprsTx(DB)
+	require.NoError(t, err)
+	require.Equal(t, `tier("legacy", p * 1 + c * 2)`, exprs["ap-glm-5.2"])
+
+	// A wholesale change now reaches the model, because the record shows the
+	// stored expression is still the one the syncer adopted.
+	changed := aipddRetailLLMCatalog("revision-2")
+	changed.Models[0].Pricing.PromptPerMillion = 160
+	updated, _, err = syncAIPDDLLMTokenPricingTx(DB, changed)
+	require.NoError(t, err)
+	require.Equal(t, 1, updated)
+	exprs, err = loadAIPDDBillingExprsTx(DB)
+	require.NoError(t, err)
+	require.Equal(t,
+		`tier("aipdd", p * 1.76 + c * 3.08 + cr * 0.011 + cc * 0.132 + cc1h * 0.132)`,
+		exprs["ap-glm-5.2"])
 }
 
 func TestSyncAIPDDLLMTokenPricingTxRequiresUsableAWCoinRate(t *testing.T) {
@@ -209,6 +301,31 @@ func TestSyncAIPDDLLMTokenPricingTxRequiresUsableAWCoinRate(t *testing.T) {
 	require.Empty(t, modes)
 }
 
+// AIPDD publishes models whose input tokens cost nothing: the catalog accepts a
+// zero price in one lane as long as the other lane is priced, so a free input lane
+// must still get a retail expression instead of being skipped.
+func TestSyncAIPDDLLMTokenPricingTxPricesFreeInputLane(t *testing.T) {
+	truncateTables(t)
+	preserveAIPDDPricingRuntime(t)
+	t.Setenv("AIPDD_PRICING_MARKUP", "1.1")
+	originalRate := operation_setting.USDExchangeRate
+	operation_setting.USDExchangeRate = 7.3
+	t.Cleanup(func() { operation_setting.USDExchangeRate = originalRate })
+
+	catalog := aipddRetailLLMCatalog("revision-1")
+	catalog.Models[0].Pricing.PromptPerMillion = 0
+
+	updated, _, err := syncAIPDDLLMTokenPricingTx(DB, catalog)
+	require.NoError(t, err)
+	require.Equal(t, 3, updated)
+
+	exprs, err := loadAIPDDBillingExprsTx(DB)
+	require.NoError(t, err)
+	require.Equal(t,
+		`tier("aipdd", p * 0 + c * 3.08 + cr * 0.011 + cc * 0.132 + cc1h * 0.132)`,
+		exprs["ap-glm-5.2"], "a free input lane is priced at zero, not left unpriced")
+}
+
 func TestSyncAIPDDLLMTokenPricingTxSkipsUnusableModelPrice(t *testing.T) {
 	truncateTables(t)
 	preserveAIPDDPricingRuntime(t)
@@ -217,10 +334,10 @@ func TestSyncAIPDDLLMTokenPricingTxSkipsUnusableModelPrice(t *testing.T) {
 	operation_setting.USDExchangeRate = 7.3
 	t.Cleanup(func() { operation_setting.USDExchangeRate = originalRate })
 
-	// A single model with a zero prompt price cannot become a retail expression,
+	// A single negative wholesale price cannot become a retail expression,
 	// but it must not leave every other model of the catalog unpriced either.
 	catalog := aipddRetailLLMCatalog("revision-1")
-	catalog.Models[0].Pricing.PromptPerMillion = 0
+	catalog.Models[0].Pricing.PromptPerMillion = -1
 
 	updated, _, err := syncAIPDDLLMTokenPricingTx(DB, catalog)
 	require.NoError(t, err)
@@ -253,5 +370,5 @@ func TestSyncAIPDDLLMTokenPricingTxRespectsLowerMarkup(t *testing.T) {
 	require.NoError(t, err)
 	// Markup 1 means exact parity with AIPDD: the coefficients drop the 10% and
 	// the rest of the expression shape is unchanged.
-	require.Equal(t, `tier("aipdd", p * 0.8 + c * 2.8 + cr * 0.01 + cc * 0.11999999999999998 + cc1h * 0.11999999999999998)`, exprs["ap-glm-5.2"])
+	require.Equal(t, `tier("aipdd", p * 0.8 + c * 2.8 + cr * 0.01 + cc * 0.12 + cc1h * 0.12)`, exprs["ap-glm-5.2"])
 }

@@ -87,7 +87,7 @@ func TestAIPDDLLMRetailExpr(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	require.Equal(t, `tier("aipdd", p * 0.8800000000000001 + c * 3.0799999999999996 + cr * 0.011 + cc * 0.132 + cc1h * 0.132)`, expr)
+	require.Equal(t, `tier("aipdd", p * 0.88 + c * 3.08 + cr * 0.011 + cc * 0.132 + cc1h * 0.132)`, expr)
 
 	// A schema v1 catalog publishes no cache prices, so the cache variables stay
 	// out and cached tokens keep being billed as ordinary input.
@@ -99,7 +99,7 @@ func TestAIPDDLLMRetailExpr(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	require.Equal(t, `tier("aipdd", p * 0.8800000000000001 + c * 3.0799999999999996)`, expr)
+	require.Equal(t, `tier("aipdd", p * 0.88 + c * 3.08)`, expr)
 
 	// Embeddings are sold for input tokens only.
 	expr, err = AIPDDLLMRetailExpr(catalog, aipddcatalog.AtomicModel{

@@ -9,7 +9,6 @@ import (
 	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 // syncAIPDDLLMTokenPricingTx provisions the default retail price of every
@@ -20,6 +19,8 @@ import (
 // falls back to the neutral ratio, which sells output tokens below what AIPDD
 // charges for them. Task models keep their own importers because a per-call or
 // per-second price cannot be expressed as a token expression.
+//
+// An administrator's edited price outranks the catalog: see aipddSyncedPricesOptionKey.
 func syncAIPDDLLMTokenPricingTx(
 	tx *gorm.DB,
 	catalog aipddcatalog.AtomicCatalog,
@@ -44,6 +45,10 @@ func syncAIPDDLLMTokenPricingTx(
 	if err != nil {
 		return 0, nil, err
 	}
+	synced, err := loadAIPDDSyncedPricesTx(tx)
+	if err != nil {
+		return 0, nil, err
+	}
 
 	updated := 0
 	for _, model := range catalog.Models {
@@ -56,19 +61,13 @@ func syncAIPDDLLMTokenPricingTx(
 		}
 		if !IsAIPDDRetailTokenModel(model) {
 			// The catalog stopped pricing this model (free, disabled pricing or no
-			// longer per-token). Drop only the rows this catalog owns so a
-			// manually priced model keeps its administrator-set price.
-			changed := false
+			// longer per-token). Its stored expression stays in place: a routable
+			// model without a price falls back to the neutral ratio, below AIPDD's
+			// wholesale cost, and free models are billed by the relay's explicit
+			// free-model branch regardless of this row.
 			if _, ok := billingExprs[modelName]; ok {
-				delete(billingExprs, modelName)
-				changed = true
-			}
-			if billingModes[modelName] == billing_setting.BillingModeTieredExpr {
-				delete(billingModes, modelName)
-				changed = true
-			}
-			if changed {
-				updated++
+				logAIPDDPricingSkipped(catalog.Revision, modelName,
+					fmt.Errorf("catalog no longer prices this model per token; keeping the local expression"))
 			}
 			continue
 		}
@@ -82,34 +81,49 @@ func syncAIPDDLLMTokenPricingTx(
 			logAIPDDPricingSkipped(catalog.Revision, modelName, err)
 			continue
 		}
-		if billingModes[modelName] != billing_setting.BillingModeTieredExpr || billingExprs[modelName] != expr {
+		current, exists := billingExprs[modelName]
+		_, hasMode := billingModes[modelName]
+		switch synced.decide(aipddSyncedKindExpr, modelName,
+			aipddSyncedStateText(billingModes[modelName], current), exists || hasMode,
+			aipddSyncedStateText(billing_setting.BillingModeTieredExpr, expr)) {
+		case aipddPriceWrite:
 			updated++
+		case aipddPriceUnchanged:
+			continue
+		case aipddPriceKeepManual, aipddPriceAdopted:
+			// An administrator owns this model's price (or it predates the record),
+			// so the catalog rewrites neither the expression nor its billing mode.
+			continue
 		}
 		billingModes[modelName] = billing_setting.BillingModeTieredExpr
 		billingExprs[modelName] = expr
 	}
 
-	if updated == 0 {
+	updates := make(map[string]string, 3)
+	if updated > 0 {
+		billingModeJSON, err := common.Marshal(billingModes)
+		if err != nil {
+			return 0, nil, fmt.Errorf("serialize AIPDD LLM billing modes: %w", err)
+		}
+		billingExprJSON, err := common.Marshal(billingExprs)
+		if err != nil {
+			return 0, nil, fmt.Errorf("serialize AIPDD LLM billing expressions: %w", err)
+		}
+		updates[aipddBillingModeOptionKey] = string(billingModeJSON)
+		updates[aipddBillingExprOptionKey] = string(billingExprJSON)
+	}
+	recordValue, recordChanged, err := synced.writeTx(tx)
+	if err != nil {
+		return 0, nil, err
+	}
+	if recordChanged {
+		updates[aipddSyncedPricesOptionKey] = recordValue
+	}
+	if len(updates) == 0 {
 		return 0, nil, nil
 	}
-	billingModeJSON, err := common.Marshal(billingModes)
-	if err != nil {
-		return 0, nil, fmt.Errorf("serialize AIPDD LLM billing modes: %w", err)
-	}
-	billingExprJSON, err := common.Marshal(billingExprs)
-	if err != nil {
-		return 0, nil, fmt.Errorf("serialize AIPDD LLM billing expressions: %w", err)
-	}
-	updates := map[string]string{
-		aipddBillingModeOptionKey: string(billingModeJSON),
-		aipddBillingExprOptionKey: string(billingExprJSON),
-	}
 	for key, value := range updates {
-		option := Option{Key: key, Value: value}
-		if err := tx.Clauses(clause.OnConflict{
-			Columns:   []clause.Column{{Name: "key"}},
-			DoUpdates: clause.AssignmentColumns([]string{"value"}),
-		}).Create(&option).Error; err != nil {
+		if err := upsertAIPDDOptionTx(tx, key, value); err != nil {
 			return 0, nil, err
 		}
 	}

@@ -1,6 +1,7 @@
 package model
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -56,9 +57,25 @@ func aipddPinnedExchangeRate(t *testing.T, rate float64) {
 	t.Cleanup(func() { operation_setting.USDExchangeRate = original })
 }
 
-// A pinned model is the one case where an administrator's price must outrank the
-// catalog: neither the retail expression nor the billing mode may be rewritten,
-// and the catalog-owned rows must not be reclaimed either.
+// loadAIPDDBillingRuntimeFromDB activates the billing rows that are in the test
+// database through the same path a saved option takes at runtime, so a test can
+// assert what the gateway would bill rather than only what a syncer wrote.
+func loadAIPDDBillingRuntimeFromDB(t *testing.T) {
+	t.Helper()
+	for _, key := range []string{aipddBillingModeOptionKey, aipddBillingExprOptionKey} {
+		value, err := loadAIPDDOptionValueTx(DB, key)
+		require.NoError(t, err)
+		if strings.TrimSpace(value) == "" {
+			continue
+		}
+		require.NoError(t, updateOptionMap(key, value))
+	}
+}
+
+// A pinned model is the case where an administrator's price must outrank the
+// catalog even when it still equals the catalog value: neither the retail
+// expression nor the billing mode may be rewritten, and the catalog-owned rows
+// must not be reclaimed either.
 func TestSyncAIPDDLLMTokenPricingTxSkipsPinnedModels(t *testing.T) {
 	truncateTables(t)
 	preserveAIPDDPricingRuntime(t)
@@ -88,14 +105,33 @@ func TestSyncAIPDDLLMTokenPricingTxSkipsPinnedModels(t *testing.T) {
 	require.Equal(t, `tier("manual", p * 3 + c * 4)`, exprs["ap-retired"], "a pinned price is never reclaimed")
 	require.Equal(t, aipddRetailEmbedExpr, exprs["ap-qwen3-embedding:0.6b"], "unpinned models still get catalog pricing")
 
-	// Unpinning hands the model back to the catalog on the next sync.
+	// Activate the stored rows through the production path and read the runtime
+	// view, because that is the expression the relay actually bills. Without it,
+	// a pin that only holds in storage would pass every check above.
+	loadAIPDDBillingRuntimeFromDB(t)
+	runtimeExpr, ok := billing_setting.GetBillingExpr("ap-glm-5.2")
+	require.True(t, ok)
+	require.Equal(t, `tier("manual", p * 1 + c * 2)`, runtimeExpr, "the pinned price is the price the gateway charges")
+	require.Equal(t, aipddRetailEmbedExpr, mustAIPDDBillingExpr(t, "ap-qwen3-embedding:0.6b"))
+
+	// Unpinning does not overwrite a hand-set price either — an edited price wins,
+	// which is what AIPDDSyncedPrices records. The first pass adopts the stored
+	// expression as the baseline; the next catalog change reaches the model.
 	require.NoError(t, SetAIPDDPinnedModel("ap-glm-5.2", false))
 	updated, _, err = syncAIPDDLLMTokenPricingTx(DB, aipddRetailLLMCatalog("revision-2"))
+	require.NoError(t, err)
+	require.Zero(t, updated, "an unowned price is adopted, not overwritten")
+
+	changed := aipddRetailLLMCatalog("revision-3")
+	changed.Models[0].Pricing.PromptPerMillion = 160
+	updated, _, err = syncAIPDDLLMTokenPricingTx(DB, changed)
 	require.NoError(t, err)
 	require.Equal(t, 1, updated)
 	exprs, err = loadAIPDDBillingExprsTx(DB)
 	require.NoError(t, err)
-	require.Equal(t, aipddRetailGLMExpr, exprs["ap-glm-5.2"])
+	require.Equal(t,
+		`tier("aipdd", p * 1.76 + c * 3.08 + cr * 0.011 + cc * 0.132 + cc1h * 0.132)`,
+		exprs["ap-glm-5.2"])
 }
 
 func TestSyncAIPDDAsyncPerSecondPricingTxSkipsPinnedModels(t *testing.T) {
@@ -119,14 +155,24 @@ func TestSyncAIPDDAsyncPerSecondPricingTxSkipsPinnedModels(t *testing.T) {
 	require.NoError(t, err)
 	require.InDelta(t, 0.5, pricing["ap-ltx-2.5"].NoReferenceVideoUnitPrice, 1e-12)
 
-	// Unpinning restores the catalog-derived retail price.
+	// Unpinning adopts the hand-set price as the baseline instead of overwriting
+	// it; the catalog takes over from the next price change onward.
 	require.NoError(t, SetAIPDDPinnedModel("ap-ltx-2.5", false))
 	updated, _, err = syncAIPDDAsyncPerSecondPricingTx(DB, aipddASRCatalog("revision-2"))
+	require.NoError(t, err)
+	require.Zero(t, updated)
+	pricing, err = loadAIPDDTaskPricingTx(DB)
+	require.NoError(t, err)
+	require.InDelta(t, 0.5, pricing["ap-ltx-2.5"].NoReferenceVideoUnitPrice, 1e-12)
+
+	changed := aipddASRCatalog("revision-3")
+	changed.Capabilities[1].Pricing.ChargeConfig["amountAwcoin"] = float64(720)
+	updated, _, err = syncAIPDDAsyncPerSecondPricingTx(DB, changed)
 	require.NoError(t, err)
 	require.Equal(t, 1, updated)
 	pricing, err = loadAIPDDTaskPricingTx(DB)
 	require.NoError(t, err)
-	require.InDelta(t, 0.033, pricing["ap-ltx-2.5"].NoReferenceVideoUnitPrice, 1e-9)
+	require.InDelta(t, 0.0396, pricing["ap-ltx-2.5"].NoReferenceVideoUnitPrice, 1e-9)
 }
 
 func seedAIPDDTaskPricing(t *testing.T, modelName string, config billing_setting.TaskPricingConfig) {

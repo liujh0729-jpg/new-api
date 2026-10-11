@@ -246,6 +246,7 @@ func applyAIPDDCatalog(catalog aipddcatalog.AtomicCatalog, baseURL, apiKey strin
 		aipddBillingModeOptionKey,
 		aipddTaskPricingOptionKey,
 		aipddBillingExprOptionKey,
+		aipddSyncedPricesOptionKey,
 	} {
 		value, ok := pricingOptionUpdates[key]
 		if !ok {

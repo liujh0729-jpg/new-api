@@ -52,6 +52,47 @@ func aipddASRCatalog(revision string) aipddcatalog.AtomicCatalog {
 	}
 }
 
+// The three predicates decide which importer owns a capability and whether it has
+// a wholesale price to resell. They are the whole routing table of the pricing
+// pipeline, and the "availability is irrelevant" rule lives here, so both are
+// pinned down rather than left to be re-derived from the importers.
+func TestAIPDDCapabilityPricingPredicates(t *testing.T) {
+	duration := func(adapter, pricingModel string) aipddcatalog.AtomicCapability {
+		capability := aipddcatalog.AtomicCapability{AdapterCode: adapter}
+		capability.Pricing.PricingModel = pricingModel
+		return capability
+	}
+	priceable := func(enabled bool, currency, basis string, available *bool) aipddcatalog.AtomicCapability {
+		capability := aipddcatalog.AtomicCapability{Available: available}
+		capability.Pricing = aipddcatalog.AtomicPricing{
+			Enabled: enabled, Currency: currency, PricingBasis: basis,
+		}
+		return capability
+	}
+	available := aipddcatalog.BoolPtr(true)
+	unavailable := aipddcatalog.BoolPtr(false)
+
+	require.True(t, isTokenMarketDurationCapability(duration(" token_market_media ", "PER_SECOND")))
+	require.False(t, isTokenMarketDurationCapability(duration("token_market_media", "per_call")))
+	require.False(t, isTokenMarketDurationCapability(duration("token_market_shared", "per_second")),
+		"the shared adapter is priced per call, and the shared per-second models belong to the per-second importers")
+	require.False(t, isTokenMarketDurationCapability(duration("comfyui", "per_second")))
+
+	// Upstream availability never decides whether a model gets a retail price.
+	for _, flag := range []*bool{available, unavailable, nil} {
+		require.True(t, tokenMarketCapabilityPriceable(priceable(true, " AWCoin ", " Display ", flag)))
+		require.True(t, tokenMarketFixedCapabilityPriceable(priceable(true, "awcoin", "display", flag)))
+	}
+	require.True(t, tokenMarketFixedCapabilityPriceable(priceable(true, "awcoin", "", available)),
+		"a schema v1 per-call row may omit pricingBasis")
+	require.False(t, tokenMarketCapabilityPriceable(priceable(true, "awcoin", "", available)),
+		"a duration model without a display basis has no per-second price to tier by")
+	require.False(t, tokenMarketCapabilityPriceable(priceable(false, "awcoin", "display", available)))
+	require.False(t, tokenMarketCapabilityPriceable(priceable(true, "cny", "display", available)))
+	require.False(t, tokenMarketCapabilityPriceable(priceable(true, "awcoin", "actual", available)))
+	require.False(t, tokenMarketFixedCapabilityPriceable(priceable(true, "awcoin", "actual", available)))
+}
+
 func TestSyncAIPDDSynchronousPerSecondPricing(t *testing.T) {
 	truncateTables(t)
 	preserveAIPDDPricingRuntime(t)
@@ -63,9 +104,10 @@ func TestSyncAIPDDSynchronousPerSecondPricing(t *testing.T) {
 	updated, updates, err := syncAIPDDSynchronousPerSecondPricingTx(DB, aipddASRCatalog("revision-1"))
 	require.NoError(t, err)
 	require.Equal(t, 1, updated)
-	require.Len(t, updates, 2)
+	require.Len(t, updates, 3)
 	require.Contains(t, updates, aipddBillingModeOptionKey)
 	require.Contains(t, updates, aipddTaskPricingOptionKey)
+	require.Contains(t, updates, aipddSyncedPricesOptionKey)
 
 	pricing, err := loadAIPDDTaskPricingTx(DB)
 	require.NoError(t, err)
@@ -112,9 +154,10 @@ func TestSyncAIPDDAsyncPerSecondPricing(t *testing.T) {
 	updated, updates, err := syncAIPDDAsyncPerSecondPricingTx(DB, aipddASRCatalog("revision-1"))
 	require.NoError(t, err)
 	require.Equal(t, 1, updated)
-	require.Len(t, updates, 2)
+	require.Len(t, updates, 3)
 	require.Contains(t, updates, aipddBillingModeOptionKey)
 	require.Contains(t, updates, aipddTaskPricingOptionKey)
+	require.Contains(t, updates, aipddSyncedPricesOptionKey)
 
 	pricing, err := loadAIPDDTaskPricingTx(DB)
 	require.NoError(t, err)

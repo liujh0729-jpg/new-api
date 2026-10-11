@@ -259,6 +259,12 @@ func validateOptionValue(key string, value string) error {
 		if _, err := parseAIPDDPinnedModels(value); err != nil {
 			return err
 		}
+	case "AIPDDSyncedPrices":
+		// Same reason as AIPDDPinnedModels: this option is the fingerprint the
+		// importers compare every stored price against.
+		if _, err := parseAIPDDSyncedPrices(value); err != nil {
+			return err
+		}
 	}
 	return nil
 }

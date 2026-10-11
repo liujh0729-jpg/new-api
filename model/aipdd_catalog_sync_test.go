@@ -173,7 +173,7 @@ func TestApplyAIPDDCatalogReplacesOnlyManagedAIPDDData(t *testing.T) {
 	require.NoError(t, DB.Where("key = ?", aipddBillingModeOptionKey).First(&modeOption).Error)
 	require.JSONEq(t, `{"task-old":"task_pricing","llm-old":"tiered_expr","unrelated-model":"ratio","llm-new":"tiered_expr"}`, modeOption.Value)
 	require.NoError(t, DB.Where("key = ?", aipddBillingExprOptionKey).First(&exprOption).Error)
-	require.JSONEq(t, `{"llm-old":"tier(\"local\", p * 1 + c * 2)","llm-new":"tier(\"aipdd\", p * 0.013750000000000002 + c * 0.04125)"}`, exprOption.Value)
+	require.JSONEq(t, `{"llm-old":"tier(\"local\", p * 1 + c * 2)","llm-new":"tier(\"aipdd\", p * 0.01375 + c * 0.04125)"}`, exprOption.Value)
 	price, ok := ratio_setting.GetModelPrice("task-old", false)
 	require.True(t, ok)
 	require.Equal(t, 1.25, price)
@@ -392,7 +392,14 @@ func TestApplyAIPDDCatalogImportsTokenMarketPerCallDisplayPrices(t *testing.T) {
 
 	result, err := applyAIPDDCatalog(catalog, "https://aipdd.example", "sk-test")
 	require.NoError(t, err)
-	require.Equal(t, 3, result.UpdatedPrices)
+	// The two per-call prices already had local rows before the syncer kept a
+	// record of what it writes, so the first pass adopts them as its baseline
+	// instead of overwriting a price an administrator may have set by hand.
+	require.Equal(t, 1, result.UpdatedPrices)
+
+	second, err := applyAIPDDCatalog(catalog, "https://aipdd.example", "sk-test")
+	require.NoError(t, err)
+	require.Equal(t, 2, second.UpdatedPrices, "the adopted baseline now follows the catalog")
 
 	price, ok := ratio_setting.GetModelPrice("fixed-image", false)
 	require.True(t, ok)
@@ -415,9 +422,9 @@ func TestApplyAIPDDCatalogImportsTokenMarketPerCallDisplayPrices(t *testing.T) {
 	require.Equal(t, 1, pricing.QuotaType)
 	require.InDelta(t, 0.1375, pricing.ModelPrice, 1e-12)
 
-	second, err := applyAIPDDCatalog(catalog, "https://aipdd.example", "sk-test")
+	third, err := applyAIPDDCatalog(catalog, "https://aipdd.example", "sk-test")
 	require.NoError(t, err)
-	require.Zero(t, second.UpdatedPrices)
+	require.Zero(t, third.UpdatedPrices)
 }
 
 func TestApplyAIPDDCatalogKeepsDisabledModelsInDBAndChannel(t *testing.T) {

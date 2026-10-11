@@ -11,9 +11,11 @@ import (
 
 // aipddPinnedModelsOptionKey stores the model names whose price an administrator
 // has pinned. The catalog price importers neither write nor delete a pinned
-// model's price rows, so a hand-set retail price survives every sync. Without
-// this, the 5-minute catalog reconciliation would revert any price edited on the
-// pricing page back to the marked-up wholesale price.
+// model's price rows, so a hand-set retail price survives every sync.
+//
+// Pinning is the stronger of the two overrides. AIPDDSyncedPrices already protects
+// a price an administrator edited by hand, but a pin also protects a price that
+// still equals the catalog value, so an upstream reprice leaves it alone too.
 const aipddPinnedModelsOptionKey = "AIPDDPinnedModels"
 
 // aipddPinnedModelSet is a defined type so the importers can ask it whether a

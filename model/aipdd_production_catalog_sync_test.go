@@ -280,8 +280,8 @@ func TestSyncAIPDDCatalogFromProductionFixtureImportsEveryPublishedPrice(t *test
 	// ¥8 input and ¥28 output per million at cost. A single "1" ratio would sell
 	// both at ¥14.6 per million: profitable on input, a loss on every output token.
 	require.Equal(t,
-		"tier(\"aipdd\", p * 1.2054794520547947 + c * 4.219178082191782"+
-			" + cr * 0.30136986301369867 + cc * 1.2054794520547947 + cc1h * 1.2054794520547947)",
+		"tier(\"aipdd\", p * 1.20547945 + c * 4.21917808"+
+			" + cr * 0.30136986 + cc * 1.20547945 + cc1h * 1.20547945)",
 		appliedExprs["ap-glm-5.2"])
 
 	// Display: every model the catalog publishes carries a retail price, even the

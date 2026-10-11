@@ -64,7 +64,10 @@ func AIPDDLLMRetailExpr(catalog aipddcatalog.AtomicCatalog, model aipddcatalog.A
 	}
 	promptUSD := aipddRetailUSD(model.Pricing.PromptPerMillion, rmbPerAWCoin, rmbPerUSD)
 	completionUSD := aipddRetailUSD(model.Pricing.CompletionPerMillion, rmbPerAWCoin, rmbPerUSD)
-	if !finitePositive(promptUSD) || math.IsNaN(completionUSD) || math.IsInf(completionUSD, 0) || completionUSD < 0 {
+	// A catalog model may legitimately publish one free lane (input-free chat
+	// models, output-only embedding revisions), so only a negative or non-finite
+	// coefficient is unusable here.
+	if !finiteNonNegative(promptUSD) || !finiteNonNegative(completionUSD) {
 		return "", fmt.Errorf("model %q per-token prices are not usable", model.ID)
 	}
 	if model.Pricing.CacheReadPerMillion == nil || model.Pricing.CacheWritePerMillion == nil {
@@ -76,8 +79,7 @@ func AIPDDLLMRetailExpr(catalog aipddcatalog.AtomicCatalog, model aipddcatalog.A
 	}
 	cacheReadUSD := aipddRetailUSD(*model.Pricing.CacheReadPerMillion, rmbPerAWCoin, rmbPerUSD)
 	cacheWriteUSD := aipddRetailUSD(*model.Pricing.CacheWritePerMillion, rmbPerAWCoin, rmbPerUSD)
-	if cacheReadUSD < 0 || cacheWriteUSD < 0 || math.IsNaN(cacheReadUSD) || math.IsNaN(cacheWriteUSD) ||
-		math.IsInf(cacheReadUSD, 0) || math.IsInf(cacheWriteUSD, 0) {
+	if !finiteNonNegative(cacheReadUSD) || !finiteNonNegative(cacheWriteUSD) {
 		return "", fmt.Errorf("model %q cache prices are not usable", model.ID)
 	}
 	return fmt.Sprintf("tier(%q, p * %s + c * %s + cr * %s + cc * %s + cc1h * %s)",
@@ -86,8 +88,15 @@ func AIPDDLLMRetailExpr(catalog aipddcatalog.AtomicCatalog, model aipddcatalog.A
 		formatRetailPrice(cacheReadUSD), formatRetailPrice(cacheWriteUSD), formatRetailPrice(cacheWriteUSD)), nil
 }
 
+// formatRetailPrice renders a retail coefficient for a billing expression.
+// Binary floats cannot hold a decimal price exactly, so the product of the
+// wholesale price, the margin and the exchange rate often carries representation
+// noise (0.11000000000000001). These strings are stored in the options table and
+// shown to the operator, so they are quantised to eight decimals first: that is
+// about a thousand times finer than the cheapest unit AIPDD can publish, and it
+// leaves the shortest possible exact text behind.
 func formatRetailPrice(value float64) string {
-	return strconv.FormatFloat(value, 'f', -1, 64)
+	return strconv.FormatFloat(math.Round(value*1e8)/1e8, 'f', -1, 64)
 }
 
 // aipddPricingSkips remembers which models were already reported for which

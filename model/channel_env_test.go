@@ -580,8 +580,8 @@ func TestEnsureAIPDDDefaultsSyncsDynamicCatalogOnBoot(t *testing.T) {
 	require.NoError(t, common.UnmarshalJsonStr(bootExprOption.Value, &bootExprs))
 	require.Equal(t,
 		map[string]string{
-			"qwen2.5:0.5b": "tier(\"aipdd\", p * 0.11000000000000001 + c * 0.22000000000000003 + cr * 0 + cc * 0 + cc1h * 0)",
-			"gemma3:1b":    "tier(\"aipdd\", p * 0.05500000000000001 + c * 0.165 + cr * 0 + cc * 0 + cc1h * 0)",
+			"qwen2.5:0.5b": "tier(\"aipdd\", p * 0.11 + c * 0.22 + cr * 0 + cc * 0 + cc1h * 0)",
+			"gemma3:1b":    "tier(\"aipdd\", p * 0.055 + c * 0.165 + cr * 0 + cc * 0 + cc1h * 0)",
 		},
 		bootExprs)
 }

@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"reflect"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -12,7 +11,6 @@ import (
 	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 const (
@@ -50,6 +48,10 @@ func syncAIPDDTokenMarketTaskPricingTx(
 	if err != nil {
 		return 0, nil, err
 	}
+	synced, err := loadAIPDDSyncedPricesTx(tx)
+	if err != nil {
+		return 0, nil, err
+	}
 
 	updated := 0
 	for _, capability := range catalog.Capabilities {
@@ -65,17 +67,12 @@ func syncAIPDDTokenMarketTaskPricingTx(
 		}
 
 		if !tokenMarketCapabilityPriceable(capability) {
-			changed := false
+			// The capability is still listed and routable but publishes no display
+			// price. Its local config stays: deleting it would drop the model back
+			// to the neutral ratio, below AIPDD's wholesale cost.
 			if _, ok := taskPricing[modelName]; ok {
-				delete(taskPricing, modelName)
-				changed = true
-			}
-			if billingModes[modelName] == billing_setting.BillingModeTaskPricing {
-				delete(billingModes, modelName)
-				changed = true
-			}
-			if changed {
-				updated++
+				logAIPDDPricingSkipped(catalog.Revision, modelName,
+					fmt.Errorf("capability publishes no usable display price; keeping the local task pricing"))
 			}
 			continue
 		}
@@ -85,44 +82,78 @@ func syncAIPDDTokenMarketTaskPricingTx(
 			logAIPDDPricingSkipped(catalog.Revision, modelName, err)
 			continue
 		}
-		previous, exists := taskPricing[modelName]
-		if billingModes[modelName] != billing_setting.BillingModeTaskPricing ||
-			!exists || !reflect.DeepEqual(previous, config) {
-			updated++
+		write, err := takeAIPDDTaskPricingTx(synced, taskPricing, billingModes, modelName, config)
+		if err != nil {
+			return 0, nil, err
 		}
+		if !write {
+			continue
+		}
+		updated++
 		taskPricing[modelName] = config
 		billingModes[modelName] = billing_setting.BillingModeTaskPricing
 	}
 
-	if updated == 0 {
+	updates := make(map[string]string, 3)
+	if updated > 0 {
+		if err := billing_setting.ValidateTaskPricingMap(taskPricing); err != nil {
+			return 0, nil, fmt.Errorf("validate merged AIPDD task pricing: %w", err)
+		}
+		billingModeJSON, err := common.Marshal(billingModes)
+		if err != nil {
+			return 0, nil, fmt.Errorf("serialize AIPDD billing modes: %w", err)
+		}
+		taskPricingJSON, err := common.Marshal(taskPricing)
+		if err != nil {
+			return 0, nil, fmt.Errorf("serialize AIPDD task pricing: %w", err)
+		}
+		updates[aipddBillingModeOptionKey] = string(billingModeJSON)
+		updates[aipddTaskPricingOptionKey] = string(taskPricingJSON)
+	}
+	recordValue, recordChanged, err := synced.writeTx(tx)
+	if err != nil {
+		return 0, nil, err
+	}
+	if recordChanged {
+		updates[aipddSyncedPricesOptionKey] = recordValue
+	}
+	if len(updates) == 0 {
 		return 0, nil, nil
 	}
-	if err := billing_setting.ValidateTaskPricingMap(taskPricing); err != nil {
-		return 0, nil, fmt.Errorf("validate merged AIPDD task pricing: %w", err)
-	}
-
-	billingModeJSON, err := common.Marshal(billingModes)
-	if err != nil {
-		return 0, nil, fmt.Errorf("serialize AIPDD billing modes: %w", err)
-	}
-	taskPricingJSON, err := common.Marshal(taskPricing)
-	if err != nil {
-		return 0, nil, fmt.Errorf("serialize AIPDD task pricing: %w", err)
-	}
-	updates := map[string]string{
-		aipddBillingModeOptionKey: string(billingModeJSON),
-		aipddTaskPricingOptionKey: string(taskPricingJSON),
-	}
 	for key, value := range updates {
-		option := Option{Key: key, Value: value}
-		if err := tx.Clauses(clause.OnConflict{
-			Columns:   []clause.Column{{Name: "key"}},
-			DoUpdates: clause.AssignmentColumns([]string{"value"}),
-		}).Create(&option).Error; err != nil {
+		if err := upsertAIPDDOptionTx(tx, key, value); err != nil {
 			return 0, nil, err
 		}
 	}
 	return updated, updates, nil
+}
+
+// takeAIPDDTaskPricing applies the "an edited price wins" rule to one duration
+// model and reports whether the caller must write config for it.
+func takeAIPDDTaskPricingTx(
+	synced *aipddSyncedPriceSet,
+	taskPricing map[string]billing_setting.TaskPricingConfig,
+	billingModes map[string]string,
+	modelName string,
+	config billing_setting.TaskPricingConfig,
+) (bool, error) {
+	desired, err := aipddSyncedTaskText(config)
+	if err != nil {
+		return false, err
+	}
+	current, exists := taskPricing[modelName]
+	currentText := ""
+	if exists {
+		currentText, err = aipddSyncedTaskText(current)
+		if err != nil {
+			return false, err
+		}
+	}
+	_, hasMode := billingModes[modelName]
+	action := synced.decide(aipddSyncedKindTask, modelName,
+		aipddSyncedStateText(billingModes[modelName], currentText), exists || hasMode,
+		aipddSyncedStateText(billing_setting.BillingModeTaskPricing, desired))
+	return action == aipddPriceWrite, nil
 }
 
 // syncAIPDDTokenMarketFixedPricingTx imports display-basis per-call prices for
@@ -150,6 +181,10 @@ func syncAIPDDTokenMarketFixedPricingTx(
 	if err != nil {
 		return 0, nil, err
 	}
+	synced, err := loadAIPDDSyncedPricesTx(tx)
+	if err != nil {
+		return 0, nil, err
+	}
 
 	rmbPerAWCoin := catalog.AWCoinRate.RMBPerAWCoin
 	rmbPerUSD := operation_setting.USDExchangeRate
@@ -170,26 +205,48 @@ func syncAIPDDTokenMarketFixedPricingTx(
 		}
 
 		modelChanged := false
-		if tokenMarketFixedCapabilityPriceable(capability) {
-			if !finitePositive(rmbPerAWCoin) {
-				return 0, nil, fmt.Errorf("AIPDD catalog rmbPerAwcoin must be finite and greater than 0")
+		if !tokenMarketFixedCapabilityPriceable(capability) {
+			// Listed and routable, but the catalog publishes no usable per-call
+			// price. The stored price stays: without it the model falls back to the
+			// neutral ratio, below AIPDD's wholesale cost.
+			if _, ok := modelPrices[modelName]; ok {
+				logAIPDDPricingSkipped(catalog.Revision, modelName,
+					fmt.Errorf("capability publishes no usable per-call price; keeping the local price"))
 			}
-			if !finitePositive(rmbPerUSD) {
-				return 0, nil, fmt.Errorf("New API USDExchangeRate must be finite and greater than 0")
-			}
-			awcoin := aipddcatalog.TaskAWCoinPrice(capability.Pricing)
-			priceUSD, err := displayAWCoinToUSD(&awcoin, rmbPerAWCoin, rmbPerUSD)
-			if err != nil {
-				logAIPDDPricingSkipped(catalog.Revision, modelName, err)
-				continue
-			}
-			if current, ok := modelPrices[modelName]; !ok || !nearlySamePrice(current, priceUSD) {
-				modelPrices[modelName] = priceUSD
-				modelPricesChanged = true
-				modelChanged = true
-			}
-		} else if _, ok := modelPrices[modelName]; ok {
-			delete(modelPrices, modelName)
+			continue
+		}
+		if !finitePositive(rmbPerAWCoin) {
+			return 0, nil, fmt.Errorf("AIPDD catalog rmbPerAwcoin must be finite and greater than 0")
+		}
+		if !finitePositive(rmbPerUSD) {
+			return 0, nil, fmt.Errorf("New API USDExchangeRate must be finite and greater than 0")
+		}
+		awcoin := aipddcatalog.TaskAWCoinPrice(capability.Pricing)
+		priceUSD, err := displayAWCoinToUSD(&awcoin, rmbPerAWCoin, rmbPerUSD)
+		if err != nil {
+			logAIPDDPricingSkipped(catalog.Revision, modelName, err)
+			continue
+		}
+
+		current, hasPrice := modelPrices[modelName]
+		_, hasMode := billingModes[modelName]
+		_, hasTask := taskPricing[modelName]
+		switch synced.decide(aipddSyncedKindPrice, modelName,
+			aipddSyncedStateText(billingModes[modelName], aipddSyncedPriceText(current)),
+			hasPrice || hasMode || hasTask,
+			aipddSyncedStateText("", aipddSyncedPriceText(priceUSD))) {
+		case aipddPriceWrite:
+			// The catalog governs this model's price.
+		case aipddPriceUnchanged:
+			// Already priced as the catalog wants; the stale-row cleanup below runs.
+		case aipddPriceKeepManual, aipddPriceAdopted:
+			// An administrator owns this price, so neither it nor the billing rows
+			// that used to accompany it are touched.
+			continue
+		}
+
+		if !hasPrice || aipddSyncedPriceText(current) != aipddSyncedPriceText(priceUSD) {
+			modelPrices[modelName] = priceUSD
 			modelPricesChanged = true
 			modelChanged = true
 		}
@@ -212,10 +269,7 @@ func syncAIPDDTokenMarketFixedPricingTx(
 		}
 	}
 
-	if updated == 0 {
-		return 0, nil, nil
-	}
-	updates := make(map[string]string, 3)
+	updates := make(map[string]string, 4)
 	if modelPricesChanged {
 		value, err := common.Marshal(modelPrices)
 		if err != nil {
@@ -240,12 +294,18 @@ func syncAIPDDTokenMarketFixedPricingTx(
 		}
 		updates[aipddTaskPricingOptionKey] = string(value)
 	}
+	recordValue, recordChanged, err := synced.writeTx(tx)
+	if err != nil {
+		return 0, nil, err
+	}
+	if recordChanged {
+		updates[aipddSyncedPricesOptionKey] = recordValue
+	}
+	if len(updates) == 0 {
+		return 0, nil, nil
+	}
 	for key, value := range updates {
-		option := Option{Key: key, Value: value}
-		if err := tx.Clauses(clause.OnConflict{
-			Columns:   []clause.Column{{Name: "key"}},
-			DoUpdates: clause.AssignmentColumns([]string{"value"}),
-		}).Create(&option).Error; err != nil {
+		if err := upsertAIPDDOptionTx(tx, key, value); err != nil {
 			return 0, nil, err
 		}
 	}
@@ -262,94 +322,17 @@ func syncAIPDDSynchronousPerSecondPricingTx(
 	tx *gorm.DB,
 	catalog aipddcatalog.AtomicCatalog,
 ) (int, map[string]string, error) {
-	rmbPerAWCoin := catalog.AWCoinRate.RMBPerAWCoin
-	rmbPerUSD := operation_setting.USDExchangeRate
-	if !finitePositive(rmbPerAWCoin) {
-		return 0, nil, fmt.Errorf("AIPDD catalog rmbPerAwcoin must be finite and greater than 0")
-	}
-	if !finitePositive(rmbPerUSD) {
-		return 0, nil, fmt.Errorf("New API USDExchangeRate must be finite and greater than 0")
-	}
-
-	billingModes, err := loadAIPDDBillingModesTx(tx)
-	if err != nil {
-		return 0, nil, err
-	}
-	taskPricing, err := loadAIPDDTaskPricingTx(tx)
-	if err != nil {
-		return 0, nil, err
-	}
-	pinned, err := loadAIPDDPinnedModelsTx(tx)
-	if err != nil {
-		return 0, nil, err
-	}
-
-	updated := 0
-	for modelName, awcoinPerSecond := range catalog.SynchronousPerSecondPrices() {
-		if pinned.contains(modelName) {
-			continue
-		}
-		unitPriceUSD := aipddRetailUSD(awcoinPerSecond, rmbPerAWCoin, rmbPerUSD)
-		if !finitePositive(unitPriceUSD) {
-			logAIPDDPricingSkipped(catalog.Revision, modelName,
-				fmt.Errorf("%g awcoin per second is not a usable retail price", awcoinPerSecond))
-			continue
-		}
-		config := billing_setting.TaskPricingConfig{
-			Unit:                      billing_setting.TaskPricingUnitSecond,
-			NoReferenceVideoUnitPrice: unitPriceUSD,
-			ReferenceVideoPolicy:      billing_setting.ReferenceVideoPolicySame,
-		}
-		if err := billing_setting.ValidateTaskPricingConfig(config); err != nil {
-			logAIPDDPricingSkipped(catalog.Revision, modelName, err)
-			continue
-		}
-		previous, exists := taskPricing[modelName]
-		if billingModes[modelName] != billing_setting.BillingModeTaskPricing ||
-			!exists || !reflect.DeepEqual(previous, config) {
-			updated++
-		}
-		taskPricing[modelName] = config
-		billingModes[modelName] = billing_setting.BillingModeTaskPricing
-	}
-
-	if updated == 0 {
-		return 0, nil, nil
-	}
-	if err := billing_setting.ValidateTaskPricingMap(taskPricing); err != nil {
-		return 0, nil, fmt.Errorf("validate merged AIPDD task pricing: %w", err)
-	}
-	billingModeJSON, err := common.Marshal(billingModes)
-	if err != nil {
-		return 0, nil, fmt.Errorf("serialize AIPDD billing modes: %w", err)
-	}
-	taskPricingJSON, err := common.Marshal(taskPricing)
-	if err != nil {
-		return 0, nil, fmt.Errorf("serialize AIPDD task pricing: %w", err)
-	}
-	updates := map[string]string{
-		aipddBillingModeOptionKey: string(billingModeJSON),
-		aipddTaskPricingOptionKey: string(taskPricingJSON),
-	}
-	for key, value := range updates {
-		option := Option{Key: key, Value: value}
-		if err := tx.Clauses(clause.OnConflict{
-			Columns:   []clause.Column{{Name: "key"}},
-			DoUpdates: clause.AssignmentColumns([]string{"value"}),
-		}).Create(&option).Error; err != nil {
-			return 0, nil, err
-		}
-	}
-	return updated, updates, nil
+	return syncAIPDDPerSecondTaskPricingTx(tx, catalog, catalog.SynchronousPerSecondPrices())
 }
 
-// syncAIPDDAsyncPerSecondPricingTx imports the per-second retail price of async
-// task models (submitted via /shared-tasks/tasks or similar) where the upstream
-// charges per unit of time. Without this importer, such models would be callable
-// but unpriced once the upstream marks them available.
-func syncAIPDDAsyncPerSecondPricingTx(
+// syncAIPDDPerSecondTaskPricingTx provisions unit=second task pricing for models
+// the upstream charges per processed or generated second. One implementation
+// serves both the synchronous and the async endpoint families so the retail price,
+// the retail margin and the "an edited price wins" rule cannot drift apart.
+func syncAIPDDPerSecondTaskPricingTx(
 	tx *gorm.DB,
 	catalog aipddcatalog.AtomicCatalog,
+	awcoinPerSecondByModel map[string]float64,
 ) (int, map[string]string, error) {
 	rmbPerAWCoin := catalog.AWCoinRate.RMBPerAWCoin
 	rmbPerUSD := operation_setting.USDExchangeRate
@@ -372,9 +355,13 @@ func syncAIPDDAsyncPerSecondPricingTx(
 	if err != nil {
 		return 0, nil, err
 	}
+	synced, err := loadAIPDDSyncedPricesTx(tx)
+	if err != nil {
+		return 0, nil, err
+	}
 
 	updated := 0
-	for modelName, awcoinPerSecond := range catalog.AsyncPerSecondPrices() {
+	for modelName, awcoinPerSecond := range awcoinPerSecondByModel {
 		if pinned.contains(modelName) {
 			continue
 		}
@@ -393,43 +380,61 @@ func syncAIPDDAsyncPerSecondPricingTx(
 			logAIPDDPricingSkipped(catalog.Revision, modelName, err)
 			continue
 		}
-		previous, exists := taskPricing[modelName]
-		if billingModes[modelName] != billing_setting.BillingModeTaskPricing ||
-			!exists || !reflect.DeepEqual(previous, config) {
-			updated++
+		write, err := takeAIPDDTaskPricingTx(synced, taskPricing, billingModes, modelName, config)
+		if err != nil {
+			return 0, nil, err
 		}
+		if !write {
+			continue
+		}
+		updated++
 		taskPricing[modelName] = config
 		billingModes[modelName] = billing_setting.BillingModeTaskPricing
 	}
 
-	if updated == 0 {
+	updates := make(map[string]string, 3)
+	if updated > 0 {
+		if err := billing_setting.ValidateTaskPricingMap(taskPricing); err != nil {
+			return 0, nil, fmt.Errorf("validate merged AIPDD task pricing: %w", err)
+		}
+		billingModeJSON, err := common.Marshal(billingModes)
+		if err != nil {
+			return 0, nil, fmt.Errorf("serialize AIPDD billing modes: %w", err)
+		}
+		taskPricingJSON, err := common.Marshal(taskPricing)
+		if err != nil {
+			return 0, nil, fmt.Errorf("serialize AIPDD task pricing: %w", err)
+		}
+		updates[aipddBillingModeOptionKey] = string(billingModeJSON)
+		updates[aipddTaskPricingOptionKey] = string(taskPricingJSON)
+	}
+	recordValue, recordChanged, err := synced.writeTx(tx)
+	if err != nil {
+		return 0, nil, err
+	}
+	if recordChanged {
+		updates[aipddSyncedPricesOptionKey] = recordValue
+	}
+	if len(updates) == 0 {
 		return 0, nil, nil
 	}
-	if err := billing_setting.ValidateTaskPricingMap(taskPricing); err != nil {
-		return 0, nil, fmt.Errorf("validate merged AIPDD async task pricing: %w", err)
-	}
-	billingModeJSON, err := common.Marshal(billingModes)
-	if err != nil {
-		return 0, nil, fmt.Errorf("serialize AIPDD billing modes: %w", err)
-	}
-	taskPricingJSON, err := common.Marshal(taskPricing)
-	if err != nil {
-		return 0, nil, fmt.Errorf("serialize AIPDD task pricing: %w", err)
-	}
-	updates := map[string]string{
-		aipddBillingModeOptionKey: string(billingModeJSON),
-		aipddTaskPricingOptionKey: string(taskPricingJSON),
-	}
 	for key, value := range updates {
-		option := Option{Key: key, Value: value}
-		if err := tx.Clauses(clause.OnConflict{
-			Columns:   []clause.Column{{Name: "key"}},
-			DoUpdates: clause.AssignmentColumns([]string{"value"}),
-		}).Create(&option).Error; err != nil {
+		if err := upsertAIPDDOptionTx(tx, key, value); err != nil {
 			return 0, nil, err
 		}
 	}
 	return updated, updates, nil
+}
+
+// syncAIPDDAsyncPerSecondPricingTx imports the per-second retail price of async
+// task models (submitted via /shared-tasks/tasks or similar) where the upstream
+// charges per unit of time. Without this importer, such models would be callable
+// but unpriced once the upstream marks them available.
+func syncAIPDDAsyncPerSecondPricingTx(
+	tx *gorm.DB,
+	catalog aipddcatalog.AtomicCatalog,
+) (int, map[string]string, error) {
+	return syncAIPDDPerSecondTaskPricingTx(tx, catalog, catalog.AsyncPerSecondPrices())
 }
 
 func loadAIPDDModelPricesTx(tx *gorm.DB) (map[string]float64, error) {
@@ -581,6 +586,13 @@ func displayAWCoinToUSD(value *float64, rmbPerAWCoin, rmbPerUSD float64) (float6
 
 func finitePositive(value float64) bool {
 	return value > 0 && !math.IsNaN(value) && !math.IsInf(value, 0)
+}
+
+// finiteNonNegative accepts a free price lane: AIPDD publishes models whose input
+// or output tokens cost nothing wholesale, and reselling a free lane at zero is
+// correct rather than a missing price.
+func finiteNonNegative(value float64) bool {
+	return value >= 0 && !math.IsNaN(value) && !math.IsInf(value, 0)
 }
 
 func nearlySamePrice(left, right float64) bool {

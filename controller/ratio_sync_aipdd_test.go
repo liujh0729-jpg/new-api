@@ -75,7 +75,7 @@ func TestAIPDDCatalogRatioDataSkipsPerSecondTaskPrices(t *testing.T) {
 	require.Equal(t, billing_setting.BillingModeTieredExpr, modes["aipdd-llm"])
 	exprs, ok := data[billing_setting.BillingExprField].(map[string]string)
 	require.True(t, ok)
-	require.Equal(t, `tier("aipdd", p * 0.11000000000000001 + c * 0.33 + cr * 0 + cc * 0 + cc1h * 0)`, exprs["aipdd-llm"])
+	require.Equal(t, `tier("aipdd", p * 0.11 + c * 0.33 + cr * 0 + cc * 0 + cc1h * 0)`, exprs["aipdd-llm"])
 }
 
 func TestAIPDDCatalogRatioDataAnchorsDisplayPerCallPriceToRMB(t *testing.T) {
@@ -127,7 +127,7 @@ func TestAIPDDCatalogRatioDataUsesCacheAwareExpressionWhenPricesArePresent(t *te
 	exprs := data[billing_setting.BillingExprField].(map[string]string)
 	require.Equal(
 		t,
-		`tier("aipdd", p * 0.11000000000000001 + c * 0.33 + cr * 0.022 + cc * 0.1375 + cc1h * 0.1375)`,
+		`tier("aipdd", p * 0.11 + c * 0.33 + cr * 0.022 + cc * 0.1375 + cc1h * 0.1375)`,
 		exprs["market/cache-aware"])
 }
 
@@ -174,7 +174,7 @@ func TestAIPDDCatalogRatioDataPricesUnavailableModel(t *testing.T) {
 		"upstream availability does not exempt a published price from the margin")
 	exprs, ok := data[billing_setting.BillingExprField].(map[string]string)
 	require.True(t, ok)
-	require.Contains(t, exprs["retired-model"], "p * 0.11000000000000001")
+	require.Contains(t, exprs["retired-model"], "p * 0.11")
 }
 
 func TestAIPDDCatalogRatioDataPreservesLegacyInputPricingWhenCachePricesAreMissing(t *testing.T) {
@@ -195,7 +195,7 @@ func TestAIPDDCatalogRatioDataPreservesLegacyInputPricingWhenCachePricesAreMissi
 	exprs := data[billing_setting.BillingExprField].(map[string]string)
 	require.Equal(
 		t,
-		`tier("aipdd", p * 0.11000000000000001 + c * 0.33)`,
+		`tier("aipdd", p * 0.11 + c * 0.33)`,
 		exprs["deepseek-r1:8b"])
 }
 
