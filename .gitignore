@@ -3,8 +3,9 @@
 .zed
 .history
 upload
-materials/
+/materials/
 *.exe
+*~
 *.db
 build
 *.db-journal
@@ -29,7 +30,7 @@ plans
 
 electron/node_modules
 electron/dist
-data/
+/data/
 .gomodcache/
 .gocache-temp
 .gopath
