@@ -276,3 +276,24 @@ custom_oauth.name_empty: "Provider name cannot be empty"
 custom_oauth.has_bindings: "Cannot delete provider with existing user bindings"
 custom_oauth.binding_not_found: "OAuth binding not found"
 custom_oauth.provider_id_field_invalid: "Could not extract user ID from provider response"
+
+# Setup wizard messages
+setup.already_completed: "System initialization has already been completed"
+setup.username_too_long: "Username must be no longer than 12 characters"
+setup.password_mismatch: "The two passwords do not match"
+setup.password_too_short: "Password must be at least 8 characters long"
+setup.system_error: "System error: {{.Error}}"
+setup.create_root_failed: "Failed to create the administrator account: {{.Error}}"
+setup.save_self_use_mode_failed: "Failed to save the self-use mode setting: {{.Error}}"
+setup.save_demo_site_mode_failed: "Failed to save the demo site mode setting: {{.Error}}"
+setup.save_aipdd_key_failed: "Failed to save the AIPDD API key: {{.Error}}"
+setup.failed: "System initialization failed: {{.Error}}"
+setup.success: "System initialized successfully"
+
+# In-app update checker messages
+update.dirty_worktree: "The working tree has uncommitted changes, so the update was stopped to avoid overwriting them. Commit or discard what git status lists, then try again."
+update.pull_failed: "git pull failed: {{.Error}}"
+update.applied: "Code updated. Rebuild the frontend and backend, then restart the process for the changes to take effect."
+
+# AIPDD catalog messages
+aipdd.catalog_managed_channel_only: "Only the system-managed AIPDD channel supports catalog sync"

@@ -20,6 +20,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
+import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
@@ -44,7 +45,7 @@ import { CompleteStep } from './components/complete-step'
 import { DatabaseStep } from './components/database-step'
 import { StepNavigation } from './components/step-navigation'
 import { UsageModeStep } from './components/usage-mode-step'
-import type { SetupFormValues, SetupStatus } from './types'
+import type { SetupFormValues, SetupResponse, SetupStatus } from './types'
 
 const STEPS = [
   {
@@ -75,6 +76,27 @@ const DEFAULT_FORM_VALUES: SetupFormValues = {
   confirmPassword: '',
   usageMode: 'external',
   aipddKey: '',
+}
+
+// Warning codes returned by POST /api/setup. The backend sends a code plus a short
+// redacted detail because its own i18n only covers three languages.
+const SETUP_WARNING_LABEL_KEYS: Record<string, string> = {
+  aipdd_catalog_sync:
+    'AIPDD catalog sync failed, so models have no retail prices yet. Retry it with the Upstream Updates action on the AIPDD channel.',
+  aipdd_channel_setup:
+    'AIPDD channel creation failed. Create the channel manually before relaying traffic.',
+}
+
+function formatSetupWarnings(
+  warnings: NonNullable<SetupResponse['warnings']>,
+  t: TFunction
+): string {
+  return warnings
+    .map((warning) => {
+      const label = t(SETUP_WARNING_LABEL_KEYS[warning.code] ?? warning.code)
+      return warning.detail ? `${label} (${warning.detail})` : label
+    })
+    .join(' ')
 }
 
 export function SetupWizard() {
@@ -109,7 +131,15 @@ export function SetupWizard() {
     mutationFn: submitSetup,
     onSuccess: async (response) => {
       if (response.success) {
-        toast.success(t('System initialized successfully! Redirecting…'))
+        const warnings = response.warnings ?? []
+        if (warnings.length > 0) {
+          toast.warning(t('Setup completed with warnings'), {
+            description: formatSetupWarnings(warnings, t),
+            duration: 15000,
+          })
+        } else {
+          toast.success(t('System initialized successfully! Redirecting…'))
+        }
         await queryClient.invalidateQueries({ queryKey: ['setup-status'] })
         setTimeout(() => {
           navigate({ to: '/' })

@@ -12,11 +12,12 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/gin-gonic/gin"
 )
 
 const (
-	gitFetchCacheTTL = 30 * time.Second
+	gitFetchCacheTTL  = 30 * time.Second
 	gitCommandTimeout = 30 * time.Second
 )
 
@@ -86,14 +87,18 @@ func runGit(dir string, args ...string) (string, error) {
 	go func() { done <- cmd.Run() }()
 	select {
 	case err := <-done:
+		// A token-authenticated HTTPS remote holds the credential in its URL, and git
+		// echoes that URL back in stdout, stderr and error text. Scrubbing here means
+		// no caller can surface the token through a message or a stored output field.
+		stdout := common.RedactURLCredentials(out.String())
 		if err != nil {
 			msg := strings.TrimSpace(errOut.String())
 			if msg == "" {
 				msg = err.Error()
 			}
-			return out.String(), errors.New(msg)
+			return stdout, errors.New(common.RedactURLCredentials(msg))
 		}
-		return out.String(), nil
+		return stdout, nil
 	case <-time.After(gitCommandTimeout):
 		if cmd.Process != nil {
 			_ = cmd.Process.Kill()
@@ -317,10 +322,7 @@ func ApplyUpdate(c *gin.Context) {
 
 	statusOut, _ := runGit(dir, "status", "--porcelain")
 	if strings.TrimSpace(statusOut) != "" {
-		c.JSON(200, gin.H{
-			"success": false,
-			"message": "工作区存在未提交的改动，为避免覆盖已本地修改，已终止更新。请先处理 git status 中的内容后再试。",
-		})
+		common.ApiErrorI18n(c, i18n.MsgUpdateDirtyWorktree)
 		return
 	}
 
@@ -340,7 +342,7 @@ func ApplyUpdate(c *gin.Context) {
 	if err != nil {
 		c.JSON(200, gin.H{
 			"success": false,
-			"message": "git pull 失败: " + err.Error(),
+			"message": i18n.T(c, i18n.MsgUpdatePullFailed, map[string]any{"Error": common.RedactSecrets(err.Error())}),
 			"data":    gin.H{"output": pullOut},
 		})
 		return
@@ -354,12 +356,12 @@ func ApplyUpdate(c *gin.Context) {
 	newHead, _ := runGit(dir, "rev-parse", "HEAD")
 	c.JSON(200, gin.H{
 		"success": true,
-		"message": "代码已更新，需重新构建前端与后端并重启进程后生效。",
+		"message": i18n.T(c, i18n.MsgUpdateApplied),
 		"data": gin.H{
-			"output":     strings.TrimSpace(pullOut),
-			"new_head":   strings.TrimSpace(newHead),
-			"branch":     branch,
-			"remote":     remoteName,
+			"output":           strings.TrimSpace(pullOut),
+			"new_head":         strings.TrimSpace(newHead),
+			"branch":           branch,
+			"remote":           remoteName,
 			"restart_required": true,
 		},
 	})

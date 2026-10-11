@@ -10,6 +10,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/aipddcatalog"
 	"github.com/QuantumNous/new-api/service"
@@ -91,7 +92,7 @@ func SyncAIPDDChannelCatalog(c *gin.Context) {
 		return
 	}
 	if channel.Type != constant.ChannelTypeAIPDD || channel.Name != "AIPDD" {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "仅系统管理的 AIPDD 渠道支持目录同步"})
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": i18n.T(c, i18n.MsgAIPDDCatalogManagedOnly)})
 		return
 	}
 	client, err := getAIPDDHTTPClientForChannel(channel)

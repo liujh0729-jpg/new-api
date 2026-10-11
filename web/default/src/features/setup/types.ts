@@ -35,8 +35,16 @@ export interface SetupFormValues {
   aipddKey: string
 }
 
+export interface SetupWarning {
+  code: string
+  detail?: string
+}
+
 export interface SetupResponse {
   success: boolean
   message?: string
   data?: SetupStatus
+  // Steps that failed after the core install succeeded, e.g. an AIPDD key that
+  // could not be synced. Initialization still worked; the platform is incomplete.
+  warnings?: SetupWarning[]
 }

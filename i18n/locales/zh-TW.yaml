@@ -277,3 +277,24 @@ custom_oauth.name_empty: "供應者名稱不能為空"
 custom_oauth.has_bindings: "無法刪除已有使用者綁定的供應者"
 custom_oauth.binding_not_found: "OAuth 綁定不存在"
 custom_oauth.provider_id_field_invalid: "無法從供應者響應中提取使用者 ID"
+
+# Setup wizard messages
+setup.already_completed: "系統已經初始化完成"
+setup.username_too_long: "使用者名長度不能超過12個字符"
+setup.password_mismatch: "兩次輸入的密碼不一致"
+setup.password_too_short: "密碼長度至少為8個字符"
+setup.system_error: "系統錯誤: {{.Error}}"
+setup.create_root_failed: "建立管理員帳號失敗: {{.Error}}"
+setup.save_self_use_mode_failed: "保存自用模式設定失敗: {{.Error}}"
+setup.save_demo_site_mode_failed: "保存演示站點模式設定失敗: {{.Error}}"
+setup.save_aipdd_key_failed: "保存 AIPDD API Key 失敗: {{.Error}}"
+setup.failed: "系統初始化失敗: {{.Error}}"
+setup.success: "系統初始化成功"
+
+# In-app update checker messages
+update.dirty_worktree: "工作區存在未提交的變更，為避免覆蓋已本地修改，已終止更新。請先處理 git status 中的內容後再試。"
+update.pull_failed: "git pull 失敗: {{.Error}}"
+update.applied: "代碼已更新，需重新構建前端與後端並重啟進程後生效。"
+
+# AIPDD catalog messages
+aipdd.catalog_managed_channel_only: "僅系統管理的 AIPDD 管道支援目錄同步"

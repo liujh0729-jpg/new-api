@@ -7,6 +7,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
@@ -16,6 +17,25 @@ type Setup struct {
 	Status       bool   `json:"status"`
 	RootInit     bool   `json:"root_init"`
 	DatabaseType string `json:"database_type"`
+}
+
+// SetupWarning reports a step that failed after the core install succeeded. The
+// wizard shows these instead of a plain success so an operator learns that, for
+// example, the AIPDD catalog never synced and models still need pricing.
+type SetupWarning struct {
+	Code   string `json:"code"`
+	Detail string `json:"detail,omitempty"`
+}
+
+const (
+	setupWarningCatalogSync  = "aipdd_catalog_sync"
+	setupWarningChannelSetup = "aipdd_channel_setup"
+)
+
+// setupErrorDetail keeps the operator-facing text short and credential-free: the
+// full error stays in the server log.
+func setupErrorDetail(err error, secrets ...string) string {
+	return common.TruncateForLog(common.RedactSecrets(err.Error(), secrets...), 200)
 }
 
 type SetupRequest struct {
@@ -57,10 +77,7 @@ func GetSetup(c *gin.Context) {
 func PostSetup(c *gin.Context) {
 	// Check if setup is already completed
 	if constant.Setup {
-		c.JSON(200, gin.H{
-			"success": false,
-			"message": "系统已经初始化完成",
-		})
+		common.ApiErrorI18n(c, i18n.MsgSetupAlreadyCompleted)
 		return
 	}
 
@@ -70,10 +87,7 @@ func PostSetup(c *gin.Context) {
 	var req SetupRequest
 	err := c.ShouldBindJSON(&req)
 	if err != nil {
-		c.JSON(200, gin.H{
-			"success": false,
-			"message": "请求参数有误",
-		})
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		return
 	}
 
@@ -81,36 +95,24 @@ func PostSetup(c *gin.Context) {
 	if !rootExists {
 		// Validate username length: max 12 characters to align with model.User validation
 		if len(req.Username) > 12 {
-			c.JSON(200, gin.H{
-				"success": false,
-				"message": "用户名长度不能超过12个字符",
-			})
+			common.ApiErrorI18n(c, i18n.MsgSetupUsernameTooLong)
 			return
 		}
 		// Validate password
 		if req.Password != req.ConfirmPassword {
-			c.JSON(200, gin.H{
-				"success": false,
-				"message": "两次输入的密码不一致",
-			})
+			common.ApiErrorI18n(c, i18n.MsgSetupPasswordMismatch)
 			return
 		}
 
 		if len(req.Password) < 8 {
-			c.JSON(200, gin.H{
-				"success": false,
-				"message": "密码长度至少为8个字符",
-			})
+			common.ApiErrorI18n(c, i18n.MsgSetupPasswordTooShort)
 			return
 		}
 
 		// Create root user
 		hashedPassword, err := common.Password2Hash(req.Password)
 		if err != nil {
-			c.JSON(200, gin.H{
-				"success": false,
-				"message": "系统错误: " + err.Error(),
-			})
+			common.ApiErrorI18n(c, i18n.MsgSetupSystemError, map[string]any{"Error": err.Error()})
 			return
 		}
 		rootUser := model.User{
@@ -124,10 +126,7 @@ func PostSetup(c *gin.Context) {
 		}
 		err = model.DB.Create(&rootUser).Error
 		if err != nil {
-			c.JSON(200, gin.H{
-				"success": false,
-				"message": "创建管理员账号失败: " + err.Error(),
-			})
+			common.ApiErrorI18n(c, i18n.MsgSetupCreateRootFailed, map[string]any{"Error": err.Error()})
 			return
 		}
 	}
@@ -139,30 +138,22 @@ func PostSetup(c *gin.Context) {
 	// Save operation modes to database for persistence
 	err = model.UpdateOption("SelfUseModeEnabled", boolToString(req.SelfUseModeEnabled))
 	if err != nil {
-		c.JSON(200, gin.H{
-			"success": false,
-			"message": "保存自用模式设置失败: " + err.Error(),
-		})
+		common.ApiErrorI18n(c, i18n.MsgSetupSaveSelfUseFailed, map[string]any{"Error": err.Error()})
 		return
 	}
 
 	err = model.UpdateOption("DemoSiteEnabled", boolToString(req.DemoSiteEnabled))
 	if err != nil {
-		c.JSON(200, gin.H{
-			"success": false,
-			"message": "保存演示站点模式设置失败: " + err.Error(),
-		})
+		common.ApiErrorI18n(c, i18n.MsgSetupSaveDemoSiteFailed, map[string]any{"Error": err.Error()})
 		return
 	}
 
 	// Save AIPDD API key and bootstrap catalog + channel
 	aipddKey := strings.TrimSpace(req.AIPDDApiKey)
+	var warnings []SetupWarning
 	if aipddKey != "" {
 		if err = model.UpdateOption("AIPDDApiKey", aipddKey); err != nil {
-			c.JSON(200, gin.H{
-				"success": false,
-				"message": "保存 AIPDD API Key 失败: " + err.Error(),
-			})
+			common.ApiErrorI18n(c, i18n.MsgSetupSaveAIPDDKeyFailed, map[string]any{"Error": setupErrorDetail(err, aipddKey)})
 			return
 		}
 		baseURL := model.ResolveAIPDDBaseURL()
@@ -170,9 +161,17 @@ func PostSetup(c *gin.Context) {
 		defer syncCancel()
 		if _, err = model.SyncAIPDDCatalog(syncCtx, nil, baseURL, aipddKey); err != nil {
 			common.SysLog("AIPDD catalog sync during setup failed: " + err.Error())
+			warnings = append(warnings, SetupWarning{
+				Code:   setupWarningCatalogSync,
+				Detail: setupErrorDetail(err, aipddKey),
+			})
 		}
 		if err = model.EnsureAIPDDChannelWithKey(aipddKey, baseURL); err != nil {
 			common.SysLog("AIPDD channel creation during setup failed: " + err.Error())
+			warnings = append(warnings, SetupWarning{
+				Code:   setupWarningChannelSetup,
+				Detail: setupErrorDetail(err, aipddKey),
+			})
 		}
 	}
 
@@ -185,17 +184,18 @@ func PostSetup(c *gin.Context) {
 	}
 	err = model.DB.Create(&setup).Error
 	if err != nil {
-		c.JSON(200, gin.H{
-			"success": false,
-			"message": "系统初始化失败: " + err.Error(),
-		})
+		common.ApiErrorI18n(c, i18n.MsgSetupFailed, map[string]any{"Error": err.Error()})
 		return
 	}
 
-	c.JSON(200, gin.H{
+	response := gin.H{
 		"success": true,
-		"message": "系统初始化成功",
-	})
+		"message": i18n.T(c, i18n.MsgSetupSuccess),
+	}
+	if len(warnings) > 0 {
+		response["warnings"] = warnings
+	}
+	c.JSON(200, response)
 }
 
 func boolToString(b bool) string {

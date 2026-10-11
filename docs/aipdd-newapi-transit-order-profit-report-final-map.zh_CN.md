@@ -554,6 +554,8 @@ NewAPI 已提供简版 AIPDD 中转订单记录页面；该页面只展示 NewAP
 - 换算一律走人民币：`零售USD = 批发AWcoin × rmbPerAwcoin × markup ÷ USDExchangeRate`。catalog 自带的 `usdPerAwcoin` 是过时参考价，**不使用**，这样对外人民币价正好等于批发人民币价 × 1.1，不随上游参考汇率漂移。
 - 文本模型用 `tiered_expr`（分档表达式）而不是 `ModelRatio`：批发价中 cacheRead/cacheWrite 与 prompt 各不相同（例如 `ap-qwen3.8-max` 的 cacheWrite `¥15/1M` ≠ prompt `¥12/1M`，`ap-deepseek-v4-flash` 的 cacheRead 只有 `¥0.1/1M`），单一倍率无法表达，只有表达式能保留每一类 token 的独立价。系数单位是 **USD/百万 token**。
 - 图片的 2K/4K 分档是相对价（`AIPDDImagePricing.RatioFor`），基础 `ModelPrice` 加了毛利后各档自动等比放大，无需单独处理。
+- **默认 1.1 倍、人工改过的价说了算**（用户 2026-10-11 口径：「默认填写的时候是 1.1 倍，但是用户自己修改了以后以用户为准，这个是原则。没有 1 倍的说法」）。机制不是「猜有没有人改过」，而是导入器自己记账：每写一行价格就把写进去的值记在 `options` 的 `AIPDDSyncedPrices` 里（key＝计价种类＋模型名，value＝计费模式＋价格的指纹），下一拍先比对，库里存的和自己上次写的不一致＝管理员改过 → 这个模型一律不碰、也不回收。钉价按钮是更强的另一层：钉住的是**同步器自己写的**价，上游改价也不动。
+- 表达式系数落库前按 8 位小数取整（`formatRetailPrice`）：8 位比 AIPDD 能发布的最小单位细约一千倍，既避免 `0.8800000000000001` 这种浮点尾巴污染定价页/日志展示，也不改变实际扣费。
 
 ### 19.3 落点
 
@@ -563,6 +565,7 @@ NewAPI 已提供简版 AIPDD 中转订单记录页面；该页面只展示 NewAP
 | 文本模型导入器 | `model/aipdd_catalog_llm_pricing.go` | `syncAIPDDLLMTokenPricingTx` 写 `billing_setting.billing_mode`/`billing_expr` |
 | 任务模型导入器 ×4 | `model/aipdd_catalog_task_pricing.go` | 按次固定价、共享适配器按次、同步按秒、异步按秒（含 by_resolution）全部应用乘数 |
 | 同步编排 | `model/aipdd_catalog_sync.go` | 文本导入器在任务导入之后运行，避免同一目录版本给任务模型发 token 表达式；提交后一并激活 `billing_expr` |
+| 人工价记账 | `model/aipdd_synced_prices.go` | `AIPDDSyncedPrices`：导入器记住自己写过的每个价格，据此把「被人工改过的模型」整台让出（不覆写、不回收） |
 | 后台「同步上游定价」预览 | `controller/ratio_sync.go` | 复用同一个 `AIPDDLLMRetailExpr`/`AIPDDRetailMarkup`，保证预览候选价＝已写入价，管理员点应用不会把毛利抹平 |
 
 **上游的 `available` 标记不参与定价**（用户 2026-10-11 口径：「不要管他可用不可用，总之就是 1.1 倍」）。目录里出现的模型一律按批发 × 倍率落价，因为不可用的模型仍然挂在托管渠道和 `abilities` 里、仍可被路由，没有零售价就等于按默认倍率亏本卖。`available=false` 只影响 `/v1/models` 是否展示该模型，不影响价格。
@@ -588,13 +591,17 @@ NewAPI 已提供简版 AIPDD 中转订单记录页面；该页面只展示 NewAP
 - `model/aipdd_retail_pricing_test.go`：默认 1.10 / 环境覆盖 / 非法值回落；`IsAIPDDRetailTokenModel` 四种排除条件（免费、停用计价、非按 token、非 awcoin；**不含 available**）；表达式含 cache 变量、schema v1 不含 cache 变量、embedding `c * 0`；汇率或 awcoin 价不可用时报错。
 - `model/aipdd_catalog_llm_pricing_test.go`：首次导入写 3 个模型（含上游标 `available=false` 的那个）且保留管理员已有价；重复导入 0 变更；批发价变动被检出；撤价/免费模型回收行（`tiered_expr` 模式删除、`ratio` 模式保留）；`markup=1` 时系数恰为平价。
 - `model/aipdd_catalog_sync_test.go`、`model/aipdd_catalog_task_pricing_test.go`、`model/aipdd_production_catalog_sync_test.go`（真实目录 8 类 fixture，逐模型断言系数）、`model/channel_env_test.go`（启动即定价）、`controller/ratio_sync_aipdd_test.go`（预览候选价含毛利）全部通过。
+- 人工价优先：`TestSyncAIPDDLLMTokenPricingTxKeepsEditedPrice`（改过的表达式永不被覆写、下一拍仍不接管）、`TestSyncAIPDDLLMTokenPricingTxAdoptsPreexistingPrice`（升级第一拍只记账不改数）、`TestSyncAIPDDLLMTokenPricingTxSkipsPinnedModels`/`TestSyncAIPDDAsyncPerSecondPricingTxSkipsPinnedModels`（钉价跳过，且断言的是运行期真正生效的 `billing_setting.GetBillingExpr`，不只是写进 options 的字符串）。
 - `go test ./model/... ./controller/... ./service/... ./setting/... ./pkg/... ./relay/... ./dto/...` 全绿。
 - 生产已验（2026-10-11，本机 `one-api.db`，`rmbPerAwcoin=0.0001`、`USDExchangeRate=7.3`）：8 个文本表达式、8 个按次价、`ap-minimax-h3` 三档分辨率全部精确等于批发 ×1.1；真实中转请求 `ap-glm-5.3-flash`（29 入 / 2500 出）收客户 3869 微元、估上游 3512 微元，比值 **1.1017**（0.15% 来自 quota 取整）。注意 `customer_charge_rmb_mic` 由整数 quota 反推，1 quota ≈ 14.6 微元，几十 token 的小请求测不出毛利，必须发长输出请求。
 
 ### 19.6 注意
 
 - 目录同步只在**价格变化**时写库；改 `AIPDD_PRICING_MARKUP` 后需要再触发一次同步（或重启）才会按新倍率重算。
-- 手动在定价页改过的模型会被下一次目录同步覆盖回「批发 × 倍率」——catalog 是价格来源。要让某个人工价说了算，在「系统设置 → 定价」点该模型的钉价按钮（写入 `options` 的 `AIPDDPinnedModels`，一个模型名数组）：5 个价格导入器与上游同步预览都会跳过钉住的模型，既不覆写也不回收，取消钉价后下一次同步自动接管。整体停用同步仍可把 `AIPDD_CATALOG_SYNC_INTERVAL_MINUTES` 设为 0。
+- 人工价自动优先，不需要管理员记得去点什么：导入器拿库里现价和 `AIPDDSyncedPrices` 里自己上次写的值比对（见 19.2），不一致就是人工改过 → 这个模型整台让出，既不覆写也不回收，改价永久生效。钉价按钮（`options` 的 `AIPDDPinnedModels`，模型名数组）解决的是另一个问题：钉住**同步器自己写的**价，让它在上游改价后也不漂移；5 个价格导入器与上游同步预览都会跳过钉住的模型。整体停用同步仍可把 `AIPDD_CATALOG_SYNC_INTERVAL_MINUTES` 设为 0。
+- 想让某个模型重新跟随目录：删掉它的价（表达式行 / 按次价 / 任务价）即可——下一拍本地无价就是直接按「批发 × 倍率」重写，残留的记账记录不影响；或者直接删掉整个 `AIPDDSyncedPrices` 选项，下一拍会把库里现价认作基线（不改），从第二拍起恢复跟随。
+- 升级到本机制时库里已有的价没有记账记录，导入器第一拍只做「采纳」（记为基线、不动数据），第二拍起才恢复跟随目录——所以升级本身绝不会覆盖任何人工价。
+- 缓存写价 `cc` 与 1 小时缓存写价 `cc1h` 用同一个系数：catalog 只发布一个 `cacheWritePerMillion`，没有 1 小时档的参考价，两类都按它收。schema v1 目录不发布缓存价时表达式里根本不带 `cr`/`cc`/`cc1h`，缓存 token 留在 `p` 里按普通输入价计费。
 - 单个模型的价格异常（批发价为 0、缓存价缺失、分辨率档位重复等）只跳过该模型并每个 revision 打一条日志，其余模型照常定价；只有汇率基准不可用、合并后的价格表校验失败、序列化或写库失败才会让整个目录同步回滚。
 - 毛利只在 catalog **列出**的模型上生效（`available` 与否都算列出了）。目录里根本没有的模型（当前 `jev`）既无批发价也无零售价，走默认 1 倍率，属于亏损区间——只能等上游发布后由同步自动接管。
 

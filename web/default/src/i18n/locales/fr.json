@@ -2389,6 +2389,7 @@
     "Importing...": "Importation...",
     "In Progress": "En cours",
     "In:": "Entrée :",
+    "Inactive": "Inactif",
     "Inactive tiers are saved but hidden from public pricing and Playground until upstream support appears.": "Les paliers inactifs sont enregistrés, mais masqués des tarifs publics et du Playground jusqu’à leur prise en charge en amont.",
     "incident": "incident",
     "incidents": "incidents",
@@ -5448,6 +5449,9 @@
     "Zero retention": "Aucune rétention",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "Setup completed with warnings": "Initialisation terminée avec des avertissements",
+    "AIPDD catalog sync failed, so models have no retail prices yet. Retry it with the Upstream Updates action on the AIPDD channel.": "Échec de la synchronisation du catalogue AIPDD : les modèles n’ont pas encore de prix de détail. Relancez-la avec l’action « Mises à jour en amont » du canal AIPDD.",
+    "AIPDD channel creation failed. Create the channel manually before relaying traffic.": "Échec de la création du canal AIPDD. Créez le canal manuellement avant de relayer le trafic."
   }
 }

@@ -265,7 +265,7 @@ AIPDD_CHANNEL_OVERWRITE_ON_BOOT=false
 | PORT | 服务监听端口，默认 3000；通常只修改宿主机端口映射即可 |
 | TZ | 容器时区，建议设置为 Asia/Shanghai |
 | SQL_DSN | PostgreSQL 或 MySQL 连接字符串；不设置时使用 SQLite |
-| SQLITE_PATH | SQLite 数据库路径；容器部署时建议放在 /data 下 |
+| SQLITE_PATH | SQLite 数据库路径；容器部署时建议放在 /data 下。注意它覆盖的是整串 DSN，一旦显式设置，默认自带的 WAL 与 busy_timeout 参数就不再生效（见下方说明） |
 | REDIS_CONN_STRING | Redis 连接字符串；多实例、共享缓存和任务轮询建议启用 |
 | SESSION_SECRET | 会话密钥；生产环境必须固定 |
 | CRYPTO_SECRET | 加密密钥；使用 Redis 或多实例时必须固定并保持一致 |
@@ -281,6 +281,7 @@ AIPDD_CHANNEL_OVERWRITE_ON_BOOT=false
 | BATCH_UPDATE_ENABLED | 是否启用批量更新 |
 | NODE_NAME | 节点名称；多容器部署时用于审计日志识别 |
 | STREAMING_TIMEOUT | 流式请求无响应超时时间，单位秒 |
+| LOG_MAX_FILES | 日志目录保留的 `oneapi-*.log` 文件个数，默认 30；填 0 或负数表示不清理历史日志 |
 
 PostgreSQL Compose 网络内的连接示例：
 
@@ -295,6 +296,23 @@ root:数据库密码@tcp(mysql.example.com:3306)/new-api?parseTime=true
 ~~~
 
 不要把 localhost 写进 New API 容器的外部数据库配置；在容器内，localhost 指向 New API 容器本身。
+
+### 6.1 SQLite 的 WAL 与并发写
+
+不设置 `SQL_DSN` 时，本系统用 SQLite，默认 DSN 已经带上两个参数：
+
+~~~text
+one-api.db?_pragma=busy_timeout(30000)&_pragma=journal_mode(WAL)
+~~~
+
+- `busy_timeout(30000)`：多个写请求撞车时排队等 30 秒，而不是直接报 `database is locked`。
+- `journal_mode(WAL)`：读不阻塞写、写不阻塞读，中转高并发下更稳。
+
+注意三件事：
+
+1. 只有**默认路径**才有这两个参数。显式设置 `SQLITE_PATH` 会替换整串 DSN，想要 WAL 就得自己把参数写回去，例如 `SQLITE_PATH=/data/one-api.db?_pragma=busy_timeout(30000)&_pragma=journal_mode(WAL)`。
+2. WAL 要求数据库文件在**本地文件系统**上。放在 NFS、网络盘或部分容器挂载卷上会损坏数据库，这种情况请改用 `SQL_DSN` 连 MySQL 或 PostgreSQL。
+3. 开启 WAL 后，数据库目录里会多出 `one-api.db-wal`、`one-api.db-shm` 两个附属文件。备份时必须和主文件一起拷、一起删，只拷 `.db` 会丢最近一段写入。
 
 ## 7. 反向代理和 HTTPS
 
@@ -473,6 +491,8 @@ an AIPDD API key is required; enter it in the setup wizard, save it on the AIPDD
 1. 已完成首次设置的话，直接在名为 AIPDD 的渠道里保存密钥，或在首次设置向导里填写——保存即生效，不必重启容器。
 2. 首次启动前就想预置，则在 .env 中填写 AIPDD_API_KEY，再执行 docker compose up -d。
 3. 如果不使用 AIPDD，设置 AIPDD_BOOTSTRAP_REQUIRED=false 和 AIPDD_CATALOG_SYNC_ON_BOOT=false。
+
+向导成功建库、建管理员之后，如果 AIPDD 模型目录同步或 AIPDD 渠道创建失败，**不会**把这次初始化判为失败——系统会照常可用，只是提示「初始化完成，但有警告」，并把失败项（`aipdd_catalog_sync` / `aipdd_channel_setup`）和一段已脱敏的原因显示出来。出现这种提示时，管理员补好密钥后在 AIPDD 渠道点「同步上游定价」即可，不必重新初始化；后台管理员账号、登录和已有数据都不受影响。
 
 ### 10.3 端口 3000 已被占用
 

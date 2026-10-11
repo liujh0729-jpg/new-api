@@ -2389,6 +2389,7 @@
     "Importing...": "インポート中...",
     "In Progress": "処理中",
     "In:": "入力：",
+    "Inactive": "無効",
     "Inactive tiers are saved but hidden from public pricing and Playground until upstream support appears.": "無効な料金段階は保存されますが、上流が対応するまで公開料金と Playground には表示されません。",
     "incident": "件",
     "incidents": "件",
@@ -5448,6 +5449,9 @@
     "Zero retention": "データ保持なし",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V 4",
-    "Zoom": "ズーム"
+    "Zoom": "ズーム",
+    "Setup completed with warnings": "セットアップは完了しましたが、警告があります",
+    "AIPDD catalog sync failed, so models have no retail prices yet. Retry it with the Upstream Updates action on the AIPDD channel.": "AIPDD カタログの同期に失敗したため、モデルに小売価格が設定されていません。AIPDD チャネルの「アップストリーム更新」操作で再試行してください。",
+    "AIPDD channel creation failed. Create the channel manually before relaying traffic.": "AIPDD チャネルの作成に失敗しました。中継前にチャネルを手動で作成してください。"
   }
 }

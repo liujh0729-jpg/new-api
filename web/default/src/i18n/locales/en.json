@@ -2389,6 +2389,7 @@
     "Importing...": "Importing...",
     "In Progress": "In Progress",
     "In:": "In:",
+    "Inactive": "Inactive",
     "Inactive tiers are saved but hidden from public pricing and Playground until upstream support appears.": "Inactive tiers are saved but hidden from public pricing and Playground until upstream support appears.",
     "incident": "incident",
     "incidents": "incidents",
@@ -5448,6 +5449,9 @@
     "Zero retention": "Zero retention",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "Setup completed with warnings": "Setup completed with warnings",
+    "AIPDD catalog sync failed, so models have no retail prices yet. Retry it with the Upstream Updates action on the AIPDD channel.": "AIPDD catalog sync failed, so models have no retail prices yet. Retry it with the Upstream Updates action on the AIPDD channel.",
+    "AIPDD channel creation failed. Create the channel manually before relaying traffic.": "AIPDD channel creation failed. Create the channel manually before relaying traffic."
   }
 }

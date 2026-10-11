@@ -329,3 +329,30 @@ const (
 	MsgCustomOAuthBindingNotFound   = "custom_oauth.binding_not_found"
 	MsgCustomOAuthProviderIdInvalid = "custom_oauth.provider_id_field_invalid"
 )
+
+// Setup wizard messages
+const (
+	MsgSetupAlreadyCompleted   = "setup.already_completed"
+	MsgSetupUsernameTooLong    = "setup.username_too_long"
+	MsgSetupPasswordMismatch   = "setup.password_mismatch"
+	MsgSetupPasswordTooShort   = "setup.password_too_short"
+	MsgSetupSystemError        = "setup.system_error"
+	MsgSetupCreateRootFailed   = "setup.create_root_failed"
+	MsgSetupSaveSelfUseFailed  = "setup.save_self_use_mode_failed"
+	MsgSetupSaveDemoSiteFailed = "setup.save_demo_site_mode_failed"
+	MsgSetupSaveAIPDDKeyFailed = "setup.save_aipdd_key_failed"
+	MsgSetupFailed             = "setup.failed"
+	MsgSetupSuccess            = "setup.success"
+)
+
+// In-app update checker messages
+const (
+	MsgUpdateDirtyWorktree = "update.dirty_worktree"
+	MsgUpdatePullFailed    = "update.pull_failed"
+	MsgUpdateApplied       = "update.applied"
+)
+
+// AIPDD catalog messages
+const (
+	MsgAIPDDCatalogManagedOnly = "aipdd.catalog_managed_channel_only"
+)

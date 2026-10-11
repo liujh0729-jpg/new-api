@@ -2389,6 +2389,7 @@
     "Importing...": "Đang nhập...",
     "In Progress": "Đang xử lý",
     "In:": "Vào:",
+    "Inactive": "Không hoạt động",
     "Inactive tiers are saved but hidden from public pricing and Playground until upstream support appears.": "Các bậc chưa kích hoạt vẫn được lưu nhưng bị ẩn khỏi bảng giá công khai và Playground cho đến khi thượng nguồn hỗ trợ.",
     "incident": "sự cố",
     "incidents": "sự cố",
@@ -5448,6 +5449,9 @@
     "Zero retention": "Không lưu dữ liệu",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Thu phóng"
+    "Zoom": "Thu phóng",
+    "Setup completed with warnings": "Khởi tạo hoàn tất nhưng có cảnh báo",
+    "AIPDD catalog sync failed, so models have no retail prices yet. Retry it with the Upstream Updates action on the AIPDD channel.": "Đồng bộ danh mục AIPDD thất bại nên các mô hình chưa có giá bán lẻ. Hãy thử lại bằng thao tác “Cập nhật nguồn” trên kênh AIPDD.",
+    "AIPDD channel creation failed. Create the channel manually before relaying traffic.": "Tạo kênh AIPDD thất bại. Hãy tự tạo kênh trước khi chuyển tiếp yêu cầu."
   }
 }
