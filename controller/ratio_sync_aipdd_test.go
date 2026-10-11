@@ -151,7 +151,7 @@ func TestAIPDDCatalogRatioDataSkipsFreeModel(t *testing.T) {
 	require.NotContains(t, data, billing_setting.BillingExprField)
 }
 
-func TestAIPDDCatalogRatioDataSkipsUnavailableModel(t *testing.T) {
+func TestAIPDDCatalogRatioDataPricesUnavailableModel(t *testing.T) {
 	aipddRatioTestDataEnv(t)
 	zero := 0.0
 	catalog := aipddcatalog.AtomicCatalog{
@@ -168,8 +168,13 @@ func TestAIPDDCatalogRatioDataSkipsUnavailableModel(t *testing.T) {
 	}
 
 	data := aipddCatalogRatioData(catalog)
-	require.NotContains(t, data, billing_setting.BillingModeField)
-	require.NotContains(t, data, billing_setting.BillingExprField)
+	modes, ok := data[billing_setting.BillingModeField].(map[string]string)
+	require.True(t, ok)
+	require.Equal(t, billing_setting.BillingModeTieredExpr, modes["retired-model"],
+		"upstream availability does not exempt a published price from the margin")
+	exprs, ok := data[billing_setting.BillingExprField].(map[string]string)
+	require.True(t, ok)
+	require.Contains(t, exprs["retired-model"], "p * 0.11000000000000001")
 }
 
 func TestAIPDDCatalogRatioDataPreservesLegacyInputPricingWhenCachePricesAreMissing(t *testing.T) {

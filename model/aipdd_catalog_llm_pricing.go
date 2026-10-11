@@ -55,7 +55,7 @@ func syncAIPDDLLMTokenPricingTx(
 			continue
 		}
 		if !IsAIPDDRetailTokenModel(model) {
-			// The catalog stopped pricing this model (unavailable, free or no
+			// The catalog stopped pricing this model (free, disabled pricing or no
 			// longer per-token). Drop only the rows this catalog owns so a
 			// manually priced model keeps its administrator-set price.
 			changed := false

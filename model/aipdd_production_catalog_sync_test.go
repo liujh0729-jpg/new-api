@@ -284,8 +284,10 @@ func TestSyncAIPDDCatalogFromProductionFixtureImportsEveryPublishedPrice(t *test
 			" + cr * 0.30136986301369867 + cc * 1.2054794520547947 + cc1h * 1.2054794520547947)",
 		appliedExprs["ap-glm-5.2"])
 
-	// Display: every available model is priced, and the unavailable upstream
-	// model (ap-ltx-2.5) is hidden from /v1/models and from the pricing page.
+	// Display: every model the catalog publishes carries a retail price, even the
+	// one upstream marks unavailable (ap-ltx-2.5) — it stays routable on the managed
+	// channel, so selling it without a margin would be a loss. It is still hidden
+	// from /v1/models, which is where availability decides advertising, not pricing.
 	require.True(t, aipddcatalog.IsHiddenFromV1ModelsList("ap-ltx-2.5"))
 	for _, modelName := range catalog.ModelNames() {
 		if modelName == "ap-ltx-2.5" {
@@ -299,10 +301,13 @@ func TestSyncAIPDDCatalogFromProductionFixtureImportsEveryPublishedPrice(t *test
 	for _, item := range pricing {
 		byName[item.ModelName] = item
 	}
-	require.Len(t, pricing, len(catalog.ModelNames())-1)
-	require.NotContains(t, byName, "ap-ltx-2.5")
+	require.Len(t, pricing, len(catalog.ModelNames()))
+	ltx, ok := byName["ap-ltx-2.5"]
+	require.True(t, ok, "an unavailable model is still priced")
+	require.Equal(t, billing_setting.BillingModeTaskPricing, ltx.BillingMode)
+	require.Equal(t, 1, ltx.QuotaType)
 	for modelName, item := range byName {
-		if modelName == "ap-funasr" || modelName == "ap-minimax-h3" {
+		if modelName == "ap-funasr" || modelName == "ap-minimax-h3" || modelName == "ap-ltx-2.5" {
 			require.Equal(t, billing_setting.BillingModeTaskPricing, item.BillingMode, modelName)
 			require.Equal(t, 1, item.QuotaType, modelName)
 			continue

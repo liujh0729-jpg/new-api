@@ -64,7 +64,7 @@ func syncAIPDDTokenMarketTaskPricingTx(
 			continue
 		}
 
-		if !tokenMarketCapabilityAvailable(capability) {
+		if !tokenMarketCapabilityPriceable(capability) {
 			changed := false
 			if _, ok := taskPricing[modelName]; ok {
 				delete(taskPricing, modelName)
@@ -170,7 +170,7 @@ func syncAIPDDTokenMarketFixedPricingTx(
 		}
 
 		modelChanged := false
-		if tokenMarketFixedCapabilityAvailable(capability) {
+		if tokenMarketFixedCapabilityPriceable(capability) {
 			if !finitePositive(rmbPerAWCoin) {
 				return 0, nil, fmt.Errorf("AIPDD catalog rmbPerAwcoin must be finite and greater than 0")
 			}
@@ -496,7 +496,7 @@ func isTokenMarketDurationCapability(capability aipddcatalog.AtomicCapability) b
 
 func isTokenMarketPerCallCapability(capability aipddcatalog.AtomicCapability) bool {
 	// token_market_shared submits through /shared-tasks/tasks but carries the
-	// same per-call display prices, and its availability check tolerates an
+	// same per-call display prices, and its pricing check tolerates an
 	// empty pricingBasis. Restricting this import to token_market_media left a
 	// shared-adapter model (image edit) with no fixed price, so it fell back to
 	// token ratio billing and was undercharged.
@@ -507,17 +507,20 @@ func isTokenMarketPerCallCapability(capability aipddcatalog.AtomicCapability) bo
 	return strings.EqualFold(strings.TrimSpace(capability.Pricing.PricingModel), "per_call")
 }
 
-func tokenMarketCapabilityAvailable(capability aipddcatalog.AtomicCapability) bool {
+// tokenMarketCapabilityPriceable and tokenMarketFixedCapabilityPriceable decide
+// whether a catalog capability carries a wholesale price to resell. Upstream's
+// availability flag is not consulted: an unavailable capability is still listed on
+// the managed channel and stays routable, and a routable model without a retail
+// price falls back to the default ratio, below AIPDD's wholesale cost.
+func tokenMarketCapabilityPriceable(capability aipddcatalog.AtomicCapability) bool {
 	return capability.Pricing.Enabled &&
-		(capability.Available == nil || *capability.Available) &&
 		strings.EqualFold(strings.TrimSpace(capability.Pricing.Currency), "awcoin") &&
 		strings.EqualFold(strings.TrimSpace(capability.Pricing.PricingBasis), "display")
 }
 
-func tokenMarketFixedCapabilityAvailable(capability aipddcatalog.AtomicCapability) bool {
+func tokenMarketFixedCapabilityPriceable(capability aipddcatalog.AtomicCapability) bool {
 	basis := strings.TrimSpace(capability.Pricing.PricingBasis)
 	return capability.Pricing.Enabled &&
-		(capability.Available == nil || *capability.Available) &&
 		strings.EqualFold(strings.TrimSpace(capability.Pricing.Currency), "awcoin") &&
 		(basis == "" || strings.EqualFold(basis, "display"))
 }

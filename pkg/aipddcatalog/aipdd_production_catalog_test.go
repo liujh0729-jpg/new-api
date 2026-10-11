@@ -250,9 +250,10 @@ func TestFixtureCatalogSynchronousAndBillingDecisions(t *testing.T) {
 	// media; asynchronous video keeps the task pricing pipeline instead.
 	assert.Equal(t, map[string]float64{"ap-funasr": 100}, catalog.SynchronousPerSecondPrices())
 
-	// ap-ltx-2.5 is the only async per-second model in the fixture but is
-	// marked available=false, so it must not appear in the price map.
-	assert.Equal(t, map[string]float64{}, catalog.AsyncPerSecondPrices())
+	// ap-ltx-2.5 is the only async per-second model in the fixture. Upstream marks
+	// it available=false, which no longer exempts it from pricing: it stays listed
+	// on the managed channel, so it must still carry a wholesale price to mark up.
+	assert.Equal(t, map[string]float64{"ap-ltx-2.5": 4000}, catalog.AsyncPerSecondPrices())
 
 	// ap-qwen-image-edit is declared image-generation by upstream but is an edit
 	// model, so the primary endpoint comes from the task kind, not upstream.

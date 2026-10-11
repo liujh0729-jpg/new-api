@@ -510,7 +510,9 @@ func (item AtomicCapability) SynchronousExecution() (protocol string, path strin
 // SynchronousPerSecondPrices returns the retail price per second, in AWCoin, of
 // every capability the gateway calls synchronously and the upstream charges per
 // unit of time (ASR). Their price cannot be imported as a per-call price: one
-// request costs as many seconds of audio as it carries.
+// request costs as many seconds of audio as it carries. Availability is not a
+// filter here: an unavailable capability is still listed on the managed channel,
+// so it must still carry a margin-covered price.
 func (catalog AtomicCatalog) SynchronousPerSecondPrices() map[string]float64 {
 	prices := make(map[string]float64)
 	for _, item := range catalog.Capabilities {
@@ -522,7 +524,6 @@ func (catalog AtomicCatalog) SynchronousPerSecondPrices() map[string]float64 {
 			continue
 		}
 		if !item.Pricing.Enabled ||
-			(item.Available != nil && !*item.Available) ||
 			!strings.EqualFold(strings.TrimSpace(item.Pricing.Currency), "awcoin") {
 			continue
 		}
@@ -537,7 +538,8 @@ func (catalog AtomicCatalog) SynchronousPerSecondPrices() map[string]float64 {
 // AsyncPerSecondPrices returns the retail price per second, in AWCoin, of every
 // capability the gateway calls asynchronously (task submission) and the upstream
 // charges per unit of time. Their price cannot be imported as a per-call price:
-// one request costs as many seconds of output as it produces.
+// one request costs as many seconds of output as it produces. Availability is not
+// a filter here, for the same reason as the synchronous prices above.
 func (catalog AtomicCatalog) AsyncPerSecondPrices() map[string]float64 {
 	prices := make(map[string]float64)
 	for _, item := range catalog.Capabilities {
@@ -549,7 +551,6 @@ func (catalog AtomicCatalog) AsyncPerSecondPrices() map[string]float64 {
 			continue
 		}
 		if !item.Pricing.Enabled ||
-			(item.Available != nil && !*item.Available) ||
 			!strings.EqualFold(strings.TrimSpace(item.Pricing.Currency), "awcoin") {
 			continue
 		}

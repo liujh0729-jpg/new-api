@@ -61,9 +61,9 @@ func TestIsAIPDDRetailTokenModel(t *testing.T) {
 		require.False(t, IsAIPDDRetailTokenModel(aipddcatalog.AtomicModel{ID: "m", Available: true, Pricing: pricing}), name)
 	}
 
-	require.False(t,
+	require.True(t,
 		IsAIPDDRetailTokenModel(aipddcatalog.AtomicModel{ID: "m", Pricing: tokenPricing}),
-		"a catalog model that is not purchasable must not be priced")
+		"upstream marks the model unavailable, but it is still routable and must still carry a margin")
 }
 
 func TestAIPDDLLMRetailExpr(t *testing.T) {

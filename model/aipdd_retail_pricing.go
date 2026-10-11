@@ -112,9 +112,13 @@ func logAIPDDPricingSkipped(revision, modelName string, err error) {
 	common.SysError(fmt.Sprintf("AIPDD catalog revision %q: skipped retail price for %q: %v", revision, modelName, err))
 }
 
+// IsAIPDDRetailTokenModel reports whether a catalog model carries a per-token
+// wholesale price that must be resold at a margin. Upstream's availability flag
+// is deliberately ignored: an unavailable model is still listed on the managed
+// channel and stays routable, and a routable model with no retail price falls
+// back to the default ratio, which is below AIPDD's wholesale cost.
 func IsAIPDDRetailTokenModel(model aipddcatalog.AtomicModel) bool {
-	return model.Available &&
-		model.Pricing.Enabled &&
+	return model.Pricing.Enabled &&
 		!model.Pricing.Free &&
 		strings.EqualFold(strings.TrimSpace(model.Pricing.PricingModel), aipddPerTokenPricingModel) &&
 		strings.EqualFold(strings.TrimSpace(model.Pricing.Currency), aipddAWCoinPricingCurrency)

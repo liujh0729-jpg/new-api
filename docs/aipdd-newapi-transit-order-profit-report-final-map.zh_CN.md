@@ -565,7 +565,9 @@ NewAPI 已提供简版 AIPDD 中转订单记录页面；该页面只展示 NewAP
 | 同步编排 | `model/aipdd_catalog_sync.go` | 文本导入器在任务导入之后运行，避免同一目录版本给任务模型发 token 表达式；提交后一并激活 `billing_expr` |
 | 后台「同步上游定价」预览 | `controller/ratio_sync.go` | 复用同一个 `AIPDDLLMRetailExpr`/`AIPDDRetailMarkup`，保证预览候选价＝已写入价，管理员点应用不会把毛利抹平 |
 
-目录不再提供某个模型的购买资格（`available=false`、`free=true`、改成按次计费）时，导入器会**回收**它自己写过的行：删掉表达式，且仅当模式是 `tiered_expr` 时删掉模式；管理员手工设的其它模式保留。目录里不存在的模型永不受影响。
+**上游的 `available` 标记不参与定价**（用户 2026-10-11 口径：「不要管他可用不可用，总之就是 1.1 倍」）。目录里出现的模型一律按批发 × 倍率落价，因为不可用的模型仍然挂在托管渠道和 `abilities` 里、仍可被路由，没有零售价就等于按默认倍率亏本卖。`available=false` 只影响 `/v1/models` 是否展示该模型，不影响价格。
+
+目录不再为某个模型计价（`free=true`、`pricing.enabled=false`、改成按次计费）时，导入器会**回收**它自己写过的行：删掉表达式，且仅当模式是 `tiered_expr` 时删掉模式；管理员手工设的其它模式保留。目录里不存在的模型永不受影响。
 
 ### 19.4 默认零售价（当前 catalog revision `37cdcae4`，`rmbPerAwcoin=0.0001`）
 
@@ -579,20 +581,20 @@ NewAPI 已提供简版 AIPDD 中转订单记录页面；该页面只展示 NewAP
 | `ap-qwen3.8-max` | 入 12 / 出 36 / 缓存读 12 / 缓存写 15 | 入 13.2 / 出 39.6 / 缓存读 13.2 / 缓存写 16.5 |
 | `ap-qwen3-embedding:0.6b` | 入 0.03 | 入 0.033（无输出价，表达式 `c * 0`） |
 
-任务侧：图片按次批发 `¥0.2 → 零售 ¥0.22`，其余各档按同样 1.1 放大（批发 ¥0.4→¥0.44、¥0.24→¥0.264、¥0.3→¥0.33、¥0.15→¥0.165、¥0.5→¥0.55）；`ap-indextts-2` `¥0.1 → ¥0.11`/次；`ap-funasr` `¥0.01 → ¥0.011`/秒；`ap-minimax-h3` 768p `¥0.12 → ¥0.132`/秒（480p ¥0.09→¥0.099、1080p ¥0.15→¥0.165）。
+任务侧：图片按次批发 `¥0.2 → 零售 ¥0.22`，其余各档按同样 1.1 放大（批发 ¥0.4→¥0.44、¥0.24→¥0.264、¥0.3→¥0.33、¥0.15→¥0.165、¥0.5→¥0.55）；`ap-indextts-2` `¥0.1 → ¥0.11`/次；`ap-funasr` `¥0.01 → ¥0.011`/秒；`ap-minimax-h3` 768p `¥0.12 → ¥0.132`/秒（480p ¥0.09→¥0.099、1080p ¥0.15→¥0.165）。上游标了 `available=false` 的两个也一样有价：`ap-qwen-image-edit` `¥1 → ¥1.1`/次、`ap-ltx-2.5` `¥0.4 → ¥0.44`/秒。
 
 ### 19.5 验收
 
-- `model/aipdd_retail_pricing_test.go`：默认 1.10 / 环境覆盖 / 非法值回落；`IsAIPDDRetailTokenModel` 五种排除条件；表达式含 cache 变量、schema v1 不含 cache 变量、embedding `c * 0`；汇率或 awcoin 价不可用时报错。
-- `model/aipdd_catalog_llm_pricing_test.go`：首次导入写 2 个模型且保留管理员已有价；重复导入 0 变更；批发价变动被检出；下架/免费模型回收行（`tiered_expr` 模式删除、`ratio` 模式保留）；`markup=1` 时系数恰为平价。
+- `model/aipdd_retail_pricing_test.go`：默认 1.10 / 环境覆盖 / 非法值回落；`IsAIPDDRetailTokenModel` 四种排除条件（免费、停用计价、非按 token、非 awcoin；**不含 available**）；表达式含 cache 变量、schema v1 不含 cache 变量、embedding `c * 0`；汇率或 awcoin 价不可用时报错。
+- `model/aipdd_catalog_llm_pricing_test.go`：首次导入写 3 个模型（含上游标 `available=false` 的那个）且保留管理员已有价；重复导入 0 变更；批发价变动被检出；撤价/免费模型回收行（`tiered_expr` 模式删除、`ratio` 模式保留）；`markup=1` 时系数恰为平价。
 - `model/aipdd_catalog_sync_test.go`、`model/aipdd_catalog_task_pricing_test.go`、`model/aipdd_production_catalog_sync_test.go`（真实目录 8 类 fixture，逐模型断言系数）、`model/channel_env_test.go`（启动即定价）、`controller/ratio_sync_aipdd_test.go`（预览候选价含毛利）全部通过。
 - `go test ./model/... ./controller/... ./service/... ./setting/... ./pkg/... ./relay/... ./dto/...` 全绿。
-- 生产待验：重启后触发一次目录同步，核对 `options` 中 `billing_setting.billing_expr` 与 `billing_setting.task_pricing`，再发一次真实中转请求，比对 `customer_charge_rmb_mic` 与 `estimated_source_rmb_mic` 的比值 ≈ 1.1。
+- 生产已验（2026-10-11，本机 `one-api.db`，`rmbPerAwcoin=0.0001`、`USDExchangeRate=7.3`）：8 个文本表达式、8 个按次价、`ap-minimax-h3` 三档分辨率全部精确等于批发 ×1.1；真实中转请求 `ap-glm-5.3-flash`（29 入 / 2500 出）收客户 3869 微元、估上游 3512 微元，比值 **1.1017**（0.15% 来自 quota 取整）。注意 `customer_charge_rmb_mic` 由整数 quota 反推，1 quota ≈ 14.6 微元，几十 token 的小请求测不出毛利，必须发长输出请求。
 
 ### 19.6 注意
 
 - 目录同步只在**价格变化**时写库；改 `AIPDD_PRICING_MARKUP` 后需要再触发一次同步（或重启）才会按新倍率重算。
 - 手动在定价页改过的模型会被下一次目录同步覆盖回「批发 × 倍率」——catalog 是价格来源。要让某个人工价说了算，在「系统设置 → 定价」点该模型的钉价按钮（写入 `options` 的 `AIPDDPinnedModels`，一个模型名数组）：5 个价格导入器与上游同步预览都会跳过钉住的模型，既不覆写也不回收，取消钉价后下一次同步自动接管。整体停用同步仍可把 `AIPDD_CATALOG_SYNC_INTERVAL_MINUTES` 设为 0。
 - 单个模型的价格异常（批发价为 0、缓存价缺失、分辨率档位重复等）只跳过该模型并每个 revision 打一条日志，其余模型照常定价；只有汇率基准不可用、合并后的价格表校验失败、序列化或写库失败才会让整个目录同步回滚。
-- 毛利只在 catalog 收录的模型上生效。未收录模型（当前 `jev`）既无批发价也无零售价，走默认 1 倍率，属于亏损区间。
+- 毛利只在 catalog **列出**的模型上生效（`available` 与否都算列出了）。目录里根本没有的模型（当前 `jev`）既无批发价也无零售价，走默认 1 倍率，属于亏损区间——只能等上游发布后由同步自动接管。
 

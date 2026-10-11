@@ -261,7 +261,7 @@
 4. 删除 LTX/首尾帧常量牵连后端 relay 专用逻辑与前端 playground 常量，**删前必须 grep 全引用并逐项判定是真死代码还是别处在用**
 5. ASR 注入 verbose_json 会改变返回给客户端的响应体形态，属破坏性变更，需开关或按客户端显式请求透传
 6. 网关对 `token_market_video` 强制 `duration_seconds` + `video_resolution`，比上游严（上游实测允许省略，默认按 480p×1s 预估）。照上游文档写的客户端经本网关会 400，是否放宽成「缺省走默认档」待确认
-7. `token_market_shared` + `per_unit`/second 的**异步**模型没有时长价导入器（同步按秒导入器只收同步端点，media 时长导入器只收 `token_market_media`）。当前只有 available=false 的 `ap-ltx-2.5` 落在这个形状里，上游一旦开放就会「能调用但没价」
+7. ~~`token_market_shared` + `per_unit`/second 的**异步**模型没有时长价导入器~~ 已解决：异步按秒导入器已补，且 `available` 不再参与定价判定（2026-10-11 口径），`ap-ltx-2.5` 虽被上游标为 `available=false` 也照样有时长价（批发 ¥0.4/秒 → 零售 ¥0.44/秒），不会再出现「能调用但没价」
 
 ---
 

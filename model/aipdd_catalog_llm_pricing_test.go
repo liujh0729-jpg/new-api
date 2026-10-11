@@ -17,8 +17,9 @@ const (
 )
 
 // aipddRetailLLMCatalog mirrors the shapes the live catalog publishes: a chat
-// model with cache pricing, an input-only embedding model, a model the marketplace
-// no longer sells, and a promotional model that costs nothing wholesale.
+// model with cache pricing, an input-only embedding model, a model upstream marks
+// unavailable but that the managed channel still lists, and a promotional model
+// that costs nothing wholesale.
 func aipddRetailLLMCatalog(revision string) aipddcatalog.AtomicCatalog {
 	return aipddcatalog.AtomicCatalog{
 		SchemaVersion: 2,
@@ -97,7 +98,7 @@ func TestSyncAIPDDLLMTokenPricingTxProvisionsRetailPrices(t *testing.T) {
 
 	updated, updates, err := syncAIPDDLLMTokenPricingTx(DB, aipddRetailLLMCatalog("revision-1"))
 	require.NoError(t, err)
-	require.Equal(t, 2, updated)
+	require.Equal(t, 3, updated)
 	require.Len(t, updates, 2)
 	require.Contains(t, updates, aipddBillingModeOptionKey)
 	require.Contains(t, updates, aipddBillingExprOptionKey)
@@ -107,6 +108,7 @@ func TestSyncAIPDDLLMTokenPricingTxProvisionsRetailPrices(t *testing.T) {
 	require.Equal(t, map[string]string{
 		"ap-glm-5.2":              billing_setting.BillingModeTieredExpr,
 		"ap-qwen3-embedding:0.6b": billing_setting.BillingModeTieredExpr,
+		"ap-retired":              billing_setting.BillingModeTieredExpr,
 		"legacy-model":            "ratio",
 	}, modes)
 
@@ -115,6 +117,7 @@ func TestSyncAIPDDLLMTokenPricingTxProvisionsRetailPrices(t *testing.T) {
 	require.Equal(t, map[string]string{
 		"ap-glm-5.2":              aipddRetailGLMExpr,
 		"ap-qwen3-embedding:0.6b": aipddRetailEmbedExpr,
+		"ap-retired":              aipddRetailGLMExpr,
 		"legacy-model":            `tier("legacy", p * 1)`,
 	}, exprs)
 
@@ -162,10 +165,12 @@ func TestSyncAIPDDLLMTokenPricingTxReclaimsPricingOfUnsellableModels(t *testing.
 			"manual-model":            `tier("manual", p * 2)`,
 		})
 
-	// The marketplace dropped ap-retired: its catalog-owned expression and
-	// tiered_expr mode go away, while a mode an administrator chose on purpose
-	// survives so their own pricing is not silently deleted.
-	updated, _, err := syncAIPDDLLMTokenPricingTx(DB, aipddRetailLLMCatalog("revision-2"))
+	// The marketplace withdrew ap-retired's display price: its catalog-owned
+	// expression and tiered_expr mode go away, while a mode an administrator chose
+	// on purpose survives so their own pricing is not silently deleted.
+	withdrawn := aipddRetailLLMCatalog("revision-2")
+	withdrawn.Models[2].Pricing.Enabled = false
+	updated, _, err := syncAIPDDLLMTokenPricingTx(DB, withdrawn)
 	require.NoError(t, err)
 	require.Equal(t, 1, updated)
 
@@ -219,7 +224,7 @@ func TestSyncAIPDDLLMTokenPricingTxSkipsUnusableModelPrice(t *testing.T) {
 
 	updated, _, err := syncAIPDDLLMTokenPricingTx(DB, catalog)
 	require.NoError(t, err)
-	require.Equal(t, 1, updated)
+	require.Equal(t, 2, updated)
 
 	modes, err := loadAIPDDBillingModesTx(DB)
 	require.NoError(t, err)
@@ -242,7 +247,7 @@ func TestSyncAIPDDLLMTokenPricingTxRespectsLowerMarkup(t *testing.T) {
 
 	updated, _, err := syncAIPDDLLMTokenPricingTx(DB, aipddRetailLLMCatalog("revision-1"))
 	require.NoError(t, err)
-	require.Equal(t, 2, updated)
+	require.Equal(t, 3, updated)
 
 	exprs, err := loadAIPDDBillingExprsTx(DB)
 	require.NoError(t, err)

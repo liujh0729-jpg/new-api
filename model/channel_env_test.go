@@ -562,21 +562,27 @@ func TestEnsureAIPDDDefaultsSyncsDynamicCatalogOnBoot(t *testing.T) {
 		require.NoError(t, DB.Model(&Option{}).Where("key = ?", key).Count(&count).Error)
 		require.Zero(t, count, key)
 	}
-	// The only published, available per-token model gets a default retail price on
-	// boot. The unavailable one and the explicitly free one must stay unpriced:
-	// provisioning a price for them would either contradict upstream or charge
-	// for something AIPDD gives away.
+	// Every published per-token model gets a default retail price on boot, whether
+	// or not upstream marks it available — an unavailable model is still routable on
+	// the managed channel. Only the explicitly free one stays unpriced: provisioning
+	// a price for it would charge for something AIPDD gives away.
 	var bootModes map[string]string
 	var bootModeOption Option
 	require.NoError(t, DB.Where("key = ?", aipddBillingModeOptionKey).First(&bootModeOption).Error)
 	require.NoError(t, common.UnmarshalJsonStr(bootModeOption.Value, &bootModes))
-	require.Equal(t, map[string]string{"qwen2.5:0.5b": billing_setting.BillingModeTieredExpr}, bootModes)
+	require.Equal(t, map[string]string{
+		"qwen2.5:0.5b": billing_setting.BillingModeTieredExpr,
+		"gemma3:1b":    billing_setting.BillingModeTieredExpr,
+	}, bootModes)
 	var bootExprs map[string]string
 	var bootExprOption Option
 	require.NoError(t, DB.Where("key = ?", aipddBillingExprOptionKey).First(&bootExprOption).Error)
 	require.NoError(t, common.UnmarshalJsonStr(bootExprOption.Value, &bootExprs))
 	require.Equal(t,
-		map[string]string{"qwen2.5:0.5b": "tier(\"aipdd\", p * 0.11000000000000001 + c * 0.22000000000000003 + cr * 0 + cc * 0 + cc1h * 0)"},
+		map[string]string{
+			"qwen2.5:0.5b": "tier(\"aipdd\", p * 0.11000000000000001 + c * 0.22000000000000003 + cr * 0 + cc * 0 + cc1h * 0)",
+			"gemma3:1b":    "tier(\"aipdd\", p * 0.05500000000000001 + c * 0.165 + cr * 0 + cc * 0 + cc1h * 0)",
+		},
 		bootExprs)
 }
 

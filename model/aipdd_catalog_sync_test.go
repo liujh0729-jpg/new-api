@@ -325,14 +325,18 @@ func TestApplyAIPDDCatalogImportsTokenMarketDisplayPrices(t *testing.T) {
 	require.NoError(t, err)
 	require.Zero(t, second.UpdatedPrices)
 
+	// Upstream pulling the availability flag is not a pricing change: the model
+	// stays listed on the managed channel and stays routable, so its retail price
+	// must survive the sync instead of falling back to the default ratio.
 	catalog.Revision = "token-market-unavailable-revision"
 	catalog.Capabilities[0].Available = aipddcatalog.BoolPtr(false)
-	removed, err := applyAIPDDCatalog(catalog, "https://aipdd.example", "sk-test")
+	unavailable, err := applyAIPDDCatalog(catalog, "https://aipdd.example", "sk-test")
 	require.NoError(t, err)
-	require.Equal(t, 1, removed.UpdatedPrices)
-	_, ok = billing_setting.GetTaskPricing("ap-minimax-h3-text-to-video")
-	require.False(t, ok)
-	require.NotEqual(t, billing_setting.BillingModeTaskPricing,
+	require.Zero(t, unavailable.UpdatedPrices)
+	unavailablePricing, ok := billing_setting.GetTaskPricing("ap-minimax-h3-text-to-video")
+	require.True(t, ok, "an unavailable capability keeps its retail price")
+	require.InDelta(t, 0.012375, unavailablePricing.ByResolution["480p"].NoReferenceVideoUnitPrice, 1e-12)
+	require.Equal(t, billing_setting.BillingModeTaskPricing,
 		billing_setting.GetBillingMode("ap-minimax-h3-text-to-video"))
 	_, ok = billing_setting.GetTaskPricing("AP Seedance")
 	require.True(t, ok)
@@ -393,8 +397,11 @@ func TestApplyAIPDDCatalogImportsTokenMarketPerCallDisplayPrices(t *testing.T) {
 	price, ok := ratio_setting.GetModelPrice("fixed-image", false)
 	require.True(t, ok)
 	require.InDelta(t, 0.1375, price, 1e-12)
-	_, ok = ratio_setting.GetModelPrice("disabled-image", false)
-	require.False(t, ok)
+	// Upstream marks disabled-image available=false, which no longer exempts it
+	// from retail pricing: it is still routable, so it must still carry a margin.
+	disabledPrice, ok := ratio_setting.GetModelPrice("disabled-image", false)
+	require.True(t, ok)
+	require.InDelta(t, 0.275, disabledPrice, 1e-12)
 	unrelatedPrice, ok := ratio_setting.GetModelPrice("unrelated-model", false)
 	require.True(t, ok)
 	require.Equal(t, 3.75, unrelatedPrice)
