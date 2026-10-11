@@ -11,7 +11,6 @@ import (
 var (
 	privateModelInError = regexp.MustCompile("(?i)\\b(?:model\\s+[`'\"]?)?doubao[-_]seedance[-_][a-z0-9._-]+\\b[`'\"]?")
 	privateModeInError  = regexp.MustCompile(`(?i)\s+in\s+(?:r2v|i2v|t2v|v2v)\b`)
-	credentialInError   = regexp.MustCompile(`(?i)\b(?:bearer\s+|(?:api[_ -]?key|access[_ -]?token|authorization)\s*[=:]\s*["']?(?:(?:bearer|basic)\s+)?)[^\s"',;<>}]+`)
 )
 
 const failureMessage = "Video processing failed. Please try again later."
@@ -20,12 +19,7 @@ const failureMessage = "Video processing failed. Please try again later."
 // routing and credentials echoed by a provider. Secrets must come from the
 // request/task context, never from an additional credential lookup.
 func ErrorText(value string, secrets ...string) string {
-	for _, secret := range secrets {
-		if secret != "" {
-			value = strings.ReplaceAll(value, secret, "[redacted]")
-		}
-	}
-	value = credentialInError.ReplaceAllString(value, "[redacted]")
+	value = common.RedactSecrets(value, secrets...)
 	value = privateModelInError.ReplaceAllString(value, "the selected model")
 	value = privateModeInError.ReplaceAllString(value, "")
 	lower := strings.ToLower(strings.TrimSpace(value))

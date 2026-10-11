@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -78,16 +79,22 @@ func recordRedisRequest(ctx context.Context, rdb *redis.Client, key string, maxC
 func redisRateLimitHandler(duration int64, totalMaxCount, successMaxCount int) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		userId := strconv.Itoa(c.GetInt("id"))
-		ctx := context.Background()
+		// The limiter protects the gateway, it is not the service itself: bound each
+		// round trip by a deadline, so a Redis that stops answering slows nothing
+		// down and cannot hang a relay request forever. It deliberately stays
+		// independent of the client connection, otherwise a disconnect mid-stream
+		// would drop the request from the counters.
+		ctx, cancel := context.WithTimeout(context.Background(), rateLimitRedisTimeout)
+		defer cancel()
 		rdb := common.RDB
 
 		// 1. 检查成功请求数限制
 		successKey := fmt.Sprintf("rateLimit:%s:%s", ModelRequestRateLimitSuccessCountMark, userId)
 		allowed, err := checkRedisRateLimit(ctx, rdb, successKey, successMaxCount, duration)
 		if err != nil {
-			fmt.Println("检查成功请求数限制失败:", err.Error())
-			abortWithOpenAiMessage(c, http.StatusInternalServerError, "rate_limit_check_failed")
-			return
+			// 放行：Redis 不可用时限流失效，但客户照样能用算力。
+			warnRateLimitUnavailable("检查成功请求数限制", err)
+			allowed = true
 		}
 		if !allowed {
 			abortWithOpenAiMessage(c, http.StatusTooManyRequests, fmt.Sprintf("您已达到请求数限制：%d分钟内最多请求%d次", setting.ModelRequestRateLimitDurationMinutes, successMaxCount))
@@ -108,13 +115,13 @@ func redisRateLimitHandler(duration int64, totalMaxCount, successMaxCount int) g
 			)
 
 			if err != nil {
-				fmt.Println("检查总请求数限制失败:", err.Error())
-				abortWithOpenAiMessage(c, http.StatusInternalServerError, "rate_limit_check_failed")
-				return
+				warnRateLimitUnavailable("检查总请求数限制", err)
+				allowed = true
 			}
 
 			if !allowed {
 				abortWithOpenAiMessage(c, http.StatusTooManyRequests, fmt.Sprintf("您已达到总请求数限制：%d分钟内最多请求%d次，包括失败次数，请检查您的请求是否正确", setting.ModelRequestRateLimitDurationMinutes, totalMaxCount))
+				return
 			}
 		}
 
@@ -126,6 +133,27 @@ func redisRateLimitHandler(duration int64, totalMaxCount, successMaxCount int) g
 			recordRedisRequest(ctx, rdb, successKey, successMaxCount)
 		}
 	}
+}
+
+const rateLimitRedisTimeout = 2 * time.Second
+
+const rateLimitWarningWindow = 10 * time.Minute
+
+var rateLimitWarnedAt atomic.Int64
+
+// warnRateLimitUnavailable reports a failed limit check without blocking the
+// request. It is throttled because an unreachable Redis would otherwise turn
+// every single relay request into another error line.
+func warnRateLimitUnavailable(action string, err error) {
+	now := time.Now().Unix()
+	last := rateLimitWarnedAt.Load()
+	if last != 0 && now-last < int64(rateLimitWarningWindow.Seconds()) {
+		return
+	}
+	if !rateLimitWarnedAt.CompareAndSwap(last, now) {
+		return
+	}
+	common.SysError(fmt.Sprintf("%s失败，已放行请求：%s", action, err.Error()))
 }
 
 // 内存限流处理器

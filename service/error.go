@@ -17,6 +17,10 @@ import (
 	"github.com/QuantumNous/new-api/types"
 )
 
+// maxTaskErrorTextLength bounds an upstream-derived task error message. Bodies
+// wrapped by adapters can otherwise be gigabytes of HTML.
+const maxTaskErrorTextLength = 2000
+
 func MidjourneyErrorWrapper(code int, desc string) *dto.MidjourneyResponse {
 	return &dto.MidjourneyResponse{
 		Code:        code,
@@ -204,6 +208,10 @@ func TaskErrorWrapper(err error, code string, statusCode int) *dto.TaskError {
 		//text = "请求上游地址失败"
 		text = common.MaskSensitiveInfo(text)
 	}
+	// Adapters wrap upstream response bodies into these errors, so a provider that
+	// echoes a credential, or a 2 MB HTML error page, would otherwise reach both
+	// the client and the log file verbatim.
+	text = common.TruncateForLog(common.RedactSecrets(text), maxTaskErrorTextLength)
 	//避免暴露内部错误
 	taskError := &dto.TaskError{
 		Code:       code,

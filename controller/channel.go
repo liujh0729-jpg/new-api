@@ -632,18 +632,16 @@ func AddChannel(c *gin.Context) {
 	}
 
 	channels := make([]model.Channel, 0, len(keys))
-	for _, key := range keys {
+	for i, key := range keys {
 		if key == "" {
 			continue
 		}
 		localChannel := addChannelRequest.Channel
 		localChannel.Key = key
 		if addChannelRequest.BatchAddSetKeyPrefix2Name && len(keys) > 1 {
-			keyPrefix := localChannel.Key
-			if len(localChannel.Key) > 8 {
-				keyPrefix = localChannel.Key[:8]
-			}
-			localChannel.Name = fmt.Sprintf("%s %s", localChannel.Name, keyPrefix)
+			// Channel names are shown unmasked everywhere (list UI, notifications,
+			// logs), so the suffix must identify the key without revealing any of it.
+			localChannel.Name = fmt.Sprintf("%s #%d", localChannel.Name, i+1)
 		}
 		channels = append(channels, *localChannel)
 	}

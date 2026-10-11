@@ -12,6 +12,16 @@ import (
 	"gorm.io/gorm"
 )
 
+// ErrAIPDDBootstrapKeyRequired is the single AIPDD boot failure that stays fatal:
+// the operator set AIPDD_BOOTSTRAP_REQUIRED, so starting without a key would
+// silently ignore an explicit instruction. Every other AIPDD problem degrades.
+var ErrAIPDDBootstrapKeyRequired = errors.New("aipdd bootstrap key required")
+
+// IsAIPDDBootstrapKeyError lets the startup path tell those two apart.
+func IsAIPDDBootstrapKeyError(err error) bool {
+	return errors.Is(err, ErrAIPDDBootstrapKeyRequired)
+}
+
 // EnsureAIPDDDefaults is the one-shot AIPDD bootstrap used during system
 // initialization. It keeps channel abilities and model metadata in sync with
 // the local AIPDD catalog.

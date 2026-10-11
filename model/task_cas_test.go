@@ -66,6 +66,15 @@ func TestMain(m *testing.M) {
 
 func truncateTables(t *testing.T) {
 	t.Helper()
+	// Options exist twice: in the options table and in the in-memory runtime
+	// settings they feed. Deleting only the rows would hand the next test the
+	// prices this one provisioned.
+	common.OptionMapRWMutex.RLock()
+	optionSnapshot := make(map[string]string, len(common.OptionMap))
+	for key, value := range common.OptionMap {
+		optionSnapshot[key] = value
+	}
+	common.OptionMapRWMutex.RUnlock()
 	t.Cleanup(func() {
 		DB.Exec("DELETE FROM tasks")
 		DB.Exec("DELETE FROM users")
@@ -86,6 +95,18 @@ func truncateTables(t *testing.T) {
 		DB.Exec("DELETE FROM virtual_character_tasks")
 		DB.Exec("DELETE FROM virtual_character_user_limits")
 		DB.Exec("DELETE FROM virtual_characters")
+
+		common.OptionMapRWMutex.Lock()
+		defer common.OptionMapRWMutex.Unlock()
+		if common.OptionMap == nil {
+			common.OptionMap = make(map[string]string, len(optionSnapshot))
+		}
+		for key := range common.OptionMap {
+			delete(common.OptionMap, key)
+		}
+		for key, value := range optionSnapshot {
+			common.OptionMap[key] = value
+		}
 	})
 }
 

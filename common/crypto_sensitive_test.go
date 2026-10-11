@@ -49,12 +49,17 @@ func TestSensitiveValueEncryptionRejectsTamperingAndWrongSecret(t *testing.T) {
 	encrypted, err := EncryptSensitiveValue("api-v3-key")
 	require.NoError(t, err)
 
-	last := encrypted[len(encrypted)-1]
+	// Tamper the leading base64 character: it carries the top bits of the nonce,
+	// so it always changes the decoded bytes. The trailing character cannot be
+	// used here — its low bits are base64 padding, and flipping them decodes to
+	// the original payload, which would make this test fail at random.
+	body := []byte(strings.TrimPrefix(encrypted, encryptedValuePrefix))
 	replacement := byte('A')
-	if last == replacement {
+	if body[0] == replacement {
 		replacement = 'B'
 	}
-	_, err = DecryptSensitiveValue(encrypted[:len(encrypted)-1] + string(replacement))
+	body[0] = replacement
+	_, err = DecryptSensitiveValue(encryptedValuePrefix + string(body))
 	require.Error(t, err)
 
 	CryptoSecret = "fedcba9876543210fedcba9876543210"

@@ -7,6 +7,8 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -25,6 +27,17 @@ const (
 )
 
 const maxLogCount = 1000000
+
+// defaultLogFileCount is how many oneapi-*.log files the log directory keeps
+// when LOG_MAX_FILES is unset.
+const defaultLogFileCount = 30
+
+// logFileRetention reads the operator's retention choice. Zero or a negative
+// value turns pruning off, because deleting historical logs is the one part of
+// rotation that cannot be undone.
+func logFileRetention() int {
+	return common.GetEnvOrDefault("LOG_MAX_FILES", defaultLogFileCount)
+}
 
 var logCount int
 var setupLogLock sync.Mutex
@@ -70,6 +83,56 @@ func SetupLogger() {
 			_ = oldFile.Close()
 		}
 		common.LogWriterMu.Unlock()
+		removeOldLogFiles(*common.LogDir, logPath)
+	}
+}
+
+// removeOldLogFiles deletes the oldest oneapi-*.log files in dir until at most
+// maxLogFiles remain. The file currently being written is always kept.
+func removeOldLogFiles(dir string, keepPath string) {
+	maxLogFiles := logFileRetention()
+	if maxLogFiles <= 0 {
+		return
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			log.Printf("failed to read log dir %s: %s", dir, err.Error())
+		}
+		return
+	}
+	var names []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if strings.HasPrefix(name, "oneapi-") && strings.HasSuffix(name, ".log") {
+			names = append(names, name)
+		}
+	}
+	// file names embed a timestamp, so lexical order is chronological order
+	sort.Strings(names)
+	toRemove := len(names) - maxLogFiles
+	if toRemove <= 0 {
+		return
+	}
+	removed := 0
+	for _, name := range names {
+		if removed >= toRemove {
+			break
+		}
+		if filepath.Join(dir, name) == keepPath {
+			continue
+		}
+		if err := os.Remove(filepath.Join(dir, name)); err != nil {
+			log.Printf("failed to remove old log file %s: %s", name, err.Error())
+			continue
+		}
+		removed++
+	}
+	if removed > 0 {
+		log.Printf("removed %d old log file(s), keeping the newest %d", removed, maxLogFiles)
 	}
 }
 

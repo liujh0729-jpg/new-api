@@ -119,7 +119,10 @@ func validateAIPDDResponse(code int, message string, operation string) error {
 	if strings.TrimSpace(message) == "" {
 		message = "unknown error"
 	}
-	return fmt.Errorf("%s failed: %s", operation, message)
+	// Upstream error text is logged and, on the sync preview, shown to operators.
+	// A provider that echoes the rejected key back in a 401 message must not put
+	// it in this process's log file.
+	return fmt.Errorf("%s failed: %s", operation, common.RedactSecrets(message))
 }
 
 func buildCapability(script Script, feeRuleByKey map[string]FeeRule) (constant.AIPDDCapability, float64, bool) {

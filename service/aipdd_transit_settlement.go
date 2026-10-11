@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -18,6 +19,10 @@ import (
 )
 
 var errAIPDDTransitSettlementPending = errors.New("AIPDD transit settlement is pending")
+
+// aipddTransitSettlementBudget is the end-to-end deadline for reading the
+// settled amount from AIPDD, retries and polling pauses included.
+const aipddTransitSettlementBudget = 5 * time.Second
 
 type aipddTransitSettlementEnvelope struct {
 	Code int `json:"code"`
@@ -68,6 +73,15 @@ func ApplyAIPDDTransitSettlementResponse(
 }
 
 func fetchAndApplyAIPDDTransitSettlement(finance *relaycommon.AIPDDFinanceContext) error {
+	return fetchAndApplyAIPDDTransitSettlementWithin(finance, aipddTransitSettlementBudget)
+}
+
+// fetchAndApplyAIPDDTransitSettlementWithin takes the deadline as a parameter so
+// the bound is testable without a slow server.
+func fetchAndApplyAIPDDTransitSettlementWithin(
+	finance *relaycommon.AIPDDFinanceContext,
+	budget time.Duration,
+) error {
 	// Without a registered site identity the upstream settlement endpoint answers
 	// 400/403 by design, so skip the read instead of burning retries on it. The
 	// local order keeps its customer charge and estimated source cost.
@@ -77,12 +91,26 @@ func fetchAndApplyAIPDDTransitSettlement(finance *relaycommon.AIPDDFinanceContex
 	if order, err := model.GetAIPDDTransitOrder(finance.PlatformOrderID); err == nil && order.Status == model.AIPDDTransitSettled {
 		return nil
 	}
+	// This runs on the customer's request goroutine after the charge is already
+	// booked, so the whole read gets one deadline: the settled amount is optional
+	// cost evidence and must never become unbounded relay latency.
+	ctx, cancel := context.WithTimeout(context.Background(), budget)
+	defer cancel()
 	var lastErr error
 	for attempt, delay := range []time.Duration{0, 150 * time.Millisecond, 400 * time.Millisecond, 900 * time.Millisecond} {
 		if delay > 0 {
-			time.Sleep(delay)
+			timer := time.NewTimer(delay)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				if lastErr != nil {
+					return lastErr
+				}
+				return ctx.Err()
+			case <-timer.C:
+			}
 		}
-		lastErr = fetchAIPDDTransitSettlement(finance)
+		lastErr = fetchAIPDDTransitSettlement(ctx, finance)
 		if lastErr == nil {
 			return nil
 		}
@@ -93,7 +121,7 @@ func fetchAndApplyAIPDDTransitSettlement(finance *relaycommon.AIPDDFinanceContex
 	return lastErr
 }
 
-func fetchAIPDDTransitSettlement(finance *relaycommon.AIPDDFinanceContext) error {
+func fetchAIPDDTransitSettlement(ctx context.Context, finance *relaycommon.AIPDDFinanceContext) error {
 	channel, err := model.GetChannelById(finance.ChannelID, true)
 	if err != nil {
 		return err
@@ -104,7 +132,7 @@ func fetchAIPDDTransitSettlement(finance *relaycommon.AIPDDFinanceContext) error
 	}
 	endpoint := aipddTransitBaseURL(channel) + "/api/transit/v1/orders/" +
 		url.PathEscape(finance.PlatformOrderID) + "/settlement"
-	body, err := doAIPDDTransitGET(endpoint, apiKey, finance.InstanceID)
+	body, err := doAIPDDTransitGET(ctx, endpoint, apiKey, finance.InstanceID)
 	if err != nil {
 		return err
 	}
@@ -209,8 +237,8 @@ func aipddTransitBaseURL(channel *model.Channel) string {
 	return strings.TrimSuffix(base, "/v1")
 }
 
-func doAIPDDTransitGET(endpoint, apiKey, instanceID string) ([]byte, error) {
-	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
+func doAIPDDTransitGET(ctx context.Context, endpoint, apiKey, instanceID string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, err
 	}

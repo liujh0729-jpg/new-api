@@ -318,8 +318,13 @@ func migrateDB() error {
 	if err := RemoveLegacyAIPDDModels(); err != nil {
 		return err
 	}
+	// AIPDD is one channel among many: an unreachable catalog or an unusable price
+	// must degrade to "AIPDD not refreshed", never to a gateway that cannot start.
 	if err := EnsureAIPDDDefaults(); err != nil {
-		return err
+		if IsAIPDDBootstrapKeyError(err) {
+			return err
+		}
+		common.SysError("AIPDD boot defaults skipped: " + err.Error())
 	}
 	if err := MigrateVirtualCharacterABData(); err != nil {
 		return err
@@ -425,8 +430,13 @@ func migrateDBFast() error {
 	if err := RemoveLegacyAIPDDModels(); err != nil {
 		return err
 	}
+	// AIPDD is one channel among many: an unreachable catalog or an unusable price
+	// must degrade to "AIPDD not refreshed", never to a gateway that cannot start.
 	if err := EnsureAIPDDDefaults(); err != nil {
-		return err
+		if IsAIPDDBootstrapKeyError(err) {
+			return err
+		}
+		common.SysError("AIPDD boot defaults skipped: " + err.Error())
 	}
 	if err := MigrateVirtualCharacterABData(); err != nil {
 		return err

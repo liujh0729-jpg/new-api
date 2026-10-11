@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -136,6 +137,22 @@ func GetClaudeAuthHeader(token string) http.Header {
 	return h
 }
 
+// channelKeySecrets lists the literal credentials that must never appear in a
+// balance-query error: one per line for multi-key channels.
+func channelKeySecrets(channel *model.Channel) []string {
+	if channel == nil {
+		return nil
+	}
+	lines := strings.Split(channel.Key, "\n")
+	secrets := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if trimmed := strings.TrimSpace(line); len(trimmed) >= 8 {
+			secrets = append(secrets, trimmed)
+		}
+	}
+	return secrets
+}
+
 func GetResponseBody(method, url string, channel *model.Channel, headers http.Header) ([]byte, error) {
 	req, err := http.NewRequest(method, url, nil)
 	if err != nil {
@@ -150,7 +167,9 @@ func GetResponseBody(method, url string, channel *model.Channel, headers http.He
 	}
 	res, err := client.Do(req)
 	if err != nil {
-		return nil, err
+		// A *url.Error quotes the whole request URL, and some balance endpoints
+		// carry the channel key in its query string.
+		return nil, errors.New(common.RedactSecrets(err.Error(), channelKeySecrets(channel)...))
 	}
 	if res.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("status code: %d", res.StatusCode)

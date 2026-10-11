@@ -447,7 +447,7 @@ func isAIPDDChannelOverwriteFromEnv() bool {
 
 func validateAIPDDBootstrapKey(key string) error {
 	if strings.TrimSpace(key) == "" && isAIPDDKeyRequiredFromEnv() {
-		return fmt.Errorf("an AIPDD API key is required; enter it in the setup wizard, save it on the AIPDD channel, or set AIPDD_API_KEY before starting the container so AIPDD models can be bootstrapped")
+		return fmt.Errorf("%w: an AIPDD API key is required; enter it in the setup wizard, save it on the AIPDD channel, or set AIPDD_API_KEY before starting the container so AIPDD models can be bootstrapped", ErrAIPDDBootstrapKeyRequired)
 	}
 	return nil
 }
@@ -1119,6 +1119,9 @@ func handlerMultiKeyUpdate(channel *Channel, usingKey string, status int, reason
 }
 
 func UpdateChannelStatus(channelId int, usingKey string, status int, reason string) bool {
+	// The reason is persisted into channels.other_info and returned by the channel
+	// list endpoint; upstream error text can echo the key it just rejected.
+	reason = common.RedactSecrets(reason)
 	if common.MemoryCacheEnabled {
 		channelStatusLock.Lock()
 		defer channelStatusLock.Unlock()

@@ -16,9 +16,54 @@ var (
 	maskURLPattern    = regexp.MustCompile(`(http|https)://[^\s/$.?#].[^\s]*`)
 	maskDomainPattern = regexp.MustCompile(`\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b`)
 	maskIPPattern     = regexp.MustCompile(`\b(?:\d{1,3}\.){3}\d{1,3}\b`)
+	// credentialLabelPattern catches "api_key: <value>" style text that providers
+	// echo back in error messages; credentialTokenPattern catches key shapes that
+	// appear bare (sk-..., GitHub PATs, Slack tokens, JWTs).
+	credentialLabelPattern = regexp.MustCompile(`(?i)\b(?:bearer\s+|(?:api[_ -]?key|access[_ -]?token|authorization)\s*[=:]\s*["']?(?:(?:bearer|basic)\s+)?)[^\s"',;<>}]+`)
+	credentialTokenPattern = regexp.MustCompile(`(?i)\b(?:sk|ghp|gho|ghu|ghs|ghr|xox[baprs])[-_][-A-Za-z0-9_]{10,}\b|\bgithub_pat_[-A-Za-z0-9_]{16,}\b|\beyJ[-A-Za-z0-9_]{8,}(?:\.[-A-Za-z0-9_]{4,}){2}\b`)
+
+	redactedPlaceholder = "[redacted]"
+
 	// maskApiKeyPattern matches patterns like 'api_key:xxx' or "api_key:xxx" to mask the API key value
 	maskApiKeyPattern = regexp.MustCompile(`(['"]?)api_key:([^\s'"]+)(['"]?)`)
+
+	// urlCredentialsPattern matches the userinfo section of an http(s) URL, i.e. the
+	// "user:token@" part between the scheme and the host. Only http(s) is matched so
+	// mailto: addresses and other text keep their "@" instead of being masked.
+	urlCredentialsPattern = regexp.MustCompile(`(?i)\b(https?://)[^\s/@]+@`)
 )
+
+// RedactSecrets strips credentials that a provider or driver echoes back into an
+// error message, a log line or a stored status reason. Literal secrets go first
+// because they are the only ones known for certain, then credential-shaped text.
+func RedactSecrets(value string, secrets ...string) string {
+	for _, secret := range secrets {
+		if secret = strings.TrimSpace(secret); secret != "" {
+			value = strings.ReplaceAll(value, secret, redactedPlaceholder)
+		}
+	}
+	value = credentialLabelPattern.ReplaceAllString(value, redactedPlaceholder)
+	return credentialTokenPattern.ReplaceAllString(value, redactedPlaceholder)
+}
+
+// RedactURLCredentials replaces the userinfo of any URL with "***", turning
+// https://user:token@host/repo into https://***@host/repo. Tools that echo a
+// configured remote back (git prints it in fetch/pull output and error text)
+// would otherwise leak the access token embedded in the URL.
+func RedactURLCredentials(value string) string {
+	return urlCredentialsPattern.ReplaceAllString(value, "${1}***@")
+}
+
+// TruncateForLog bounds a captured upstream body so a single malformed response
+// cannot bloat a log file or a client error, while keeping the head useful for
+// diagnosis. Secrets are stripped before cutting, so a truncated tail cannot
+// leave a partial credential behind.
+func TruncateForLog(value string, max int) string {
+	if max <= 0 || len(value) <= max {
+		return value
+	}
+	return value[:max] + "...(truncated)"
+}
 
 func GetStringIfEmpty(str string, defaultValue string) string {
 	if str == "" {

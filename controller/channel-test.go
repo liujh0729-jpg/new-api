@@ -498,7 +498,10 @@ func testChannel(channel *model.Channel, testModel string, endpointType string, 
 		Group:            info.UsingGroup,
 		Other:            other,
 	})
-	common.SysLog(fmt.Sprintf("testing channel #%d, response: \n%s", channel.Id, string(respBody)))
+	// A channel test echoes whatever the upstream returned, including provider
+	// error bodies that can quote the rejected key.
+	common.SysLog(fmt.Sprintf("testing channel #%d, response: \n%s", channel.Id,
+		common.TruncateForLog(common.RedactSecrets(string(respBody)), 2000)))
 	return testResult{
 		context:     c,
 		localErr:    nil,

@@ -572,6 +572,13 @@ func (a *TaskAdaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, req
 	return channel.DoTaskApiRequest(a, c, info, requestBody)
 }
 
+// upstreamBodySample keeps a decode failure diagnosable without shipping the
+// whole upstream payload into an error that reaches both the client and the log
+// file, where an echoed credential would persist.
+func upstreamBodySample(body []byte) string {
+	return common.TruncateForLog(common.RedactSecrets(string(body)), 512)
+}
+
 func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (taskID string, taskData []byte, taskErr *dto.TaskError) {
 	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -583,7 +590,7 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	if cfg.ExecutionProtocol == "seedance_official" || cfg.ExecutionProtocol == tokenMarketVideoProtocol {
 		var official seedanceOfficialTaskResponse
 		if err := common.Unmarshal(responseBody, &official); err != nil {
-			return "", nil, service.TaskErrorWrapper(errors.Wrapf(err, "body: %s", responseBody), "unmarshal_response_body_failed", http.StatusInternalServerError)
+			return "", nil, service.TaskErrorWrapper(errors.Wrapf(err, "body: %s", upstreamBodySample(responseBody)), "unmarshal_response_body_failed", http.StatusInternalServerError)
 		}
 		if strings.TrimSpace(official.ID) == "" {
 			rawMessage, rawCode := seedanceOfficialErrorDetails(official)
@@ -614,7 +621,7 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 
 	var aipddResp createTaskResponse
 	if err := common.Unmarshal(responseBody, &aipddResp); err != nil {
-		return "", nil, service.TaskErrorWrapper(errors.Wrapf(err, "body: %s", responseBody), "unmarshal_response_body_failed", http.StatusInternalServerError)
+		return "", nil, service.TaskErrorWrapper(errors.Wrapf(err, "body: %s", upstreamBodySample(responseBody)), "unmarshal_response_body_failed", http.StatusInternalServerError)
 	}
 	if aipddResp.Code != 0 && aipddResp.Code != http.StatusOK {
 		taskErr := service.TaskErrorWrapper(fmt.Errorf("%s", aipddResp.Message), "aipdd_task_create_failed", http.StatusBadGateway)

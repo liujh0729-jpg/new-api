@@ -226,7 +226,7 @@ func NormalizeUpstreamTaskError(code, message, param, requestID string) PublicUp
 	if canonicalCode == "" {
 		return PublicUpstreamTaskError{
 			Code:      code,
-			Message:   message,
+			Message:   seedancepublic.ErrorText(message),
 			Param:     param,
 			RequestID: requestID,
 		}
@@ -236,7 +236,7 @@ func NormalizeUpstreamTaskError(code, message, param, requestID string) PublicUp
 	if publicMessage == "" {
 		return PublicUpstreamTaskError{
 			Code:      code,
-			Message:   message,
+			Message:   seedancepublic.ErrorText(message),
 			Param:     param,
 			RequestID: requestID,
 		}

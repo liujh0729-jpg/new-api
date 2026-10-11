@@ -91,6 +91,54 @@ func TestSyncAIPDDTaskFinanceFromUpstreamSettlesOfficialBody(t *testing.T) {
 	require.EqualValues(t, 8_000_000, *order.SourceChargeRMBMic)
 }
 
+func TestFetchAndApplyAIPDDTransitSettlementGivesUpWithinBudget(t *testing.T) {
+	previousDB := model.DB
+	previousClient := httpClient
+	dsn := fmt.Sprintf("file:aipdd-transit-timeout-%d?mode=memory&cache=shared", time.Now().UnixNano())
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	model.DB = db
+	t.Cleanup(func() {
+		model.DB = previousDB
+		httpClient = previousClient
+	})
+	require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.AIPDDTransitOrder{}))
+
+	const (
+		orderID   = "newapi-order-chat-hang"
+		instance  = "11111111-2222-4333-8444-555555555555"
+		channelID = 8
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		select {
+		case <-request.Context().Done():
+		case <-time.After(2 * time.Second):
+		}
+	}))
+	t.Cleanup(server.Close)
+	httpClient = server.Client()
+	baseURL := server.URL
+	require.NoError(t, db.Create(&model.Channel{
+		Id: channelID, Type: 100, Key: "sk-aipdd-hang", Name: "AIPDD", BaseURL: &baseURL,
+	}).Error)
+	require.NoError(t, model.EnsureAIPDDTransitOrder(
+		instance, orderID, orderID+":0:8", 1, 2, channelID, 0, "chat-model"))
+
+	// This read runs on the customer's request goroutine after their charge is
+	// already booked, so a hung AIPDD may cost the deadline and nothing more.
+	start := time.Now()
+	err = fetchAndApplyAIPDDTransitSettlementWithin(&relaycommon.AIPDDFinanceContext{
+		InstanceID: instance, PlatformOrderID: orderID, ChannelID: channelID, ChannelKeyIndex: 0,
+	}, 150*time.Millisecond)
+	require.Error(t, err)
+	require.Less(t, time.Since(start), time.Second, "the deadline must bound the retries and their polling pauses")
+
+	order, err := model.GetAIPDDTransitOrder(orderID)
+	require.NoError(t, err)
+	require.Equal(t, model.AIPDDTransitPending, order.Status,
+		"giving up defers the source amount, it never touches the customer charge")
+}
+
 func TestFetchAIPDDTransitSettlementUsesTheSelectedMultiKeyAndMinimalIdentity(t *testing.T) {
 	previousDB := model.DB
 	previousClient := httpClient
